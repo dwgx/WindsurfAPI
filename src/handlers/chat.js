@@ -5,7 +5,7 @@
 
 import { randomUUID } from 'crypto';
 import { WindsurfClient } from '../client.js';
-import { getApiKey, acquireAccountByKey, reportError, reportSuccess, markRateLimited, updateCapability } from '../auth.js';
+import { getApiKey, acquireAccountByKey, reportError, reportSuccess, markRateLimited, reportInternalError, updateCapability, getAccountList } from '../auth.js';
 import { resolveModel, getModelInfo } from '../models.js';
 import { getLsFor, ensureLs } from '../langserver.js';
 import { config, log } from '../config.js';
@@ -16,6 +16,10 @@ import { isExperimentalEnabled } from '../runtime-config.js';
 import {
   fingerprintBefore, fingerprintAfter, checkout as poolCheckout, checkin as poolCheckin,
 } from '../conversation-pool.js';
+import {
+  normalizeMessagesForCascade, ToolCallStreamParser, parseToolCallsFromText,
+} from './tool-emulation.js';
+import { sanitizeText, PathSanitizeStream } from '../sanitize.js';
 
 const HEARTBEAT_MS = 15_000;
 const QUEUE_RETRY_MS = 1_000;
@@ -52,17 +56,58 @@ function cachedUsage(messages, completionText) {
   };
 }
 
+/**
+ * Build an OpenAI-shaped `usage` object, preferring server-reported token
+ * counts from Cascade's CortexStepMetadata.model_usage when available, and
+ * falling back to the local chars/4 estimate otherwise. Keeps the same shape
+ * in both branches so downstream billing doesn't have to care which source
+ * produced the numbers.
+ *
+ * The Cascade backend reports usage as {inputTokens, outputTokens,
+ * cacheReadTokens, cacheWriteTokens}. We map them onto the OpenAI shape:
+ *   prompt_tokens     = inputTokens + cacheReadTokens  (total tokens the
+ *                       model actually read, cached or not — matches Anthropic
+ *                       billing convention and what new-api expects)
+ *   completion_tokens = outputTokens
+ *   prompt_tokens_details.cached_tokens       = cacheReadTokens
+ *   cache_creation_input_tokens (Anthropic ext) = cacheWriteTokens
+ */
+function buildUsageBody(serverUsage, messages, completionText, thinkingText = '') {
+  if (serverUsage && (serverUsage.inputTokens || serverUsage.outputTokens)) {
+    const inputTokens = serverUsage.inputTokens || 0;
+    const outputTokens = serverUsage.outputTokens || 0;
+    const cacheRead = serverUsage.cacheReadTokens || 0;
+    const cacheWrite = serverUsage.cacheWriteTokens || 0;
+    const promptTotal = inputTokens + cacheRead;
+    return {
+      prompt_tokens: promptTotal,
+      completion_tokens: outputTokens,
+      total_tokens: promptTotal + outputTokens,
+      prompt_tokens_details: { cached_tokens: cacheRead },
+      cache_creation_input_tokens: cacheWrite,
+    };
+  }
+  const prompt = estimateTokens(messages);
+  const completion = Math.max(1, Math.ceil(((completionText || '').length + (thinkingText || '').length) / 4));
+  return {
+    prompt_tokens: prompt,
+    completion_tokens: completion,
+    total_tokens: prompt + completion,
+    prompt_tokens_details: { cached_tokens: 0 },
+  };
+}
+
 // Wait until getApiKey returns a non-null account, or until maxWaitMs expires.
 // Used when every account has momentarily exhausted its RPM budget so the
 // client is queued instead of getting a 503.
-async function waitForAccount(tried, signal, maxWaitMs = QUEUE_MAX_WAIT_MS) {
+async function waitForAccount(tried, signal, maxWaitMs = QUEUE_MAX_WAIT_MS, modelKey = null) {
   const deadline = Date.now() + maxWaitMs;
-  let acct = getApiKey(tried);
+  let acct = getApiKey(tried, modelKey);
   while (!acct) {
     if (signal?.aborted) return null;
     if (Date.now() >= deadline) return null;
     await new Promise(r => setTimeout(r, QUEUE_RETRY_MS));
-    acct = getApiKey(tried);
+    acct = getApiKey(tried, modelKey);
   }
   return acct;
 }
@@ -85,10 +130,43 @@ export async function handleChatCompletions(body) {
   // Models with enumValue=0 must use Cascade; others use legacy RawGetChatMessage
   const useCascade = !!(modelUid && modelEnum === 0);
 
-  // Model access control
+  // Tool-call emulation: if the client passed OpenAI-style tools[], we inject
+  // a protocol preamble into the messages and rewrite any tool-result turns
+  // into synthetic user text. Cascade has no native slot for per-request tool
+  // defs (verified in exa.cortex_pb.proto), so the prompt layer is the only
+  // path. The stream parser in tool-emulation.js extracts <tool_call> blocks
+  // back out of the cascade text and re-emits them as OpenAI tool_calls.
+  const hasTools = Array.isArray(tools) && tools.length > 0;
+  const hasToolHistory = Array.isArray(messages) && messages.some(m => m?.role === 'tool' || (m?.role === 'assistant' && Array.isArray(m.tool_calls) && m.tool_calls.length));
+  const emulateTools = useCascade && (hasTools || hasToolHistory);
+  const cascadeMessages = emulateTools
+    ? normalizeMessagesForCascade(messages, tools || [])
+    : messages;
+
+  // Global model access control (allowlist / blocklist from dashboard)
   const access = isModelAllowed(modelKey);
   if (!access.allowed) {
     return { status: 403, body: { error: { message: access.reason, type: 'model_blocked' } } };
+  }
+
+  // Per-account model routing preflight: if NO active account has this
+  // model in its tier ∩ available list, fail fast instead of looping
+  // through every account trying to find one. This surfaces tier
+  // entitlement and blocklist errors as a clean 403 rather than a 30s
+  // queue timeout → pool_exhausted.
+  const anyEligible = getAccountList().some(a =>
+    a.status === 'active' && (a.availableModels || []).includes(modelKey)
+  );
+  if (!anyEligible) {
+    return {
+      status: 403,
+      body: {
+        error: {
+          message: `模型 ${displayModel} 在当前账号池中不可用（未订阅或已被封禁）`,
+          type: 'model_not_entitled',
+        },
+      },
+    };
   }
 
   const chatId = genId();
@@ -96,7 +174,7 @@ export async function handleChatCompletions(body) {
   const ckey = cacheKey(body);
 
   if (stream) {
-    return streamResponse(chatId, created, displayModel, modelKey, messages, modelEnum, modelUid, useCascade, ckey);
+    return streamResponse(chatId, created, displayModel, modelKey, messages, cascadeMessages, modelEnum, modelUid, useCascade, ckey, emulateTools);
   }
 
   // ── Local response cache (exact body match) ─────────────
@@ -121,7 +199,11 @@ export async function handleChatCompletions(body) {
   // cascade_id from last turn, pin this request to that exact (account, LS)
   // pair so the Windsurf backend serves from its hot per-cascade context
   // instead of replaying the whole history.
-  const reuseEnabled = useCascade && isExperimentalEnabled('cascadeConversationReuse');
+  //
+  // Tool-emulation mode bypasses the reuse pool: fingerprint can't stably
+  // collapse a conversation whose assistant turns contain synthesised
+  // <tool_call> markup and whose user turns contain <tool_result> wrappers.
+  const reuseEnabled = useCascade && !emulateTools && isExperimentalEnabled('cascadeConversationReuse');
   const fpBefore = reuseEnabled ? fingerprintBefore(messages) : null;
   let reuseEntry = reuseEnabled ? poolCheckout(fpBefore) : null;
   if (reuseEntry) log.info(`Chat: cascade reuse HIT cascadeId=${reuseEntry.cascadeId.slice(0, 8)}… model=${displayModel}`);
@@ -134,14 +216,14 @@ export async function handleChatCompletions(body) {
     let acct = null;
     if (reuseEntry && attempt === 0) {
       // First attempt pins to the account that owns the cached cascade.
-      acct = acquireAccountByKey(reuseEntry.apiKey);
+      acct = acquireAccountByKey(reuseEntry.apiKey, modelKey);
       if (!acct) {
         log.info('Chat: cascade reuse skipped — owning account not available, falling back to fresh cascade');
         reuseEntry = null;
       }
     }
     if (!acct) {
-      acct = await waitForAccount(tried, null);
+      acct = await waitForAccount(tried, null, QUEUE_MAX_WAIT_MS, modelKey);
       if (!acct) break;
     }
     tried.push(acct.apiKey);
@@ -154,12 +236,13 @@ export async function handleChatCompletions(body) {
       log.info('Chat: cascade reuse skipped — LS port changed');
       reuseEntry = null;
     }
-    log.info(`Chat: model=${displayModel} flow=${useCascade ? 'cascade' : 'legacy'} attempt=${attempt + 1} account=${acct.email} ls=${ls.port}${reuseEntry ? ' reuse=1' : ''}`);
+    log.info(`Chat: model=${displayModel} flow=${useCascade ? 'cascade' : 'legacy'} attempt=${attempt + 1} account=${acct.email} ls=${ls.port}${reuseEntry ? ' reuse=1' : ''}${emulateTools ? ' tools=emu' : ''}`);
     const client = new WindsurfClient(acct.apiKey, ls.port, ls.csrfToken);
     const result = await nonStreamResponse(
-      client, chatId, created, displayModel, modelKey, messages, modelEnum, modelUid,
+      client, chatId, created, displayModel, modelKey, messages, cascadeMessages, modelEnum, modelUid,
       useCascade, acct.apiKey, ckey,
       reuseEnabled ? { reuseEntry, lsPort: ls.port, apiKey: acct.apiKey } : null,
+      emulateTools,
     );
     if (result.status === 200) return result;
     reuseEntry = null; // don't try to reuse on the retry
@@ -170,25 +253,55 @@ export async function handleChatCompletions(body) {
   return lastErr || { status: 503, body: { error: { message: 'No active accounts available', type: 'pool_exhausted' } } };
 }
 
-async function nonStreamResponse(client, id, created, model, modelKey, messages, modelEnum, modelUid, useCascade, apiKey, ckey, poolCtx) {
+async function nonStreamResponse(client, id, created, model, modelKey, messages, cascadeMessages, modelEnum, modelUid, useCascade, apiKey, ckey, poolCtx, emulateTools) {
   const startTime = Date.now();
   try {
     let allText = '';
     let allThinking = '';
     let cascadeMeta = null;
+    let toolCalls = [];
+    // Server-reported token usage from CortexStepMetadata.model_usage, summed
+    // across all trajectory steps. Preferred over the chars/4 estimate when
+    // present so downstream billing (new-api, etc.) sees real Cascade numbers.
+    let serverUsage = null;
 
     if (useCascade) {
-      const chunks = await client.cascadeChat(messages, modelEnum, modelUid, { reuseEntry: poolCtx?.reuseEntry || null });
+      const chunks = await client.cascadeChat(cascadeMessages, modelEnum, modelUid, { reuseEntry: poolCtx?.reuseEntry || null });
       for (const c of chunks) {
         if (c.text) allText += c.text;
         if (c.thinking) allThinking += c.thinking;
       }
       cascadeMeta = { cascadeId: chunks.cascadeId, sessionId: chunks.sessionId };
+      serverUsage = chunks.usage || null;
+      if (emulateTools) {
+        // Strip <tool_call> blocks out of the text and surface them as
+        // OpenAI-format tool_calls instead.
+        const parsed = parseToolCallsFromText(allText);
+        allText = parsed.text;
+        toolCalls = parsed.toolCalls;
+      }
+      // Built-in Cascade tool calls (chunks.toolCalls — edit_file, view_file,
+      // list_directory, run_command, etc.) are intentionally DROPPED. Their
+      // argumentsJson and result fields reference server-internal paths like
+      // /tmp/windsurf-workspace/config.yaml and must never be exposed to an
+      // API caller. Emulated tool calls (above) are safe because they
+      // reference the caller's own tool schema.
     } else {
       const chunks = await client.rawGetChatMessage(messages, modelEnum, modelUid);
       for (const c of chunks) {
         if (c.text) allText += c.text;
       }
+    }
+
+    // Scrub server-internal filesystem paths from everything we're about to
+    // return. See src/sanitize.js for the patterns and rationale.
+    allText = sanitizeText(allText);
+    allThinking = sanitizeText(allThinking);
+    if (toolCalls.length) {
+      toolCalls = toolCalls.map(tc => ({
+        ...tc,
+        argumentsJson: sanitizeText(tc.argumentsJson || ''),
+      }));
     }
 
     // Check the cascade back into the pool under the *post-turn* fingerprint
@@ -213,20 +326,28 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
 
     const message = { role: 'assistant', content: allText || null };
     if (allThinking) message.reasoning_content = allThinking;
+    if (toolCalls.length) {
+      message.tool_calls = toolCalls.map((tc, i) => ({
+        id: tc.id || `call_${i}_${Date.now().toString(36)}`,
+        type: 'function',
+        function: {
+          name: tc.name || 'unknown',
+          arguments: tc.argumentsJson || tc.arguments || '{}',
+        },
+      }));
+      if (!message.content) message.content = null;
+    }
 
-    const promptTok = estimateTokens(messages);
-    const completionTok = Math.max(1, Math.ceil((allText.length + allThinking.length) / 4));
+    // Prefer server-reported usage; fall back to chars/4 estimate only when
+    // the trajectory didn't include a ModelUsageStats field.
+    const usage = buildUsageBody(serverUsage, messages, allText, allThinking);
+    const finishReason = toolCalls.length ? 'tool_calls' : 'stop';
     return {
       status: 200,
       body: {
         id, object: 'chat.completion', created, model,
-        choices: [{ index: 0, message, finish_reason: 'stop' }],
-        usage: {
-          prompt_tokens: promptTok,
-          completion_tokens: completionTok,
-          total_tokens: promptTok + completionTok,
-          prompt_tokens_details: { cached_tokens: 0 },
-        },
+        choices: [{ index: 0, message, finish_reason: finishReason }],
+        usage,
       },
     };
   } catch (err) {
@@ -234,21 +355,23 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
     // errors and transport issues shouldn't disable the key.
     const isAuthFail = /unauthenticated|invalid api key|invalid_grant|permission_denied.*account/i.test(err.message);
     const isRateLimit = /rate limit|rate_limit|too many requests|quota/i.test(err.message);
+    const isInternal = /internal error occurred.*error id/i.test(err.message);
     if (isAuthFail) reportError(apiKey);
     if (isRateLimit) { markRateLimited(apiKey); err.isModelError = true; }
-    if (err.isModelError && !isRateLimit) {
+    if (isInternal) { reportInternalError(apiKey); err.isModelError = true; }
+    if (err.isModelError && !isRateLimit && !isInternal) {
       updateCapability(apiKey, modelKey, false, 'model_error');
     }
     recordRequest(model, false, Date.now() - startTime, apiKey);
     log.error('Chat error:', err.message);
     return {
       status: err.isModelError ? 403 : 502,
-      body: { error: { message: err.message, type: err.isModelError ? 'model_not_available' : 'upstream_error' } },
+      body: { error: { message: sanitizeText(err.message), type: err.isModelError ? 'model_not_available' : 'upstream_error' } },
     };
   }
 }
 
-function streamResponse(id, created, model, modelKey, messages, modelEnum, modelUid, useCascade, ckey) {
+function streamResponse(id, created, model, modelKey, messages, cascadeMessages, modelEnum, modelUid, useCascade, ckey, emulateTools) {
   return {
     status: 200,
     stream: true,
@@ -318,11 +441,54 @@ function streamResponse(id, created, model, modelKey, messages, modelEnum, model
       let accText = '';
       let accThinking = '';
 
-      // Cascade conversation pool (experimental, stream path)
-      const reuseEnabled = useCascade && isExperimentalEnabled('cascadeConversationReuse');
+      // Cascade conversation pool (experimental, stream path) — bypassed in
+      // tool-emulation mode because the fingerprint can't collapse turns
+      // whose bodies carry <tool_call>/<tool_result> markup.
+      const reuseEnabled = useCascade && !emulateTools && isExperimentalEnabled('cascadeConversationReuse');
       const fpBefore = reuseEnabled ? fingerprintBefore(messages) : null;
       let reuseEntry = reuseEnabled ? poolCheckout(fpBefore) : null;
       if (reuseEntry) log.info(`Chat: cascade reuse HIT cascadeId=${reuseEntry.cascadeId.slice(0, 8)}… stream model=${model}`);
+
+      // Tool-call stream parser: in emulation mode every text delta flows
+      // through here so we can intercept <tool_call>...</tool_call> blocks
+      // before they leak out as content. Plain text deltas are passed
+      // through unchanged. Tool calls are emitted as OpenAI delta.tool_calls
+      // chunks when a block closes, and the final finish_reason switches to
+      // "tool_calls" if any were seen.
+      const toolParser = emulateTools ? new ToolCallStreamParser() : null;
+      const collectedToolCalls = [];
+
+      // Streaming path sanitizers. Every text/thinking delta flows through a
+      // PathSanitizeStream before leaving the server so /tmp/windsurf-workspace,
+      // /opt/windsurf and /root/WindsurfAPI literals can never slip out even
+      // if a path straddles a chunk boundary. See src/sanitize.js.
+      const pathStreamText = new PathSanitizeStream();
+      const pathStreamThinking = new PathSanitizeStream();
+
+      const emitContent = (clean) => {
+        if (!clean) return;
+        accText += clean;
+        send({ id, object: 'chat.completion.chunk', created, model,
+          choices: [{ index: 0, delta: { content: clean }, finish_reason: null }] });
+      };
+      const emitThinking = (clean) => {
+        if (!clean) return;
+        accThinking += clean;
+        send({ id, object: 'chat.completion.chunk', created, model,
+          choices: [{ index: 0, delta: { reasoning_content: clean }, finish_reason: null }] });
+      };
+
+      const emitToolCallDelta = (tc, idx) => {
+        send({ id, object: 'chat.completion.chunk', created, model,
+          choices: [{ index: 0, delta: {
+            tool_calls: [{
+              index: idx,
+              id: tc.id,
+              type: 'function',
+              function: { name: tc.name, arguments: sanitizeText(tc.argumentsJson || '{}') },
+            }],
+          }, finish_reason: null }] });
+      };
 
       const onChunk = (chunk) => {
         if (!rolePrinted) {
@@ -331,15 +497,26 @@ function streamResponse(id, created, model, modelKey, messages, modelEnum, model
             choices: [{ index: 0, delta: { role: 'assistant', content: '' }, finish_reason: null }] });
         }
         hadSuccess = true;
+
         if (chunk.text) {
-          accText += chunk.text;
-          send({ id, object: 'chat.completion.chunk', created, model,
-            choices: [{ index: 0, delta: { content: chunk.text }, finish_reason: null }] });
+          // Pipeline for text deltas:
+          //   raw chunk  →  ToolCallStreamParser (strip <tool_call> blocks)
+          //              →  PathSanitizeStream   (scrub server paths)
+          //              →  client
+          let safeText = chunk.text;
+          if (toolParser) {
+            const { text: safe, toolCalls: done } = toolParser.feed(chunk.text);
+            safeText = safe;
+            for (const tc of done) {
+              const idx = collectedToolCalls.length;
+              collectedToolCalls.push(tc);
+              emitToolCallDelta(tc, idx);
+            }
+          }
+          if (safeText) emitContent(pathStreamText.feed(safeText));
         }
         if (chunk.thinking) {
-          accThinking += chunk.thinking;
-          send({ id, object: 'chat.completion.chunk', created, model,
-            choices: [{ index: 0, delta: { reasoning_content: chunk.thinking }, finish_reason: null }] });
+          emitThinking(pathStreamThinking.feed(chunk.thinking));
         }
       };
 
@@ -348,14 +525,14 @@ function streamResponse(id, created, model, modelKey, messages, modelEnum, model
           if (abortController.signal.aborted) return;
           let acct = null;
           if (reuseEntry && attempt === 0) {
-            acct = acquireAccountByKey(reuseEntry.apiKey);
+            acct = acquireAccountByKey(reuseEntry.apiKey, modelKey);
             if (!acct) {
               log.info('Chat: cascade reuse skipped — owning account not available');
               reuseEntry = null;
             }
           }
           if (!acct) {
-            acct = await waitForAccount(tried, abortController.signal);
+            acct = await waitForAccount(tried, abortController.signal, QUEUE_MAX_WAIT_MS, modelKey);
             if (!acct) break;
           }
           tried.push(acct.apiKey);
@@ -372,12 +549,30 @@ function streamResponse(id, created, model, modelKey, messages, modelEnum, model
           let cascadeResult = null;
           try {
             if (useCascade) {
-              cascadeResult = await client.cascadeChat(messages, modelEnum, modelUid, {
+              cascadeResult = await client.cascadeChat(cascadeMessages, modelEnum, modelUid, {
                 onChunk, signal: abortController.signal, reuseEntry,
               });
             } else {
               await client.rawGetChatMessage(messages, modelEnum, modelUid, { onChunk });
             }
+            // Flush order matters:
+            //   1. ToolCallStreamParser tail → may produce more text deltas
+            //      (e.g., a dangling <tool_call> that never closed falls
+            //      through as literal text)
+            //   2. PathSanitizeStream tail (text) → scrubs anything the tool
+            //      parser held back AND anything we were holding ourselves
+            //   3. PathSanitizeStream tail (thinking)
+            if (toolParser) {
+              const tail = toolParser.flush();
+              if (tail.text) emitContent(pathStreamText.feed(tail.text));
+              for (const tc of tail.toolCalls) {
+                const idx = collectedToolCalls.length;
+                collectedToolCalls.push(tc);
+                emitToolCallDelta(tc, idx);
+              }
+            }
+            emitContent(pathStreamText.flush());
+            emitThinking(pathStreamThinking.flush());
             // Pool check-in on success (cascade only)
             if (reuseEnabled && cascadeResult?.cascadeId && accText) {
               const fpAfter = fingerprintAfter(messages, accText);
@@ -397,22 +592,17 @@ function streamResponse(id, created, model, modelKey, messages, modelEnum, model
               send({ id, object: 'chat.completion.chunk', created, model,
                 choices: [{ index: 0, delta: { role: 'assistant', content: '' }, finish_reason: null }] });
             }
+            const finalReason = collectedToolCalls.length ? 'tool_calls' : 'stop';
             send({ id, object: 'chat.completion.chunk', created, model,
-              choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] });
-            // OpenAI-compat: emit a terminal usage chunk so downstream
-            // billing (new-api) sees non-zero completion_tokens for streams.
-            // stream_options.include_usage-style chunk: empty choices + usage.
+              choices: [{ index: 0, delta: {}, finish_reason: finalReason }] });
+            // OpenAI-compat: terminal usage chunk (stream_options.include_usage
+            // convention — empty choices[] + usage). Prefer Cascade's own
+            // CortexStepMetadata.model_usage numbers when present, fall back
+            // to the local chars/4 estimator. See buildUsageBody().
             {
-              const promptTok = estimateTokens(messages);
-              const completionTok = Math.max(1, Math.ceil((accText.length + accThinking.length) / 4));
+              const usage = buildUsageBody(cascadeResult?.usage || null, messages, accText, accThinking);
               send({ id, object: 'chat.completion.chunk', created, model,
-                choices: [],
-                usage: {
-                  prompt_tokens: promptTok,
-                  completion_tokens: completionTok,
-                  total_tokens: promptTok + completionTok,
-                  prompt_tokens_details: { cached_tokens: 0 },
-                } });
+                choices: [], usage });
             }
             if (!res.writableEnded) { res.write('data: [DONE]\n\n'); res.end(); }
             if (ckey && (accText || accThinking)) {
@@ -424,14 +614,17 @@ function streamResponse(id, created, model, modelKey, messages, modelEnum, model
             reuseEntry = null; // don't try to reuse on retry
             const isAuthFail = /unauthenticated|invalid api key|invalid_grant|permission_denied.*account/i.test(err.message);
             const isRateLimit = /rate limit|rate_limit|too many requests|quota/i.test(err.message);
+            const isInternal = /internal error occurred.*error id/i.test(err.message);
             if (isAuthFail) reportError(currentApiKey);
             if (isRateLimit) { markRateLimited(currentApiKey); err.isModelError = true; }
-            if (err.isModelError && !isRateLimit) {
+            if (isInternal) { reportInternalError(currentApiKey); err.isModelError = true; }
+            if (err.isModelError && !isRateLimit && !isInternal) {
               updateCapability(currentApiKey, modelKey, false, 'model_error');
             }
             // Retry only if nothing has been streamed yet AND it's a model error
             if (!hadSuccess && err.isModelError) {
-              log.warn(`Account ${acct.email} failed (${isRateLimit ? 'rate_limit' : 'model_error'}), trying next`);
+              const tag = isRateLimit ? 'rate_limit' : isInternal ? 'internal_error' : 'model_error';
+              log.warn(`Account ${acct.email} failed (${tag}), trying next`);
               continue;
             }
             break;
@@ -446,8 +639,9 @@ function streamResponse(id, created, model, modelKey, messages, modelEnum, model
             send({ id, object: 'chat.completion.chunk', created, model,
               choices: [{ index: 0, delta: { role: 'assistant', content: '' }, finish_reason: null }] });
           }
+          const errMsg = sanitizeText(lastErr?.message || 'no accounts');
           send({ id, object: 'chat.completion.chunk', created, model,
-            choices: [{ index: 0, delta: { content: `\n[Error: ${lastErr?.message || 'no accounts'}]` }, finish_reason: 'stop' }] });
+            choices: [{ index: 0, delta: { content: `\n[Error: ${errMsg}]` }, finish_reason: 'stop' }] });
           res.write('data: [DONE]\n\n');
         } catch {}
         if (!res.writableEnded) res.end();

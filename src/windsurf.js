@@ -337,6 +337,85 @@ export function buildGetTrajectoryRequest(cascadeId) {
   return writeStringField(1, cascadeId);
 }
 
+/**
+ * Build GetCascadeTrajectoryGeneratorMetadataRequest.
+ *
+ * Field 1: cascade_id
+ * Field 2: generator_metadata_offset (uint32)
+ *
+ * The response carries real token counts from the generator models
+ * (CortexStepGeneratorMetadata.chat_model.usage → ModelUsageStats).
+ * CortexStepMetadata.model_usage on the trajectory steps themselves is
+ * usually empty — the LS only fills it on this separate RPC.
+ */
+export function buildGetGeneratorMetadataRequest(cascadeId, offset = 0) {
+  const parts = [writeStringField(1, cascadeId)];
+  if (offset > 0) parts.push(writeVarintField(2, offset));
+  return Buffer.concat(parts);
+}
+
+/**
+ * Parse GetCascadeTrajectoryGeneratorMetadataResponse → aggregated usage.
+ *
+ * Response {
+ *   repeated CortexStepGeneratorMetadata generator_metadata = 1;
+ * }
+ * CortexStepGeneratorMetadata {
+ *   ChatModelMetadata chat_model = 1;
+ *   ...
+ * }
+ * ChatModelMetadata {
+ *   ...
+ *   ModelUsageStats usage = 4;
+ *   ...
+ * }
+ * ModelUsageStats {
+ *   uint64 input_tokens = 2;
+ *   uint64 output_tokens = 3;
+ *   uint64 cache_write_tokens = 4;
+ *   uint64 cache_read_tokens = 5;
+ * }
+ *
+ * Returns null if nothing reported; otherwise an aggregated
+ * {inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens} summed
+ * across every generator invocation (multi-model trajectories sum).
+ */
+export function parseGeneratorMetadata(buf) {
+  const fields = parseFields(buf);
+  const metaEntries = getAllFields(fields, 1).filter(f => f.wireType === 2);
+  if (metaEntries.length === 0) return null;
+
+  let inputTokens = 0, outputTokens = 0, cacheReadTokens = 0, cacheWriteTokens = 0;
+  let found = false;
+
+  for (const entry of metaEntries) {
+    const gm = parseFields(entry.value);
+    const chatModelField = getField(gm, 1, 2); // chat_model
+    if (!chatModelField) continue;
+    const cm = parseFields(chatModelField.value);
+    const usageField = getField(cm, 4, 2); // usage
+    if (!usageField) continue;
+    const us = parseFields(usageField.value);
+    const readUint = (fn) => {
+      const f = getField(us, fn, 0);
+      return f ? Number(f.value) : 0;
+    };
+    const inT = readUint(2);
+    const outT = readUint(3);
+    const cacheW = readUint(4);
+    const cacheR = readUint(5);
+    if (inT || outT || cacheW || cacheR) {
+      inputTokens += inT;
+      outputTokens += outT;
+      cacheWriteTokens += cacheW;
+      cacheReadTokens += cacheR;
+      found = true;
+    }
+  }
+  if (!found) return null;
+  return { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens };
+}
+
 // ─── Cascade response parsers ──────────────────────────────
 
 /** Parse StartCascadeResponse → cascade_id (field 1). */
@@ -381,7 +460,38 @@ export function parseTrajectorySteps(buf) {
       thinking: '',
       errorText: '',
       toolCalls: [], // [{id, name, argumentsJson, result?}]
+      usage: null,  // {inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens}
     };
+
+    // CortexTrajectoryStep.metadata (field 5) → CortexStepMetadata.
+    // CortexStepMetadata.model_usage (field 9) → ModelUsageStats.
+    // ModelUsageStats:
+    //   input_tokens       = 2 (uint64)
+    //   output_tokens      = 3 (uint64)
+    //   cache_write_tokens = 4 (uint64)
+    //   cache_read_tokens  = 5 (uint64)
+    // These are server-reported token counts for this step's generator model
+    // and map cleanly onto OpenAI `usage.prompt_tokens` / `completion_tokens`
+    // / `prompt_tokens_details.cached_tokens` when aggregated across steps.
+    const stepMetaField = getField(sf, 5, 2);
+    if (stepMetaField) {
+      const meta = parseFields(stepMetaField.value);
+      const usageField = getField(meta, 9, 2);
+      if (usageField) {
+        const us = parseFields(usageField.value);
+        const readUint = (fn) => {
+          const f = getField(us, fn, 0);
+          return f ? Number(f.value) : 0;
+        };
+        const inputTokens = readUint(2);
+        const outputTokens = readUint(3);
+        const cacheWriteTokens = readUint(4);
+        const cacheReadTokens = readUint(5);
+        if (inputTokens || outputTokens || cacheReadTokens || cacheWriteTokens) {
+          entry.usage = { inputTokens, outputTokens, cacheWriteTokens, cacheReadTokens };
+        }
+      }
+    }
 
     // Tool-call / tool-result sub-messages on CortexTrajectoryStep.
     // Sources: exa.cortex_pb.proto (AlexStrNik/windsurf-api).
