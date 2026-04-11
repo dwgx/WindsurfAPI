@@ -20,6 +20,7 @@ import {
   buildSendCascadeMessageRequest,
   buildGetTrajectoryRequest, parseTrajectoryStatus,
   buildGetTrajectoryStepsRequest, parseTrajectorySteps,
+  buildGetGeneratorMetadataRequest, parseGeneratorMetadata,
 } from './windsurf.js';
 
 const LS_SERVICE = '/exa.language_server_pb.LanguageServerService';
@@ -276,6 +277,11 @@ export class WindsurfClient {
       const chunks = [];
       const yieldedByStep = new Map(); // stepIndex → emitted text length
       const thinkingByStep = new Map(); // stepIndex → emitted thinking length
+      // Server-reported token usage, one entry per step keyed by step index.
+      // Each value is the latest {inputTokens, outputTokens, cacheReadTokens,
+      // cacheWriteTokens} observed on that step's CortexStepMetadata.model_usage.
+      // Summed across all steps at return time → the response's real usage.
+      const usageByStep = new Map();
       const seenToolCallIds = new Set();
       const toolCalls = [];
       let totalYielded = 0;
@@ -389,6 +395,12 @@ export class WindsurfClient {
 
         for (let i = 0; i < steps.length; i++) {
           const step = steps[i];
+
+          // Per-step token usage. Overwrite on every poll so the map always
+          // holds the latest reported numbers (they grow monotonically as
+          // the generator emits more output). We sum across steps at the
+          // end to compute the response's total usage.
+          if (step.usage) usageByStep.set(i, step.usage);
 
           // Collect tool calls — dedupe by id so the same step seen across
           // polls only emits once. A tool call with an existing `result`
@@ -542,12 +554,57 @@ export class WindsurfClient {
       }
 
       onEnd?.(chunks);
+
+      // ── Real token usage via GetCascadeTrajectoryGeneratorMetadata ──
+      // CortexStepMetadata.model_usage (the per-step field) is usually empty
+      // in the step trajectory response — the LS only populates the real
+      // token counts in a separate RPC keyed off cascade_id. We fire this
+      // once after the polling loop ends. Keep it non-fatal: a network blip
+      // here just drops usage back to the chars/4 estimator, the response
+      // itself is already formed.
+      let serverUsage = null;
+      try {
+        const metaReq = buildGetGeneratorMetadataRequest(cascadeId, 0);
+        const metaResp = await grpcUnary(
+          this.port, this.csrfToken,
+          `${LS_SERVICE}/GetCascadeTrajectoryGeneratorMetadata`,
+          grpcFrame(metaReq), 5000
+        );
+        serverUsage = parseGeneratorMetadata(metaResp);
+      } catch (e) {
+        log.debug(`GetCascadeTrajectoryGeneratorMetadata failed: ${e.message}`);
+      }
+      // Fallback: if the generator metadata RPC didn't give us anything,
+      // check the per-step metadata we collected during polling (some LS
+      // versions do populate CortexStepMetadata.model_usage directly).
+      if (!serverUsage && usageByStep.size > 0) {
+        let inT = 0, outT = 0, cacheR = 0, cacheW = 0;
+        for (const u of usageByStep.values()) {
+          inT += u.inputTokens || 0;
+          outT += u.outputTokens || 0;
+          cacheR += u.cacheReadTokens || 0;
+          cacheW += u.cacheWriteTokens || 0;
+        }
+        if (inT || outT || cacheR || cacheW) {
+          serverUsage = {
+            inputTokens: inT,
+            outputTokens: outT,
+            cacheReadTokens: cacheR,
+            cacheWriteTokens: cacheW,
+          };
+        }
+      }
+
       // Attach cascade metadata so the caller can check it back into the
       // conversation pool. We still return the array so existing callers
       // that iterate over it keep working.
       chunks.cascadeId = cascadeId;
       chunks.sessionId = sessionId;
       chunks.toolCalls = toolCalls;
+      chunks.usage = serverUsage;
+      if (serverUsage) {
+        log.info(`Cascade usage: in=${serverUsage.inputTokens} out=${serverUsage.outputTokens} cache_r=${serverUsage.cacheReadTokens} cache_w=${serverUsage.cacheWriteTokens}`);
+      }
       if (toolCalls.length) log.info(`Cascade tool calls: ${toolCalls.length}`, { names: toolCalls.map(t => t.name) });
       return chunks;
 
