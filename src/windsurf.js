@@ -275,20 +275,25 @@ export function buildSendCascadeMessageRequest(apiKey, cascadeId, text, modelEnu
 }
 
 function buildCascadeConfig(modelEnum, modelUid) {
-  // CascadeConversationalPlannerConfig: field 4 = planner_mode = 1 (CONVERSATIONAL)
-  const conversationalConfig = writeVarintField(4, 1);
-
-  // AutoCommandConfig: field 6 = auto_execution_policy = 3 (ALWAYS)
-  const autoCommandConfig = writeVarintField(6, 3);
-  // RunCommandToolConfig: field 3 = auto_command_config
-  const runCommandConfig = writeMessageField(3, autoCommandConfig);
-  // CascadeToolConfig: field 8 = run_command
-  const toolConfig = writeMessageField(8, runCommandConfig);
-
-  // CascadePlannerConfig: field 2=conversational, field 13=tool_config
+  // CascadeConversationalPlannerConfig.planner_mode (field 4) uses
+  // codeium_common.ConversationalPlannerMode:
+  //   0 UNSPECIFIED  1 DEFAULT  2 READ_ONLY  3 NO_TOOL
+  //   4 EXPLORE      5 PLANNING 6 AUTO
+  //
+  // We pick NO_TOOL (3). DEFAULT keeps the IDE agent loop alive, so even
+  // without setting CascadeToolConfig the planner reflexively fires
+  // edit_file/view_file, which produces:
+  //   - stall_warm bursts (15–25s silent tool-execution trajectory steps)
+  //   - "Cascade cannot create /tmp/windsurf-workspace/foo because it already
+  //     exists" on request bursts that reuse the same filename
+  //   - /tmp/windsurf-workspace path leaks inside the chat body
+  // NO_TOOL tells the planner to generate a pure conversational response
+  // with no tool_call proposals at all. Client-defined OpenAI tools are
+  // still supported via the prompt-level emulation layer in
+  // handlers/tool-emulation.js — that doesn't go through this planner mode.
+  const conversationalConfig = writeVarintField(4, 3);
   const plannerParts = [
-    writeMessageField(2, conversationalConfig),
-    writeMessageField(13, toolConfig),
+    writeMessageField(2, conversationalConfig),   // conversational = 2
   ];
 
   if (modelUid) {
@@ -375,15 +380,86 @@ export function parseTrajectorySteps(buf) {
       text: '',
       thinking: '',
       errorText: '',
+      toolCalls: [], // [{id, name, argumentsJson, result?}]
     };
+
+    // Tool-call / tool-result sub-messages on CortexTrajectoryStep.
+    // Sources: exa.cortex_pb.proto (AlexStrNik/windsurf-api).
+    //   45 custom_tool         → CortexStepCustomTool{1=recipe_id,2=args,3=output,4=name}
+    //   47 mcp_tool            → CortexStepMcpTool{1=server,2=ChatToolCall,3=result}
+    //   49 tool_call_proposal  → {1=ChatToolCall}
+    //   50 tool_call_choice    → {1=repeated ChatToolCall, 2=choice, 3=reason}
+    // ChatToolCall (codeium_common_pb): 1=id, 2=name, 3=arguments_json
+    const parseChatToolCall = (buf) => {
+      const f = parseFields(buf);
+      const id = getField(f, 1, 2);
+      const name = getField(f, 2, 2);
+      const args = getField(f, 3, 2);
+      return {
+        id: id ? id.value.toString('utf8') : '',
+        name: name ? name.value.toString('utf8') : '',
+        argumentsJson: args ? args.value.toString('utf8') : '',
+      };
+    };
+    const customField = getField(sf, 45, 2);
+    if (customField) {
+      const cf = parseFields(customField.value);
+      const recipeId = getField(cf, 1, 2);
+      const argsF = getField(cf, 2, 2);
+      const outF = getField(cf, 3, 2);
+      const nameF = getField(cf, 4, 2);
+      entry.toolCalls.push({
+        id: recipeId ? recipeId.value.toString('utf8') : '',
+        name: nameF ? nameF.value.toString('utf8') : (recipeId ? recipeId.value.toString('utf8') : 'custom_tool'),
+        argumentsJson: argsF ? argsF.value.toString('utf8') : '',
+        result: outF ? outF.value.toString('utf8') : '',
+      });
+    }
+    const mcpField = getField(sf, 47, 2);
+    if (mcpField) {
+      const mf = parseFields(mcpField.value);
+      const serverF = getField(mf, 1, 2);
+      const callF = getField(mf, 2, 2);
+      const resultF = getField(mf, 3, 2);
+      if (callF) {
+        const tc = parseChatToolCall(callF.value);
+        tc.serverName = serverF ? serverF.value.toString('utf8') : '';
+        tc.result = resultF ? resultF.value.toString('utf8') : '';
+        entry.toolCalls.push(tc);
+      }
+    }
+    const proposalField = getField(sf, 49, 2);
+    if (proposalField) {
+      const pf = parseFields(proposalField.value);
+      const callF = getField(pf, 1, 2);
+      if (callF) entry.toolCalls.push(parseChatToolCall(callF.value));
+    }
+    const choiceField = getField(sf, 50, 2);
+    if (choiceField) {
+      const cf = parseFields(choiceField.value);
+      const chosenIdx = getField(cf, 2, 0);
+      const calls = getAllFields(cf, 1).filter(x => x.wireType === 2).map(x => parseChatToolCall(x.value));
+      if (calls.length) {
+        const idx = chosenIdx ? Number(chosenIdx.value) : 0;
+        entry.toolCalls.push(calls[idx] || calls[0]);
+      }
+    }
 
     if (plannerField) {
       const pf = parseFields(plannerField.value);
       const textField = getField(pf, 1, 2);
       const modifiedField = getField(pf, 8, 2);
       const thinkField = getField(pf, 3, 2);
-      if (textField) entry.text = textField.value.toString('utf8');
-      if (modifiedField && !entry.text) entry.text = modifiedField.value.toString('utf8');
+      const responseText = textField ? textField.value.toString('utf8') : '';
+      const modifiedText = modifiedField ? modifiedField.value.toString('utf8') : '';
+      // modified_response is the LS post-pass edited final text (markdown
+      // fixups, citations, tool-result folding). On long opus-4 replies the
+      // LS writes a short `response` first, then overwrites with a much
+      // longer `modified_response` at turn end. Prefer it whenever present
+      // so we don't truncate to the early draft.
+      entry.text = modifiedText || responseText;
+      entry.responseText = responseText;
+      entry.modifiedText = modifiedText;
       if (thinkField) entry.thinking = thinkField.value.toString('utf8');
     }
 

@@ -106,9 +106,13 @@ export class WindsurfClient {
    * callers share one init round. Safe to call from a startup warmup path
    * so the first real chat request skips these 3 gRPC round-trips.
    */
-  warmupCascade() {
+  warmupCascade(force = false) {
     const lsEntry = getLsEntryByPort(this.port);
     if (!lsEntry) return Promise.resolve();
+    if (force) {
+      lsEntry.workspaceInit = null;
+      lsEntry.sessionId = randomUUID();
+    }
     if (!lsEntry.sessionId) lsEntry.sessionId = randomUUID();
     if (lsEntry.workspaceInit) return lsEntry.workspaceInit;
 
@@ -164,25 +168,39 @@ export class WindsurfClient {
     // LS startup). Falls back to a local session id if the LS entry is gone.
     const lsEntry = getLsEntryByPort(this.port);
     await this.warmupCascade().catch(() => {});
-    const sessionId = reuseEntry?.sessionId || lsEntry?.sessionId || randomUUID();
+    let sessionId = reuseEntry?.sessionId || lsEntry?.sessionId || randomUUID();
+
+    // "panel state not found" means the LS forgot the panel for our sessionId
+    // (LS restarted, TTL expired, etc.). Re-run warmupCascade with a fresh
+    // sessionId and retry the handshake once.
+    const isPanelMissing = (e) => /panel state not found|not_found.*panel/i.test(e?.message || '');
 
     try {
-      // Step 1: Start cascade — unless the caller handed us a live cascadeId
-      // from the conversation pool, in which case we skip StartCascade and
-      // just SendUserCascadeMessage onto the existing cascade so the backend
-      // keeps its per-cascade context hot.
+      // Step 1: Start cascade — with retry on panel-state-not-found
       let cascadeId;
-      if (reuseEntry?.cascadeId) {
-        cascadeId = reuseEntry.cascadeId;
-        log.debug(`Cascade resumed: ${cascadeId}`);
-      } else {
+      const openCascade = async () => {
+        if (reuseEntry?.cascadeId) {
+          log.debug(`Cascade resumed: ${reuseEntry.cascadeId}`);
+          return reuseEntry.cascadeId;
+        }
         const startProto = buildStartCascadeRequest(this.apiKey, sessionId);
         const startResp = await grpcUnary(
           this.port, this.csrfToken, `${LS_SERVICE}/StartCascade`, grpcFrame(startProto)
         );
-        cascadeId = parseStartCascadeResponse(startResp);
-        if (!cascadeId) throw new Error('StartCascade returned empty cascade_id');
-        log.debug(`Cascade started: ${cascadeId}`);
+        const id = parseStartCascadeResponse(startResp);
+        if (!id) throw new Error('StartCascade returned empty cascade_id');
+        log.debug(`Cascade started: ${id}`);
+        return id;
+      };
+      try {
+        cascadeId = await openCascade();
+      } catch (e) {
+        if (!isPanelMissing(e)) throw e;
+        log.warn(`Panel state missing, re-warming LS port=${this.port}`);
+        await this.warmupCascade(true).catch(() => {});
+        sessionId = getLsEntryByPort(this.port)?.sessionId || randomUUID();
+        if (reuseEntry) reuseEntry.cascadeId = null; // force StartCascade
+        cascadeId = await openCascade();
       }
 
       // Build the text payload. Two cases:
@@ -193,6 +211,12 @@ export class WindsurfClient {
       //     top, then we render u/a turns as a labeled transcript so the
       //     model can see its own prior replies — previously we dropped
       //     assistant turns entirely and multi-turn context was broken.
+      //
+      // The caller (handlers/chat.js) is responsible for any tool-protocol
+      // preamble that needs to sit in front of the user text (client-defined
+      // OpenAI tools are serialized into a '<tool_call>{...}</tool_call>'
+      // emission contract there). This function just stitches system + u/a
+      // turns into the single text payload Cascade accepts.
       let text;
       if (reuseEntry?.cascadeId) {
         const lastUser = [...messages].reverse().find(m => m.role === 'user');
@@ -219,24 +243,70 @@ export class WindsurfClient {
         if (sysText) text = sysText + '\n\n' + text;
       }
 
-      // Step 2: Send message
-      const sendProto = buildSendCascadeMessageRequest(this.apiKey, cascadeId, text, modelEnum, modelUid, sessionId);
-      await grpcUnary(
-        this.port, this.csrfToken, `${LS_SERVICE}/SendUserCascadeMessage`, grpcFrame(sendProto)
-      );
+      // Step 2: Send message (retry once on panel-state-not-found)
+      const sendMessage = async () => {
+        const sendProto = buildSendCascadeMessageRequest(this.apiKey, cascadeId, text, modelEnum, modelUid, sessionId);
+        await grpcUnary(
+          this.port, this.csrfToken, `${LS_SERVICE}/SendUserCascadeMessage`, grpcFrame(sendProto)
+        );
+      };
+      try {
+        await sendMessage();
+      } catch (e) {
+        if (!isPanelMissing(e)) throw e;
+        log.warn(`Panel state missing on Send, re-warming + restarting cascade port=${this.port}`);
+        await this.warmupCascade(true).catch(() => {});
+        sessionId = getLsEntryByPort(this.port)?.sessionId || randomUUID();
+        const startProto = buildStartCascadeRequest(this.apiKey, sessionId);
+        const startResp = await grpcUnary(
+          this.port, this.csrfToken, `${LS_SERVICE}/StartCascade`, grpcFrame(startProto)
+        );
+        cascadeId = parseStartCascadeResponse(startResp);
+        if (!cascadeId) throw new Error('StartCascade returned empty cascade_id after re-warm');
+        await sendMessage();
+      }
 
-      // Step 3: Poll for response
+      // Step 3: Poll for response.
+      // Track per-step text cursors instead of a single global `lastYielded`.
+      // The cascade trajectory can contain MULTIPLE PLANNER_RESPONSE steps
+      // (thinking step + final response, or multi-turn). The old single-cursor
+      // code silently dropped any step whose text was shorter than the longest
+      // step seen so far — which showed up as "30k in / 200 out" where the real
+      // answer was split across two steps and only one was emitted.
       const chunks = [];
-      let lastYielded = '';
+      const yieldedByStep = new Map(); // stepIndex → emitted text length
+      const thinkingByStep = new Map(); // stepIndex → emitted thinking length
+      const seenToolCallIds = new Set();
+      const toolCalls = [];
+      let totalYielded = 0;
+      let totalThinking = 0;
       let idleCount = 0;
-      const maxWait = 120_000;
-      const pollInterval = 300;
+      let pollCount = 0;
+      let sawActive = false;   // true once we've seen a non-IDLE status
+      let sawText = false;     // true once at least one PLANNER_RESPONSE with text arrived
+      let lastStatus = -1;
+      // "Progress" is ANY forward motion on the trajectory — text, thinking,
+      // new tool call, or a new step appearing. Using this (instead of text
+      // alone) for stall detection fixes the false-positive warm stalls where
+      // Cascade is legitimately mid-thinking but `responseText` hasn't moved.
+      let lastGrowthAt = Date.now();
+      let lastStepCount = 0;
+      const maxWait = 180_000;
+      const pollInterval = 250;
+      const IDLE_GRACE_MS = 8_000;     // minimum time before idle-break allowed
+      // 25s no progress on any signal = genuine stall. Was 15s + text-only,
+      // which misfired on long thinking phases and returned tiny "Let me…"
+      // preambles as if they were complete replies.
+      const NO_GROWTH_STALL_MS = 25_000;
+      const STALL_RETRY_MIN_TEXT = 300;  // stalls shorter than this → retryable error, not partial success
       const startTime = Date.now();
+      let endReason = 'unknown';
 
       while (Date.now() - startTime < maxWait) {
-        if (aborted()) { log.debug('Cascade polling aborted by client'); break; }
+        if (aborted()) { endReason = 'aborted'; break; }
         await new Promise(r => setTimeout(r, pollInterval));
-        if (aborted()) { log.debug('Cascade polling aborted by client'); break; }
+        if (aborted()) { endReason = 'aborted'; break; }
+        pollCount++;
 
         // Get steps
         const stepsProto = buildGetTrajectoryStepsRequest(cascadeId, 0);
@@ -250,18 +320,131 @@ export class WindsurfClient {
         // raise it as a model-level error so the account isn't blamed.
         for (const step of steps) {
           if (step.type === 17 && step.errorText) {
+            // Log the full trajectory context so we can see WHICH tool call
+            // (if any) the error refers to. "invalid tool call" without
+            // context is useless for debugging.
+            const trail = steps.map(s => ({
+              type: s.type,
+              status: s.status,
+              textLen: s.text?.length || 0,
+              tools: (s.toolCalls || []).map(tc => tc.name).join(','),
+            }));
+            log.warn('Cascade error step', { errorText: step.errorText.trim(), trail });
             const err = new Error(step.errorText.trim());
             err.isModelError = true;
             throw err;
           }
         }
 
-        for (const step of steps) {
-          if (step.text && step.text.length > lastYielded.length) {
-            const delta = step.text.slice(lastYielded.length);
-            lastYielded = step.text;
+        // Stall detection — two flavors:
+        //   (a) "cold stall": 30s+ ACTIVE but never saw any text or tool
+        //       call → planner is deadlocked before even starting to
+        //       produce output. Rotate account, don't make the user wait.
+        //   (b) "warm stall": we already streamed some text, but it hasn't
+        //       grown for 15s while status is still non-IDLE → planner is
+        //       stuck in a tool round-trip or upstream throttle. Accept
+        //       what we have as a complete response rather than waiting
+        //       out the full 180s maxWait with the client hanging.
+        const elapsed = Date.now() - startTime;
+        if (elapsed > 30_000 && sawActive && !sawText && seenToolCallIds.size === 0) {
+          log.warn(`Cascade cold stall: ${elapsed}ms active without any text or tool call, bailing`);
+          endReason = 'stall_cold';
+          const err = new Error('Cascade planner stalled — no output after 30s');
+          err.isModelError = true;
+          throw err;
+        }
+        if (sawText && lastStatus !== 1 && (Date.now() - lastGrowthAt) > NO_GROWTH_STALL_MS) {
+          const diag = {
+            msSinceGrowth: Date.now() - lastGrowthAt,
+            textLen: totalYielded,
+            thinkingLen: totalThinking,
+            stepCount: yieldedByStep.size,
+            toolCalls: seenToolCallIds.size,
+            lastStatus,
+          };
+          // Short-reply stall → treat as error so handlers/chat.js retries on
+          // another account. A 50-char preamble is worse than no reply at all
+          // because the client accepts it as "successful" and shows it to the
+          // user. Retry only if we haven't streamed anything substantial yet
+          // (if we did, partial delivery + idle end is fine).
+          if (totalYielded < STALL_RETRY_MIN_TEXT) {
+            log.warn('Cascade warm stall (short, retrying on next account)', diag);
+            endReason = 'stall_warm_retry';
+            const err = new Error('Cascade planner stalled after preamble — no progress for 25s');
+            err.isModelError = true;
+            throw err;
+          }
+          log.warn('Cascade warm stall (accepting partial)', diag);
+          endReason = 'stall_warm';
+          break; // return what we have as a successful response
+        }
+
+        // Any trajectory change counts as forward progress. A new step, a new
+        // tool call proposal, or thinking growth all reset the stall timer so
+        // Cascade's slow silent planning phases don't get cut off mid-think.
+        if (steps.length > lastStepCount) {
+          lastStepCount = steps.length;
+          lastGrowthAt = Date.now();
+        }
+
+        for (let i = 0; i < steps.length; i++) {
+          const step = steps[i];
+
+          // Collect tool calls — dedupe by id so the same step seen across
+          // polls only emits once. A tool call with an existing `result`
+          // means the LS already executed it (built-in Cascade tool); we
+          // pass it through to the client for visibility.
+          if (step.toolCalls && step.toolCalls.length) {
+            for (const tc of step.toolCalls) {
+              const key = tc.id || `${tc.name}:${tc.argumentsJson}`;
+              if (seenToolCallIds.has(key)) continue;
+              seenToolCallIds.add(key);
+              toolCalls.push(tc);
+              lastGrowthAt = Date.now();
+            }
+          }
+
+          // Thinking delta: the LS keeps `thinking` as the cumulative
+          // reasoning text for the step. Track a per-step cursor and emit
+          // only the tail as reasoning_content. Crucially, thinking growth
+          // *also* resets lastGrowthAt — prior code only watched response
+          // text, so long silent thinking phases got falsely flagged as
+          // stalls and 20% of Cascade requests came back as 50-char
+          // preambles (`/tmp/...` style "let me analyze" stubs).
+          const liveThink = step.thinking || '';
+          if (liveThink) {
+            const prevThink = thinkingByStep.get(i) || 0;
+            if (liveThink.length > prevThink) {
+              const thinkDelta = liveThink.slice(prevThink);
+              thinkingByStep.set(i, liveThink.length);
+              totalThinking += thinkDelta.length;
+              lastGrowthAt = Date.now();
+              const tchunk = { text: '', thinking: thinkDelta, isError: false };
+              chunks.push(tchunk);
+              onChunk?.(tchunk);
+            }
+          }
+
+          // Text delta rule: prefer `responseText` (append-only stream) over
+          // `modifiedText` (LS post-pass rewrite) while we're streaming. The
+          // LS periodically swaps `response` → `modified_response` mid-turn
+          // with slightly different wording; if we blindly `entry.text =
+          // modifiedText || responseText` and take a length-based slice, the
+          // rewritten middle bytes vanish because we already advanced the
+          // cursor past them in an earlier poll. Using responseText keeps the
+          // slice monotonic. At turn end we top up with `modifiedText` (see
+          // below) so the final accumulated text is still the LS's polished
+          // version when one exists.
+          const liveText = step.responseText || step.text || '';
+          if (!liveText) continue;
+          const prev = yieldedByStep.get(i) || 0;
+          if (liveText.length > prev) {
+            const delta = liveText.slice(prev);
+            yieldedByStep.set(i, liveText.length);
+            totalYielded += delta.length;
+            lastGrowthAt = Date.now();
+            sawText = true;
             const chunk = { text: delta, thinking: '', isError: false };
-            if (step.thinking) chunk.thinking = step.thinking;
             chunks.push(chunk);
             onChunk?.(chunk);
           }
@@ -273,28 +456,89 @@ export class WindsurfClient {
           this.port, this.csrfToken, `${LS_SERVICE}/GetCascadeTrajectory`, grpcFrame(statusProto)
         );
         const status = parseTrajectoryStatus(statusResp);
+        lastStatus = status;
+
+        if (status !== 1) sawActive = true;
 
         if (status === 1) { // IDLE
+          // Don't allow idle-break during the warmup window unless we've
+          // already seen the planner go non-IDLE at least once. Without this
+          // guard, cascades whose trajectory hasn't kicked off yet (status
+          // stuck at 1 for the first ~600ms) terminate after only 2 polls
+          // and the client sees a near-empty reply.
+          const elapsed = Date.now() - startTime;
+          const graceOver = elapsed > IDLE_GRACE_MS;
+          if (!sawActive && !graceOver) {
+            continue; // still warming up — don't count this as idle
+          }
           idleCount++;
-          if (idleCount >= 2) {
+          // Require at least a little text OR a long idle streak before
+          // accepting "done", so we don't race the first visible chunk.
+          const canBreak = sawText ? idleCount >= 2 : idleCount >= 4;
+          if (canBreak) {
             // Final sweep
             const finalResp = await grpcUnary(
               this.port, this.csrfToken, `${LS_SERVICE}/GetCascadeTrajectorySteps`, grpcFrame(stepsProto)
             );
             const finalSteps = parseTrajectorySteps(finalResp);
-            for (const step of finalSteps) {
-              if (step.text && step.text.length > lastYielded.length) {
-                const delta = step.text.slice(lastYielded.length);
-                lastYielded = step.text;
+            for (let i = 0; i < finalSteps.length; i++) {
+              const step = finalSteps[i];
+              const responseText = step.responseText || '';
+              const modifiedText = step.modifiedText || '';
+              const prev = yieldedByStep.get(i) || 0;
+
+              // Normal top-up: responseText grew past what we streamed.
+              if (responseText.length > prev) {
+                const delta = responseText.slice(prev);
+                yieldedByStep.set(i, responseText.length);
+                totalYielded += delta.length;
+                chunks.push({ text: delta, thinking: '', isError: false });
+                onChunk?.({ text: delta, thinking: '', isError: false });
+              }
+
+              // Modified-response top-up: only if it's a strict extension of
+              // what we already emitted. If modifiedText rewrites the prefix
+              // (common when LS polishes), emitting the tail would splice
+              // wrong content onto the stream, so we skip it and keep the
+              // raw responseText we already showed.
+              const cursor = yieldedByStep.get(i) || 0;
+              if (modifiedText.length > cursor && modifiedText.startsWith(responseText)) {
+                const delta = modifiedText.slice(cursor);
+                yieldedByStep.set(i, modifiedText.length);
+                totalYielded += delta.length;
                 chunks.push({ text: delta, thinking: '', isError: false });
                 onChunk?.({ text: delta, thinking: '', isError: false });
               }
             }
+            endReason = sawText ? 'idle_done' : 'idle_empty';
             break;
           }
         } else {
           idleCount = 0;
         }
+      }
+      if (endReason === 'unknown') endReason = 'max_wait';
+
+      // Structured summary so we can diagnose short/empty completions after
+      // the fact. sawActive=false + sawText=false + idle_empty = the planner
+      // never actually ran on this cascade — likely an upstream starvation.
+      const summary = {
+        cascadeId: cascadeId.slice(0, 8),
+        reason: endReason,
+        polls: pollCount,
+        textLen: totalYielded,
+        thinkingLen: totalThinking,
+        stepCount: Math.max(yieldedByStep.size, thinkingByStep.size, lastStepCount),
+        toolCalls: seenToolCallIds.size,
+        sawActive,
+        sawText,
+        lastStatus,
+        ms: Date.now() - startTime,
+      };
+      if (totalYielded < 20 && endReason !== 'aborted') {
+        log.warn('Cascade short reply', summary);
+      } else {
+        log.info('Cascade done', summary);
       }
 
       onEnd?.(chunks);
@@ -303,6 +547,8 @@ export class WindsurfClient {
       // that iterate over it keep working.
       chunks.cascadeId = cascadeId;
       chunks.sessionId = sessionId;
+      chunks.toolCalls = toolCalls;
+      if (toolCalls.length) log.info(`Cascade tool calls: ${toolCalls.length}`, { names: toolCalls.map(t => t.name) });
       return chunks;
 
     } catch (err) {
