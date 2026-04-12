@@ -255,7 +255,7 @@ export function buildStartCascadeRequest(apiKey, sessionId) {
  * Field 3: metadata
  * Field 5: cascade_config
  */
-export function buildSendCascadeMessageRequest(apiKey, cascadeId, text, modelEnum, modelUid, sessionId) {
+export function buildSendCascadeMessageRequest(apiKey, cascadeId, text, modelEnum, modelUid, sessionId, { toolPreamble } = {}) {
   const parts = [];
 
   // Field 1: cascade_id
@@ -268,13 +268,13 @@ export function buildSendCascadeMessageRequest(apiKey, cascadeId, text, modelEnu
   parts.push(writeMessageField(3, buildMetadata(apiKey, undefined, sessionId)));
 
   // Field 5: cascade_config
-  const cascadeConfig = buildCascadeConfig(modelEnum, modelUid);
+  const cascadeConfig = buildCascadeConfig(modelEnum, modelUid, { toolPreamble });
   parts.push(writeMessageField(5, cascadeConfig));
 
   return Buffer.concat(parts);
 }
 
-function buildCascadeConfig(modelEnum, modelUid) {
+function buildCascadeConfig(modelEnum, modelUid, { toolPreamble } = {}) {
   // CascadeConversationalPlannerConfig.planner_mode (field 4) uses
   // codeium_common.ConversationalPlannerMode:
   //   0 UNSPECIFIED  1 DEFAULT  2 READ_ONLY  3 NO_TOOL
@@ -288,10 +288,41 @@ function buildCascadeConfig(modelEnum, modelUid) {
   //     exists" on request bursts that reuse the same filename
   //   - /tmp/windsurf-workspace path leaks inside the chat body
   // NO_TOOL tells the planner to generate a pure conversational response
-  // with no tool_call proposals at all. Client-defined OpenAI tools are
-  // still supported via the prompt-level emulation layer in
-  // handlers/tool-emulation.js — that doesn't go through this planner mode.
-  const conversationalConfig = writeVarintField(4, 3);
+  // with no tool_call proposals at all.
+  //
+  // When toolPreamble is provided (client-side OpenAI tools[] emulation),
+  // we inject it into the system prompt's tool_calling_section via
+  // SectionOverrideConfig (OVERRIDE mode). This is far more reliable than
+  // user-message injection because NO_TOOL mode's system prompt likely
+  // tells the model "you have no tools" — which overpowers anything we
+  // put in the user message. The section override replaces that section
+  // directly so the model sees our emulated tool definitions at the
+  // system-prompt level.
+  const convParts = [writeVarintField(4, 3)]; // planner_mode = NO_TOOL
+
+  if (toolPreamble) {
+    // CascadeConversationalPlannerConfig.tool_calling_section = field 10
+    // SectionOverrideConfig { mode(1)=OVERRIDE(1), content(2)=preamble }
+    const toolSection = Buffer.concat([
+      writeVarintField(1, 1),             // SECTION_OVERRIDE_MODE_OVERRIDE
+      writeStringField(2, toolPreamble),
+    ]);
+    convParts.push(writeMessageField(10, toolSection));
+
+    // CascadeConversationalPlannerConfig.additional_instructions_section = field 12
+    // Reinforce that tools are available (fights any residual "no tools" framing).
+    const reinforcement =
+      'IMPORTANT: You have real, callable functions available as described in the tool-calling section. ' +
+      'When the user\'s request requires using a tool, you MUST emit <tool_call> blocks. ' +
+      'Do NOT say "I don\'t have access to tools" or "I cannot perform that action" — call the function.';
+    const additionalSection = Buffer.concat([
+      writeVarintField(1, 2),             // SECTION_OVERRIDE_MODE_APPEND
+      writeStringField(2, reinforcement),
+    ]);
+    convParts.push(writeMessageField(12, additionalSection));
+  }
+
+  const conversationalConfig = Buffer.concat(convParts);
   const plannerParts = [
     writeMessageField(2, conversationalConfig),   // conversational = 2
   ];

@@ -44,6 +44,9 @@ Now respond to the user request above. Use <tool_call> if appropriate, otherwise
 /**
  * Serialize an OpenAI-format tools[] array into a text preamble block.
  * Returns '' if no tools present.
+ *
+ * This version is for user-message injection (legacy fallback).
+ * Prefer buildToolPreambleForProto() for system-prompt-level injection.
  */
 export function buildToolPreamble(tools) {
   if (!Array.isArray(tools) || tools.length === 0) return '';
@@ -62,6 +65,48 @@ export function buildToolPreamble(tools) {
     }
   }
   lines.push(TOOL_PROTOCOL_FOOTER);
+  return lines.join('\n');
+}
+
+/**
+ * System-prompt-level preamble for proto-level injection via
+ * CascadeConversationalPlannerConfig.tool_calling_section (field 10).
+ *
+ * Unlike buildToolPreamble (which wraps in user-message-style fences),
+ * this version is written as authoritative system instructions so the
+ * model treats the tool definitions as first-class, not as a "user hint"
+ * that the baked-in system prompt can override.
+ */
+const TOOL_PROTOCOL_SYSTEM_HEADER = `You have access to the following functions. To invoke a function, emit a block in this EXACT format:
+
+<tool_call>{"name":"<function_name>","arguments":{...}}</tool_call>
+
+Rules:
+1. Each <tool_call>...</tool_call> block must fit on ONE line (no line breaks inside the JSON).
+2. "arguments" must be a JSON object matching the function's parameter schema.
+3. You MAY emit MULTIPLE <tool_call> blocks if the request requires calling several functions in parallel. Emit ALL needed calls consecutively, then STOP generating.
+4. After emitting the last <tool_call> block, STOP. Do not write any explanation after it. The caller executes the functions and returns results wrapped in <tool_result tool_call_id="...">...</tool_result> tags in the next user turn.
+5. Only call a function when the user's request genuinely needs it. If you can answer directly, do so in plain text without any <tool_call>.
+6. NEVER say "I don't have access to tools" or "I cannot perform that action" — the functions listed below ARE your available tools.
+
+Available functions:`;
+
+export function buildToolPreambleForProto(tools) {
+  if (!Array.isArray(tools) || tools.length === 0) return '';
+  const lines = [TOOL_PROTOCOL_SYSTEM_HEADER];
+  for (const t of tools) {
+    if (t?.type !== 'function' || !t.function) continue;
+    const { name, description, parameters } = t.function;
+    lines.push('');
+    lines.push(`### ${name}`);
+    if (description) lines.push(description);
+    if (parameters) {
+      lines.push('Parameters:');
+      lines.push('```json');
+      lines.push(JSON.stringify(parameters, null, 2));
+      lines.push('```');
+    }
+  }
   return lines.join('\n');
 }
 

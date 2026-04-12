@@ -18,6 +18,7 @@ import {
 } from '../conversation-pool.js';
 import {
   normalizeMessagesForCascade, ToolCallStreamParser, parseToolCallsFromText,
+  buildToolPreambleForProto,
 } from './tool-emulation.js';
 import { sanitizeText, PathSanitizeStream } from '../sanitize.js';
 
@@ -150,17 +151,25 @@ export async function handleChatCompletions(body) {
   // Models with enumValue=0 must use Cascade; others use legacy RawGetChatMessage
   const useCascade = !!(modelUid && modelEnum === 0);
 
-  // Tool-call emulation: if the client passed OpenAI-style tools[], we inject
-  // a protocol preamble into the messages and rewrite any tool-result turns
-  // into synthetic user text. Cascade has no native slot for per-request tool
-  // defs (verified in exa.cortex_pb.proto), so the prompt layer is the only
-  // path. The stream parser in tool-emulation.js extracts <tool_call> blocks
-  // back out of the cascade text and re-emits them as OpenAI tool_calls.
+  // Tool-call emulation: if the client passed OpenAI-style tools[], we rewrite
+  // tool-result turns into synthetic user text and inject the tool protocol
+  // at the system-prompt level via CascadeConversationalPlannerConfig's
+  // tool_calling_section (SectionOverrideConfig, OVERRIDE mode). This is far
+  // more reliable than user-message-level injection because NO_TOOL mode's
+  // baked-in system prompt tells the model "you have no tools" — which
+  // overpowers user-message preambles. The section override replaces that
+  // section directly so the model sees our emulated tool definitions as
+  // authoritative system instructions.
   const hasTools = Array.isArray(tools) && tools.length > 0;
   const hasToolHistory = Array.isArray(messages) && messages.some(m => m?.role === 'tool' || (m?.role === 'assistant' && Array.isArray(m.tool_calls) && m.tool_calls.length));
   const emulateTools = useCascade && (hasTools || hasToolHistory);
+  // Build proto-level preamble (goes into tool_calling_section override);
+  // pass empty tools to normalizeMessagesForCascade so it only rewrites
+  // role:tool / assistant.tool_calls messages without injecting a user-level
+  // preamble (that's now handled at the proto layer).
+  const toolPreamble = emulateTools ? buildToolPreambleForProto(tools || []) : '';
   let cascadeMessages = emulateTools
-    ? normalizeMessagesForCascade(messages, tools || [])
+    ? normalizeMessagesForCascade(messages, [])
     : [...messages];
 
   // ── Model identity prompt injection ──
@@ -205,7 +214,7 @@ export async function handleChatCompletions(body) {
   const ckey = cacheKey(body);
 
   if (stream) {
-    return streamResponse(chatId, created, displayModel, modelKey, messages, cascadeMessages, modelEnum, modelUid, useCascade, ckey, emulateTools);
+    return streamResponse(chatId, created, displayModel, modelKey, messages, cascadeMessages, modelEnum, modelUid, useCascade, ckey, emulateTools, toolPreamble);
   }
 
   // ── Local response cache (exact body match) ─────────────
@@ -273,7 +282,7 @@ export async function handleChatCompletions(body) {
       client, chatId, created, displayModel, modelKey, messages, cascadeMessages, modelEnum, modelUid,
       useCascade, acct.apiKey, ckey,
       reuseEnabled ? { reuseEntry, lsPort: ls.port, apiKey: acct.apiKey } : null,
-      emulateTools,
+      emulateTools, toolPreamble,
     );
     if (result.status === 200) return result;
     reuseEntry = null; // don't try to reuse on the retry
@@ -284,7 +293,7 @@ export async function handleChatCompletions(body) {
   return lastErr || { status: 503, body: { error: { message: 'No active accounts available', type: 'pool_exhausted' } } };
 }
 
-async function nonStreamResponse(client, id, created, model, modelKey, messages, cascadeMessages, modelEnum, modelUid, useCascade, apiKey, ckey, poolCtx, emulateTools) {
+async function nonStreamResponse(client, id, created, model, modelKey, messages, cascadeMessages, modelEnum, modelUid, useCascade, apiKey, ckey, poolCtx, emulateTools, toolPreamble) {
   const startTime = Date.now();
   try {
     let allText = '';
@@ -297,7 +306,7 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
     let serverUsage = null;
 
     if (useCascade) {
-      const chunks = await client.cascadeChat(cascadeMessages, modelEnum, modelUid, { reuseEntry: poolCtx?.reuseEntry || null });
+      const chunks = await client.cascadeChat(cascadeMessages, modelEnum, modelUid, { reuseEntry: poolCtx?.reuseEntry || null, toolPreamble });
       for (const c of chunks) {
         if (c.text) allText += c.text;
         if (c.thinking) allThinking += c.thinking;
@@ -405,7 +414,7 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
   }
 }
 
-function streamResponse(id, created, model, modelKey, messages, cascadeMessages, modelEnum, modelUid, useCascade, ckey, emulateTools) {
+function streamResponse(id, created, model, modelKey, messages, cascadeMessages, modelEnum, modelUid, useCascade, ckey, emulateTools, toolPreamble) {
   return {
     status: 200,
     stream: true,
@@ -584,7 +593,7 @@ function streamResponse(id, created, model, modelKey, messages, cascadeMessages,
           try {
             if (useCascade) {
               cascadeResult = await client.cascadeChat(cascadeMessages, modelEnum, modelUid, {
-                onChunk, signal: abortController.signal, reuseEntry,
+                onChunk, signal: abortController.signal, reuseEntry, toolPreamble,
               });
             } else {
               await client.rawGetChatMessage(messages, modelEnum, modelUid, { onChunk });
