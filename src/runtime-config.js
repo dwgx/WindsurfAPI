@@ -21,6 +21,11 @@ const DEFAULTS = {
     // fingerprint matches. Big latency win for long conversations but relies
     // on Windsurf keeping the cascade alive — off by default.
     cascadeConversationReuse: false,
+    // Inject a system prompt that tells the model to identify itself as the
+    // requested model (e.g. "You are Claude Opus 4.6, made by Anthropic")
+    // instead of revealing the Windsurf/Cascade backend. Enabled by default
+    // so API responses match official Claude/GPT behaviour.
+    modelIdentityPrompt: true,
   },
 };
 

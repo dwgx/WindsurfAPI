@@ -9,6 +9,7 @@ import {
   removeAccount, setAccountStatus, resetAccountErrors, updateAccountLabel,
   isAuthenticated, probeAccount, ensureLsForAccount,
   refreshCredits, refreshAllCredits,
+  setAccountBlockedModels,
 } from '../auth.js';
 import { restartLsForProxy } from '../langserver.js';
 import { getLsStatus, stopLanguageServer, startLanguageServer, isLanguageServerRunning } from '../langserver.js';
@@ -18,7 +19,7 @@ import { getExperimental, setExperimental } from '../runtime-config.js';
 import { poolStats as convPoolStats, poolClear as convPoolClear } from '../conversation-pool.js';
 import { getLogs, subscribeToLogs, unsubscribeFromLogs } from './logger.js';
 import { getProxyConfig, setGlobalProxy, setAccountProxy, removeProxy, getEffectiveProxy } from './proxy-config.js';
-import { MODELS } from '../models.js';
+import { MODELS, MODEL_TIER_ACCESS as _TIER_TABLE, getTierModels as _getTierModels } from '../models.js';
 import { windsurfLogin } from './windsurf-login.js';
 import { getModelAccessConfig, setModelAccessMode, setModelAccessList, addModelToList, removeModelFromList } from './model-access.js';
 
@@ -179,7 +180,21 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
     if (body.status) setAccountStatus(id, body.status);
     if (body.label) updateAccountLabel(id, body.label);
     if (body.resetErrors) resetAccountErrors(id);
+    if (Array.isArray(body.blockedModels)) setAccountBlockedModels(id, body.blockedModels);
     return json(res, 200, { success: true });
+  }
+
+  // GET /tier-access — hardcoded FREE/PRO model entitlement tables.
+  // The dashboard uses this to render the full per-account model grid
+  // (every row in the tier's list is shown, blocked models are dimmed).
+  if (subpath === '/tier-access' && method === 'GET') {
+    return json(res, 200, {
+      free: _TIER_TABLE.free,
+      pro: _TIER_TABLE.pro,
+      unknown: _TIER_TABLE.unknown,
+      expired: _TIER_TABLE.expired,
+      allModels: Object.keys(MODELS),
+    });
   }
 
   // DELETE /accounts/:id

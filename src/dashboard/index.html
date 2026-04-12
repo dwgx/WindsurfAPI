@@ -1369,6 +1369,28 @@ tbody tr:hover td { background: var(--surface-2); }
         </div>
       </div>
     </div>
+    <div class="section" style="margin-top:24px">
+      <div class="section-header">
+        <div class="section-title">模型身份注入</div>
+      </div>
+      <div class="section-body">
+        <div class="section-desc" style="margin-bottom:12px">
+          开启后，在每个请求的上下文中注入一条系统提示词，让模型以请求的身份自称
+          （例如请求 <code>claude-opus-4.6</code> 时，模型会说自己是 Claude Opus 4.6，由 Anthropic 开发）。
+          覆盖 Cascade 内置的 Windsurf 身份。
+        </div>
+        <div style="display:flex;align-items:center;gap:16px;margin-bottom:16px">
+          <label class="switch">
+            <input type="checkbox" id="exp-identity-prompt" onchange="App.toggleExperimental('modelIdentityPrompt', this.checked)">
+            <span class="switch-slider"></span>
+          </label>
+          <div>
+            <div style="font-weight:500">启用模型身份注入</div>
+            <div class="text-sm text-muted">默认开启。支持 Anthropic / OpenAI / Google / DeepSeek / xAI 等厂商模型。</div>
+          </div>
+        </div>
+      </div>
+    </div>
   </section>
 </main>
 
@@ -1487,12 +1509,24 @@ const App = {
     return new Promise(resolve => {
       const wrap = document.createElement('div');
       wrap.className = 'modal-overlay';
+      // opts.html=true lets callers pass rich markup in `desc` (e.g. the
+      // per-account blocked-models editor). opts.wide=true widens the modal
+      // so the 2-col model grid has room to breathe.
+      const descHtml = desc
+        ? (opts.html
+          ? `<div class="modal-body">${desc}</div>`
+          : `<div class="modal-desc">${this.esc(desc)}</div>`)
+        : '';
+      const widthStyle = opts.wide ? ' style="max-width:640px;width:92vw"' : '';
+      // Title is trusted caller input but may contain <code>/<b>; use esc by
+      // default to match prior behaviour.
       wrap.innerHTML = `
-        <div class="modal">
+        <div class="modal"${widthStyle}>
           <div class="modal-header">
-            <div class="modal-title">${this.esc(title)}</div>
-            ${desc ? `<div class="modal-desc">${this.esc(desc)}</div>` : ''}
+            <div class="modal-title">${opts.titleHtml ? title : this.esc(title)}</div>
+            ${opts.html ? '' : (desc ? `<div class="modal-desc">${this.esc(desc)}</div>` : '')}
           </div>
+          ${opts.html ? descHtml : ''}
           <div class="modal-footer">
             <button class="btn btn-ghost" data-act="cancel">${this.esc(opts.cancelText || '取消')}</button>
             <button class="btn ${opts.danger ? 'btn-danger' : 'btn-primary'}" data-act="ok">${this.esc(opts.okText || '确认')}</button>
@@ -1759,18 +1793,18 @@ const App = {
     const tbody = document.querySelector('#accounts-table tbody');
     const tierLabel = { pro: 'PRO', free: 'FREE', expired: '已过期', unknown: '未知' };
     tbody.innerHTML = (d.accounts || []).map(a => {
-      const caps = a.capabilities || {};
-      const shorten = m => m.replace('claude-', 'c-').replace('gemini-2.5-', 'g-').replace('gpt-4o-', '4o-');
-      const okModels = Object.keys(caps).filter(m => caps[m].ok).map(shorten);
-      const failModels = Object.keys(caps).filter(m => !caps[m].ok).map(shorten);
       const tier = a.tier || 'unknown';
-      const probedAt = a.lastProbed ? new Date(a.lastProbed).toLocaleString() : '尚未探测';
-      const capsHtml = (okModels.length || failModels.length)
-        ? `<div class="cap-list" title="已探测: ${probedAt}">` +
-          okModels.map(m => `<span class="cap-item ok">✓ ${m}</span>`).join('') +
-          failModels.map(m => `<span class="cap-item fail">${m}</span>`).join('') +
-          `</div>`
-        : `<span class="text-xs text-dim">尚未探测</span>`;
+      // Compact summary: avail/total + 编辑 button. Clicking opens modal.
+      const tierModels = a.tierModels || [];
+      const blockedCount = (a.blockedModels || []).length;
+      const availCount = tierModels.length - blockedCount;
+      const capsHtml = tierModels.length
+        ? `<button class="btn btn-ghost btn-xs" style="min-width:96px" onclick="App.openBlockedModal('${a.id}')" title="编辑该账号可用模型">
+             <span style="color:var(--success,#10b981);font-weight:600">${availCount}</span>
+             <span style="color:var(--text-dim)">/${tierModels.length}</span>
+             ${blockedCount > 0 ? `<span class="badge warn" style="margin-left:4px">-${blockedCount}</span>` : ''}
+           </button>`
+        : `<span class="text-xs text-dim">-</span>`;
       const rateLimitBadge = a.rateLimited ? ` <span class="badge warn">限流中</span>` : '';
       const rpmUsed = a.rpmUsed ?? 0;
       const rpmLimit = a.rpmLimit ?? 0;
@@ -1906,6 +1940,153 @@ const App = {
         this.toast(r.error || '探测失败', 'error');
       }
     } catch (e) { this.toast('探测失败: ' + e.message, 'error'); }
+  },
+
+  async openBlockedModal(id) {
+    try {
+      const d = await this.api('GET', '/accounts', null);
+      const acct = (d.accounts || []).find(a => a.id === id);
+      if (!acct) return this.toast('账号不存在', 'error');
+      const tierModels = acct.tierModels || [];
+      const blocked = new Set(acct.blockedModels || []);
+      if (!tierModels.length) return this.toast('该账号层级无可用模型', 'info');
+      const providerOf = (m) => {
+        if (m.startsWith('claude')) return 'anthropic';
+        if (m.startsWith('gpt') || m.startsWith('o3') || m.startsWith('o4')) return 'openai';
+        if (m.startsWith('gemini')) return 'google';
+        if (m.startsWith('grok')) return 'xai';
+        if (m.startsWith('deepseek')) return 'deepseek';
+        if (m.startsWith('qwen')) return 'alibaba';
+        if (m.startsWith('kimi')) return 'moonshot';
+        if (m.startsWith('swe') || m.startsWith('arena')) return 'windsurf';
+        return 'other';
+      };
+      const groups = {};
+      for (const m of tierModels) (groups[providerOf(m)] = groups[providerOf(m)] || []).push(m);
+      const total = tierModels.length;
+      const availInit = total - blocked.size;
+      const html = `
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px;padding:8px 10px;background:var(--surface-2);border-radius:6px">
+          <div class="text-xs text-dim">勾选 = 可用；取消 = 对该账号禁用</div>
+          <div style="font-size:13px">
+            已启用 <span id="bm-avail" style="color:var(--success,#10b981);font-weight:600">${availInit}</span>
+            <span style="color:var(--text-dim)"> / ${total}</span>
+          </div>
+        </div>
+        <div style="display:flex;gap:6px;margin-bottom:10px">
+          <button class="btn btn-ghost btn-xs" onclick="App.blockedModalToggleAll(true)">全选</button>
+          <button class="btn btn-ghost btn-xs" onclick="App.blockedModalToggleAll(false)">全不选</button>
+          <button class="btn btn-ghost btn-xs" onclick="App.blockedModalInvert()">反选</button>
+        </div>
+        <div style="max-height:50vh;overflow:auto;padding:2px 2px 2px 0">
+          ${Object.entries(groups).map(([provider, models]) => `
+            <div class="bm-group" data-provider="${provider}" style="margin-bottom:12px;border:1px solid var(--border);border-radius:6px;padding:8px 10px">
+              <label style="display:flex;align-items:center;gap:8px;cursor:pointer;margin-bottom:6px;padding-bottom:6px;border-bottom:1px solid var(--border)">
+                <input type="checkbox" class="bm-group-cb" data-provider="${provider}">
+                <span style="text-transform:uppercase;letter-spacing:.5px;font-size:11px;color:var(--text-muted);font-weight:600">${provider}</span>
+                <span class="text-xs text-dim" data-role="count">(${models.filter(m => !blocked.has(m)).length}/${models.length})</span>
+              </label>
+              <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:2px 10px">
+                ${models.map(m => `
+                  <label style="display:flex;align-items:center;gap:6px;padding:3px 4px;border-radius:3px;cursor:pointer;font-size:12px" onmouseover="this.style.background='var(--surface-2)'" onmouseout="this.style.background=''">
+                    <input type="checkbox" class="blocked-model-cb" data-model="${this.esc(m)}" data-provider="${provider}" ${blocked.has(m) ? '' : 'checked'}>
+                    <span>${this.esc(m)}</span>
+                  </label>
+                `).join('')}
+              </div>
+            </div>
+          `).join('')}
+        </div>`;
+      // Fire-and-forget: confirm() drops the modal into the DOM synchronously
+      // so we can wire listeners on the next microtask. We don't await its
+      // Promise — _bindBlockedModal replaces the OK handler with one that
+      // PATCHes and closes itself, so the original resolve() only fires on
+      // Cancel, which we ignore.
+      this.confirm(`编辑可用模型 — ${acct.email}`, html, { okText: '保存', html: true, wide: true });
+      setTimeout(() => this._bindBlockedModal(id), 0);
+    } catch (e) { this.toast('打开失败: ' + e.message, 'error'); }
+  },
+
+  // Bind listeners once the blocked-models modal is mounted.
+  // Listeners live on the modal so they're GC'd when it closes.
+  // `accountId` is passed by the caller so the PATCH target can't drift
+  // if the user opens two modals in quick succession.
+  _bindBlockedModal(accountId) {
+    const root = document.querySelector('.modal-overlay:last-child');
+    if (!root) return;
+    const updateGroup = (provider) => {
+      const group = root.querySelector(`.bm-group[data-provider="${provider}"]`);
+      if (!group) return;
+      const boxes = group.querySelectorAll('.blocked-model-cb');
+      const checked = [...boxes].filter(b => b.checked).length;
+      const groupCb = group.querySelector('.bm-group-cb');
+      groupCb.checked = checked === boxes.length;
+      groupCb.indeterminate = checked > 0 && checked < boxes.length;
+      group.querySelector('[data-role=count]').textContent = `(${checked}/${boxes.length})`;
+    };
+    const updateTotal = () => {
+      const all = root.querySelectorAll('.blocked-model-cb');
+      const checked = [...all].filter(b => b.checked).length;
+      const el = root.querySelector('#bm-avail');
+      if (el) el.textContent = checked;
+    };
+    root.querySelectorAll('.bm-group').forEach(g => updateGroup(g.dataset.provider));
+    updateTotal();
+    root.querySelectorAll('.blocked-model-cb').forEach(cb => {
+      cb.addEventListener('change', () => { updateGroup(cb.dataset.provider); updateTotal(); });
+    });
+    root.querySelectorAll('.bm-group-cb').forEach(gcb => {
+      gcb.addEventListener('change', () => {
+        const provider = gcb.dataset.provider;
+        root.querySelectorAll(`.blocked-model-cb[data-provider="${provider}"]`).forEach(cb => { cb.checked = gcb.checked; });
+        updateGroup(provider);
+        updateTotal();
+      });
+    });
+    // Intercept OK to PATCH, then close. We replace the handler confirm()
+    // installed so the modal stays open on network errors.
+    const okBtn = root.querySelector('[data-act=ok]');
+    const cancelBtn = root.querySelector('[data-act=cancel]');
+    if (!okBtn || okBtn.dataset.bmBound) return;
+    okBtn.dataset.bmBound = '1';
+    const id = accountId;
+    const self = this;
+    okBtn.onclick = async () => {
+      const newBlocked = [];
+      root.querySelectorAll('.blocked-model-cb').forEach(cb => { if (!cb.checked) newBlocked.push(cb.dataset.model); });
+      okBtn.disabled = true; cancelBtn.disabled = true;
+      okBtn.textContent = '保存中...';
+      try {
+        const r = await self.api('PATCH', `/accounts/${id}`, { blockedModels: newBlocked });
+        if (r.success) {
+          self.toast(`已保存：启用 ${root.querySelectorAll('.blocked-model-cb:checked').length} / 禁用 ${newBlocked.length}`, 'success');
+          root.remove();
+          self.loadAccounts();
+        } else {
+          self.toast(r.error || '保存失败', 'error');
+          okBtn.disabled = false; cancelBtn.disabled = false; okBtn.textContent = '保存';
+        }
+      } catch (e) {
+        self.toast('保存失败: ' + e.message, 'error');
+        okBtn.disabled = false; cancelBtn.disabled = false; okBtn.textContent = '保存';
+      }
+    };
+  },
+
+  blockedModalToggleAll(checked) {
+    const root = document.querySelector('.modal-overlay:last-child');
+    if (!root) return;
+    root.querySelectorAll('.blocked-model-cb').forEach(cb => { cb.checked = checked; });
+    root.querySelectorAll('.blocked-model-cb').forEach(cb => cb.dispatchEvent(new Event('change')));
+  },
+
+  blockedModalInvert() {
+    const root = document.querySelector('.modal-overlay:last-child');
+    if (!root) return;
+    root.querySelectorAll('.blocked-model-cb').forEach(cb => {
+      cb.checked = !cb.checked;
+      cb.dispatchEvent(new Event('change'));
+    });
   },
 
   async addAccount() {
@@ -2211,6 +2392,8 @@ const App = {
     const d = await this.api('GET', '/experimental');
     const cb = document.getElementById('exp-cascade-reuse');
     if (cb) cb.checked = !!d.flags?.cascadeConversationReuse;
+    const idCb = document.getElementById('exp-identity-prompt');
+    if (idCb) idCb.checked = !!d.flags?.modelIdentityPrompt;
     const pool = d.conversationPool || {};
     document.getElementById('exp-pool-cards').innerHTML = `
       <div class="card info">

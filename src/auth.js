@@ -12,6 +12,7 @@ import { randomUUID } from 'crypto';
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { config, log } from './config.js';
 import { getEffectiveProxy } from './dashboard/proxy-config.js';
+import { getTierModels } from './models.js';
 
 import { join } from 'path';
 const ACCOUNTS_FILE = join(process.cwd(), 'accounts.json');
@@ -47,6 +48,7 @@ function saveAccounts() {
       status: a.status, addedAt: a.addedAt,
       tier: a.tier, capabilities: a.capabilities, lastProbed: a.lastProbed,
       credits: a.credits || null,
+      blockedModels: a.blockedModels || [],
     }));
     writeFileSync(ACCOUNTS_FILE, JSON.stringify(data, null, 2));
   } catch (e) {
@@ -73,6 +75,7 @@ function loadAccounts() {
         capabilities: a.capabilities || {},
         lastProbed: a.lastProbed || 0,
         credits: a.credits || null,
+        blockedModels: Array.isArray(a.blockedModels) ? a.blockedModels : [],
       });
     }
     if (data.length > 0) log.info(`Loaded ${data.length} account(s) from disk`);
@@ -113,6 +116,7 @@ export function addAccountByKey(apiKey, label = '') {
     tier: 'unknown',
     capabilities: {},
     lastProbed: 0,
+    blockedModels: [],
   };
   account.credits = null;
   accounts.push(account);
@@ -142,6 +146,11 @@ export async function addAccountByToken(token, label = '') {
     expiresAt: 0,
     refreshTimer: null,
     addedAt: Date.now(),
+    tier: 'unknown',
+    capabilities: {},
+    lastProbed: 0,
+    blockedModels: [],
+    credits: null,
   };
   accounts.push(account);
   saveAccounts();
@@ -155,6 +164,39 @@ export async function addAccountByToken(token, label = '') {
  */
 export async function addAccountByEmail(email, password) {
   throw new Error('Direct email/password login is not supported. Use token-based auth: get token from windsurf.com, then POST /auth/login {"token":"..."}');
+}
+
+/**
+ * Per-account blocklist: hide specific models from this account so the
+ * selector won't route matching requests here. Useful when one key has
+ * burned its claude quota but still serves gpt just fine.
+ */
+export function setAccountBlockedModels(id, blockedModels) {
+  const account = accounts.find(a => a.id === id);
+  if (!account) return false;
+  account.blockedModels = Array.isArray(blockedModels) ? blockedModels.slice() : [];
+  saveAccounts();
+  log.info(`Account ${id} blockedModels updated: ${account.blockedModels.length} blocked`);
+  return true;
+}
+
+/**
+ * Resolve whether `modelKey` is callable on this account:
+ *   tier entitlement ∩ (models.js catalog) − account.blockedModels
+ */
+export function isModelAllowedForAccount(account, modelKey) {
+  const tierModels = getTierModels(account.tier || 'unknown');
+  if (!tierModels.includes(modelKey)) return false;
+  const blocked = account.blockedModels || [];
+  if (blocked.includes(modelKey)) return false;
+  return true;
+}
+
+/** List of model keys this account is currently allowed to call. */
+export function getAvailableModelsForAccount(account) {
+  const tierModels = getTierModels(account.tier || 'unknown');
+  const blocked = new Set(account.blockedModels || []);
+  return tierModels.filter(m => !blocked.has(m));
 }
 
 /**
@@ -224,7 +266,7 @@ export function removeAccount(id) {
  * Returns null when every account is temporarily full — callers should
  * wait a moment and retry (see handlers/chat.js queue loop).
  */
-export function getApiKey(excludeKeys = []) {
+export function getApiKey(excludeKeys = [], modelKey = null) {
   const now = Date.now();
   const candidates = [];
   for (const a of accounts) {
@@ -235,6 +277,8 @@ export function getApiKey(excludeKeys = []) {
     if (limit <= 0) continue; // expired tier
     const used = pruneRpmHistory(a, now);
     if (used >= limit) continue;
+    // Tier entitlement + per-account blocklist filter
+    if (modelKey && !isModelAllowedForAccount(a, modelKey)) continue;
     candidates.push({ account: a, used, limit });
   }
   if (candidates.length === 0) return null;
@@ -265,7 +309,7 @@ export function getApiKey(excludeKeys = []) {
  * upstream cascade_id — if that account is momentarily unavailable we fall
  * back to a fresh cascade on a different account instead of queuing.
  */
-export function acquireAccountByKey(apiKey) {
+export function acquireAccountByKey(apiKey, modelKey = null) {
   const now = Date.now();
   const a = accounts.find(x => x.apiKey === apiKey);
   if (!a) return null;
@@ -275,6 +319,7 @@ export function acquireAccountByKey(apiKey) {
   if (limit <= 0) return null;
   const used = pruneRpmHistory(a, now);
   if (used >= limit) return null;
+  if (modelKey && !isModelAllowedForAccount(a, modelKey)) return null;
   a._rpmHistory.push(now);
   a.lastUsed = now;
   return {
@@ -356,6 +401,23 @@ export function reportSuccess(apiKey) {
     account.errorCount = 0;
     account.status = 'active';
   }
+  account.internalErrorStreak = 0;
+}
+
+/**
+ * Report an upstream "internal error occurred (error ID: ...)" from Windsurf.
+ * These are account-specific backend errors — a given key will keep hitting
+ * them until we stop using it. Quarantine the key for 5 minutes after 2
+ * consecutive hits so we stop burning user-visible retries on a dead key.
+ */
+export function reportInternalError(apiKey) {
+  const account = accounts.find(a => a.apiKey === apiKey);
+  if (!account) return;
+  account.internalErrorStreak = (account.internalErrorStreak || 0) + 1;
+  if (account.internalErrorStreak >= 2) {
+    account.rateLimitedUntil = Date.now() + 5 * 60 * 1000;
+    log.warn(`Account ${account.id} (${account.email}) quarantined 5min after ${account.internalErrorStreak} consecutive upstream internal errors`);
+  }
 }
 
 // ─── Status ────────────────────────────────────────────────
@@ -387,6 +449,9 @@ export function getAccountList() {
       rpmUsed,
       rpmLimit,
       credits: a.credits || null,
+      blockedModels: a.blockedModels || [],
+      availableModels: getAvailableModelsForAccount(a),
+      tierModels: getTierModels(a.tier || 'unknown'),
     };
   });
 }

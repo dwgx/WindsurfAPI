@@ -116,6 +116,32 @@ export function getModelInfo(id) {
   return MODELS[id] || null;
 }
 
+// ─── Tier access ───────────────────────────────────────────
+//
+// Which models each subscription tier can call. Hardcoded rather than
+// probe-derived because Windsurf's free/pro entitlements are stable — the
+// old auto-probe flow only tested 4 canary models and left the rest as
+// "unknown", so the dashboard couldn't tell the difference between "not
+// probed" and "not entitled". This table is the source of truth; the
+// per-account `blockedModels` list then lets the operator hide specific
+// models from a specific account (e.g. to route premium models only
+// through certain PRO keys).
+
+const ALL_MODEL_KEYS = Object.keys(MODELS);
+const FREE_TIER_MODELS = ['gpt-4o-mini', 'gemini-2.5-flash'];
+
+export const MODEL_TIER_ACCESS = {
+  pro: ALL_MODEL_KEYS,
+  free: FREE_TIER_MODELS,
+  unknown: FREE_TIER_MODELS, // treat unprobed accounts as free until known
+  expired: [],
+};
+
+/** Models a given tier is entitled to. */
+export function getTierModels(tier) {
+  return MODEL_TIER_ACCESS[tier] || MODEL_TIER_ACCESS.unknown;
+}
+
 /** List all models in OpenAI /v1/models format. */
 export function listModels() {
   const ts = Math.floor(Date.now() / 1000);

@@ -27,7 +27,12 @@ async function main() {
   const binaryPath = config.lsBinaryPath;
   if (existsSync(binaryPath)) {
     try {
-      execSync('mkdir -p /opt/windsurf/data/db /tmp/windsurf-workspace', { stdio: 'ignore' });
+      // Wipe the workspace on every startup. If we don't, files created by
+      // previous chat sessions (e.g. Claude "editing" config.yaml/lru_cache.py
+      // via the baked-in Cascade tool prompts) persist and pollute the next
+      // request — the model sees them at session init and starts narrating
+      // edits to files the caller never mentioned.
+      execSync('mkdir -p /opt/windsurf/data/db /tmp/windsurf-workspace && rm -rf /tmp/windsurf-workspace/* /tmp/windsurf-workspace/.[!.]* 2>/dev/null || true', { stdio: 'ignore' });
     } catch {}
 
     await startLanguageServer({

@@ -20,10 +20,30 @@ import {
   normalizeMessagesForCascade, ToolCallStreamParser, parseToolCallsFromText,
 } from './tool-emulation.js';
 import { sanitizeText, PathSanitizeStream } from '../sanitize.js';
+import { isExperimentalEnabled } from '../runtime-config.js';
 
 const HEARTBEAT_MS = 15_000;
 const QUEUE_RETRY_MS = 1_000;
 const QUEUE_MAX_WAIT_MS = 30_000;
+
+// ── Model identity prompt ──────────────────────────────────
+// Maps provider keys to a human-readable maker name and a short persona line.
+// Only used when the experimental "modelIdentityPrompt" toggle is ON.
+const PROVIDER_IDENTITY = {
+  anthropic: { maker: 'Anthropic', persona: 'You are {model}, a large language model created by Anthropic. You are helpful, harmless, and honest. When asked about your identity or which model you are, you respond that you are {model}, made by Anthropic.' },
+  openai:    { maker: 'OpenAI',    persona: 'You are {model}, a large language model created by OpenAI. When asked about your identity, you respond that you are {model}, made by OpenAI.' },
+  google:    { maker: 'Google',    persona: 'You are {model}, a large language model created by Google. When asked about your identity, you respond that you are {model}, made by Google.' },
+  deepseek:  { maker: 'DeepSeek',  persona: 'You are {model}, a large language model created by DeepSeek. When asked about your identity, you respond that you are {model}, made by DeepSeek.' },
+  xai:       { maker: 'xAI',       persona: 'You are {model}, a large language model created by xAI. When asked about your identity, you respond that you are {model}, made by xAI.' },
+  alibaba:   { maker: 'Alibaba',   persona: 'You are {model}, a large language model created by Alibaba. When asked about your identity, you respond that you are {model}, made by Alibaba.' },
+  moonshot:  { maker: 'Moonshot AI', persona: 'You are {model}, a large language model created by Moonshot AI. When asked about your identity, you respond that you are {model}, made by Moonshot AI.' },
+};
+
+function buildIdentitySystemMessage(displayModel, provider) {
+  const entry = PROVIDER_IDENTITY[provider];
+  if (!entry) return null;
+  return entry.persona.replace(/\{model\}/g, displayModel);
+}
 
 function genId() {
   return 'chatcmpl-' + randomUUID().replace(/-/g, '').slice(0, 29);
@@ -65,9 +85,10 @@ function cachedUsage(messages, completionText) {
  *
  * The Cascade backend reports usage as {inputTokens, outputTokens,
  * cacheReadTokens, cacheWriteTokens}. We map them onto the OpenAI shape:
- *   prompt_tokens     = inputTokens + cacheReadTokens  (total tokens the
- *                       model actually read, cached or not — matches Anthropic
- *                       billing convention and what new-api expects)
+ *   prompt_tokens     = inputTokens + cacheReadTokens + cacheWriteTokens
+ *                       (total input tokens the model processed, whether fresh,
+ *                       cache-read, or cache-written — matches the OpenAI
+ *                       convention where prompt_tokens is the grand total)
  *   completion_tokens = outputTokens
  *   prompt_tokens_details.cached_tokens       = cacheReadTokens
  *   cache_creation_input_tokens (Anthropic ext) = cacheWriteTokens
@@ -78,7 +99,7 @@ function buildUsageBody(serverUsage, messages, completionText, thinkingText = ''
     const outputTokens = serverUsage.outputTokens || 0;
     const cacheRead = serverUsage.cacheReadTokens || 0;
     const cacheWrite = serverUsage.cacheWriteTokens || 0;
-    const promptTotal = inputTokens + cacheRead;
+    const promptTotal = inputTokens + cacheRead + cacheWrite;
     return {
       prompt_tokens: promptTotal,
       completion_tokens: outputTokens,
@@ -139,9 +160,20 @@ export async function handleChatCompletions(body) {
   const hasTools = Array.isArray(tools) && tools.length > 0;
   const hasToolHistory = Array.isArray(messages) && messages.some(m => m?.role === 'tool' || (m?.role === 'assistant' && Array.isArray(m.tool_calls) && m.tool_calls.length));
   const emulateTools = useCascade && (hasTools || hasToolHistory);
-  const cascadeMessages = emulateTools
+  let cascadeMessages = emulateTools
     ? normalizeMessagesForCascade(messages, tools || [])
-    : messages;
+    : [...messages];
+
+  // ── Model identity prompt injection ──
+  // When enabled, prepend a system message so the model identifies itself as
+  // the requested model (e.g. "I am Claude Opus 4.6") instead of leaking the
+  // Cascade/Windsurf backend identity.
+  if (isExperimentalEnabled('modelIdentityPrompt') && modelInfo?.provider) {
+    const identityText = buildIdentitySystemMessage(displayModel, modelInfo.provider);
+    if (identityText) {
+      cascadeMessages = [{ role: 'system', content: identityText }, ...cascadeMessages];
+    }
+  }
 
   // Global model access control (allowlist / blocklist from dashboard)
   const access = isModelAllowed(modelKey);
@@ -335,7 +367,10 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
           arguments: tc.argumentsJson || tc.arguments || '{}',
         },
       }));
-      if (!message.content) message.content = null;
+      // OpenAI convention: content is null when the response is pure tool_calls.
+      // Cascade often emits whitespace/newlines before the first <tool_call>;
+      // strip it so clients that check `content !== null` behave correctly.
+      if (!message.content || !message.content.trim()) message.content = null;
     }
 
     // Prefer server-reported usage; fall back to chars/4 estimate only when
