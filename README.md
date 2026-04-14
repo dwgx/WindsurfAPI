@@ -1,3 +1,5 @@
+# 商用 未经本人允许 二次分发 死爹烂妈 死全家 操你妈 没问过我的 你他妈拿出去当中专卖就是死了爹娘 那我就当你是孤儿 反正
+  你他妈没问过我就部署到你那个后台然后挂上来中专卖掉就是脑子有毛病 傻逼
 # Windsurf API
 
 [Windsurf](https://windsurf.com)（原 Codeium）的 OpenAI 相容 API 代理服務。在 Linux 伺服器上無頭運行 Windsurf 的 AI 模型，透過標準 OpenAI API 端點對外提供服務。
