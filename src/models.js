@@ -26,11 +26,12 @@ export const MODELS = {
   'claude-sonnet-4.6-thinking': { name: 'claude-sonnet-4.6-thinking', provider: 'anthropic', enumValue: 0, modelUid: 'claude-sonnet-4-6-thinking' },
   'claude-opus-4.6': { name: 'claude-opus-4.6', provider: 'anthropic', enumValue: 0, modelUid: 'claude-opus-4-6' },
   'claude-opus-4.6-thinking': { name: 'claude-opus-4.6-thinking', provider: 'anthropic', enumValue: 0, modelUid: 'claude-opus-4-6-thinking' },
-  'claude-code': { name: 'claude-code', provider: 'anthropic', enumValue: 344, modelUid: 'MODEL_CLAUDE_CODE' },
+  // claude-code requires Windsurf's special is_claude_code agent flow
+  // (different RPC than standard Cascade/legacy) — not supported through our proxy.
 
   // ── GPT ─────────────────────────────────────────────────
-  'gpt-4o': { name: 'gpt-4o', provider: 'openai', enumValue: 109, modelUid: 'MODEL_GPT_4O' },
-  'gpt-4o-mini': { name: 'gpt-4o-mini', provider: 'openai', enumValue: 113, modelUid: 'MODEL_GPT_4O_MINI' },
+  'gpt-4o': { name: 'gpt-4o', provider: 'openai', enumValue: 109 },
+  'gpt-4o-mini': { name: 'gpt-4o-mini', provider: 'openai', enumValue: 113 },
   'gpt-4.1': { name: 'gpt-4.1', provider: 'openai', enumValue: 259, modelUid: 'MODEL_CHAT_GPT_4_1_2025_04_14' },
   'gpt-4.1-mini': { name: 'gpt-4.1-mini', provider: 'openai', enumValue: 260 },
   'gpt-4.1-nano': { name: 'gpt-4.1-nano', provider: 'openai', enumValue: 261 },
@@ -41,7 +42,6 @@ export const MODELS = {
   'gpt-5.2-high': { name: 'gpt-5.2-high', provider: 'openai', enumValue: 402, modelUid: 'MODEL_GPT_5_2_HIGH' },
   'gpt-5.4-low': { name: 'gpt-5.4-low', provider: 'openai', enumValue: 0, modelUid: 'gpt-5-4-low' },
   'gpt-5.4-medium': { name: 'gpt-5.4-medium', provider: 'openai', enumValue: 0, modelUid: 'gpt-5-4-medium' },
-  'gpt-5.4-high': { name: 'gpt-5.4-high', provider: 'openai', enumValue: 0, modelUid: 'gpt-5-4-high' },
   'gpt-5.4-xhigh': { name: 'gpt-5.4-xhigh', provider: 'openai', enumValue: 0, modelUid: 'gpt-5-4-xhigh' },
   'gpt-5.3-codex': { name: 'gpt-5.3-codex', provider: 'openai', enumValue: 0, modelUid: 'gpt-5-3-codex-medium' },
 
@@ -55,7 +55,7 @@ export const MODELS = {
   // ── Gemini ──────────────────────────────────────────────
   'gemini-2.5-pro': { name: 'gemini-2.5-pro', provider: 'google', enumValue: 246, modelUid: 'MODEL_GOOGLE_GEMINI_2_5_PRO' },
   'gemini-2.5-flash': { name: 'gemini-2.5-flash', provider: 'google', enumValue: 312, modelUid: 'MODEL_GOOGLE_GEMINI_2_5_FLASH' },
-  'gemini-3.0-pro': { name: 'gemini-3.0-pro', provider: 'google', enumValue: 412, modelUid: 'MODEL_GOOGLE_GEMINI_3_0_PRO_MEDIUM' },
+  'gemini-3.0-pro': { name: 'gemini-3.0-pro', provider: 'google', enumValue: 412, modelUid: 'MODEL_GOOGLE_GEMINI_3_0_PRO_LOW' },
   'gemini-3.0-flash': { name: 'gemini-3.0-flash', provider: 'google', enumValue: 415, modelUid: 'MODEL_GOOGLE_GEMINI_3_0_FLASH_MEDIUM' },
   'gemini-3.1-pro-low': { name: 'gemini-3.1-pro-low', provider: 'google', enumValue: 0, modelUid: 'gemini-3-1-pro-low' },
   'gemini-3.1-pro-high': { name: 'gemini-3.1-pro-high', provider: 'google', enumValue: 0, modelUid: 'gemini-3-1-pro-high' },

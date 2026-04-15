@@ -86,14 +86,48 @@ Rules:
 2. "arguments" must be a JSON object matching the function's parameter schema.
 3. You MAY emit MULTIPLE <tool_call> blocks if the request requires calling several functions in parallel. Emit ALL needed calls consecutively, then STOP generating.
 4. After emitting the last <tool_call> block, STOP. Do not write any explanation after it. The caller executes the functions and returns results wrapped in <tool_result tool_call_id="...">...</tool_result> tags in the next user turn.
-5. Only call a function when the user's request genuinely needs it. If you can answer directly, do so in plain text without any <tool_call>.
-6. NEVER say "I don't have access to tools" or "I cannot perform that action" — the functions listed below ARE your available tools.
+5. NEVER say "I don't have access to tools" or "I cannot perform that action" — the functions listed below ARE your available tools.`;
 
-Available functions:`;
+// Behaviour suffix appended after the base rules, controlled by tool_choice.
+const TOOL_CHOICE_SUFFIX = {
+  // "auto" (default): prefer tools over direct answers when a tool is relevant
+  auto: `
+6. When a function is relevant to the user's request, you SHOULD call it rather than answering from memory. Prefer using a tool over guessing.`,
+  // "required": MUST call at least one tool — never answer directly
+  required: `
+6. You MUST call at least one function for every request. Do NOT answer directly in plain text — always use a <tool_call>.`,
+  // "none": never call tools (shouldn't normally reach here, but be safe)
+  none: `
+6. Do NOT call any functions. Answer the user's question directly in plain text.`,
+};
 
-export function buildToolPreambleForProto(tools) {
+/**
+ * Resolve the OpenAI tool_choice parameter into a { mode, forceName } pair.
+ *   tool_choice = "auto" | "required" | "none"
+ *   tool_choice = { type: "function", function: { name: "X" } }
+ */
+function resolveToolChoice(tc) {
+  if (!tc || tc === 'auto') return { mode: 'auto', forceName: null };
+  if (tc === 'required' || tc === 'any') return { mode: 'required', forceName: null };
+  if (tc === 'none') return { mode: 'none', forceName: null };
+  if (typeof tc === 'object' && tc.function?.name) {
+    return { mode: 'required', forceName: tc.function.name };
+  }
+  return { mode: 'auto', forceName: null };
+}
+
+export function buildToolPreambleForProto(tools, toolChoice) {
   if (!Array.isArray(tools) || tools.length === 0) return '';
+  const { mode, forceName } = resolveToolChoice(toolChoice);
+
   const lines = [TOOL_PROTOCOL_SYSTEM_HEADER];
+  // Append the appropriate behaviour suffix
+  lines.push(TOOL_CHOICE_SUFFIX[mode] || TOOL_CHOICE_SUFFIX.auto);
+  if (forceName) {
+    lines.push(`7. You MUST call the function "${forceName}". No other function and no direct answer.`);
+  }
+  lines.push('');
+  lines.push('Available functions:');
   for (const t of tools) {
     if (t?.type !== 'function' || !t.function) continue;
     const { name, description, parameters } = t.function;
@@ -192,6 +226,7 @@ export class ToolCallStreamParser {
   constructor() {
     this.buffer = '';
     this.inToolCall = false;
+    this.inToolResult = false;
     this._totalSeen = 0;
   }
 
@@ -200,53 +235,97 @@ export class ToolCallStreamParser {
     this.buffer += delta;
     const safeParts = [];
     const doneCalls = [];
-    const OPEN = '<tool_call>';
-    const CLOSE = '</tool_call>';
+    const TC_OPEN = '<tool_call>';
+    const TC_CLOSE = '</tool_call>';
+    const TR_PREFIX = '<tool_result';
+    const TR_CLOSE = '</tool_result>';
 
     while (true) {
-      if (!this.inToolCall) {
-        const openIdx = this.buffer.indexOf(OPEN);
-        if (openIdx === -1) {
-          // Hold back any suffix that could be a prefix of OPEN so we don't
-          // leak an in-progress open tag to the client.
-          let holdLen = 0;
-          const maxHold = Math.min(OPEN.length - 1, this.buffer.length);
+      // ── Inside a <tool_result …>…</tool_result> block — discard body ──
+      if (this.inToolResult) {
+        const closeIdx = this.buffer.indexOf(TR_CLOSE);
+        if (closeIdx === -1) break; // wait for close tag
+        this.buffer = this.buffer.slice(closeIdx + TR_CLOSE.length);
+        this.inToolResult = false;
+        continue;
+      }
+
+      // ── Inside a <tool_call>…</tool_call> block — parse JSON body ──
+      if (this.inToolCall) {
+        const closeIdx = this.buffer.indexOf(TC_CLOSE);
+        if (closeIdx === -1) break; // wait for more
+        const body = this.buffer.slice(0, closeIdx).trim();
+        this.buffer = this.buffer.slice(closeIdx + TC_CLOSE.length);
+        this.inToolCall = false;
+
+        const parsed = safeParseJson(body);
+        if (parsed && typeof parsed.name === 'string') {
+          const args = parsed.arguments;
+          const argsJson = typeof args === 'string' ? args : JSON.stringify(args ?? {});
+          doneCalls.push({
+            id: `call_${this._totalSeen}_${Date.now().toString(36)}`,
+            name: parsed.name,
+            argumentsJson: argsJson,
+          });
+          this._totalSeen++;
+        } else {
+          // Malformed — surface as literal text so it's debuggable
+          safeParts.push(`<tool_call>${body}</tool_call>`);
+        }
+        continue;
+      }
+
+      // ── Normal mode — scan for the next opening tag ──
+      const tcIdx = this.buffer.indexOf(TC_OPEN);
+      const trIdx = this.buffer.indexOf(TR_PREFIX);
+
+      // Pick whichever opening tag comes first
+      let nextIdx = -1;
+      let isResult = false;
+      if (tcIdx !== -1 && (trIdx === -1 || tcIdx <= trIdx)) {
+        nextIdx = tcIdx;
+      } else if (trIdx !== -1) {
+        nextIdx = trIdx;
+        isResult = true;
+      }
+
+      if (nextIdx === -1) {
+        // No tags found. Hold back any suffix that could be a partial
+        // prefix of either opening tag so we don't leak mid-tag to the
+        // client.
+        let holdLen = 0;
+        for (const prefix of [TC_OPEN, TR_PREFIX]) {
+          const maxHold = Math.min(prefix.length - 1, this.buffer.length);
           for (let len = maxHold; len > 0; len--) {
-            if (this.buffer.endsWith(OPEN.slice(0, len))) {
-              holdLen = len;
+            if (this.buffer.endsWith(prefix.slice(0, len))) {
+              holdLen = Math.max(holdLen, len);
               break;
             }
           }
-          const emitUpto = this.buffer.length - holdLen;
-          if (emitUpto > 0) safeParts.push(this.buffer.slice(0, emitUpto));
-          this.buffer = this.buffer.slice(emitUpto);
-          break;
         }
-        if (openIdx > 0) safeParts.push(this.buffer.slice(0, openIdx));
-        this.buffer = this.buffer.slice(openIdx + OPEN.length);
-        this.inToolCall = true;
+        const emitUpto = this.buffer.length - holdLen;
+        if (emitUpto > 0) safeParts.push(this.buffer.slice(0, emitUpto));
+        this.buffer = this.buffer.slice(emitUpto);
+        break;
       }
 
-      // inToolCall === true
-      const closeIdx = this.buffer.indexOf(CLOSE);
-      if (closeIdx === -1) break; // wait for more
-      const body = this.buffer.slice(0, closeIdx).trim();
-      this.buffer = this.buffer.slice(closeIdx + CLOSE.length);
-      this.inToolCall = false;
+      // Emit text before the tag
+      if (nextIdx > 0) safeParts.push(this.buffer.slice(0, nextIdx));
 
-      const parsed = safeParseJson(body);
-      if (parsed && typeof parsed.name === 'string') {
-        const args = parsed.arguments;
-        const argsJson = typeof args === 'string' ? args : JSON.stringify(args ?? {});
-        doneCalls.push({
-          id: `call_${this._totalSeen}_${Date.now().toString(36)}`,
-          name: parsed.name,
-          argumentsJson: argsJson,
-        });
-        this._totalSeen++;
+      if (!isResult) {
+        // <tool_call>
+        this.buffer = this.buffer.slice(nextIdx + TC_OPEN.length);
+        this.inToolCall = true;
       } else {
-        // Malformed — surface as literal text so it's debuggable
-        safeParts.push(`<tool_call>${body}</tool_call>`);
+        // <tool_result …> — may have attributes, find closing >
+        const closeAngle = this.buffer.indexOf('>', nextIdx + TR_PREFIX.length);
+        if (closeAngle === -1) {
+          // Incomplete open tag; hold everything from the tag start
+          this.buffer = this.buffer.slice(nextIdx);
+          break;
+        }
+        this.buffer = this.buffer.slice(closeAngle + 1);
+        this.inToolResult = true;
       }
     }
 
@@ -260,6 +339,10 @@ export class ToolCallStreamParser {
     if (this.inToolCall) {
       this.inToolCall = false;
       return { text: `<tool_call>${remaining}`, toolCalls: [] };
+    }
+    if (this.inToolResult) {
+      this.inToolResult = false;
+      return { text: '', toolCalls: [] }; // discard incomplete tool_result
     }
     return { text: remaining, toolCalls: [] };
   }

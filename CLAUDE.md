@@ -53,9 +53,11 @@ src/
 or `.rawGetChatMessage()` → gRPC unary calls to `LanguageServerService/StartCascade`,
 `SendUserCascadeMessage`, polling `GetCascadeTrajectorySteps`/`GetCascadeTrajectory`.
 
-**Cascade vs legacy:** Models with `enumValue === 0` + a `modelUid` (claude-opus-4.6,
-claude-sonnet-4.5, etc.) go through the Cascade flow. Older models (`enumValue > 0`)
-use `RawGetChatMessage`. See `src/models.js` for the catalog.
+**Cascade vs legacy:** Models with a `modelUid` go through the Cascade flow.
+Models with only `enumValue > 0` (no `modelUid`) use legacy `RawGetChatMessage`.
+Newer models (gemini-3.0, gpt-5.2, etc.) have both `enumValue` AND `modelUid` —
+they MUST use Cascade because the LS binary rejects their high enum values in the
+legacy proto endpoint with "cannot parse invalid wire-format data".
 
 **LS pool:** one LS process per unique outbound proxy URL. Mixing accounts with
 different proxies in a single LS causes silent state pollution — `InitializeCascadePanelState`

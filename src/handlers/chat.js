@@ -5,7 +5,7 @@
 
 import { randomUUID } from 'crypto';
 import { WindsurfClient } from '../client.js';
-import { getApiKey, acquireAccountByKey, reportError, reportSuccess, markRateLimited, reportInternalError, updateCapability, getAccountList } from '../auth.js';
+import { getApiKey, acquireAccountByKey, reportError, reportSuccess, markRateLimited, reportInternalError, updateCapability, getAccountList, isAllRateLimited } from '../auth.js';
 import { resolveModel, getModelInfo } from '../models.js';
 import { getLsFor, ensureLs } from '../langserver.js';
 import { config, log } from '../config.js';
@@ -148,8 +148,12 @@ export async function handleChatCompletions(body) {
   const displayModel = modelInfo?.name || reqModel || config.defaultModel;
   const modelEnum = modelInfo?.enumValue || 0;
   const modelUid = modelInfo?.modelUid || null;
-  // Models with enumValue=0 must use Cascade; others use legacy RawGetChatMessage
-  const useCascade = !!(modelUid && modelEnum === 0);
+  // Models with a modelUid use the Cascade flow (StartCascade → SendUserCascadeMessage).
+  // Legacy RawGetChatMessage only for models with enumValue>0 and NO modelUid.
+  // Newer models (gemini-3.0, gpt-5.2, etc.) have both enumValue AND modelUid but
+  // their high enum values cause "cannot parse invalid wire-format data" in the
+  // legacy proto endpoint. Cascade handles them correctly via uid string.
+  const useCascade = !!modelUid;
 
   // Tool-call emulation: if the client passed OpenAI-style tools[], we rewrite
   // tool-result turns into synthetic user text and inject the tool protocol
@@ -167,7 +171,7 @@ export async function handleChatCompletions(body) {
   // pass empty tools to normalizeMessagesForCascade so it only rewrites
   // role:tool / assistant.tool_calls messages without injecting a user-level
   // preamble (that's now handled at the proto layer).
-  const toolPreamble = emulateTools ? buildToolPreambleForProto(tools || []) : '';
+  const toolPreamble = emulateTools ? buildToolPreambleForProto(tools || [], tool_choice) : '';
   let cascadeMessages = emulateTools
     ? normalizeMessagesForCascade(messages, [])
     : [...messages];
@@ -287,8 +291,25 @@ export async function handleChatCompletions(body) {
     if (result.status === 200) return result;
     reuseEntry = null; // don't try to reuse on the retry
     lastErr = result;
-    if (result.body?.error?.type !== 'model_not_available') break;
-    log.warn(`Account ${acct.email} lacks ${displayModel}, trying next account`);
+    const errType = result.body?.error?.type;
+    // Rate limit: this account is done for this model, try the next one
+    if (errType === 'rate_limit_exceeded') {
+      log.warn(`Account ${acct.email} rate-limited on ${displayModel}, trying next account`);
+      continue;
+    }
+    // Model not available on this account (permission_denied, etc.)
+    if (errType === 'model_not_available') {
+      log.warn(`Account ${acct.email} cannot serve ${displayModel}, trying next account`);
+      continue;
+    }
+    break; // other errors (502, transport) — don't retry
+  }
+  // If all accounts exhausted, check if it's because they're all rate-limited
+  if (!lastErr || lastErr.status === 429) {
+    const rl = isAllRateLimited(modelKey);
+    if (rl.allLimited) {
+      return { status: 429, body: { error: { message: `${displayModel} 所有账号均已达速率限制，请 ${Math.ceil(rl.retryAfterMs / 1000)} 秒后重试`, type: 'rate_limit_exceeded', retry_after_ms: rl.retryAfterMs } } };
+    }
   }
   return lastErr || { status: 503, body: { error: { message: 'No active accounts available', type: 'pool_exhausted' } } };
 }
@@ -313,12 +334,15 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
       }
       cascadeMeta = { cascadeId: chunks.cascadeId, sessionId: chunks.sessionId };
       serverUsage = chunks.usage || null;
-      if (emulateTools) {
-        // Strip <tool_call> blocks out of the text and surface them as
-        // OpenAI-format tool_calls instead.
+      // Always strip <tool_call>/<tool_result> blocks from Cascade text.
+      // - emulateTools=true: parsed tool_calls become OpenAI-format tool_calls.
+      // - emulateTools=false: blocks are silently discarded (defense-in-depth
+      //   against Cascade's system prompt inducing tool markup even after we
+      //   override tool_calling_section).
+      {
         const parsed = parseToolCallsFromText(allText);
         allText = parsed.text;
-        toolCalls = parsed.toolCalls;
+        if (emulateTools) toolCalls = parsed.toolCalls;
       }
       // Built-in Cascade tool calls (chunks.toolCalls — edit_file, view_file,
       // list_directory, run_command, etc.) are intentionally DROPPED. Their
@@ -361,8 +385,11 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
     updateCapability(apiKey, modelKey, true, 'success');
     recordRequest(model, true, Date.now() - startTime, apiKey);
 
-    // Store in cache for next identical request
-    if (ckey) cacheSet(ckey, { text: allText, thinking: allThinking });
+    // Store in cache for next identical request. Skip caching tool_call
+    // responses — they're inherently contextual and the cache doesn't
+    // preserve the tool_calls array, so a cache hit would return a
+    // content-only response with finish_reason:stop, breaking tool flow.
+    if (ckey && !toolCalls.length) cacheSet(ckey, { text: allText, thinking: allThinking });
 
     const message = { role: 'assistant', content: allText || null };
     if (allThinking) message.reasoning_content = allThinking;
@@ -375,10 +402,13 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
           arguments: tc.argumentsJson || tc.arguments || '{}',
         },
       }));
-      // OpenAI convention: content is null when the response is pure tool_calls.
-      // Cascade often emits whitespace/newlines before the first <tool_call>;
-      // strip it so clients that check `content !== null` behave correctly.
-      if (!message.content || !message.content.trim()) message.content = null;
+      // OpenAI convention: content is null when finish_reason is tool_calls.
+      // In text emulation the model often emits an inline answer alongside the
+      // <tool_call> block (e.g., hallucinated weather data). Set content to
+      // null so clients that check `content !== null` behave correctly and the
+      // caller waits for the real tool result rather than showing hallucinated
+      // data.
+      message.content = null;
     }
 
     // Prefer server-reported usage; fall back to chars/4 estimate only when
@@ -400,13 +430,21 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
     const isRateLimit = /rate limit|rate_limit|too many requests|quota/i.test(err.message);
     const isInternal = /internal error occurred.*error id/i.test(err.message);
     if (isAuthFail) reportError(apiKey);
-    if (isRateLimit) { markRateLimited(apiKey); err.isModelError = true; }
+    if (isRateLimit) { markRateLimited(apiKey, 5 * 60 * 1000, modelKey); err.isRateLimit = true; err.isModelError = true; }
     if (isInternal) { reportInternalError(apiKey); err.isModelError = true; }
     if (err.isModelError && !isRateLimit && !isInternal) {
       updateCapability(apiKey, modelKey, false, 'model_error');
     }
     recordRequest(model, false, Date.now() - startTime, apiKey);
     log.error('Chat error:', err.message);
+    // Rate limits → 429 with Retry-After; model errors → 403; others → 502
+    if (isRateLimit) {
+      const rl = isAllRateLimited(modelKey);
+      return {
+        status: 429,
+        body: { error: { message: `${model} 已达速率限制，请稍后重试`, type: 'rate_limit_exceeded', retry_after_ms: rl.retryAfterMs || 60000 } },
+      };
+    }
     return {
       status: err.isModelError ? 403 : 502,
       body: { error: { message: sanitizeText(err.message), type: err.isModelError ? 'model_not_available' : 'upstream_error' } },
@@ -492,13 +530,11 @@ function streamResponse(id, created, model, modelKey, messages, cascadeMessages,
       let reuseEntry = reuseEnabled ? poolCheckout(fpBefore) : null;
       if (reuseEntry) log.info(`Chat: cascade reuse HIT cascadeId=${reuseEntry.cascadeId.slice(0, 8)}… stream model=${model}`);
 
-      // Tool-call stream parser: in emulation mode every text delta flows
-      // through here so we can intercept <tool_call>...</tool_call> blocks
-      // before they leak out as content. Plain text deltas are passed
-      // through unchanged. Tool calls are emitted as OpenAI delta.tool_calls
-      // chunks when a block closes, and the final finish_reason switches to
-      // "tool_calls" if any were seen.
-      const toolParser = emulateTools ? new ToolCallStreamParser() : null;
+      // Always strip <tool_call>/<tool_result> blocks in Cascade mode.
+      // In emulation mode, parsed calls are emitted as OpenAI tool_calls.
+      // In non-emulation mode, blocks are silently stripped (defense-in-depth
+      // against Cascade's system prompt inducing tool markup).
+      const toolParser = useCascade ? new ToolCallStreamParser() : null;
       const collectedToolCalls = [];
 
       // Streaming path sanitizers. Every text/thinking delta flows through a
@@ -550,10 +586,15 @@ function streamResponse(id, created, model, modelKey, messages, cascadeMessages,
           if (toolParser) {
             const { text: safe, toolCalls: done } = toolParser.feed(chunk.text);
             safeText = safe;
-            for (const tc of done) {
-              const idx = collectedToolCalls.length;
-              collectedToolCalls.push(tc);
-              emitToolCallDelta(tc, idx);
+            // Only emit tool_call deltas when emulating — otherwise the
+            // parsed calls came from Cascade's built-in tools and are
+            // silently discarded.
+            if (emulateTools) {
+              for (const tc of done) {
+                const idx = collectedToolCalls.length;
+                collectedToolCalls.push(tc);
+                emitToolCallDelta(tc, idx);
+              }
             }
           }
           if (safeText) emitContent(pathStreamText.feed(safeText));
@@ -608,10 +649,12 @@ function streamResponse(id, created, model, modelKey, messages, cascadeMessages,
             if (toolParser) {
               const tail = toolParser.flush();
               if (tail.text) emitContent(pathStreamText.feed(tail.text));
-              for (const tc of tail.toolCalls) {
-                const idx = collectedToolCalls.length;
-                collectedToolCalls.push(tc);
-                emitToolCallDelta(tc, idx);
+              if (emulateTools) {
+                for (const tc of tail.toolCalls) {
+                  const idx = collectedToolCalls.length;
+                  collectedToolCalls.push(tc);
+                  emitToolCallDelta(tc, idx);
+                }
               }
             }
             emitContent(pathStreamText.flush());
@@ -648,7 +691,7 @@ function streamResponse(id, created, model, modelKey, messages, cascadeMessages,
                 choices: [], usage });
             }
             if (!res.writableEnded) { res.write('data: [DONE]\n\n'); res.end(); }
-            if (ckey && (accText || accThinking)) {
+            if (ckey && !collectedToolCalls.length && (accText || accThinking)) {
               cacheSet(ckey, { text: accText, thinking: accThinking });
             }
             return;
@@ -659,15 +702,15 @@ function streamResponse(id, created, model, modelKey, messages, cascadeMessages,
             const isRateLimit = /rate limit|rate_limit|too many requests|quota/i.test(err.message);
             const isInternal = /internal error occurred.*error id/i.test(err.message);
             if (isAuthFail) reportError(currentApiKey);
-            if (isRateLimit) { markRateLimited(currentApiKey); err.isModelError = true; }
+            if (isRateLimit) { markRateLimited(currentApiKey, 5 * 60 * 1000, modelKey); err.isRateLimit = true; err.isModelError = true; }
             if (isInternal) { reportInternalError(currentApiKey); err.isModelError = true; }
             if (err.isModelError && !isRateLimit && !isInternal) {
               updateCapability(currentApiKey, modelKey, false, 'model_error');
             }
-            // Retry only if nothing has been streamed yet AND it's a model error
-            if (!hadSuccess && err.isModelError) {
+            // Retry only if nothing has been streamed yet AND it's a retryable error
+            if (!hadSuccess && (err.isModelError || isRateLimit)) {
               const tag = isRateLimit ? 'rate_limit' : isInternal ? 'internal_error' : 'model_error';
-              log.warn(`Account ${acct.email} failed (${tag}), trying next`);
+              log.warn(`Account ${acct.email} failed (${tag}) on ${model}, trying next`);
               continue;
             }
             break;
@@ -682,7 +725,11 @@ function streamResponse(id, created, model, modelKey, messages, cascadeMessages,
             send({ id, object: 'chat.completion.chunk', created, model,
               choices: [{ index: 0, delta: { role: 'assistant', content: '' }, finish_reason: null }] });
           }
-          const errMsg = sanitizeText(lastErr?.message || 'no accounts');
+          // Check if failure is due to all accounts being rate-limited
+          const rl = isAllRateLimited(modelKey);
+          const errMsg = rl.allLimited
+            ? `${model} 所有账号均已达速率限制，请 ${Math.ceil(rl.retryAfterMs / 1000)} 秒后重试`
+            : sanitizeText(lastErr?.message || 'no accounts');
           send({ id, object: 'chat.completion.chunk', created, model,
             choices: [{ index: 0, delta: { content: `\n[Error: ${errMsg}]` }, finish_reason: 'stop' }] });
           res.write('data: [DONE]\n\n');

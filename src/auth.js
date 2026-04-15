@@ -272,7 +272,7 @@ export function getApiKey(excludeKeys = [], modelKey = null) {
   for (const a of accounts) {
     if (a.status !== 'active') continue;
     if (excludeKeys.includes(a.apiKey)) continue;
-    if (a.rateLimitedUntil && a.rateLimitedUntil > now) continue;
+    if (isRateLimitedForModel(a, modelKey, now)) continue;
     const limit = rpmLimitFor(a);
     if (limit <= 0) continue; // expired tier
     const used = pruneRpmHistory(a, now);
@@ -314,7 +314,7 @@ export function acquireAccountByKey(apiKey, modelKey = null) {
   const a = accounts.find(x => x.apiKey === apiKey);
   if (!a) return null;
   if (a.status !== 'active') return null;
-  if (a.rateLimitedUntil && a.rateLimitedUntil > now) return null;
+  if (isRateLimitedForModel(a, modelKey, now)) return null;
   const limit = rpmLimitFor(a);
   if (limit <= 0) return null;
   const used = pruneRpmHistory(a, now);
@@ -368,14 +368,39 @@ export async function ensureLsForAccount(accountId) {
 }
 
 /**
- * Mark an account as rate-limited for a duration (default 1 hour).
- * The account stays 'active' but is skipped until the cooldown expires.
+ * Mark an account as rate-limited for a duration (default 5 min).
+ * When `modelKey` is provided, only that model is blocked on this account —
+ * other models remain routable. When omitted, the entire account is blocked
+ * (legacy behaviour, used by generic 429 responses).
  */
-export function markRateLimited(apiKey, durationMs = 60 * 60 * 1000) {
+export function markRateLimited(apiKey, durationMs = 5 * 60 * 1000, modelKey = null) {
   const account = accounts.find(a => a.apiKey === apiKey);
   if (!account) return;
-  account.rateLimitedUntil = Date.now() + durationMs;
-  log.warn(`Account ${account.id} (${account.email}) rate-limited for ${Math.round(durationMs / 60000)} min`);
+  const until = Date.now() + durationMs;
+  if (modelKey) {
+    if (!account._modelRateLimits) account._modelRateLimits = {};
+    account._modelRateLimits[modelKey] = until;
+    log.warn(`Account ${account.id} (${account.email}) rate-limited on ${modelKey} for ${Math.round(durationMs / 60000)} min`);
+  } else {
+    account.rateLimitedUntil = until;
+    log.warn(`Account ${account.id} (${account.email}) rate-limited (all models) for ${Math.round(durationMs / 60000)} min`);
+  }
+}
+
+/**
+ * Check if an account is rate-limited for a specific model.
+ */
+function isRateLimitedForModel(account, modelKey, now) {
+  // Global rate limit
+  if (account.rateLimitedUntil && account.rateLimitedUntil > now) return true;
+  // Per-model rate limit
+  if (modelKey && account._modelRateLimits) {
+    const until = account._modelRateLimits[modelKey];
+    if (until && until > now) return true;
+    // Clean up expired entries
+    if (until && until <= now) delete account._modelRateLimits[modelKey];
+  }
+  return false;
 }
 
 /**
@@ -422,6 +447,33 @@ export function reportInternalError(apiKey) {
 
 // ─── Status ────────────────────────────────────────────────
 
+/**
+ * Check if every eligible account is currently rate-limited for a given model.
+ * Returns { allLimited, retryAfterMs } — callers can use retryAfterMs to set
+ * a Retry-After header for 429 responses.
+ */
+export function isAllRateLimited(modelKey) {
+  const now = Date.now();
+  let soonestExpiry = Infinity;
+  let anyEligible = false;
+  for (const a of accounts) {
+    if (a.status !== 'active') continue;
+    if (modelKey && !isModelAllowedForAccount(a, modelKey)) continue;
+    anyEligible = true;
+    if (!isRateLimitedForModel(a, modelKey, now)) return { allLimited: false };
+    // Track the soonest expiry across both global and per-model limits
+    if (a.rateLimitedUntil && a.rateLimitedUntil > now) {
+      soonestExpiry = Math.min(soonestExpiry, a.rateLimitedUntil);
+    }
+    if (modelKey && a._modelRateLimits?.[modelKey] > now) {
+      soonestExpiry = Math.min(soonestExpiry, a._modelRateLimits[modelKey]);
+    }
+  }
+  if (!anyEligible) return { allLimited: false };
+  const retryAfterMs = soonestExpiry === Infinity ? 60000 : Math.max(1000, soonestExpiry - now);
+  return { allLimited: true, retryAfterMs };
+}
+
 export function isAuthenticated() {
   return accounts.some(a => a.status === 'active');
 }
@@ -446,6 +498,9 @@ export function getAccountList() {
       lastProbed: a.lastProbed || 0,
       rateLimitedUntil: a.rateLimitedUntil || 0,
       rateLimited: !!(a.rateLimitedUntil && a.rateLimitedUntil > now),
+      modelRateLimits: a._modelRateLimits ? Object.fromEntries(
+        Object.entries(a._modelRateLimits).filter(([, v]) => v > now)
+      ) : {},
       rpmUsed,
       rpmLimit,
       credits: a.credits || null,
@@ -562,7 +617,7 @@ export async function probeAccount(id) {
   for (const modelKey of canaries) {
     const info = getModelInfo(modelKey);
     if (!info) continue;
-    const useCascade = !!(info.modelUid && info.enumValue === 0);
+    const useCascade = !!info.modelUid;
     const client = new WindsurfClient(account.apiKey, port, csrf);
     try {
       if (useCascade) {

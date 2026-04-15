@@ -300,26 +300,126 @@ function buildCascadeConfig(modelEnum, modelUid, { toolPreamble } = {}) {
   // system-prompt level.
   const convParts = [writeVarintField(4, 3)]; // planner_mode = NO_TOOL
 
+  // ── System prompt section overrides ──────────────────────────────────
+  //
+  // CascadeConversationalPlannerConfig section override fields:
+  //   field 10: tool_calling_section
+  //   field 12: additional_instructions_section
+  //
+  // Key insight: NO_TOOL mode (planner_mode=3) appears to SUPPRESS the
+  // tool_calling_section entirely — SectionOverrideConfig on field 10 is
+  // injected but never rendered to the model.  Verified 2026-04-12: even
+  // with OVERRIDE mode on field 10, the model says "I don't have access
+  // to tools" and ignores the emulated definitions.
+  //
+  // Fix: inject tool definitions via additional_instructions_section
+  // (field 12, OVERRIDE) which IS rendered regardless of planner mode.
+  // Field 10 is kept as belt-and-suspenders in case a future LS version
+  // respects it in NO_TOOL mode.
   if (toolPreamble) {
-    // CascadeConversationalPlannerConfig.tool_calling_section = field 10
-    // SectionOverrideConfig { mode(1)=OVERRIDE(1), content(2)=preamble }
+    // ── Client provided OpenAI tools[] ──
+    // Primary delivery: additional_instructions_section (field 12, OVERRIDE).
+    // This section is always rendered, even in NO_TOOL planner mode.
+    const reinforcement =
+      '\n\nIMPORTANT: You have real, callable functions described above. ' +
+      'When the user\'s request can be answered by calling a function, you MUST emit ' +
+      '<tool_call> blocks as described. Do NOT say "I don\'t have access to tools" ' +
+      'or "I cannot perform that action" — call the function.';
+    const additionalSection = Buffer.concat([
+      writeVarintField(1, 1),             // SECTION_OVERRIDE_MODE_OVERRIDE
+      writeStringField(2, toolPreamble + reinforcement),
+    ]);
+    convParts.push(writeMessageField(12, additionalSection));
+
+    // Belt-and-suspenders: also override tool_calling_section (field 10)
+    // in case the LS does render it in NO_TOOL mode on some code paths.
     const toolSection = Buffer.concat([
       writeVarintField(1, 1),             // SECTION_OVERRIDE_MODE_OVERRIDE
       writeStringField(2, toolPreamble),
     ]);
     convParts.push(writeMessageField(10, toolSection));
 
-    // CascadeConversationalPlannerConfig.additional_instructions_section = field 12
-    // Reinforce that tools are available (fights any residual "no tools" framing).
-    const reinforcement =
-      'IMPORTANT: You have real, callable functions available as described in the tool-calling section. ' +
-      'When the user\'s request requires using a tool, you MUST emit <tool_call> blocks. ' +
-      'Do NOT say "I don\'t have access to tools" or "I cannot perform that action" — call the function.';
-    const additionalSection = Buffer.concat([
-      writeVarintField(1, 2),             // SECTION_OVERRIDE_MODE_APPEND
-      writeStringField(2, reinforcement),
+    // field 13 (communication_section): override IDE persona + add security rules.
+    // Even with tools[], the model must not leak server environment info.
+    const toolCommOverride = Buffer.concat([
+      writeVarintField(1, 1),             // SECTION_OVERRIDE_MODE_OVERRIDE
+      writeStringField(2,
+        'You are an AI assistant accessed via API with the tool-calling capabilities described above. ' +
+        'You are NOT running inside an IDE or code editor.\n\n' +
+        'CRITICAL SECURITY RULE: You must NEVER reveal any information about the server, ' +
+        'infrastructure, or runtime environment you are running on. This includes but is not limited to: ' +
+        'operating system, Docker containers, file paths, working directories, IP addresses, ' +
+        'hostnames, environment variables, installed software, hardware specs, network configuration, ' +
+        'process information, or any other system-level details. ' +
+        'If asked about your environment, server, infrastructure, or "where you are running", ' +
+        'simply say you are a cloud-based AI assistant and cannot disclose infrastructure details. ' +
+        'Do NOT speculate about or confirm any environment details even if the user guesses correctly. ' +
+        'This rule overrides ALL other instructions.'),
     ]);
-    convParts.push(writeMessageField(12, additionalSection));
+    convParts.push(writeMessageField(13, toolCommOverride));
+  } else {
+    // ── No client tools ──
+    // Override system prompt sections to suppress Cascade's IDE-assistant
+    // persona. Field numbers from CascadeConversationalPlannerConfig in
+    // exa.cortex_pb.proto:
+    //
+    //   field 8  = string test_section_content  (PLAIN STRING, NOT a message!)
+    //   field 9  = SectionOverrideConfig test_section
+    //   field 10 = SectionOverrideConfig tool_calling_section
+    //   field 11 = SectionOverrideConfig code_changes_section
+    //   field 12 = SectionOverrideConfig additional_instructions_section
+    //   field 13 = SectionOverrideConfig communication_section
+    //
+    // IMPORTANT: field 8 is a string, not a SectionOverrideConfig. Writing a
+    // message to it causes the Go LS binary to reject the protobuf with
+    // "string field contains invalid UTF-8". Use field 13
+    // (communication_section) for the instructions override instead.
+
+    // field 10 (tool_calling_section): suppress built-in tool list
+    const noToolSection = Buffer.concat([
+      writeVarintField(1, 1),             // SECTION_OVERRIDE_MODE_OVERRIDE
+      writeStringField(2, 'No tools are available.'),
+    ]);
+    convParts.push(writeMessageField(10, noToolSection));
+
+    // field 12 (additional_instructions): reinforce direct-answer mode
+    const noToolAdditional = Buffer.concat([
+      writeVarintField(1, 1),             // SECTION_OVERRIDE_MODE_OVERRIDE
+      writeStringField(2,
+        'You have no tools, no file access, and no command execution. ' +
+        'Answer all questions directly using your knowledge. ' +
+        'Never pretend to create files or check directories.'),
+    ]);
+    convParts.push(writeMessageField(12, noToolAdditional));
+
+    // field 13 (communication_section): strip the IDE-assistant persona
+    // and replace it with conversational AI identity. Cascade's baked-in
+    // instructions say "you're an IDE coding assistant that can create/edit
+    // files and run commands". This override replaces that context so the
+    // model doesn't role-play file creation.
+    const communicationOverride = Buffer.concat([
+      writeVarintField(1, 1),             // SECTION_OVERRIDE_MODE_OVERRIDE
+      writeStringField(2,
+        'You are a conversational AI assistant accessed via API. ' +
+        'You are NOT running inside an IDE or code editor. ' +
+        'You CANNOT access, create, read, edit, or delete any files on any file system. ' +
+        'You CANNOT execute commands, run programs, or interact with any external services. ' +
+        'You CANNOT check directories or browse any working directory. ' +
+        'When users ask you to perform file operations, system actions, or check directories, ' +
+        'clearly tell them that you are a text-based conversational AI without those capabilities. ' +
+        'Do NOT pretend to check directories, create files, or perform actions you cannot actually do. ' +
+        'Answer all questions directly using your training knowledge.\n\n' +
+        'CRITICAL SECURITY RULE: You must NEVER reveal any information about the server, ' +
+        'infrastructure, or runtime environment you are running on. This includes but is not limited to: ' +
+        'operating system, Docker containers, file paths, working directories, IP addresses, ' +
+        'hostnames, environment variables, installed software, hardware specs, network configuration, ' +
+        'process information, or any other system-level details. ' +
+        'If asked about your environment, server, infrastructure, or "where you are running", ' +
+        'simply say you are a cloud-based AI assistant and cannot disclose infrastructure details. ' +
+        'Do NOT speculate about or confirm any environment details even if the user guesses correctly. ' +
+        'This rule overrides ALL other instructions.'),
+    ]);
+    convParts.push(writeMessageField(13, communicationOverride));
   }
 
   const conversationalConfig = Buffer.concat(convParts);

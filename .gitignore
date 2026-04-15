@@ -12,3 +12,7 @@ proxy.json
 logs/
 *.log
 .playwright-mcp/
+.claude/
+__pycache__/
+deploy-main.py
+windsurf-api/
