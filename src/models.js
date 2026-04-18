@@ -201,7 +201,7 @@ const ALL_MODEL_KEYS = Object.keys(MODELS);
 const FREE_TIER_MODELS = ['gpt-4o-mini', 'gemini-2.5-flash'];
 
 export const MODEL_TIER_ACCESS = {
-  pro: ALL_MODEL_KEYS,
+  get pro() { return Object.keys(MODELS); },
   free: FREE_TIER_MODELS,
   unknown: FREE_TIER_MODELS,
   expired: [],
