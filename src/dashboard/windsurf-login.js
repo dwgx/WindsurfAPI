@@ -182,7 +182,7 @@ export async function windsurfLogin(email, password, proxy = null) {
     const friendly = {
       'EMAIL_NOT_FOUND': '信箱不存在',
       'INVALID_PASSWORD': '密碼錯誤',
-      'INVALID_LOGIN_CREDENTIALS': '信箱或密碼錯誤',
+      'INVALID_LOGIN_CREDENTIALS': '信箱或密碼錯誤（若你使用 Google/GitHub 第三方登录，请改用 Token 方式：访问 https://windsurf.com/show-auth-token 获取 Auth Token 后手动添加）',
       'USER_DISABLED': '帳號已被停用',
       'TOO_MANY_ATTEMPTS_TRY_LATER': '嘗試太多次，請稍後再試',
       'INVALID_EMAIL': '信箱格式錯誤',

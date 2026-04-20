@@ -979,6 +979,11 @@ tbody tr:hover td { background: var(--surface-2); }
             <input id="wl-password" class="input" type="password" placeholder="••••••••" autocomplete="off" onkeydown="if(event.key==='Enter')App.windsurfLogin()">
           </div>
         </div>
+        <div style="padding:8px 12px;margin-bottom:12px;background:var(--surface-2);border-radius:var(--radius);font-size:12px;color:var(--text-muted);line-height:1.6">
+          仅支持<b style="color:var(--text)">邮箱+密码</b>注册的账号。若你通过 Google / GitHub 第三方登录 Windsurf，请前往
+          <a href="https://windsurf.com/show-auth-token" target="_blank" style="color:var(--accent)">windsurf.com/show-auth-token</a>
+          获取 Auth Token，然后在下方「账号管理」面板用 Token 方式添加。
+        </div>
         <div class="field-row-actions">
           <button class="btn btn-primary" onclick="App.windsurfLogin()" id="wl-btn">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>

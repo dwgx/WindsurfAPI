@@ -162,6 +162,7 @@ export class WindsurfClient {
   async cascadeChat(messages, modelEnum, modelUid, opts = {}) {
     const { onChunk, onEnd, onError, signal, reuseEntry, toolPreamble } = opts;
     const aborted = () => signal?.aborted;
+    const inputChars = messages.reduce((n, m) => n + (typeof m?.content === 'string' ? m.content.length : 0), 0);
 
     log.debug(`CascadeChat: uid=${modelUid} enum=${modelEnum} msgs=${messages.length} reuse=${!!reuseEntry}`);
 
@@ -352,10 +353,11 @@ export class WindsurfClient {
         //       what we have as a complete response rather than waiting
         //       out the full 180s maxWait with the client hanging.
         const elapsed = Date.now() - startTime;
-        if (elapsed > 30_000 && sawActive && !sawText && seenToolCallIds.size === 0) {
-          log.warn(`Cascade cold stall: ${elapsed}ms active without any text or tool call, bailing`);
+        const coldStallMs = Math.min(90_000, 30_000 + Math.floor(inputChars / 2000) * 5_000);
+        if (elapsed > coldStallMs && sawActive && !sawText && seenToolCallIds.size === 0) {
+          log.warn(`Cascade cold stall: ${elapsed}ms active without any text or tool call (threshold=${coldStallMs}ms, inputChars=${inputChars}), bailing`);
           endReason = 'stall_cold';
-          const err = new Error('Cascade planner stalled — no output after 30s');
+          const err = new Error(`Cascade planner stalled — no output after ${Math.round(coldStallMs / 1000)}s`);
           err.isModelError = true;
           throw err;
         }

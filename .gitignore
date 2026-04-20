@@ -16,3 +16,8 @@ logs/
 __pycache__/
 deploy-main.py
 windsurf-api/
+codeium.zip
+codeium_ext/
+bugsy/
+windsurf-grpc/
+*.db
