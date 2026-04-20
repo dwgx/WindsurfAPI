@@ -472,7 +472,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
         account: account ? { id: account.id, email: account.email, status: account.status } : null,
       });
     } catch (err) {
-      return json(res, 400, { error: err.message });
+      return json(res, 400, { error: err.message, isAuthFail: !!err.isAuthFail, firebaseCode: err.firebaseCode });
     }
   }
 

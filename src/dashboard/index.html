@@ -2000,13 +2000,23 @@ const App = {
         entry.status = 'error: ' + (r.error || 'unknown');
         const rd = document.getElementById('wl-result');
         rd.classList.remove('hidden');
+        const actionBlock = r.isAuthFail ? `
+          <div style="margin-top:12px;padding:12px;background:var(--surface-2);border-radius:var(--radius);border-left:3px solid var(--accent)">
+            <div style="font-weight:600;margin-bottom:8px">换个方式试试</div>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <button class="btn btn-sm" style="background:#4285F4;color:#fff" onclick="App.oauthLogin('google')">Google 登录</button>
+              <button class="btn btn-sm" style="background:#24292e;color:#fff" onclick="App.oauthLogin('github')">GitHub 登录</button>
+              <a class="btn btn-sm btn-outline" href="https://windsurf.com/show-auth-token" target="_blank">复制 Auth Token</a>
+              <button class="btn btn-sm btn-ghost" onclick="document.querySelector('[data-panel=accounts]').click();setTimeout(()=>document.getElementById('acc-key')?.focus(),100)">去账号管理粘贴 Token</button>
+            </div>
+          </div>` : '';
         rd.innerHTML = `
           <div class="section-header">
             <div>
               <div class="section-title" style="color:var(--error)">✗ 登录失败</div>
             </div>
           </div>
-          <div class="section-body"><p class="text-sm">${this.esc(r.error || '未知错误')}</p></div>`;
+          <div class="section-body"><p class="text-sm">${this.esc(r.error || '未知错误')}</p>${actionBlock}</div>`;
         this.toast(r.error || '登录失败', 'error');
       }
     } catch (err) {

@@ -179,15 +179,19 @@ export async function windsurfLogin(email, password, proxy = null) {
 
   if (fbRes.data.error) {
     const msg = fbRes.data.error.message || 'Unknown Firebase error';
+    const oauthHint = '若你用 Google/GitHub 注册的 Windsurf 账号 此处密码登录不适用 请用页面顶部的 Google / GitHub 登录按钮 或访问 https://windsurf.com/show-auth-token 复制 Auth Token 后在「账号管理」页手动添加';
     const friendly = {
-      'EMAIL_NOT_FOUND': '信箱不存在',
-      'INVALID_PASSWORD': '密碼錯誤',
-      'INVALID_LOGIN_CREDENTIALS': '信箱或密碼錯誤（若你使用 Google/GitHub 第三方登录，请改用 Token 方式：访问 https://windsurf.com/show-auth-token 获取 Auth Token 后手动添加）',
-      'USER_DISABLED': '帳號已被停用',
-      'TOO_MANY_ATTEMPTS_TRY_LATER': '嘗試太多次，請稍後再試',
-      'INVALID_EMAIL': '信箱格式錯誤',
+      'EMAIL_NOT_FOUND': `该邮箱未注册邮箱密码登录方式（${oauthHint}）`,
+      'INVALID_PASSWORD': `密码错误（${oauthHint}）`,
+      'INVALID_LOGIN_CREDENTIALS': `邮箱或密码错误（${oauthHint}）`,
+      'USER_DISABLED': '账号已被停用',
+      'TOO_MANY_ATTEMPTS_TRY_LATER': '尝试太多次 请稍后再试',
+      'INVALID_EMAIL': '邮箱格式错误',
     }[msg] || msg;
-    throw new Error(`Firebase 登入失敗: ${friendly}`);
+    const err = new Error(`Firebase 登入失败: ${friendly}`);
+    err.firebaseCode = msg;
+    err.isAuthFail = ['EMAIL_NOT_FOUND', 'INVALID_PASSWORD', 'INVALID_LOGIN_CREDENTIALS'].includes(msg);
+    throw err;
   }
 
   const idToken = fbRes.data.idToken;
