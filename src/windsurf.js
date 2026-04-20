@@ -464,12 +464,26 @@ function buildCascadeConfig(modelEnum, modelUid, { toolPreamble } = {}) {
     writeMessageField(2, conversationalConfig),   // conversational = 2
   ];
 
+  // Set BOTH the modern uid field (35) and the deprecated enum field (15)
+  // when available. Seen in the wild (issue #8): free-tier / fresh accounts
+  // report "user status is nil" during InitializeCascadePanelState and then
+  // the server rejects the chat with "neither PlanModel nor RequestedModel
+  // specified" if only field 35 is populated. Setting both covers whichever
+  // field the upstream validator actually reads for that account state.
+  // plan_model_uid (field 34) is also set as a safety fallback — some
+  // backends require the plan model when user status has no tier info.
   if (modelUid) {
-    // field 35: requested_model_uid (string)
-    plannerParts.push(writeStringField(35, modelUid));
-  } else {
-    // field 15: requested_model_deprecated (ModelOrAlias { model = 1 })
+    plannerParts.push(writeStringField(35, modelUid));   // requested_model_uid
+    plannerParts.push(writeStringField(34, modelUid));   // plan_model_uid (safety)
+  }
+  if (modelEnum && modelEnum > 0) {
+    // requested_model_deprecated = ModelOrAlias { model = 1 (enum) }
     plannerParts.push(writeMessageField(15, writeVarintField(1, modelEnum)));
+    // plan_model_deprecated = Model (enum directly at field 1)
+    plannerParts.push(writeVarintField(1, modelEnum));
+  }
+  if (!modelUid && !modelEnum) {
+    throw new Error('buildCascadeConfig: at least one of modelUid or modelEnum must be provided');
   }
 
   const plannerConfig = Buffer.concat(plannerParts);
