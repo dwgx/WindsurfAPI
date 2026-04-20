@@ -950,7 +950,7 @@ window._firebaseOAuth = async function(provider) {
       <span id="lang-indicator">中</span> / EN
     </button>
     <span>© Windsurf</span>
-    <span class="ver">v1.1.0</span>
+    <span class="ver" id="sidebar-ver" title="版本">v1.2.0</span>
   </div>
 </aside>
 
@@ -1812,6 +1812,21 @@ const App = {
 
   async loadOverview() {
     const d = await this.api('GET', '/overview');
+    // Fetch /health (no auth) in parallel for version/commit info
+    try {
+      const h = await fetch('/health').then(r => r.json()).catch(() => null);
+      if (h) {
+        const sv = document.getElementById('sidebar-ver');
+        if (sv) {
+          const label = h.commit ? `v${h.version} · ${h.commit}` : `v${h.version}`;
+          sv.textContent = label;
+          sv.title = h.commitMessage
+            ? `${h.commitMessage}\n${h.commitDate || ''}${h.branch ? ` (${h.branch})` : ''}`
+            : `版本 ${h.version}`;
+        }
+        this._versionInfo = h;
+      }
+    } catch {}
     const uptime = d.uptime ? this.fmtDuration(d.uptime) : '-';
     const ls = d.langServer || {};
     const poolCount = (ls.instances || []).length || (ls.running ? 1 : 0);

@@ -138,12 +138,14 @@ async function waitForAccount(tried, signal, maxWaitMs = QUEUE_MAX_WAIT_MS, mode
 export async function handleChatCompletions(body) {
   const {
     model: reqModel,
-    messages,
     stream = false,
     max_tokens,
     tools,
     tool_choice,
   } = body;
+  // `messages` is `let` not `const` so the identity-prompt injection below
+  // can prepend a system turn for the legacy path too.
+  let messages = body.messages;
 
   const modelKey = resolveModel(reqModel || config.defaultModel);
   const modelInfo = getModelInfo(modelKey);
@@ -181,11 +183,16 @@ export async function handleChatCompletions(body) {
   // ── Model identity prompt injection ──
   // When enabled, prepend a system message so the model identifies itself as
   // the requested model (e.g. "I am Claude Opus 4.6") instead of leaking the
-  // Cascade/Windsurf backend identity.
+  // Cascade/Windsurf backend identity. Inject into BOTH messages (for legacy
+  // RawGetChatMessage path) and cascadeMessages (Cascade path) — they diverge
+  // once tool-emulation rewrites the Cascade path, but the system identity
+  // should be identical in both.
   if (isExperimentalEnabled('modelIdentityPrompt') && modelInfo?.provider) {
     const identityText = buildIdentitySystemMessage(displayModel, modelInfo.provider);
     if (identityText) {
-      cascadeMessages = [{ role: 'system', content: identityText }, ...cascadeMessages];
+      const sysMsg = { role: 'system', content: identityText };
+      cascadeMessages = [sysMsg, ...cascadeMessages];
+      messages = [sysMsg, ...messages];
     }
   }
 

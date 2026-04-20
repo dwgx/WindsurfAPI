@@ -11,7 +11,8 @@
  */
 
 import http from 'http';
-import { readFileSync } from 'fs';
+import { readFileSync, existsSync } from 'fs';
+import { execSync } from 'child_process';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
 import {
@@ -25,6 +26,25 @@ import { handleDashboardApi } from './dashboard/api.js';
 import { config, log } from './config.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = join(__dirname, '..');
+
+// Cache version info at boot — git queries are slow and this never changes
+// until a restart (and self-update restarts us, so always fresh).
+const VERSION_INFO = (() => {
+  let pkgVersion = '1.2.0';
+  try {
+    const pkg = JSON.parse(readFileSync(join(REPO_ROOT, 'package.json'), 'utf-8'));
+    if (pkg.version) pkgVersion = pkg.version;
+  } catch {}
+  let commit = '', commitMessage = '', commitDate = '', branch = 'unknown';
+  if (existsSync(join(REPO_ROOT, '.git'))) {
+    try { commit = execSync('git rev-parse --short HEAD', { cwd: REPO_ROOT, timeout: 2000 }).toString().trim(); } catch {}
+    try { commitMessage = execSync('git log -1 --pretty=format:%s', { cwd: REPO_ROOT, timeout: 2000 }).toString().trim(); } catch {}
+    try { commitDate = execSync('git log -1 --pretty=format:%cI', { cwd: REPO_ROOT, timeout: 2000 }).toString().trim(); } catch {}
+    try { branch = execSync('git rev-parse --abbrev-ref HEAD', { cwd: REPO_ROOT, timeout: 2000 }).toString().trim(); } catch {}
+  }
+  return { version: pkgVersion, commit, commitMessage, commitDate, branch };
+})();
 
 function readBody(req) {
   return new Promise((resolve, reject) => {
@@ -61,7 +81,11 @@ async function route(req, res) {
     return json(res, 200, {
       status: 'ok',
       provider: 'WindsurfAPI bydwgx1337',
-      version: '1.2.0',
+      version: VERSION_INFO.version,
+      commit: VERSION_INFO.commit,
+      commitMessage: VERSION_INFO.commitMessage,
+      commitDate: VERSION_INFO.commitDate,
+      branch: VERSION_INFO.branch,
       uptime: Math.round(process.uptime()),
       accounts: counts,
     });

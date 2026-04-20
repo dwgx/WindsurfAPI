@@ -1,6 +1,6 @@
 {
   "name": "windsurf-api",
-  "version": "1.0.0",
+  "version": "1.3.0",
   "description": "Windsurf to OpenAI-compatible API proxy",
   "type": "module",
   "main": "src/index.js",
