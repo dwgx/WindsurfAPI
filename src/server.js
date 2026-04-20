@@ -19,6 +19,7 @@ import {
   addAccountByEmail, addAccountByToken, addAccountByKey, removeAccount,
 } from './auth.js';
 import { handleChatCompletions } from './handlers/chat.js';
+import { handleMessages } from './handlers/messages.js';
 import { handleModels } from './handlers/models.js';
 import { handleDashboardApi } from './dashboard/api.js';
 import { config, log } from './config.js';
@@ -183,6 +184,25 @@ async function route(req, res) {
     }
 
     const result = await handleChatCompletions(body);
+    if (result.stream) {
+      res.writeHead(result.status, { 'Access-Control-Allow-Origin': '*', ...result.headers });
+      await result.handler(res);
+    } else {
+      json(res, result.status, result.body);
+    }
+    return;
+  }
+
+  // Anthropic Messages API — Claude Code compatibility
+  if (path === '/v1/messages' && method === 'POST') {
+    if (!isAuthenticated()) {
+      return json(res, 503, { type: 'error', error: { type: 'api_error', message: 'No active accounts' } });
+    }
+    let body;
+    try { body = JSON.parse(await readBody(req)); } catch {
+      return json(res, 400, { type: 'error', error: { type: 'invalid_request_error', message: 'Invalid JSON' } });
+    }
+    const result = await handleMessages(body);
     if (result.stream) {
       res.writeHead(result.status, { 'Access-Control-Allow-Origin': '*', ...result.headers });
       await result.handler(res);
