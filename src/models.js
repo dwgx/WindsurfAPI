@@ -136,7 +136,7 @@ export const MODELS = {
   'qwen-3-coder':                   { name: 'qwen-3-coder',                   provider: 'alibaba', enumValue: 325, credit: 0.5 },
 
   // ── Kimi ────────────────────────────────────────────────
-  'kimi-k2':                        { name: 'kimi-k2',                        provider: 'moonshot', enumValue: 323, credit: 0.5 },
+  'kimi-k2':                        { name: 'kimi-k2',                        provider: 'moonshot', enumValue: 323, modelUid: 'MODEL_KIMI_K2', credit: 0.5 },
   'kimi-k2.5':                      { name: 'kimi-k2.5',                      provider: 'moonshot', enumValue: 0,   modelUid: 'kimi-k2-5', credit: 1 },
 
   // ── GLM ─────────────────────────────────────────────────
