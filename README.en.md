@@ -7,11 +7,12 @@
   <a href="README.md">中文/简体中文</a>
 </p>
 
-# Strict Notice: Any commercial use, resale, paid deployment, or reselling as a relay service is strictly prohibited without the author's explicit written permission.
+# Notice
 
-> This project is currently for authorized use only.
-> Without the author's explicit written permission, it is prohibited to use this project for commercial purposes, paid deployment services, hosting it as a backend for public services, packaging it as a relay service for sale, or reselling it in any form.
-> The author reserves the right to make public statements, collect evidence, and pursue legal action against unauthorized commercial use and distribution.
+> **If you haven't starred and followed**: commercial use, resale, paid deployment, hosting as a backend for public services, or reselling as a relay service is strictly prohibited.
+> **If you have starred and followed**: go ahead, I'll look the other way.
+>
+> The code itself is MIT-licensed (see [LICENSE](LICENSE)); the above is the author's personal stance.
 
 ---
 
@@ -109,10 +110,14 @@ If you are using our public instances (`skiapi.dev`, etc.), you don't need to do
 git clone https://github.com/dwgx/WindsurfAPI.git
 cd WindsurfAPI
 
-# Place the Language Server binary here
+# Language Server binary — one-click download + chmod (from Exafunction/codeium releases)
 mkdir -p /opt/windsurf/data/db
-cp language_server_linux_x64 /opt/windsurf/
-chmod +x /opt/windsurf/language_server_linux_x64
+bash install-ls.sh
+
+# Or use a local binary you already have:
+#   bash install-ls.sh /path/to/language_server_linux_x64
+# Or specify a custom URL:
+#   bash install-ls.sh --url https://example.com/language_server_linux_x64
 
 # ⚠️ Can't see opus-4.7 / other new models?
 # The public Exafunction/codeium release is stuck at v2.12.5 (Jan 2026)
@@ -124,7 +129,7 @@ chmod +x /opt/windsurf/language_server_linux_x64
 #            or /opt/Windsurf/resources/app/extensions/windsurf/bin/language_server_linux_x64
 #   Windows: %APPDATA%\Windsurf\bin\language_server_windows_x64.exe
 #
-# Then install it via the one-click script:
+#   # Install from the local desktop copy:
 #   bash install-ls.sh /path/to/language_server_linux_x64
 #
 # Once swapped, /v1/models will auto-discover the newer catalog from the cloud.

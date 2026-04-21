@@ -1,7 +1,7 @@
 {
   "name": "windsurf-api",
   "version": "1.3.0",
-  "description": "Windsurf to OpenAI-compatible API proxy",
+  "description": "Windsurf to OpenAI + Anthropic compatible API proxy. Turns Windsurf's 107 AI models (Claude, GPT, Gemini, DeepSeek, Grok, Qwen, Kimi, GLM, SWE) into dual-protocol API endpoints. Zero npm deps.",
   "type": "module",
   "main": "src/index.js",
   "scripts": {
@@ -10,5 +10,28 @@
   },
   "engines": {
     "node": ">=20.0.0"
-  }
+  },
+  "license": "MIT",
+  "author": "dwgx <somdhmtb@gmail.com> (https://github.com/dwgx)",
+  "homepage": "https://dwgx.github.io/WindsurfAPI/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/dwgx/WindsurfAPI.git"
+  },
+  "bugs": {
+    "url": "https://github.com/dwgx/WindsurfAPI/issues"
+  },
+  "keywords": [
+    "windsurf",
+    "codeium",
+    "openai",
+    "anthropic",
+    "claude",
+    "gpt",
+    "gemini",
+    "api-proxy",
+    "llm-gateway",
+    "reverse-engineering",
+    "zero-dependency"
+  ]
 }

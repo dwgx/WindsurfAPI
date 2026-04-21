@@ -1,0 +1,25 @@
+name: 功能请求 / Feature Request
+description: 建议一个新功能 / Suggest a new feature
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: 想要什么功能 / What feature?
+      description: 你想加什么 解决什么问题 / What should be added, and what problem does it solve?
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 替代方案 / Alternatives considered
+      description: 现在有没有 workaround 为什么不够好 / Any current workaround? Why is it not enough?
+
+  - type: checkboxes
+    id: willing
+    attributes:
+      label: 是否愿意提 PR / Willing to submit a PR?
+      options:
+        - label: 我想自己实现 / I'd like to implement this myself

@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Windsurf API — Windsurf 的 OpenAI 相容代理服務</title>
-<meta name="description" content="在你的伺服器上無頭運行 Windsurf 的 59 個 AI 模型，透過標準 OpenAI API 端點對外提供服務。多帳號池、管理後台、零依賴。">
+<meta name="description" content="在你的伺服器上無頭運行 Windsurf 的 107 個 AI 模型，同時支援 OpenAI 與 Anthropic 兩套標準 API 端點。多帳號池、管理後台、零依賴。">
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
 :root{
@@ -142,12 +142,12 @@ pre code{color:var(--text)}
 <section class="hero">
   <h1><span>Windsurf API</span></h1>
   <p class="subtitle">
-    Windsurf 的 OpenAI 相容代理服務。在你的伺服器上無頭運行 59 個 AI 模型，透過標準 API 端點對外提供服務。
+    Windsurf 的雙協定代理服務。無頭運行 107 個 AI 模型，同時支援 OpenAI 與 Anthropic 兩套標準 API。
   </p>
   <div class="badges">
     <span class="badge"><span class="dot green"></span> 零依賴</span>
-    <span class="badge"><span class="dot blue"></span> 59 個模型</span>
-    <span class="badge"><span class="dot purple"></span> OpenAI 相容</span>
+    <span class="badge"><span class="dot blue"></span> 107 個模型</span>
+    <span class="badge"><span class="dot purple"></span> OpenAI + Anthropic 相容</span>
   </div>
   <div class="btn-group">
     <a href="https://github.com/dwgx/WindsurfAPI" class="btn btn-primary">GitHub 倉庫</a>
@@ -163,13 +163,13 @@ pre code{color:var(--text)}
     <div class="features">
       <div class="feature">
         <div class="icon i1">API</div>
-        <h3>OpenAI 相容 API</h3>
-        <p>直接替換 /v1/chat/completions 和 /v1/models，可搭配任何 OpenAI SDK 或用戶端使用。</p>
+        <h3>雙協定 API</h3>
+        <p>同時提供 <code>/v1/chat/completions</code>（OpenAI）與 <code>/v1/messages</code>（Anthropic），Claude Code、Cline、Cursor 直接連。</p>
       </div>
       <div class="feature">
-        <div class="icon i2">59</div>
-        <h3>59 個 AI 模型</h3>
-        <p>Claude、GPT、Gemini、DeepSeek、Grok、Qwen、Kimi 及 Windsurf SWE 模型，一個 API 全部存取。</p>
+        <div class="icon i2">107</div>
+        <h3>107 個 AI 模型</h3>
+        <p>Claude Opus / Sonnet、GPT-5 全系、Gemini 3.x、DeepSeek、Grok、Qwen、Kimi、GLM、SWE 一個 API 全部存取。</p>
       </div>
       <div class="feature">
         <div class="icon i3">Pool</div>
@@ -199,7 +199,7 @@ pre code{color:var(--text)}
 <section id="models" style="background:var(--surface2)">
   <div class="container">
     <h2>支援的模型</h2>
-    <p class="section-sub">來自 8 個供應商的 59 個模型，透過一個 API 統一存取</p>
+    <p class="section-sub">來自 9 個供應商的 107 個模型，透過一個 API 統一存取</p>
     <div class="models-grid">
       <div class="model-card">
         <h4>Claude <span class="pv an">Anthropic</span></h4>
@@ -208,17 +208,17 @@ pre code{color:var(--text)}
           <li>claude-4-sonnet / opus</li>
           <li>claude-4.1-opus</li>
           <li>claude-4.5-sonnet / haiku / opus</li>
-          <li>claude-sonnet / opus-4.6</li>
+          <li>claude-sonnet-4.6 / opus-4.6</li>
           <li>claude-code</li>
         </ul>
       </div>
       <div class="model-card">
         <h4>GPT <span class="pv oa">OpenAI</span></h4>
         <ul>
-          <li>gpt-4o<span class="free-tag">免費</span> / 4o-mini<span class="free-tag">免費</span></li>
+          <li>gpt-4o / 4o-mini<span class="free-tag">免費</span></li>
           <li>gpt-4.1 / mini / nano</li>
-          <li>gpt-5 / 5-mini</li>
-          <li>gpt-5.2 / 5.3 / 5.4</li>
+          <li>gpt-5 / 5-mini / 5-codex</li>
+          <li>gpt-5.1 / 5.2</li>
           <li>o3 / o3-pro / o4-mini</li>
         </ul>
       </div>
@@ -227,17 +227,18 @@ pre code{color:var(--text)}
         <ul>
           <li>gemini-2.5-pro / flash<span class="free-tag">免費</span></li>
           <li>gemini-3.0-pro / flash</li>
-          <li>gemini-3.1-pro</li>
+          <li>gemini-3-pro-preview</li>
         </ul>
       </div>
       <div class="model-card">
         <h4>其他 <span class="pv ot">多家</span></h4>
         <ul>
-          <li>deepseek-v3 / r1</li>
-          <li>grok-3 / grok-3-mini</li>
+          <li>deepseek-v3 / v3.1 / r1</li>
+          <li>grok-3 / grok-4 / 4-fast</li>
           <li>qwen-3 / qwen-3-coder</li>
-          <li>kimi-k2 / k2.5</li>
-          <li>swe-1.5 / 1.6</li>
+          <li>kimi-k2 / k2-thinking</li>
+          <li>glm-4.6 / minimax-m2</li>
+          <li>swe-1 / 1.5 / 1-lite</li>
         </ul>
       </div>
     </div>
@@ -269,23 +270,27 @@ pre code{color:var(--text)}
       </div>
 
       <div class="step">
-        <h3>取得 Language Server</h3>
-        <p>從 Windsurf 的 Linux 版本中提取 <code>language_server_linux_x64</code> 二進位檔。</p>
-        <div class="code-section">
-          <div class="code-header"><span>bash</span></div>
-          <pre><code><span class="tc"># 建立目錄並放置二進位檔</span>
-<span class="tw">mkdir -p</span> /opt/windsurf /opt/windsurf/data/db
-<span class="tw">cp</span> language_server_linux_x64 /opt/windsurf/
-<span class="tw">chmod</span> +x /opt/windsurf/language_server_linux_x64</code></pre>
-        </div>
-      </div>
-
-      <div class="step">
         <h3>下載專案</h3>
         <div class="code-section">
           <div class="code-header"><span>bash</span></div>
           <pre><code><span class="tw">git clone</span> <span class="tu">https://github.com/dwgx/WindsurfAPI.git</span>
 <span class="tw">cd</span> WindsurfAPI</code></pre>
+        </div>
+      </div>
+
+      <div class="step">
+        <h3>安裝 Language Server</h3>
+        <p>倉庫自帶 <code>install-ls.sh</code> 一鍵腳本，預設從 Exafunction release 下載並安裝到 <code>/opt/windsurf/</code>。</p>
+        <div class="code-section">
+          <div class="code-header"><span>bash</span></div>
+          <pre><code><span class="tc"># 一鍵安裝（自動下載最新版 LS binary）</span>
+<span class="tw">bash</span> install-ls.sh
+
+<span class="tc"># 或指定自訂 URL</span>
+<span class="tw">bash</span> install-ls.sh --url https://example.com/language_server_linux_x64
+
+<span class="tc"># 或使用本地已有檔案</span>
+<span class="tw">bash</span> install-ls.sh --file ./language_server_linux_x64</code></pre>
         </div>
       </div>
 
@@ -380,8 +385,16 @@ pre code{color:var(--text)}
           <div class="desc">運行時間、帳號池狀態、成功率</div>
         </div>
         <div class="panel-tag">
+          <div class="name">登入取號</div>
+          <div class="desc">Email/密碼直接註冊 Windsurf 帳號</div>
+        </div>
+        <div class="panel-tag">
           <div class="name">帳號管理</div>
-          <div class="desc">新增、刪除、停用、標籤編輯</div>
+          <div class="desc">新增、刪除、停用、標籤編輯、Credits</div>
+        </div>
+        <div class="panel-tag">
+          <div class="name">模型控制</div>
+          <div class="desc">全域/帳號層模型白/黑名單</div>
         </div>
         <div class="panel-tag">
           <div class="name">代理配置</div>
@@ -398,6 +411,14 @@ pre code{color:var(--text)}
         <div class="panel-tag">
           <div class="name">封禁偵測</div>
           <div class="desc">錯誤模式與帳號健康監控</div>
+        </div>
+        <div class="panel-tag">
+          <div class="name">自動更新</div>
+          <div class="desc">一鍵 git pull + 重啟服務</div>
+        </div>
+        <div class="panel-tag">
+          <div class="name">致謝</div>
+          <div class="desc">Contributors 列表</div>
         </div>
       </div>
     </div>

@@ -1,0 +1,77 @@
+name: Bug 报告 / Bug Report
+description: 报告一个 bug / Report a bug
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢报告 bug 反馈问题越详细越容易修复 / Thanks for reporting. The more detail you provide, the faster it can be fixed.
+
+        **安全漏洞请走私下披露：** [SECURITY.md](../blob/master/SECURITY.md) — 不要在这里发 PoC。
+        **Security issues go private:** see [SECURITY.md](../blob/master/SECURITY.md) — do not post PoCs here.
+
+  - type: input
+    id: version
+    attributes:
+      label: 版本 / Version
+      description: 访问 `http://你的IP:PORT/health` 查看 commit 字段 / Check `/health` endpoint for commit SHA
+      placeholder: "commit 5d12adf 或 v1.3.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: 部署方式 / Deployment
+      options:
+        - 自建服务器 / Self-hosted
+        - 公网实例 skiapi.dev / Public instance
+        - 本地开发 / Local dev
+        - 其他 / Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: 问题描述 / What happened?
+      description: 发生了什么 期望的行为是什么 / What happened? What did you expect?
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: 复现步骤 / Steps to reproduce
+      description: 具体的 curl 命令 / 请求体 / 使用的客户端（Cursor/Cline/Claude Code 等） / Exact curl command, request body, client used
+      render: bash
+    validations:
+      required: true
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志 / Logs
+      description: |
+        后端日志（dashboard 日志面板 或 PM2 logs windsurf-api） 把 token/api key 打码
+        Backend logs from dashboard log panel or `pm2 logs windsurf-api`. Redact tokens/API keys.
+      render: shell
+
+  - type: input
+    id: model
+    attributes:
+      label: 模型 / Model
+      placeholder: "claude-4.5-sonnet-thinking"
+
+  - type: textarea
+    id: env
+    attributes:
+      label: 环境 / Environment
+      description: |
+        Node 版本、操作系统、LS binary 来源（Exafunction release / Windsurf 桌面端 / 其他）
+        Node version, OS, LS binary source.
+      placeholder: |
+        Node: v20.x
+        OS: Ubuntu 22.04
+        LS: from Windsurf desktop app v1.12

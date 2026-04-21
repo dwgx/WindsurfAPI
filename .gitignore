@@ -21,3 +21,8 @@ codeium_ext/
 bugsy/
 windsurf-grpc/
 *.db
+
+# internal dev notes — not for distribution
+CLAUDE.md
+audit/
+*.png

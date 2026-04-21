@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+
+jobs:
+  syntax:
+    name: Node syntax check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Check JS syntax for all src files
+        run: |
+          find src -name '*.js' -type f -print0 | xargs -0 -n1 node --check
+
+      - name: Validate package.json
+        run: node -e "JSON.parse(require('fs').readFileSync('package.json'))"
+
+      - name: Validate JSON configs
+        run: |
+          for f in $(find . -maxdepth 2 -name '*.json' -not -path './node_modules/*' -not -path './.git/*'); do
+            echo "Checking $f"
+            node -e "JSON.parse(require('fs').readFileSync('$f'))"
+          done
