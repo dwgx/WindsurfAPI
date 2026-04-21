@@ -89,8 +89,10 @@ export const MODELS = {
   'gpt-5.3-codex':                  { name: 'gpt-5.3-codex',                  provider: 'openai', enumValue: 0,   modelUid: 'gpt-5-3-codex-medium', credit: 1 },
 
   // GPT-5.4
+  'gpt-5.4-none':                   { name: 'gpt-5.4-none',                   provider: 'openai', enumValue: 0,   modelUid: 'gpt-5-4-none', credit: 0.5 },
   'gpt-5.4-low':                    { name: 'gpt-5.4-low',                    provider: 'openai', enumValue: 0,   modelUid: 'gpt-5-4-low', credit: 1 },
   'gpt-5.4-medium':                 { name: 'gpt-5.4-medium',                 provider: 'openai', enumValue: 0,   modelUid: 'gpt-5-4-medium', credit: 2 },
+  'gpt-5.4-high':                   { name: 'gpt-5.4-high',                   provider: 'openai', enumValue: 0,   modelUid: 'gpt-5-4-high', credit: 4 },
   'gpt-5.4-xhigh':                  { name: 'gpt-5.4-xhigh',                  provider: 'openai', enumValue: 0,   modelUid: 'gpt-5-4-xhigh', credit: 8 },
   'gpt-5.4-mini-low':               { name: 'gpt-5.4-mini-low',               provider: 'openai', enumValue: 0,   modelUid: 'gpt-5-4-mini-low', credit: 1.5 },
   'gpt-5.4-mini-medium':            { name: 'gpt-5.4-mini-medium',            provider: 'openai', enumValue: 0,   modelUid: 'gpt-5-4-mini-medium', credit: 1.5 },
@@ -176,8 +178,10 @@ _lookup.set('MODEL_CLAUDE_4_5_SONNET_THINKING', 'claude-4.5-sonnet-thinking');
 // UID-based aliases not already covered by modelUid field
 _lookup.set('claude-sonnet-4-6-1m', 'claude-sonnet-4.6-1m');
 _lookup.set('claude-sonnet-4-6-thinking-1m', 'claude-sonnet-4.6-thinking-1m');
+_lookup.set('gpt-5-4-none', 'gpt-5.4-none');
 _lookup.set('gpt-5-4-low', 'gpt-5.4-low');
 _lookup.set('gpt-5-4-medium', 'gpt-5.4-medium');
+_lookup.set('gpt-5-4-high', 'gpt-5.4-high');
 _lookup.set('gpt-5-4-xhigh', 'gpt-5.4-xhigh');
 _lookup.set('gpt-5-4-mini-low', 'gpt-5.4-mini-low');
 _lookup.set('gpt-5-4-mini-medium', 'gpt-5.4-mini-medium');

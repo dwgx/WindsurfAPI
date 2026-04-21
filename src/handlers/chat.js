@@ -481,6 +481,18 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
         body: { error: { message: `${model} 已达速率限制，请稍后重试`, type: 'rate_limit_exceeded', retry_after_ms: rl.retryAfterMs || 60000 } },
       };
     }
+    // LS crash on oversized payload — gRPC surfaces this as "pending stream
+    // has been canceled" within a second. Give the user an actionable hint.
+    const isStreamCanceled = /pending stream has been canceled|panel state|ECONNRESET/i.test(err.message);
+    if (isStreamCanceled && _msgChars > 500_000) {
+      return {
+        status: 413,
+        body: { error: {
+          message: `请求过大（${Math.round(_msgChars / 1024)}KB 输入）导致语言服务器中断。请尝试：1) 分块发送；2) 先用摘要/summarization 预处理 PDF；3) 减少历史轮数`,
+          type: 'payload_too_large',
+        } },
+      };
+    }
     return {
       status: err.isModelError ? 403 : 502,
       body: { error: { message: sanitizeText(err.message), type: err.isModelError ? 'model_not_available' : 'upstream_error' } },
