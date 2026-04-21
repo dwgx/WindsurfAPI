@@ -46,10 +46,21 @@ const VERSION_INFO = (() => {
   return { version: pkgVersion, commit, commitMessage, commitDate, branch };
 })();
 
+const MAX_BODY_SIZE = 10 * 1024 * 1024; // 10 MB
+
 function readBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
-    req.on('data', c => chunks.push(c));
+    let size = 0;
+    req.on('data', c => {
+      size += c.length;
+      if (size > MAX_BODY_SIZE) {
+        req.destroy();
+        reject(new Error('Request body too large'));
+        return;
+      }
+      chunks.push(c);
+    });
     req.on('end', () => resolve(Buffer.concat(chunks).toString('utf-8')));
     req.on('error', reject);
   });
@@ -121,11 +132,19 @@ async function route(req, res) {
     return handleDashboardApi(method, subpath, body, req, res);
   }
 
-  // ─── Auth management (no API key required) ─────────────
+  // ─── Auth status (public, no sensitive data) ───────────
 
   if (path === '/auth/status') {
     return json(res, 200, { authenticated: isAuthenticated(), ...getAccountCount() });
   }
+
+  // ─── API endpoints (require API key) ────────────────────
+
+  if (!validateApiKey(extractToken(req))) {
+    return json(res, 401, { error: { message: 'Invalid API key', type: 'auth_error' } });
+  }
+
+  // ─── Auth management (requires API key) ────────────────
 
   if (path === '/auth/accounts' && method === 'GET') {
     return json(res, 200, { accounts: getAccountList() });
@@ -190,12 +209,6 @@ async function route(req, res) {
       log.error('Login failed:', err.message);
       return json(res, 401, { error: err.message });
     }
-  }
-
-  // ─── API endpoints (require API key) ────────────────────
-
-  if (!validateApiKey(extractToken(req))) {
-    return json(res, 401, { error: { message: 'Invalid API key', type: 'auth_error' } });
   }
 
   if (path === '/v1/models' && method === 'GET') {

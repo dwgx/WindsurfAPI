@@ -5,6 +5,7 @@
 
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { join } from 'path';
+import { log } from '../config.js';
 
 const PROXY_FILE = join(process.cwd(), 'proxy.json');
 
@@ -18,12 +19,16 @@ try {
   if (existsSync(PROXY_FILE)) {
     Object.assign(_config, JSON.parse(readFileSync(PROXY_FILE, 'utf-8')));
   }
-} catch {}
+} catch (e) {
+  log.error('Failed to load proxy.json:', e.message);
+}
 
 function save() {
   try {
     writeFileSync(PROXY_FILE, JSON.stringify(_config, null, 2));
-  } catch {}
+  } catch (e) {
+    log.error('Failed to save proxy.json:', e.message);
+  }
 }
 
 export function getProxyConfig() {

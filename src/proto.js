@@ -22,6 +22,17 @@ export function encodeVarint(value) {
     }
     return Buffer.from(bytes);
   }
+  // Use BigInt for values > 32 bits
+  if (v > 0xFFFFFFFF) {
+    let b = BigInt(v);
+    while (b > 0n) {
+      let byte = Number(b & 0x7Fn);
+      b >>= 7n;
+      if (b > 0n) byte |= 0x80;
+      bytes.push(byte);
+    }
+    return Buffer.from(bytes);
+  }
   do {
     let byte = v & 0x7F;
     v >>>= 7;
@@ -35,7 +46,24 @@ export function decodeVarint(buf, offset = 0) {
   let result = 0, shift = 0, pos = offset;
   while (pos < buf.length) {
     const byte = buf[pos++];
-    result |= (byte & 0x7F) << shift;
+    if (shift < 28) {
+      result |= (byte & 0x7F) << shift;
+    } else {
+      // Switch to BigInt for values requiring > 32 bits
+      let big = BigInt(result);
+      big |= BigInt(byte & 0x7F) << BigInt(shift);
+      shift += 7;
+      if (!(byte & 0x80)) return { value: Number(big), length: pos - offset };
+
+      while (pos < buf.length) {
+        const b = buf[pos++];
+        big |= BigInt(b & 0x7F) << BigInt(shift);
+        if (!(b & 0x80)) break;
+        shift += 7;
+        if (shift >= 64) throw new Error('Varint overflow');
+      }
+      return { value: Number(big), length: pos - offset };
+    }
     if (!(byte & 0x80)) break;
     shift += 7;
     if (shift >= 64) throw new Error('Varint overflow');

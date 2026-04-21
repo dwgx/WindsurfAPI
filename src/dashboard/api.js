@@ -162,10 +162,12 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
             dirtyFiles: dirty.split('\n').slice(0, 20),
           });
         }
-        await runShell(`git fetch origin ${before.branch || 'master'}`);
-        await runShell(`git reset --hard origin/${before.branch || 'master'}`);
+        const safeBranch = /^[\w.\-\/]+$/.test(before.branch) ? before.branch : 'master';
+        await runShell(`git fetch origin ${safeBranch}`);
+        await runShell(`git reset --hard origin/${safeBranch}`);
       }
-      const pullCmd = `git pull origin ${before.branch || 'master'} --ff-only 2>&1`;
+      const safeBranch = /^[\w.\-\/]+$/.test(before.branch) ? before.branch : 'master';
+      const pullCmd = `git pull origin ${safeBranch} --ff-only 2>&1`;
       const pull = dirty ? 'hard-reset applied' : await runShell(pullCmd);
       const after = await gitStatus();
       const changed = before.commit !== after.commit;

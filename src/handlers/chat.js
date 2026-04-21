@@ -264,6 +264,7 @@ export async function handleChatCompletions(body) {
   // Non-stream: retry with a different account on model-not-available errors
   const tried = [];
   let lastErr = null;
+  let _msgChars = 0;
   // Dynamic: try every active account in the pool (capped at 10) so a
   // large pool with many rate-limited accounts can still fall through
   // to a free one. Was hardcoded 3 — in pools bigger than 3 with the
@@ -294,7 +295,7 @@ export async function handleChatCompletions(body) {
         const rl = await checkMessageRateLimit(acct.apiKey, px);
         if (!rl.hasCapacity) {
           log.warn(`Preflight: ${acct.email} has no capacity (remaining=${rl.messagesRemaining}), skipping`);
-          markRateLimited(acct.id, modelKey);
+          markRateLimited(acct.apiKey, 5 * 60 * 1000, modelKey);
           continue;
         }
       } catch (e) {
@@ -312,7 +313,7 @@ export async function handleChatCompletions(body) {
       log.info('Chat: cascade reuse skipped — LS port changed');
       reuseEntry = null;
     }
-    const _msgChars = (messages || []).reduce((n, m) => {
+    _msgChars = (messages || []).reduce((n, m) => {
       const c = m?.content;
       return n + (typeof c === 'string' ? c.length : Array.isArray(c) ? c.reduce((k, p) => k + (typeof p?.text === 'string' ? p.text.length : 0), 0) : 0);
     }, 0);
@@ -571,6 +572,10 @@ function streamResponse(id, created, model, modelKey, messages, cascadeMessages,
   // even though they would have worked (issue #5).
   const maxAttempts = Math.min(10, Math.max(3, getAccountList().filter(a => a.status === 'active').length));
 
+  try {
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      if (abortController.signal.aborted) return;
+
       // Accumulate chunks so we can cache a successful response at the end.
       let accText = '';
       let accThinking = '';
@@ -657,10 +662,7 @@ function streamResponse(id, created, model, modelKey, messages, cascadeMessages,
         }
       };
 
-      try {
-        for (let attempt = 0; attempt < maxAttempts; attempt++) {
-          if (abortController.signal.aborted) return;
-          let acct = null;
+      let acct = null;
           if (reuseEntry && attempt === 0) {
             acct = acquireAccountByKey(reuseEntry.apiKey, modelKey);
             if (!acct) {
@@ -682,7 +684,7 @@ function streamResponse(id, created, model, modelKey, messages, cascadeMessages,
               const rl = await checkMessageRateLimit(acct.apiKey, px);
               if (!rl.hasCapacity) {
                 log.warn(`Preflight: ${acct.email} has no capacity (remaining=${rl.messagesRemaining}), skipping`);
-                markRateLimited(acct.id, modelKey);
+                markRateLimited(acct.apiKey, 5 * 60 * 1000, modelKey);
                 continue;
               }
             } catch (e) {

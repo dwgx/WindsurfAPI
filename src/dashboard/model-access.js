@@ -5,6 +5,7 @@
 
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { join } from 'path';
+import { log } from '../config.js';
 
 const ACCESS_FILE = join(process.cwd(), 'model-access.json');
 
@@ -19,12 +20,16 @@ try {
   if (existsSync(ACCESS_FILE)) {
     Object.assign(_config, JSON.parse(readFileSync(ACCESS_FILE, 'utf-8')));
   }
-} catch {}
+} catch (e) {
+  log.error('Failed to load model-access.json:', e.message);
+}
 
 function save() {
   try {
     writeFileSync(ACCESS_FILE, JSON.stringify(_config, null, 2));
-  } catch {}
+  } catch (e) {
+    log.error('Failed to save model-access.json:', e.message);
+  }
 }
 
 export function getModelAccessConfig() {

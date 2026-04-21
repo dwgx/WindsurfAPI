@@ -2133,7 +2133,7 @@ const App = {
       const blockedCount = (a.blockedModels || []).length;
       const availCount = tierModels.length - blockedCount;
       const capsHtml = tierModels.length
-        ? `<button class="btn btn-ghost btn-xs" style="min-width:96px" onclick="App.openBlockedModal('${a.id}')" title="编辑该账号可用模型">
+        ? `<button class="btn btn-ghost btn-xs" style="min-width:96px" onclick="App.openBlockedModal('${this.esc(a.id)}')" title="编辑该账号可用模型">
              <span style="color:var(--success,#10b981);font-weight:600">${availCount}</span>
              <span style="color:var(--text-dim)">/${tierModels.length}</span>
              ${blockedCount > 0 ? `<span class="badge warn" style="margin-left:4px">-${blockedCount}</span>` : ''}
@@ -2197,7 +2197,7 @@ const App = {
         <td>${this.esc(a.email)}</td>
         <td>
           <div style="display:flex;flex-direction:column;gap:2px">
-            <span class="tier ${tier}" style="cursor:pointer" title="${this.esc(tierTooltip)}" onclick="App.overrideTier('${a.id}','${tier}')">${tierLabel[tier] || tier}${a.tierManual ? ' ✎' : ''}</span>
+            <span class="tier ${this.esc(tier)}" style="cursor:pointer" title="${this.esc(tierTooltip)}" onclick="App.overrideTier('${this.esc(a.id)}','${this.esc(tier)}')">${tierLabel[tier] || this.esc(tier)}${a.tierManual ? ' ✎' : ''}</span>
             ${tierSubline ? `<span class="text-xs text-dim" style="font-size:10px">${this.esc(tierSubline)}</span>` : ''}
           </div>
         </td>
@@ -2212,13 +2212,13 @@ const App = {
         </td>
         <td class="nowrap">
           <div class="btn-group">
-            <button class="btn btn-ghost btn-xs" onclick="App.probeAccount('${a.id}')" title="探测能力">探测</button>
+            <button class="btn btn-ghost btn-xs" onclick="App.probeAccount('${this.esc(a.id)}')" title="探测能力">探测</button>
             <button class="btn btn-ghost btn-xs" onclick="App.refreshCredits('${a.id}')" title="刷新余额">余额</button>
             ${a.status === 'active'
-              ? `<button class="btn btn-ghost btn-xs" onclick="App.toggleAccount('${a.id}','disabled')">停用</button>`
-              : `<button class="btn btn-success btn-xs" onclick="App.toggleAccount('${a.id}','active')">启用</button>`}
+              ? `<button class="btn btn-ghost btn-xs" onclick="App.toggleAccount('${this.esc(a.id)}','disabled')">停用</button>`
+              : `<button class="btn btn-success btn-xs" onclick="App.toggleAccount('${this.esc(a.id)}','active')">启用</button>`}
             <button class="btn btn-ghost btn-xs" onclick="App.resetErrors('${a.id}')">重置</button>
-            <button class="btn btn-ghost btn-xs" style="color:var(--error)" onclick="App.deleteAccount('${a.id}')">删除</button>
+            <button class="btn btn-ghost btn-xs" style="color:var(--error)" onclick="App.deleteAccount('${this.esc(a.id)}')">删除</button>
           </div>
         </td>
       </tr>`;
@@ -2494,7 +2494,7 @@ const App = {
     if (current.length > 0) {
       document.getElementById('model-list-current').innerHTML = `
         <div class="text-xs text-muted" style="margin-bottom:6px">当前清单 (${current.length})</div>
-        <div class="model-chips">${current.map(m => `<span class="model-chip selected">${m}<span class="remove" onclick="App.removeModelFromList('${m}')">×</span></span>`).join('')}</div>`;
+        <div class="model-chips">${current.map(m => `<span class="model-chip selected">${this.esc(m)}<span class="remove" onclick="App.removeModelFromList('${this.esc(m)}')">×</span></span>`).join('')}</div>`;
     } else {
       document.getElementById('model-list-current').innerHTML = '<div class="text-xs text-dim">清单为空</div>';
     }
@@ -2524,7 +2524,7 @@ const App = {
         <div class="provider-label">${prov}</div>
         <div class="model-chips">${models.map(m => {
           const inList = list.includes(m.id);
-          return `<span class="model-chip ${inList ? 'selected' : ''}" onclick="App.toggleModelInList('${m.id}')">${m.name}</span>`;
+          return `<span class="model-chip ${inList ? 'selected' : ''}" onclick="App.toggleModelInList('${this.esc(m.id)}')">${this.esc(m.name)}</span>`;
         }).join('')}</div>
       </div>
     `).join('') || '<div class="text-sm text-dim">没有符合的模型</div>';
@@ -2577,11 +2577,11 @@ const App = {
       const p = pa[a.id];
       return `<tr>
         <td>${this.esc(a.email)} <code class="text-xs">${a.id}</code></td>
-        <td>${p ? `<code>${p.type}://${p.username ? p.username + '@' : ''}${p.host}:${p.port}</code>` : '<span class="text-sm text-dim">无（使用全局）</span>'}</td>
+        <td>${p ? `<code>${this.esc(p.type)}://${p.username ? this.esc(p.username) + '@' : ''}${this.esc(p.host)}:${this.esc(String(p.port))}</code>` : '<span class="text-sm text-dim">无（使用全局）</span>'}</td>
         <td class="nowrap">
           <div class="btn-group">
-            <button class="btn btn-outline btn-xs" onclick="App.editAccountProxy('${a.id}','${this.esc(a.email)}')">配置</button>
-            ${p ? `<button class="btn btn-ghost btn-xs" style="color:var(--error)" onclick="App.clearAccountProxy('${a.id}')">清除</button>` : ''}
+            <button class="btn btn-outline btn-xs" onclick="App.editAccountProxy('${this.esc(a.id)}','${this.esc(a.email)}')">配置</button>
+            ${p ? `<button class="btn btn-ghost btn-xs" style="color:var(--error)" onclick="App.clearAccountProxy('${this.esc(a.id)}')">清除</button>` : ''}
           </div>
         </td>
       </tr>`;
@@ -2647,19 +2647,41 @@ const App = {
   loadLogs() {
     this.logEntries = [];
     document.getElementById('log-container').innerHTML = '';
-    // EventSource can't set custom headers, so pass the dashboard password
-    // via query string (same secret, only transmitted over same-origin).
-    const qs = this.password ? `?pwd=${encodeURIComponent(this.password)}` : '';
-    this.sseConn = new EventSource('/dashboard/api/logs/stream' + qs);
-    this.sseConn.onmessage = (e) => {
-      try {
-        const entry = JSON.parse(e.data);
-        this.logEntries.push(entry);
-        if (this.logEntries.length > 500) this.logEntries.shift();
-        this.renderLogEntry(entry);
-      } catch {}
-    };
-    this.sseConn.onerror = () => {};
+
+    // Use fetch-based SSE to send password via header instead of URL
+    const headers = { 'Accept': 'text/event-stream' };
+    if (this.password) headers['X-Dashboard-Password'] = this.password;
+
+    fetch('/dashboard/api/logs/stream', { headers })
+      .then(response => {
+        if (!response.ok) throw new Error('SSE connection failed');
+        const reader = response.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = '';
+
+        const processChunk = ({ done, value }) => {
+          if (done) return;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop();
+
+          for (const line of lines) {
+            if (line.startsWith('data: ')) {
+              try {
+                const entry = JSON.parse(line.slice(6));
+                this.logEntries.push(entry);
+                if (this.logEntries.length > 500) this.logEntries.shift();
+                this.renderLogEntry(entry);
+              } catch {}
+            }
+          }
+          return reader.read().then(processChunk);
+        };
+
+        this.sseConn = { close: () => reader.cancel() };
+        return reader.read().then(processChunk);
+      })
+      .catch(() => {});
   },
 
   renderLogEntry(entry) {
@@ -2961,7 +2983,7 @@ const App = {
         <td class="text-sm">${a.lastUsed ? new Date(a.lastUsed).toLocaleString() : '-'}</td>
         <td class="nowrap">
           <div class="btn-group">
-            ${a.status === 'error' ? `<button class="btn btn-success btn-xs" onclick="App.toggleAccount('${a.id}','active');setTimeout(()=>App.loadBans(),500)">重新启用</button>` : ''}
+            ${a.status === 'error' ? `<button class="btn btn-success btn-xs" onclick="App.toggleAccount('${this.esc(a.id)}','active');setTimeout(()=>App.loadBans(),500)">重新启用</button>` : ''}
             ${a.errorCount > 0 ? `<button class="btn btn-outline btn-xs" onclick="App.resetErrors('${a.id}');setTimeout(()=>App.loadBans(),500)">重置错误</button>` : ''}
           </div>
         </td>

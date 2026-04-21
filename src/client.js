@@ -68,9 +68,11 @@ export class WindsurfClient {
 
     return new Promise((resolve, reject) => {
       const chunks = [];
+      let done = false;
 
       grpcStream(this.port, this.csrfToken, `${LS_SERVICE}/RawGetChatMessage`, body, {
         onData: (payload) => {
+          if (done) return;
           try {
             const parsed = parseRawResponse(payload);
             if (parsed.text) {
@@ -80,6 +82,7 @@ export class WindsurfClient {
                 const err = new Error(parsed.text.trim());
                 // Mark model-level errors so they don't count against the account
                 err.isModelError = /permission_denied|failed_precondition/.test(parsed.text);
+                done = true;
                 reject(err);
                 return;
               }
@@ -91,10 +94,14 @@ export class WindsurfClient {
           }
         },
         onEnd: () => {
+          if (done) return;
+          done = true;
           onEnd?.(chunks);
           resolve(chunks);
         },
         onError: (err) => {
+          if (done) return;
+          done = true;
           onError?.(err);
           reject(err);
         },

@@ -9,7 +9,7 @@
  */
 
 import { randomUUID } from 'crypto';
-import { readFileSync, writeFileSync, existsSync } from 'fs';
+import { readFileSync, writeFileSync, existsSync, renameSync, unlinkSync } from 'fs';
 import { config, log } from './config.js';
 import { getEffectiveProxy } from './dashboard/proxy-config.js';
 import { getTierModels, getModelKeysByEnum, MODELS } from './models.js';
@@ -54,9 +54,12 @@ function saveAccounts() {
       userStatus: a.userStatus || null,
       userStatusLastFetched: a.userStatusLastFetched || 0,
     }));
-    writeFileSync(ACCOUNTS_FILE, JSON.stringify(data, null, 2));
+    const tempFile = ACCOUNTS_FILE + '.tmp';
+    writeFileSync(tempFile, JSON.stringify(data, null, 2));
+    renameSync(tempFile, ACCOUNTS_FILE);
   } catch (e) {
     log.error('Failed to save accounts:', e.message);
+    try { unlinkSync(ACCOUNTS_FILE + '.tmp'); } catch {}
   }
 }
 
@@ -552,7 +555,6 @@ export function getAccountList() {
       lastUsed: a.lastUsed ? new Date(a.lastUsed).toISOString() : null,
       addedAt: new Date(a.addedAt).toISOString(),
       keyPrefix: a.apiKey.slice(0, 8) + '...',
-      apiKey: a.apiKey,
       tier: a.tier || 'unknown',
       capabilities: a.capabilities || {},
       lastProbed: a.lastProbed || 0,

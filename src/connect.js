@@ -109,9 +109,13 @@ export class StreamingFrameParser {
 
   /** Drain all complete frames. Returns [{ flags, isEndStream, payload }]. */
   drain() {
+    const MAX_FRAME_SIZE = 16 * 1024 * 1024; // 16 MB
     const frames = [];
     while (this.buffer.length >= 5) {
       const len = this.buffer.readUInt32BE(1);
+      if (len > MAX_FRAME_SIZE) {
+        throw new Error(`Frame size ${len} exceeds maximum ${MAX_FRAME_SIZE}`);
+      }
       if (this.buffer.length < 5 + len) break;
 
       const flags = this.buffer[0];
