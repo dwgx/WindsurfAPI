@@ -1048,7 +1048,7 @@ window._firebaseOAuth = async function(provider) {
       <div class="section-header">
         <div>
           <div class="section-title">邮箱密码登录</div>
-          <div class="section-desc">仅限邮箱+密码注册的账号 第三方登录请用上面的按钮</div>
+          <div class="section-desc">仅限邮箱+密码注册的账号 第三方登录请用上面的按钮；支持单个登录或按“邮箱 密码”格式批量导入</div>
         </div>
       </div>
       <div class="section-body">
@@ -1062,7 +1062,6 @@ window._firebaseOAuth = async function(provider) {
             <input id="wl-password" class="input" type="password" placeholder="••••••••" autocomplete="off" onkeydown="if(event.key==='Enter')App.windsurfLogin()">
           </div>
         </div>
-        </div>
         <div class="field-row-actions">
           <button class="btn btn-primary" onclick="App.windsurfLogin()" id="wl-btn">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
@@ -1073,6 +1072,26 @@ window._firebaseOAuth = async function(provider) {
             <span class="box"></span>
             <span>登录成功自动加入账号池</span>
           </label>
+        </div>
+        <div style="margin-top:16px;padding-top:16px;border-top:1px dashed var(--border)">
+          <label class="field-label">批量导入</label>
+          <textarea
+            id="wl-batch-input"
+            class="textarea"
+            rows="6"
+            placeholder="buulzqkz0iee@2116666.xyz  zy$&X5f5CT8k&#10;ejjdthoqi34l@2116666.xyz  zy$&X5f5CT8k&#10;lij3th36mtki@2116666.xyz  zy$&X5f5CT8k"
+          ></textarea>
+          <div class="field-hint">每行一个账号，格式：邮箱 + 空格/Tab + 密码。会自动忽略空行。</div>
+          <div class="field-row-actions">
+            <button class="btn btn-outline" onclick="App.pasteWindsurfBatch()">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>
+              读取剪贴板
+            </button>
+            <button class="btn btn-primary" onclick="App.windsurfLoginBatch()" id="wl-batch-btn">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M3 5h18"/><path d="M3 12h18"/><path d="M3 19h18"/></svg>
+              批量导入并登录
+            </button>
+          </div>
         </div>
       </div>
     </div>
@@ -2003,11 +2022,8 @@ const App = {
       status.textContent = `登录成功 ${r.email || label} 已加入账号池`;
       this.toast(`${label} 登录成功`, 'success');
       this.loadAccounts();
-      const entry = { time: new Date().toISOString(), email: r.email || label, proxy: '直连', status: 'ok', method: label };
-      this.loginHistory.unshift(entry);
-      if (this.loginHistory.length > 50) this.loginHistory.length = 50;
-      localStorage.setItem('wl_history', JSON.stringify(this.loginHistory));
-      this.renderLoginHistory();
+      const entry = { time: new Date().toISOString(), email: r.email || label, proxy: '直连', status: 'success', method: label };
+      this.pushLoginHistory(entry);
     } catch (err) {
       status.style.color = '#ef4444';
       status.textContent = `${label} 登录失败: ${err.message}`;
@@ -2017,71 +2033,173 @@ const App = {
     }
   },
 
-  async windsurfLogin() {
-    const email = document.getElementById('wl-email').value.trim();
-    const password = document.getElementById('wl-password').value.trim();
-    if (!email || !password) return this.toast('请输入邮箱和密码', 'error');
-
+  getWindsurfLoginProxy() {
     const proxyHost = document.getElementById('wl-proxy-host').value.trim();
-    const proxy = proxyHost ? {
+    return proxyHost ? {
       type: document.getElementById('wl-proxy-type').value,
       host: proxyHost,
       port: parseInt(document.getElementById('wl-proxy-port').value) || 8080,
       username: document.getElementById('wl-proxy-user').value,
       password: document.getElementById('wl-proxy-pass').value,
     } : null;
+  },
+
+  getWindsurfProxyLabel(proxy) {
+    return proxy ? `${proxy.type}://${proxy.host}:${proxy.port}` : '全局';
+  },
+
+  pushLoginHistory(entry) {
+    this.pushLoginHistoryEntries([entry]);
+  },
+
+  pushLoginHistoryEntries(entries) {
+    for (let i = entries.length - 1; i >= 0; i--) this.loginHistory.unshift(entries[i]);
+    if (this.loginHistory.length > 50) this.loginHistory.length = 50;
+    localStorage.setItem('wl_history', JSON.stringify(this.loginHistory));
+    this.renderLoginHistory();
+  },
+
+  showWindsurfLoginResult(html) {
+    const rd = document.getElementById('wl-result');
+    rd.classList.remove('hidden');
+    rd.innerHTML = html;
+  },
+
+  getWindsurfLoginFailActions(r) {
+    if (!r.isAuthFail) return '';
+    return `
+      <div style="margin-top:12px;padding:12px;background:var(--surface-2);border-radius:var(--radius);border-left:3px solid var(--accent)">
+        <div style="font-weight:600;margin-bottom:8px">换个方式试试</div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap">
+          <button class="btn btn-sm" style="background:#4285F4;color:#fff" onclick="App.oauthLogin('google')">Google 登录</button>
+          <button class="btn btn-sm" style="background:#24292e;color:#fff" onclick="App.oauthLogin('github')">GitHub 登录</button>
+          <a class="btn btn-sm btn-outline" href="https://windsurf.com/show-auth-token" target="_blank">复制 Auth Token</a>
+          <button class="btn btn-sm btn-ghost" onclick="document.querySelector('[data-panel=accounts]').click();setTimeout(()=>document.getElementById('acc-key')?.focus(),100)">去账号管理粘贴 Token</button>
+        </div>
+      </div>`;
+  },
+
+  renderSingleWindsurfLoginResult(r, autoAdd) {
+    if (r.success) {
+      this.showWindsurfLoginResult(`
+        <div class="section-header">
+          <div>
+            <div class="section-title" style="color:var(--success)">✓ 登录成功</div>
+            <div class="section-desc">API Key 已生成${autoAdd ? '并加入账号池' : ''}</div>
+          </div>
+        </div>
+        <div class="section-body">
+          <table style="background:transparent">
+            <tr><td style="color:var(--text-muted);width:120px">邮箱</td><td>${this.esc(r.email)}</td></tr>
+            <tr><td style="color:var(--text-muted)">姓名</td><td>${this.esc(r.name || '-')}</td></tr>
+            <tr><td style="color:var(--text-muted)">API Key</td><td><code class="break-all">${this.esc(r.apiKey)}</code></td></tr>
+            ${r.account ? `<tr><td style="color:var(--text-muted)">账号 ID</td><td><code>${r.account.id}</code> <span class="badge active">${r.account.status}</span></td></tr>` : ''}
+          </table>
+        </div>`);
+      return;
+    }
+    this.showWindsurfLoginResult(`
+      <div class="section-header">
+        <div>
+          <div class="section-title" style="color:var(--error)">✗ 登录失败</div>
+        </div>
+      </div>
+      <div class="section-body"><p class="text-sm">${this.esc(r.error || '未知错误')}</p>${this.getWindsurfLoginFailActions(r)}</div>`);
+  },
+
+  renderBatchWindsurfLoginResult(results, autoAdd) {
+    const successCount = results.filter(r => r.success).length;
+    const failCount = results.length - successCount;
+    this.showWindsurfLoginResult(`
+        <div class="section-header">
+        <div>
+          <div class="section-title" style="color:${failCount ? 'var(--warning, #f59e0b)' : 'var(--success)'}">批量导入完成</div>
+          <div class="section-desc">共 ${results.length} 个账号，成功 ${successCount} 个，失败 ${failCount} 个${autoAdd ? '；成功项已自动加入账号池' : ''}</div>
+        </div>
+      </div>
+      <div class="section-body tight">
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>邮箱</th><th>状态</th><th>说明</th></tr></thead>
+            <tbody>
+              ${results.map(r => `
+                <tr>
+                  <td>${this.esc(r.email || '-')}</td>
+                  <td><span class="badge ${r.success ? 'active' : 'error'}">${r.success ? '成功' : '失败'}</span></td>
+                  <td class="text-sm">${r.success
+                    ? `<span class="break-all"><code>${this.esc(r.apiKey ? r.apiKey.slice(0, 16) + '...' : '-')}</code>${r.account ? ` · 账号 ${this.esc(r.account.id)}` : ''}</span>`
+                    : `<span style="color:var(--error)">${this.esc(r.error || '未知错误')}</span>`}</td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+      </div>`);
+  },
+
+  parseWindsurfBatchInput(text) {
+    const entries = [];
+    const errors = [];
+    String(text || '').replace(/\r\n?/g, '\n').split('\n').forEach((raw, idx) => {
+      const line = raw.trim();
+      if (!line) return;
+      const m = line.match(/^(\S+)\s+(.+)$/);
+      if (!m) {
+        errors.push(`第 ${idx + 1} 行格式错误`);
+        return;
+      }
+      const email = m[1].trim();
+      const password = m[2].trim();
+      if (!email.includes('@') || !password) {
+        errors.push(`第 ${idx + 1} 行格式错误`);
+        return;
+      }
+      entries.push({ email, password });
+    });
+    return { entries, errors };
+  },
+
+  async pasteWindsurfBatch() {
+    const el = document.getElementById('wl-batch-input');
+    if (!navigator.clipboard || !window.isSecureContext) {
+      el?.focus();
+      return this.toast('当前环境不支持自动读取剪贴板，请手动粘贴', 'info');
+    }
+    try {
+      const text = await navigator.clipboard.readText();
+      if (!text) return this.toast('剪贴板为空', 'info');
+      el.value = text;
+      this.toast('已读取剪贴板', 'success');
+    } catch (err) {
+      this.toast('读取剪贴板失败: ' + err.message, 'error');
+    }
+  },
+
+  async windsurfLogin() {
+    const email = document.getElementById('wl-email').value.trim();
+    const password = document.getElementById('wl-password').value.trim();
+    if (!email || !password) return this.toast('请输入邮箱和密码', 'error');
+
+    const proxy = this.getWindsurfLoginProxy();
     const autoAdd = document.getElementById('wl-auto-add').checked;
 
     const btn = document.getElementById('wl-btn');
     btn.disabled = true;
     btn.innerHTML = '<span class="spinner"></span> 登录中...';
 
-    const entry = { time: new Date().toISOString(), email, proxy: proxy ? `${proxy.type}://${proxy.host}:${proxy.port}` : '全局', status: 'pending' };
+    const entry = { time: new Date().toISOString(), email, proxy: this.getWindsurfProxyLabel(proxy), status: 'pending' };
 
     try {
       const r = await this.api('POST', '/windsurf-login', { email, password, proxy, autoAdd });
       if (r.success) {
         entry.status = 'success';
         entry.apiKey = r.apiKey?.slice(0, 16) + '...';
-        const rd = document.getElementById('wl-result');
-        rd.classList.remove('hidden');
-        rd.innerHTML = `
-          <div class="section-header">
-            <div>
-              <div class="section-title" style="color:var(--success)">✓ 登录成功</div>
-              <div class="section-desc">API Key 已生成${autoAdd ? '并加入账号池' : ''}</div>
-            </div>
-          </div>
-          <div class="section-body">
-            <table style="background:transparent">
-              <tr><td style="color:var(--text-muted);width:120px">邮箱</td><td>${this.esc(r.email)}</td></tr>
-              <tr><td style="color:var(--text-muted)">姓名</td><td>${this.esc(r.name || '-')}</td></tr>
-              <tr><td style="color:var(--text-muted)">API Key</td><td><code class="break-all">${this.esc(r.apiKey)}</code></td></tr>
-              ${r.account ? `<tr><td style="color:var(--text-muted)">账号 ID</td><td><code>${r.account.id}</code> <span class="badge active">${r.account.status}</span></td></tr>` : ''}
-            </table>
-          </div>`;
-        this.toast('登录成功，账号已加入');
+        this.renderSingleWindsurfLoginResult(r, autoAdd);
+        this.toast(autoAdd ? '登录成功，账号已加入' : '登录成功', 'success');
+        this.loadAccounts();
       } else {
         entry.status = 'error: ' + (r.error || 'unknown');
-        const rd = document.getElementById('wl-result');
-        rd.classList.remove('hidden');
-        const actionBlock = r.isAuthFail ? `
-          <div style="margin-top:12px;padding:12px;background:var(--surface-2);border-radius:var(--radius);border-left:3px solid var(--accent)">
-            <div style="font-weight:600;margin-bottom:8px">换个方式试试</div>
-            <div style="display:flex;gap:8px;flex-wrap:wrap">
-              <button class="btn btn-sm" style="background:#4285F4;color:#fff" onclick="App.oauthLogin('google')">Google 登录</button>
-              <button class="btn btn-sm" style="background:#24292e;color:#fff" onclick="App.oauthLogin('github')">GitHub 登录</button>
-              <a class="btn btn-sm btn-outline" href="https://windsurf.com/show-auth-token" target="_blank">复制 Auth Token</a>
-              <button class="btn btn-sm btn-ghost" onclick="document.querySelector('[data-panel=accounts]').click();setTimeout(()=>document.getElementById('acc-key')?.focus(),100)">去账号管理粘贴 Token</button>
-            </div>
-          </div>` : '';
-        rd.innerHTML = `
-          <div class="section-header">
-            <div>
-              <div class="section-title" style="color:var(--error)">✗ 登录失败</div>
-            </div>
-          </div>
-          <div class="section-body"><p class="text-sm">${this.esc(r.error || '未知错误')}</p>${actionBlock}</div>`;
+        this.renderSingleWindsurfLoginResult(r, autoAdd);
         this.toast(r.error || '登录失败', 'error');
       }
     } catch (err) {
@@ -2089,12 +2207,65 @@ const App = {
       this.toast(err.message, 'error');
     }
 
-    this.loginHistory.unshift(entry);
-    if (this.loginHistory.length > 50) this.loginHistory.length = 50;
-    localStorage.setItem('wl_history', JSON.stringify(this.loginHistory));
-    this.renderLoginHistory();
+    this.pushLoginHistory(entry);
     btn.disabled = false;
     btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg> 登录';
+  },
+
+  async windsurfLoginBatch() {
+    const input = document.getElementById('wl-batch-input').value;
+    const { entries, errors } = this.parseWindsurfBatchInput(input);
+    if (!entries.length) return this.toast('请先粘贴批量账号', 'error');
+    if (errors.length) return this.toast(errors.slice(0, 3).join('；'), 'error');
+
+    const proxy = this.getWindsurfLoginProxy();
+    const autoAdd = document.getElementById('wl-auto-add').checked;
+    const btn = document.getElementById('wl-batch-btn');
+    btn.disabled = true;
+    btn.innerHTML = '<span class="spinner"></span> 导入中...';
+    this.showWindsurfLoginResult(`
+      <div class="section-header">
+        <div>
+          <div class="section-title">批量导入中...</div>
+          <div class="section-desc">共 ${entries.length} 个账号，请稍候</div>
+        </div>
+      </div>`);
+
+    try {
+      const r = await this.api('POST', '/windsurf-login/batch', { accounts: entries, proxy, autoAdd });
+      if (!r.success || !Array.isArray(r.results)) {
+        this.showWindsurfLoginResult(`
+          <div class="section-header">
+            <div><div class="section-title" style="color:var(--error)">✗ 批量导入失败</div></div>
+          </div>
+          <div class="section-body"><p class="text-sm">${this.esc(r.error || '未知错误')}</p></div>`);
+        return this.toast(r.error || '批量导入失败', 'error');
+      }
+
+      this.renderBatchWindsurfLoginResult(r.results, autoAdd);
+      this.pushLoginHistoryEntries(r.results.map(item => ({
+          time: new Date().toISOString(),
+          email: item.email,
+          proxy: this.getWindsurfProxyLabel(proxy),
+          status: item.success ? 'success' : `error: ${item.error || 'unknown'}`,
+          apiKey: item.success && item.apiKey ? item.apiKey.slice(0, 16) + '...' : undefined,
+        })));
+      this.toast(`批量导入完成：成功 ${r.successCount || 0} / 失败 ${r.failCount || 0}`, (r.failCount || 0) ? 'info' : 'success');
+      if ((r.successCount || 0) > 0) {
+        this.loadAccounts();
+        document.getElementById('wl-batch-input').value = '';
+      }
+    } catch (err) {
+      this.showWindsurfLoginResult(`
+        <div class="section-header">
+          <div><div class="section-title" style="color:var(--error)">✗ 批量导入失败</div></div>
+        </div>
+        <div class="section-body"><p class="text-sm">${this.esc(err.message)}</p></div>`);
+      this.toast(err.message, 'error');
+    } finally {
+      btn.disabled = false;
+      btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M3 5h18"/><path d="M3 12h18"/><path d="M3 19h18"/></svg> 批量导入并登录';
+    }
   },
 
   renderLoginHistory() {

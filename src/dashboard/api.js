@@ -50,6 +50,44 @@ function checkAuth(req) {
   return true;  // No password and no API key = open access
 }
 
+async function processWindsurfLogin({ email, password, loginProxy, autoAdd }) {
+  if (!email || !password) {
+    const err = new Error('email 和 password 为必填');
+    err.statusCode = 400;
+    throw err;
+  }
+
+  // Use provided proxy, or global proxy
+  const proxy = loginProxy?.host ? loginProxy : getProxyConfig().global;
+  const result = await windsurfLogin(email, password, proxy);
+
+  // Auto-add to account pool if requested
+  let account = null;
+  if (autoAdd !== false) {
+    account = addAccountByKey(result.apiKey, result.name || email);
+    // Persist refresh token via the setter so it survives restart and
+    // the background Firebase-renewal loop can find it.
+    if (result.refreshToken) {
+      setAccountTokens(account.id, { refreshToken: result.refreshToken, idToken: result.idToken });
+    }
+    // Persist the per-account proxy we used for login so chat requests
+    // also egress through the same IP, then warm up a matching LS.
+    if (loginProxy?.host) setAccountProxy(account.id, loginProxy);
+    ensureLsForAccount(account.id)
+      .then(() => probeAccount(account.id))
+      .catch(e => log.warn(`Auto-probe failed: ${e.message}`));
+  }
+
+  return {
+    success: true,
+    apiKey: result.apiKey,
+    name: result.name,
+    email: result.email,
+    apiServerUrl: result.apiServerUrl,
+    account: account ? { id: account.id, email: account.email, status: account.status } : null,
+  };
+}
+
 /**
  * Handle all /dashboard/api/* requests.
  */
@@ -456,41 +494,49 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
   // ─── Windsurf Login ────────────────────────────────────
   if (subpath === '/windsurf-login' && method === 'POST') {
     try {
-      const { email, password, proxy: loginProxy, autoAdd } = body;
-      if (!email || !password) return json(res, 400, { error: 'email 和 password 為必填' });
+      const { email, password, proxy: loginProxy, autoAdd } = body || {};
+      return json(res, 200, await processWindsurfLogin({ email, password, loginProxy, autoAdd }));
+    } catch (err) {
+      return json(res, err.statusCode || 400, { error: err.message, isAuthFail: !!err.isAuthFail, firebaseCode: err.firebaseCode });
+    }
+  }
 
-      // Use provided proxy, or global proxy
-      const proxy = loginProxy?.host ? loginProxy : getProxyConfig().global;
-
-      const result = await windsurfLogin(email, password, proxy);
-
-      // Auto-add to account pool if requested
-      let account = null;
-      if (autoAdd !== false) {
-        account = addAccountByKey(result.apiKey, result.name || email);
-        // Persist refresh token via the setter so it survives restart and
-        // the background Firebase-renewal loop can find it.
-        if (result.refreshToken) {
-          setAccountTokens(account.id, { refreshToken: result.refreshToken, idToken: result.idToken });
-        }
-        // Persist the per-account proxy we used for login so chat requests
-        // also egress through the same IP, then warm up a matching LS.
-        if (loginProxy?.host) setAccountProxy(account.id, loginProxy);
-        ensureLsForAccount(account.id)
-          .then(() => probeAccount(account.id))
-          .catch(e => log.warn(`Auto-probe failed: ${e.message}`));
+  if (subpath === '/windsurf-login/batch' && method === 'POST') {
+    try {
+      const { accounts, proxy: loginProxy, autoAdd } = body || {};
+      if (!Array.isArray(accounts) || !accounts.length) {
+        return json(res, 400, { error: 'accounts 为必填数组' });
       }
 
+      const results = [];
+      for (const acct of accounts) {
+        const email = String(acct?.email || '').trim();
+        const password = String(acct?.password || '').trim();
+        try {
+          const result = await processWindsurfLogin({ email, password, loginProxy, autoAdd });
+          results.push(result);
+        } catch (err) {
+          results.push({
+            success: false,
+            email,
+            error: err.message,
+            isAuthFail: !!err.isAuthFail,
+            firebaseCode: err.firebaseCode,
+          });
+        }
+      }
+
+      const successCount = results.filter(r => r.success).length;
+      const failCount = results.length - successCount;
       return json(res, 200, {
         success: true,
-        apiKey: result.apiKey,
-        name: result.name,
-        email: result.email,
-        apiServerUrl: result.apiServerUrl,
-        account: account ? { id: account.id, email: account.email, status: account.status } : null,
+        total: results.length,
+        successCount,
+        failCount,
+        results,
       });
     } catch (err) {
-      return json(res, 400, { error: err.message, isAuthFail: !!err.isAuthFail, firebaseCode: err.firebaseCode });
+      return json(res, 400, { error: err.message });
     }
   }
 

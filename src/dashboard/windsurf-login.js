@@ -1,5 +1,5 @@
 /**
- * Windsurf direct login — Firebase auth + Codeium registration.
+ * Windsurf direct login — Auth1/Firebase auth + Codeium registration.
  * Supports proxy tunneling and fingerprint randomization.
  */
 
@@ -11,6 +11,11 @@ const FIREBASE_API_KEY = 'AIzaSyDsOl-1XpT5err0Tcnx8FFod1H8gVGIycY';
 const FIREBASE_AUTH_URL = `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${FIREBASE_API_KEY}`;
 const FIREBASE_REFRESH_URL = `https://securetoken.googleapis.com/v1/token?key=${FIREBASE_API_KEY}`;
 const CODEIUM_REGISTER_URL = 'https://api.codeium.com/register_user/';
+const AUTH1_CONNECTIONS_URL = 'https://windsurf.com/_devin-auth/connections';
+const AUTH1_PASSWORD_LOGIN_URL = 'https://windsurf.com/_devin-auth/password/login';
+const WINDSURF_SEAT_SERVICE_BASE = 'https://server.self-serve.windsurf.com/exa.seat_management_pb.SeatManagementService';
+const WINDSURF_POST_AUTH_URL = `${WINDSURF_SEAT_SERVICE_BASE}/WindsurfPostAuth`;
+const WINDSURF_ONE_TIME_TOKEN_URL = `${WINDSURF_SEAT_SERVICE_BASE}/GetOneTimeAuthToken`;
 
 // ─── Fingerprint randomization ────────────────────────────
 
@@ -61,6 +66,15 @@ function generateFingerprint() {
     'Sec-Fetch-Site': 'cross-site',
     'Origin': 'https://windsurf.com',
     'Referer': 'https://windsurf.com/',
+  };
+}
+
+function buildJsonHeaders(fingerprint, body, extra = {}) {
+  return {
+    ...fingerprint,
+    'Content-Type': 'application/json',
+    'Content-Length': Buffer.byteLength(body),
+    ...extra,
   };
 }
 
@@ -147,8 +161,137 @@ function httpsRequest(url, opts, postData, proxy) {
 
 // ─── Login flow ───────────────────────────────────────────
 
+function createFriendlyAuthError(prefix, detail, fallback = '登录失败') {
+  const oauthHint = '若你用 Google/GitHub 注册的 Windsurf 账号 此处密码登录不适用 请用页面顶部的 Google / GitHub 登录按钮 或访问 https://windsurf.com/show-auth-token 复制 Auth Token 后在「账号管理」页手动添加';
+  const normalized = String(detail || '').trim();
+  const friendly = {
+    'EMAIL_NOT_FOUND': `该邮箱未注册邮箱密码登录方式（${oauthHint}）`,
+    'INVALID_PASSWORD': `密码错误（${oauthHint}）`,
+    'INVALID_LOGIN_CREDENTIALS': `邮箱或密码错误（${oauthHint}）`,
+    'Invalid email or password': `邮箱或密码错误（${oauthHint}）`,
+    'No password set. Please log in with Google or GitHub.': `该账号未设置密码登录方式（${oauthHint}）`,
+    'No password set': `该账号未设置密码登录方式（${oauthHint}）`,
+    'USER_DISABLED': '账号已被停用',
+    'TOO_MANY_ATTEMPTS_TRY_LATER': '尝试太多次 请稍后再试',
+    'INVALID_EMAIL': '邮箱格式错误',
+  }[normalized] || normalized || fallback;
+  const err = new Error(`${prefix}: ${friendly}`);
+  err.isAuthFail = [
+    'EMAIL_NOT_FOUND',
+    'INVALID_PASSWORD',
+    'INVALID_LOGIN_CREDENTIALS',
+    'Invalid email or password',
+    'No password set. Please log in with Google or GitHub.',
+    'No password set',
+  ].includes(normalized);
+  err.firebaseCode = normalized || undefined;
+  return err;
+}
+
+async function fetchAuth1Connections(email, fingerprint, proxy) {
+  const body = JSON.stringify({ product: 'windsurf', email });
+  const headers = buildJsonHeaders(fingerprint, body);
+  const res = await httpsRequest(AUTH1_CONNECTIONS_URL, { method: 'POST', headers }, body, proxy);
+  return res.data || {};
+}
+
+async function registerWithCodeium(token, fingerprint, proxy) {
+  const regBody = JSON.stringify({ firebase_id_token: token });
+  const regHeaders = buildJsonHeaders(fingerprint, regBody);
+  const regRes = await httpsRequest(CODEIUM_REGISTER_URL, { method: 'POST', headers: regHeaders }, regBody, proxy);
+
+  if (regRes.status >= 400 || !regRes.data.api_key) {
+    throw new Error(`Codeium 註冊失敗: ${JSON.stringify(regRes.data).slice(0, 200)}`);
+  }
+
+  return regRes.data;
+}
+
+async function windsurfLoginViaAuth1(email, password, fingerprint, proxy) {
+  const loginBody = JSON.stringify({ email, password });
+  const loginHeaders = buildJsonHeaders(fingerprint, loginBody);
+  const loginRes = await httpsRequest(AUTH1_PASSWORD_LOGIN_URL, { method: 'POST', headers: loginHeaders }, loginBody, proxy);
+
+  if (loginRes.status >= 400 || loginRes.data?.detail) {
+    throw createFriendlyAuthError('Windsurf Auth1 登入失败', loginRes.data?.detail, '登录失败');
+  }
+
+  const auth1Token = loginRes.data?.token;
+  if (!auth1Token) {
+    throw new Error(`Windsurf Auth1 回应缺少 token: ${JSON.stringify(loginRes.data).slice(0, 200)}`);
+  }
+
+  log.info(`Auth1 login OK: ${email}`);
+
+  const bridgeBody = JSON.stringify({ auth1Token, orgId: '' });
+  const bridgeHeaders = buildJsonHeaders(fingerprint, bridgeBody, { 'Connect-Protocol-Version': '1' });
+  const bridgeRes = await httpsRequest(WINDSURF_POST_AUTH_URL, { method: 'POST', headers: bridgeHeaders }, bridgeBody, proxy);
+
+  if (bridgeRes.status >= 400 || !bridgeRes.data?.sessionToken) {
+    throw new Error(`Windsurf PostAuth 失败: ${JSON.stringify(bridgeRes.data).slice(0, 200)}`);
+  }
+
+  const sessionToken = bridgeRes.data.sessionToken;
+  log.info(`Windsurf PostAuth OK: ${email} account=${bridgeRes.data.accountId || 'unknown'}`);
+
+  const ottBody = JSON.stringify({ authToken: sessionToken });
+  const ottHeaders = buildJsonHeaders(fingerprint, ottBody, { 'Connect-Protocol-Version': '1' });
+  const ottRes = await httpsRequest(WINDSURF_ONE_TIME_TOKEN_URL, { method: 'POST', headers: ottHeaders }, ottBody, proxy);
+
+  if (ottRes.status >= 400 || !ottRes.data?.authToken) {
+    throw new Error(`获取一次性 Auth Token 失败: ${JSON.stringify(ottRes.data).slice(0, 200)}`);
+  }
+
+  const reg = await registerWithCodeium(ottRes.data.authToken, fingerprint, proxy);
+  log.info(`Codeium register via Auth1 OK: ${email} → key=${reg.api_key.slice(0, 20)}...`);
+
+  return {
+    apiKey: reg.api_key,
+    name: reg.name || email,
+    email,
+    apiServerUrl: reg.api_server_url || '',
+    sessionToken,
+    auth1Token,
+  };
+}
+
+async function windsurfLoginViaFirebase(email, password, fingerprint, proxy) {
+  const firebaseBody = JSON.stringify({
+    email,
+    password,
+    returnSecureToken: true,
+  });
+
+  const fbHeaders = buildJsonHeaders(fingerprint, firebaseBody);
+  const fbRes = await httpsRequest(FIREBASE_AUTH_URL, { method: 'POST', headers: fbHeaders }, firebaseBody, proxy);
+
+  if (fbRes.data.error) {
+    const msg = fbRes.data.error.message || 'Unknown Firebase error';
+    throw createFriendlyAuthError('Firebase 登入失败', msg, msg);
+  }
+
+  const idToken = fbRes.data.idToken;
+  if (!idToken) throw new Error('Firebase 回應缺少 idToken');
+
+  log.info(`Firebase login OK: ${email}, UID=${fbRes.data.localId}`);
+
+  const reg = await registerWithCodeium(idToken, fingerprint, proxy);
+  log.info(`Codeium register OK: ${email} → key=${reg.api_key.slice(0, 20)}...`);
+
+  return {
+    apiKey: reg.api_key,
+    name: reg.name || email,
+    email,
+    idToken,
+    refreshToken: fbRes.data.refreshToken || '',
+    apiServerUrl: reg.api_server_url || '',
+  };
+}
+
 /**
- * Full Windsurf login: Firebase auth → Codeium register → API key.
+ * Full Windsurf login:
+ *  - Auth1 password login → bridge session → one-time auth token → Codeium register
+ *  - or legacy Firebase auth → Codeium register
  * @param {string} email
  * @param {string} password
  * @param {object} [proxy] - { host, port, username, password }
@@ -158,67 +301,33 @@ export async function windsurfLogin(email, password, proxy = null) {
   const fingerprint = generateFingerprint();
   log.info(`Windsurf login: ${email} fp=${fingerprint['User-Agent'].slice(0, 40)}... proxy=${proxy?.host || 'none'}`);
 
-  // Step 1: Firebase sign in
-  const firebaseBody = JSON.stringify({
-    email,
-    password,
-    returnSecureToken: true,
-  });
-
-  const fbHeaders = {
-    ...fingerprint,
-    'Content-Type': 'application/json',
-    'Content-Length': Buffer.byteLength(firebaseBody),
-  };
-
-  const fbRes = await httpsRequest(FIREBASE_AUTH_URL, { method: 'POST', headers: fbHeaders }, firebaseBody, proxy);
-
-  if (fbRes.data.error) {
-    const msg = fbRes.data.error.message || 'Unknown Firebase error';
-    const oauthHint = '若你用 Google/GitHub 注册的 Windsurf 账号 此处密码登录不适用 请用页面顶部的 Google / GitHub 登录按钮 或访问 https://windsurf.com/show-auth-token 复制 Auth Token 后在「账号管理」页手动添加';
-    const friendly = {
-      'EMAIL_NOT_FOUND': `该邮箱未注册邮箱密码登录方式（${oauthHint}）`,
-      'INVALID_PASSWORD': `密码错误（${oauthHint}）`,
-      'INVALID_LOGIN_CREDENTIALS': `邮箱或密码错误（${oauthHint}）`,
-      'USER_DISABLED': '账号已被停用',
-      'TOO_MANY_ATTEMPTS_TRY_LATER': '尝试太多次 请稍后再试',
-      'INVALID_EMAIL': '邮箱格式错误',
-    }[msg] || msg;
-    const err = new Error(`Firebase 登入失败: ${friendly}`);
-    err.firebaseCode = msg;
-    err.isAuthFail = ['EMAIL_NOT_FOUND', 'INVALID_PASSWORD', 'INVALID_LOGIN_CREDENTIALS'].includes(msg);
-    throw err;
+  let auth1Connections = null;
+  try {
+    auth1Connections = await fetchAuth1Connections(email, fingerprint, proxy);
+  } catch (err) {
+    log.warn(`Auth1 connections probe failed for ${email}: ${err.message}`);
   }
 
-  const idToken = fbRes.data.idToken;
-  if (!idToken) throw new Error('Firebase 回應缺少 idToken');
-
-  log.info(`Firebase login OK: ${email}, UID=${fbRes.data.localId}`);
-
-  // Step 2: Register with Codeium to get API key
-  const regBody = JSON.stringify({ firebase_id_token: idToken });
-  const regHeaders = {
-    ...fingerprint,
-    'Content-Type': 'application/json',
-    'Content-Length': Buffer.byteLength(regBody),
-  };
-
-  const regRes = await httpsRequest(CODEIUM_REGISTER_URL, { method: 'POST', headers: regHeaders }, regBody, proxy);
-
-  if (regRes.status >= 400 || !regRes.data.api_key) {
-    throw new Error(`Codeium 註冊失敗: ${JSON.stringify(regRes.data).slice(0, 200)}`);
+  const auth1Method = auth1Connections?.auth_method?.method;
+  if (auth1Method === 'auth1') {
+    if (auth1Connections?.auth_method?.has_password === false) {
+      throw createFriendlyAuthError('Windsurf Auth1 登入失败', 'No password set. Please log in with Google or GitHub.');
+    }
+    return await windsurfLoginViaAuth1(email, password, fingerprint, proxy);
   }
 
-  log.info(`Codeium register OK: ${email} → key=${regRes.data.api_key.slice(0, 12)}...`);
+  try {
+    return await windsurfLoginViaFirebase(email, password, fingerprint, proxy);
+  } catch (firebaseErr) {
+    if (!firebaseErr?.isAuthFail) throw firebaseErr;
 
-  return {
-    apiKey: regRes.data.api_key,
-    name: regRes.data.name || email,
-    email,
-    idToken,
-    refreshToken: fbRes.data.refreshToken || '',
-    apiServerUrl: regRes.data.api_server_url || '',
-  };
+    try {
+      return await windsurfLoginViaAuth1(email, password, fingerprint, proxy);
+    } catch (auth1Err) {
+      if (auth1Err?.isAuthFail) throw firebaseErr;
+      throw auth1Err;
+    }
+  }
 }
 
 /**
@@ -270,21 +379,10 @@ export async function refreshFirebaseToken(refreshToken, proxy = null) {
  */
 export async function reRegisterWithCodeium(idToken, proxy = null) {
   const fingerprint = generateFingerprint();
-  const regBody = JSON.stringify({ firebase_id_token: idToken });
-  const regHeaders = {
-    ...fingerprint,
-    'Content-Type': 'application/json',
-    'Content-Length': Buffer.byteLength(regBody),
-  };
-
-  const regRes = await httpsRequest(CODEIUM_REGISTER_URL, { method: 'POST', headers: regHeaders }, regBody, proxy);
-
-  if (regRes.status >= 400 || !regRes.data.api_key) {
-    throw new Error(`Codeium re-registration failed: ${JSON.stringify(regRes.data).slice(0, 200)}`);
-  }
+  const regRes = await registerWithCodeium(idToken, fingerprint, proxy);
 
   return {
-    apiKey: regRes.data.api_key,
-    name: regRes.data.name || '',
+    apiKey: regRes.api_key,
+    name: regRes.name || '',
   };
 }
