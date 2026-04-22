@@ -8,12 +8,10 @@
  */
 
 import { readFileSync, writeFileSync, existsSync } from 'fs';
-import { resolve, dirname } from 'path';
-import { fileURLToPath } from 'url';
-import { log } from './config.js';
+import { resolve } from 'path';
+import { config, log } from './config.js';
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
-const FILE = resolve(__dirname, '..', 'runtime-config.json');
+const FILE = resolve(config.dataDir, 'runtime-config.json');
 
 export const DEFAULT_IDENTITY_PROMPTS = {
   anthropic: 'You are {model}, a large language model created by Anthropic. You are helpful, harmless, and honest. When asked about your identity or which model you are, you respond that you are {model}, made by Anthropic.',

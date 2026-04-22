@@ -1,0 +1,20 @@
+services:
+  windsurf-api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: windsurf-api
+    restart: unless-stopped
+    init: true
+    env_file:
+      - .env
+    environment:
+      PORT: ${PORT:-3003}
+      DATA_DIR: ${DATA_DIR:-/data}
+      LS_BINARY_PATH: /opt/windsurf/language_server_linux_x64
+    ports:
+      - "${PORT:-3003}:${PORT:-3003}"
+    volumes:
+      - ./.docker-data/data:${DATA_DIR:-/data}
+      - ./.docker-data/opt/windsurf:/opt/windsurf
+      - ./.docker-data/tmp/windsurf-workspace:/tmp/windsurf-workspace

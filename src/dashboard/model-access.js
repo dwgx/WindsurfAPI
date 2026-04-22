@@ -5,9 +5,9 @@
 
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { join } from 'path';
-import { log } from '../config.js';
+import { config, log } from '../config.js';
 
-const ACCESS_FILE = join(process.cwd(), 'model-access.json');
+const ACCESS_FILE = join(config.dataDir, 'model-access.json');
 
 // mode: 'allowlist' (only listed models allowed) | 'blocklist' (listed models blocked) | 'all' (no restrictions)
 const _config = {

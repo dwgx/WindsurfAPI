@@ -25,6 +25,7 @@ if [ ! -f .env ]; then
   cat > .env << 'ENVEOF'
 PORT=3003
 API_KEY=
+DATA_DIR=
 DEFAULT_MODEL=gpt-4o-mini
 MAX_TOKENS=8192
 LOG_LEVEL=info

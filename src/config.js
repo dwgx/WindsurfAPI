@@ -1,4 +1,4 @@
-import { readFileSync, existsSync } from 'fs';
+import { readFileSync, existsSync, mkdirSync } from 'fs';
 import { resolve, dirname } from 'path';
 import { fileURLToPath } from 'url';
 
@@ -28,9 +28,18 @@ function loadEnv() {
 
 loadEnv();
 
+const dataDir = process.env.DATA_DIR
+  ? resolve(ROOT, process.env.DATA_DIR)
+  : ROOT;
+
+try {
+  mkdirSync(dataDir, { recursive: true });
+} catch {}
+
 export const config = {
   port: parseInt(process.env.PORT || '3003', 10),
   apiKey: process.env.API_KEY || '',
+  dataDir,
 
   codeiumAuthToken: process.env.CODEIUM_AUTH_TOKEN || '',
   codeiumApiKey: process.env.CODEIUM_API_KEY || '',

@@ -1,6 +1,7 @@
 node_modules/
 .env
 accounts.json
+model-access.json
 sshpass.sh
 sshpass2.sh
 deploy-us.py
@@ -26,3 +27,4 @@ windsurf-grpc/
 CLAUDE.md
 audit/
 *.png
+.docker-data/

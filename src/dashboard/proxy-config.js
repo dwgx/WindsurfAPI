@@ -5,9 +5,9 @@
 
 import { readFileSync, writeFileSync, existsSync } from 'fs';
 import { join } from 'path';
-import { log } from '../config.js';
+import { config, log } from '../config.js';
 
-const PROXY_FILE = join(process.cwd(), 'proxy.json');
+const PROXY_FILE = join(config.dataDir, 'proxy.json');
 
 const _config = {
   global: null,       // { type, host, port, username, password }

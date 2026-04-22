@@ -16,13 +16,13 @@
 import { mkdirSync, createWriteStream, existsSync } from 'fs';
 import { join } from 'path';
 import { randomUUID } from 'crypto';
-import { log } from '../config.js';
+import { config, log } from '../config.js';
 
 const MAX_BUFFER = 1000;
 const _buffer = [];
 const _subscribers = new Set();
 
-const LOG_DIR = join(process.cwd(), 'logs');
+const LOG_DIR = join(config.dataDir, 'logs');
 try { mkdirSync(LOG_DIR, { recursive: true }); } catch {}
 
 // Rotate by UTC date. One stream per day, lazily recreated at midnight.

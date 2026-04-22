@@ -92,6 +92,26 @@ node src/index.js
 
 Dashboard: `http://YOUR_IP:3003/dashboard`
 
+### Docker Deployment
+
+```bash
+cp .env.example .env
+
+# Optional: place language_server_linux_x64 under .docker-data/opt/windsurf/
+# If omitted, the container will auto-download it into /opt/windsurf/ on first boot.
+
+docker compose up -d --build
+docker compose logs -f
+```
+
+Default mounts:
+
+- `./.docker-data/data`: persisted `accounts.json`, `proxy.json`, `stats.json`, `runtime-config.json`, `model-access.json`, and `logs/`
+- `./.docker-data/opt/windsurf`: Language Server binary and its data directory
+- `./.docker-data/tmp/windsurf-workspace`: temporary workspace
+
+If you want a different persistence location, set `DATA_DIR` in `.env`. The Docker setup defaults it to `/data`.
+
 ### One-Click Update
 
 To pull the latest fixes after deployment, just run one command:
@@ -229,6 +249,7 @@ In your client's settings for **Custom OpenAI Compatible**:
 |---|---|---|
 | `PORT` | `3003` | Service port |
 | `API_KEY` | empty | API key required for requests. Leave empty to disable validation. |
+| `DATA_DIR` | project root | Directory for persisted JSON state and `logs/`. Docker deployments should usually use `/data`. |
 | `DEFAULT_MODEL` | `claude-4.5-sonnet-thinking` | The model to use if `model` is not specified. |
 | `MAX_TOKENS` | `8192` | Default maximum number of response tokens. |
 | `LOG_LEVEL` | `info` | debug / info / warn / error |

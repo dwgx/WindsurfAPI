@@ -92,6 +92,26 @@ node src/index.js
 
 Dashboard：`http://你的IP:3003/dashboard`
 
+### Docker 部署
+
+```bash
+cp .env.example .env
+
+# 可选：提前把 language_server_linux_x64 放到 .docker-data/opt/windsurf/ 下
+# 不放也行，容器首次启动时会自动下载到 /opt/windsurf/
+
+docker compose up -d --build
+docker compose logs -f
+```
+
+默认挂载：
+
+- `./.docker-data/data`：持久化 `accounts.json`、`proxy.json`、`stats.json`、`runtime-config.json`、`model-access.json`、`logs/`
+- `./.docker-data/opt/windsurf`：Language Server 二进制与数据目录
+- `./.docker-data/tmp/windsurf-workspace`：临时工作区
+
+如果想改持久化目录，可在 `.env` 里设置 `DATA_DIR`。Docker 默认已设为 `/data`。
+
 ### 一键更新
 
 部署过之后要拉最新修复，一条命令搞定：
@@ -231,6 +251,7 @@ curl http://localhost:3003/v1/messages \
 |---|---|---|
 | `PORT` | `3003` | 服务端口 |
 | `API_KEY` | 空 | 调 API 要带的密钥 留空就不验证 |
+| `DATA_DIR` | 项目根目录 | 持久化 JSON 状态和 `logs/` 的目录，Docker 推荐设成 `/data` |
 | `DEFAULT_MODEL` | `claude-4.5-sonnet-thinking` | 不传 model 用哪个 |
 | `MAX_TOKENS` | `8192` | 默认最大回复 token 数 |
 | `LOG_LEVEL` | `info` | debug / info / warn / error |
