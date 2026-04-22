@@ -142,6 +142,7 @@ export const MODELS = {
   // ── Kimi ────────────────────────────────────────────────
   'kimi-k2':                        { name: 'kimi-k2',                        provider: 'moonshot', enumValue: 323, modelUid: 'MODEL_KIMI_K2', credit: 0.5 },
   'kimi-k2.5':                      { name: 'kimi-k2.5',                      provider: 'moonshot', enumValue: 0,   modelUid: 'kimi-k2-5', credit: 1 },
+  'kimi-k2-6':                      { name: 'kimi-k2-6',                      provider: 'moonshot', enumValue: 0,   modelUid: 'kimi-k2-6', credit: 1 },
 
   // ── GLM ─────────────────────────────────────────────────
   'glm-4.7':                        { name: 'glm-4.7',                        provider: 'zhipu', enumValue: 417, modelUid: 'MODEL_GLM_4_7', credit: 0.25 },
