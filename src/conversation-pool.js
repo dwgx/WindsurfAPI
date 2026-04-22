@@ -6,11 +6,12 @@
  * Windsurf backend keep its own per-cascade context cached — we avoid
  * resending the full history on each turn and the server responds faster.
  *
- * The key is a "fingerprint" of the conversation up to (but not including)
- * the newest user message. A client sending [u1, a1, u2] looks up fp([u1, a1]);
- * a hit means we already drove the cascade to exactly that state. We then
- * `SendUserCascadeMessage(u2)` on the stored cascade_id and, on success,
- * re-store the entry under fp([u1, a1, u2, a2]) for the next turn.
+ * The key is a "fingerprint" of the stable caller-visible trajectory up to
+ * (but not including) the newest user/tool result turn. A client sending
+ * [u1, a1, u2] looks up fp([u1]); a hit means we already drove the cascade to
+ * exactly that state. We then `SendUserCascadeMessage(u2)` on the stored
+ * cascade_id and, on success, re-store the entry under fp([u1, u2]) for the
+ * next turn.
  *
  * Safety rails:
  *   - Entries are pinned to a specific (apiKey, lsPort) pair. We must reuse
@@ -51,30 +52,42 @@ function canonicalise(messages) {
 }
 
 /**
- * Fingerprint for "resume this conversation". Hash only USER messages
- * (excluding the latest one we're about to send). User messages have stable
- * format across client round-trips; assistant messages don't — the client
- * may restructure content arrays, add tool_use blocks, or modify text,
- * causing hash mismatches and 0% hit rate. (#24)
+ * Fingerprint for "resume this conversation". Hash only stable caller-visible
+ * turns: normal user messages and tool results. Assistant messages are
+ * excluded because clients may restructure content arrays, add tool_use
+ * blocks, or modify text between turns, causing hash mismatches and 0% hit
+ * rate. Claude Code's system prompt also changes frequently as local project
+ * state changes, so it is excluded by default; set
+ * CASCADE_REUSE_HASH_SYSTEM=1 if strict system-prompt isolation matters more
+ * than reuse hit rate for a deployment.
  */
 function systemPrefix(messages) {
+  if (process.env.CASCADE_REUSE_HASH_SYSTEM !== '1') return '';
   return messages
     .filter(m => m.role === 'system')
     .map(m => typeof m.content === 'string' ? m.content : JSON.stringify(m.content ?? ''))
     .join('\0');
 }
 
+function stableTurns(messages) {
+  return messages
+    .filter(m => m.role === 'user' || m.role === 'tool')
+    .map(m => m.role === 'tool'
+      ? { ...m, role: 'tool_result' }
+      : m);
+}
+
 export function fingerprintBefore(messages, modelKey = '') {
   if (!Array.isArray(messages) || messages.length < 2) return null;
-  const users = messages.filter(m => m.role === 'user');
-  if (users.length < 2) return null;
-  return sha256(modelKey + '\0' + systemPrefix(messages) + '\0' + JSON.stringify(canonicalise(users.slice(0, -1))));
+  const turns = stableTurns(messages);
+  if (turns.length < 2) return null;
+  return sha256(modelKey + '\0' + systemPrefix(messages) + '\0' + JSON.stringify(canonicalise(turns.slice(0, -1))));
 }
 
 export function fingerprintAfter(messages, modelKey = '') {
-  const users = messages.filter(m => m.role === 'user');
-  if (!users.length) return null;
-  return sha256(modelKey + '\0' + systemPrefix(messages) + '\0' + JSON.stringify(canonicalise(users)));
+  const turns = stableTurns(messages);
+  if (!turns.length) return null;
+  return sha256(modelKey + '\0' + systemPrefix(messages) + '\0' + JSON.stringify(canonicalise(turns)));
 }
 
 function prune(now) {

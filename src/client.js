@@ -35,6 +35,19 @@ function contentToString(content) {
   return content == null ? '' : JSON.stringify(content);
 }
 
+function positiveIntEnv(name, fallback) {
+  const n = parseInt(process.env[name] || '', 10);
+  return Number.isFinite(n) && n > 0 ? n : fallback;
+}
+
+function cascadeHistoryBudget(modelUid) {
+  const normal = positiveIntEnv('CASCADE_MAX_HISTORY_BYTES', 200_000);
+  if (/\b1m\b|[-_]1m$/i.test(String(modelUid || ''))) {
+    return positiveIntEnv('CASCADE_1M_HISTORY_BYTES', 900_000);
+  }
+  return normal;
+}
+
 // ─── WindsurfClient ────────────────────────────────────────
 
 export class WindsurfClient {
@@ -233,14 +246,14 @@ export class WindsurfClient {
         images = extracted.images;
         if (!isResume && sysText) text = sysText + '\n\n' + text;
       } else {
-        const MAX_HISTORY_BYTES = 200_000;
+        const maxHistoryBytes = cascadeHistoryBudget(modelUid);
         const lines = [];
         let historyBytes = 0;
         for (let i = convo.length - 2; i >= 0; i--) {
           const m = convo[i];
           const tag = m.role === 'user' ? 'human' : 'assistant';
           const line = `<${tag}>\n${contentToString(m.content)}\n</${tag}>`;
-          if (historyBytes + line.length > MAX_HISTORY_BYTES && lines.length > 0) {
+          if (historyBytes + line.length > maxHistoryBytes && lines.length > 0) {
             log.info(`Cascade: trimmed history at turn ${i}/${convo.length} (${Math.round(historyBytes/1024)}KB kept, ${convo.length - 2 - i} turns dropped)`);
             break;
           }
@@ -270,14 +283,14 @@ export class WindsurfClient {
         // Cascade expired — fall back to fresh with FULL history.
         // text was built as resume-only (last message). Rebuild it.
         if (isResume && convo.length > 1) {
-          const MAX_HISTORY_BYTES = 200_000;
+          const maxHistoryBytes = cascadeHistoryBudget(modelUid);
           const lines = [];
           let historyBytes = 0;
           for (let i = convo.length - 2; i >= 0; i--) {
             const m = convo[i];
             const tag = m.role === 'user' ? 'human' : 'assistant';
             const line = `<${tag}>\n${contentToString(m.content)}\n</${tag}>`;
-            if (historyBytes + line.length > MAX_HISTORY_BYTES && lines.length > 0) break;
+            if (historyBytes + line.length > maxHistoryBytes && lines.length > 0) break;
             lines.unshift(line);
             historyBytes += line.length;
           }

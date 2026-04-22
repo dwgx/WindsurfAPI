@@ -13,6 +13,7 @@ import { mkdirSync } from 'fs';
 import { existsSync } from 'fs';
 import http2 from 'http2';
 import net from 'net';
+import { resolve } from 'path';
 import { log } from './config.js';
 import { closeSessionForPort } from './grpc.js';
 
@@ -20,6 +21,7 @@ const DEFAULT_BINARY = '/opt/windsurf/language_server_linux_x64';
 const DEFAULT_PORT = 42100;
 const DEFAULT_CSRF = 'windsurf-api-csrf-fixed-token';
 const DEFAULT_API_URL = 'https://server.self-serve.windsurf.com';
+const DEFAULT_DATA_ROOT = '/opt/windsurf/data';
 
 // Pool: key -> { process, port, csrfToken, proxy, startedAt, ready }
 const _pool = new Map();
@@ -34,11 +36,18 @@ let _apiServerUrl = DEFAULT_API_URL;
 function proxyKey(proxy) {
   if (!proxy || !proxy.host) return 'default';
   // Sanitize to [A-Za-z0-9_] — the key flows into a filesystem path
-  // (`/opt/windsurf/data/${key}`) and a shell-quoted mkdir, so strip any
+  // (`${LS_DATA_DIR}/${key}`) and a shell-quoted mkdir, so strip any
   // special character that could slip past execSync's naive quoting.
   const safeHost = proxy.host.replace(/[^a-zA-Z0-9]/g, '_');
   const safePort = String(proxy.port || 8080).replace(/[^0-9]/g, '');
   return `px_${safeHost}_${safePort}`;
+}
+
+function dataDirForKey(key) {
+  const root = process.env.LS_DATA_DIR
+    ? resolve(process.cwd(), process.env.LS_DATA_DIR)
+    : DEFAULT_DATA_ROOT;
+  return `${root}/${key}`;
 }
 
 function proxyUrl(proxy) {
@@ -124,7 +133,7 @@ export async function ensureLs(proxy = null) {
       }
     }
 
-    const dataDir = `/opt/windsurf/data/${key}`;
+    const dataDir = dataDirForKey(key);
     try { mkdirSync(`${dataDir}/db`, { recursive: true }); } catch (e) { log.warn(`mkdirSync ${dataDir}/db: ${e.message}`); }
 
     const args = [
