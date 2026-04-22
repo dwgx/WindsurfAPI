@@ -256,10 +256,11 @@ export async function handleChatCompletions(body) {
   // pair so the Windsurf backend serves from its hot per-cascade context
   // instead of replaying the whole history.
   //
-  // Tool-emulation mode bypasses the reuse pool: fingerprint can't stably
-  // collapse a conversation whose assistant turns contain synthesised
-  // <tool_call> markup and whose user turns contain <tool_result> wrappers.
-  const reuseEnabled = useCascade && !emulateTools && isExperimentalEnabled('cascadeConversationReuse');
+  // Conversation reuse lets Cascade keep server-side context across turns.
+  // Previously disabled for tool-emulation but that caused ALL Claude Code
+  // conversations to lose context after every turn (#24). A fingerprint miss
+  // just falls back to fresh cascade (no worse than before). (#24)
+  const reuseEnabled = useCascade && isExperimentalEnabled('cascadeConversationReuse');
   const fpBefore = reuseEnabled ? fingerprintBefore(messages) : null;
   let reuseEntry = reuseEnabled ? poolCheckout(fpBefore) : null;
   if (reuseEntry) log.info(`Chat: cascade reuse HIT cascadeId=${reuseEntry.cascadeId.slice(0, 8)}… model=${displayModel}`);

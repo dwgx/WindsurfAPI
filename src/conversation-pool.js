@@ -22,7 +22,7 @@
 
 import { createHash } from 'crypto';
 
-const POOL_TTL_MS = 10 * 60 * 1000;
+const POOL_TTL_MS = 30 * 60 * 1000;
 const POOL_MAX = 500;
 
 // fingerprint -> { cascadeId, sessionId, lsPort, apiKey, createdAt, lastAccess }
