@@ -351,7 +351,13 @@ function buildCascadeConfig(modelEnum, modelUid, { toolPreamble, forceDefault } 
   // put in the user message. The section override replaces that section
   // directly so the model sees our emulated tool definitions at the
   // system-prompt level.
-  const convParts = [writeVarintField(4, forceDefault ? 1 : 3)]; // DEFAULT(1) for images, NO_TOOL(3) otherwise
+  // When client provides tools, use READ_ONLY (2) instead of NO_TOOL (3).
+  // NO_TOOL's system prompt tells the model "you have no tools" which makes
+  // opus/thinking models refuse our injected tool definitions entirely.
+  // READ_ONLY doesn't suppress tool awareness, so the model accepts our
+  // emulated tools while Cascade still won't execute its built-in tools.
+  const mode = forceDefault ? 1 : toolPreamble ? 2 : 3;
+  const convParts = [writeVarintField(4, mode)];
 
   // ── System prompt section overrides ──────────────────────────────────
   //
