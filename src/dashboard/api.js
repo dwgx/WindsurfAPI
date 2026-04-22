@@ -451,11 +451,15 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
     }
     stopLanguageServer();
     setTimeout(async () => {
-      await startLanguageServer({
-        binaryPath: config.lsBinaryPath,
-        port: config.lsPort,
-        apiServerUrl: config.codeiumApiUrl,
-      });
+      try {
+        await startLanguageServer({
+          binaryPath: config.lsBinaryPath,
+          port: config.lsPort,
+          apiServerUrl: config.codeiumApiUrl,
+        });
+      } catch (e) {
+        log.error(`Language server restart failed: ${e.message}`);
+      }
     }, 2000);
     return json(res, 200, { success: true, message: 'Restarting language server...' });
   }
