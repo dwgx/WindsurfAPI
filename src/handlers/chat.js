@@ -205,9 +205,10 @@ export async function handleChatCompletions(body) {
   const displayModel = modelInfo?.name || reqModel || config.defaultModel;
   const modelEnum = modelInfo?.enumValue || 0;
   const modelUid = modelInfo?.modelUid || null;
-  // All models now use Cascade flow — Legacy RawGetChatMessage returns empty
-  // text on current LS versions (Windsurf deprecated the raw endpoint).
-  // Cascade handles both modelUid (string) and modelEnum (int) routing.
+  // Cascade requires either a valid modelUid (string) or a recognized modelEnum.
+  // Legacy RawGetChatMessage is deprecated (returns empty on current LS).
+  // Models with only an old enum and no UID may fail with "neither PlanModel
+  // nor RequestedModel" — those models were removed from Windsurf upstream.
   const useCascade = !!(modelUid || modelEnum);
 
   // Tool-call emulation: if the client passed OpenAI-style tools[], we rewrite
