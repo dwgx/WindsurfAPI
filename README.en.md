@@ -165,6 +165,10 @@ LS_PORT=42100
 DASHBOARD_PASSWORD=
 EOF
 
+# Note: Inline comments are supported in .env for unquoted values:
+#   PORT=3003  # Service port
+# Quoted values preserve everything inside the quotes.
+
 node src/index.js
 ```
 
@@ -181,16 +185,16 @@ Open `http://YOUR_IP:3003/dashboard` → Login to get token → Click **Sign in 
 Go to [windsurf.com/show-auth-token](https://windsurf.com/show-auth-token) to copy your token:
 
 ```bash
-curl -X POST http://localhost:3003/auth/login 
-  -H "Content-Type: application/json" 
+curl -X POST http://localhost:3003/auth/login
+  -H "Content-Type: application/json"
   -d '{"token": "YOUR_TOKEN"}'
 ```
 
 **Method 3: Batch**
 
 ```bash
-curl -X POST http://localhost:3003/auth/login 
-  -H "Content-Type: application/json" 
+curl -X POST http://localhost:3003/auth/login
+  -H "Content-Type: application/json"
   -d '{"accounts": [{"token": "t1"}, {"token": "t2"}]}'
 ```
 
@@ -218,9 +222,9 @@ claude                # Use Claude Code as usual
 
 ```bash
 # Raw curl test
-curl http://localhost:3003/v1/messages 
-  -H "Authorization: Bearer YOUR_KEY" 
-  -H "anthropic-version: 2023-06-01" 
+curl http://localhost:3003/v1/messages
+  -H "Authorization: Bearer YOUR_KEY"
+  -H "anthropic-version: 2023-06-01"
   -d '{"model":"claude-opus-4.6","max_tokens":100,"messages":[{"role":"user","content":"Hello"}]}'
 ```
 
@@ -250,12 +254,21 @@ In your client's settings for **Custom OpenAI Compatible**:
 | `PORT` | `3003` | Service port |
 | `API_KEY` | empty | API key required for requests. Leave empty to disable validation. |
 | `DATA_DIR` | project root | Directory for persisted JSON state and `logs/`. Docker deployments should usually use `/data`. |
+| `CODEIUM_API_KEY` | empty | Direct API key from Windsurf (alternative to token-based auth). |
+| `CODEIUM_AUTH_TOKEN` | empty | Token from [windsurf.com/show-auth-token](https://windsurf.com/show-auth-token). |
+| `CODEIUM_EMAIL` | empty | Email for Windsurf account authentication. |
+| `CODEIUM_PASSWORD` | empty | Password for Windsurf account authentication. |
+| `CODEIUM_API_URL` | `https://server.self-serve.windsurf.com` | Windsurf cloud API endpoint. |
 | `DEFAULT_MODEL` | `claude-4.5-sonnet-thinking` | The model to use if `model` is not specified. |
 | `MAX_TOKENS` | `8192` | Default maximum number of response tokens. |
 | `LOG_LEVEL` | `info` | debug / info / warn / error |
 | `LS_BINARY_PATH` | `/opt/windsurf/language_server_linux_x64` | Path to the LS binary. |
 | `LS_PORT` | `42100` | LS gRPC port. |
+| `LS_DATA_DIR` | `/opt/windsurf` | Per-proxy LS data directory root. |
 | `DASHBOARD_PASSWORD` | empty | Dashboard password. Leave empty for no password. |
+| `CASCADE_REUSE_STRICT` | `0` | Set to `1` for strict conversation reuse mode (waits for same fingerprint). |
+| `CASCADE_REUSE_STRICT_RETRY_MS` | `60000` | Retry delay in ms for strict reuse mode. |
+| `CASCADE_REUSE_HASH_SYSTEM` | `0` | Set to `1` to include system messages in conversation reuse hash. |
 
 ## Dashboard Features
 
@@ -305,6 +318,10 @@ deepseek-v3 / v3-2 / r1 · grok-3 / mini / mini-thinking / code-fast-1 · qwen-3
 </details>
 
 > **Free accounts** can only use `gpt-4o-mini` and `gemini-2.5-flash`. Others require Windsurf Pro.
+
+### Language-Following for CJK Users
+
+The service automatically detects Chinese, Japanese, or Korean characters in your messages and injects a language-following hint to ensure the model responds in the same language. This fixes the issue where Claude Code's large English system prompt would override the communication language.
 
 ## Architecture Highlights
 
