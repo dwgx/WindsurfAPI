@@ -19,6 +19,10 @@ function loadEnv() {
     let val = trimmed.slice(eqIdx + 1).trim();
     if ((val.startsWith('"') && val.endsWith('"')) || (val.startsWith("'") && val.endsWith("'"))) {
       val = val.slice(1, -1);
+    } else {
+      // Strip inline comments for unquoted values: PORT=3003 # port → 3003
+      const commentIdx = val.indexOf(' #');
+      if (commentIdx !== -1) val = val.slice(0, commentIdx).trim();
     }
     if (!process.env[key]) {
       process.env[key] = val;

@@ -64,7 +64,18 @@ const META_TAG_RE = new RegExp(
 
 function stripMetaTags(s) {
   if (typeof s !== 'string' || !s) return s;
-  return s.replace(META_TAG_RE, '').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  const stripped = s.replace(META_TAG_RE, '').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  // Debug: log any remaining XML tags NOT in META_TAG_NAMES so we can expand the list
+  const remaining = stripped.match(/<([a-z][-a-z_]*)[^>]*>[\s\S]*?<\/\1>/g);
+  if (remaining?.length) {
+    const tagNames = remaining.map(m => m.match(/^<([a-z][-a-z_]*)/)?.[1]).filter(Boolean);
+    const unknown = tagNames.filter(t => !META_TAG_NAMES.includes(t));
+    if (unknown.length) {
+      // Import not available here — use console.error as a fallback log
+      console.error(`[META_TAG_AUDIT] Unknown XML tags in user message: ${[...new Set(unknown)].join(', ')}`);
+    }
+  }
+  return stripped;
 }
 
 /**
