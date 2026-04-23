@@ -77,9 +77,11 @@
     "delete": "Delete",
     "refresh": "Refresh",
     "probe": "Probe",
+    "probeTitle": "Probe capabilities",
     "enable": "Enable",
     "disable": "Disable",
     "copy": "Copy",
+    "copyTitle": "Click to copy",
     "configure": "Configure",
     "test": "Test",
     "readClipboard": "Read Clipboard",
@@ -202,7 +204,7 @@
     },
     "cascadeReuse": {
       "title": "Cascade Conversation Reuse",
-      "desc": "Reuse cascade_id across multi-turn conversations to maintain context cache on the server side.",
+      "desc": "Reuse the same cascade_id across multi-turn conversations, only sending the latest user message to Windsurf. Let the server maintain context cache. Significantly reduces TTFB and upload volume on cache hits; automatically falls back to new session on cache miss or account/LS change. Requires client to retain full history and append in order (e.g., new-api, OpenWebUI).",
       "enable": "Enable Cascade Conversation Reuse",
       "hint": "Disabled by default. When enabled, takes effect immediately on current conversation pool."
     },
@@ -259,6 +261,9 @@
     },
     "type": {
       "label": "Type"
+    },
+    "tier": {
+      "label": "Tier"
     },
     "provider": {
       "label": "Provider",
@@ -355,7 +360,8 @@
       "p50": "p50",
       "p95": "p95",
       "errorCount": "Error Count",
-      "model": "Model"
+      "model": "Model",
+      "note": "Note"
     },
     "empty": {
       "loginHistory": "No login records",
@@ -368,7 +374,10 @@
       "credits": "Loading...",
       "accountNotFound": "Account not found",
       "noValidAccounts": "No valid accounts available for routing",
-      "probeFailed": "Probe failed"
+      "probeFailed": "Probe failed",
+      "noRequestData": "No request data",
+      "noAccountRequestData": "No account-level request data",
+      "noData": "No data"
     }
   },
 
@@ -473,7 +482,9 @@
     "disable": "Disable",
     "cascadeReuse": {
       "title": "Enable Cascade Conversation Reuse",
-      "desc": "Disabled by default. When enabled, takes effect immediately on current conversation pool."
+      "desc": "Disabled by default. When enabled, takes effect immediately on current conversation pool.",
+      "enable": "Enable Cascade Conversation Reuse",
+      "hint": "Disabled by default. When enabled, takes effect immediately on current conversation pool."
     },
     "identityPrompt": {
       "title": "Enable Model Identity Injection",
@@ -507,6 +518,7 @@
       "title": "Edit Available Models — {{email}}",
       "hint": "Checked = available; Uncheck = disabled for this account",
       "enabled": "Enabled",
+      "saved": "Saved: enabled {{enabled}} / disabled {{disabled}}",
       "saving": "Saving...",
       "total": "Total"
     },
@@ -590,7 +602,8 @@
     "current": "Current",
     "notConfigured": "No global proxy configured",
     "placeholderSaved": "Saved (leave empty to keep)",
-    "placeholderPassword": "Proxy auth password"
+    "placeholderPassword": "Proxy auth password",
+    "auth": "Auth"
   },
 
   "account": {
@@ -600,6 +613,7 @@
     "disableSuccess": "Account disabled",
     "resetErrors": "Errors reset",
     "tierSet": "Tier set to {{tier}}",
+    "editModels": "Edit available models",
     "probe": {
       "doing": "Probing, takes about 10-30 seconds...",
       "complete": "Probe complete: {{result}}",
@@ -609,6 +623,7 @@
       "probeComplete": "Probe complete: {{tier}}"
     },
     "credits": {
+      "refreshTitle": "Refresh credits",
       "refreshed": "Credits refreshed",
       "refreshFailed": "Refresh failed",
       "allRefreshed": "All account credits refreshed: {{ok}} success / {{fail}} failed",
@@ -621,9 +636,12 @@
   },
 
   "batch": {
+    "pasteFirst": "Please paste batch accounts first",
     "importing": "Importing...",
     "importingDesc": "{{count}} lines, please wait",
     "complete": "Batch import complete",
+    "importFailed": "Batch import failed",
+    "importComplete": "Batch import complete: success {{success}} / failed {{fail}}",
     "success": "Success",
     "fail": "Fail",
     "formatError": "Line {{line}} format error"
@@ -640,6 +658,7 @@
     "experimentalEnabled": "Experimental feature enabled",
     "experimentalDisabled": "Experimental feature disabled",
     "toggleFailed": "Toggle failed: {{error}}",
+    "modeUpdated": "Mode updated",
     "noTierModels": "No models available for this account tier",
     "loginSuccess": "{{label}} login successful",
     "loginFailed": "{{label}} login failed: {{error}}",
@@ -648,8 +667,19 @@
     "clipboardEmpty": "Clipboard is empty",
     "clipboardUnsupported": "Current environment doesn't support auto clipboard read, please paste manually",
     "clipboardError": "Failed to read clipboard: {{error}}",
+    "apiKeyCopied": "API Key copied",
+    "copyFailed": "Copy failed, please select manually",
+    "copyFailedError": "Copy failed: {{error}}",
     "enterEmailPassword": "Please enter email and password",
-    "restarting": "Language Server restarting..."
+    "restarting": "Language Server restarting...",
+    "proxyConfigured": "Account proxy configured",
+    "proxyCleared": "Account proxy cleared",
+    "globalProxySaved": "Global proxy saved",
+    "globalProxyCleared": "Global proxy cleared",
+    "enterProxyHost": "Please enter proxy host",
+    "statsReset": "Statistics reset",
+    "enterKeyOrToken": "Please enter Key or Token",
+    "addFailed": "Add failed"
   },
 
   "log": {
@@ -694,6 +724,7 @@
     "updateFailed": "Update failed",
     "apiError": "API error",
     "loadFailed": "Failed to load",
+    "openFailed": "Failed to open",
     "saveFailed": "Save failed",
     "deleteFailed": "Delete failed",
     "networkError": "Network error",
@@ -753,13 +784,22 @@
       "name": "Name",
       "apiKey": "API Key",
       "accountId": "Account ID"
-    }
+    },
+    "successTitle": "Login Success",
+    "addedToPool": "and added to account pool"
   },
 
   "timeRange": {
     "minutesAgo": "{{count}}m ago",
     "hoursAgo": "{{count}}h ago",
     "daysAgo": "{{count}}d ago"
+  },
+
+  "time": {
+    "day": "d",
+    "hour": "h",
+    "minute": "m",
+    "second": "s"
   },
 
   "prompt": {

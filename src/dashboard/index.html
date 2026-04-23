@@ -1411,8 +1411,8 @@ window._firebaseOAuth = async function(provider) {
           </div>
         </div>
         <div class="field-row-actions">
-          <button class="btn btn-primary" onclick="App.saveGlobalProxy()">保存</button>
-          <button class="btn btn-outline" onclick="App.clearGlobalProxy()">清除</button>
+          <button class="btn btn-primary" onclick="App.saveGlobalProxy()" data-i18n="action.save">Save</button>
+          <button class="btn btn-outline" onclick="App.clearGlobalProxy()" data-i18n="action.clear">Clear</button>
           <span id="proxy-current" class="text-sm text-muted" style="margin-left:auto;align-self:center"></span>
         </div>
       </div>
@@ -1596,9 +1596,8 @@ window._firebaseOAuth = async function(provider) {
       </div>
       <div class="section-body">
         <div class="section-desc" style="margin-bottom:12px" data-i18n="section.cascadeReuse.desc">
-          多轮对话时复用同一个 <code>cascade_id</code>，只把最新一条 user 消息发给 Windsurf，
-          让服务端维持上下文缓存。命中时可显著降低 TTFB 与上传体积；未命中或账号/LS 变更会自动回退到新会话。
-          需要客户端保留完整历史并按顺序追加（如 new-api、OpenWebUI）。
+          ${I18n.t('section.cascadeReuse.desc')}
+        </div>
         </div>
         <div style="display:flex;align-items:center;gap:16px;margin-bottom:16px">
           <label class="switch">
@@ -1635,8 +1634,8 @@ window._firebaseOAuth = async function(provider) {
             <div class="text-sm text-muted" data-i18n="section.identityPrompt.hint">默认开启；关闭后下面的模板不起作用</div>
           </div>
         </div>
-        <div class="section-desc" style="margin-bottom:10px" data-i18n="section.identityPrompt.templateHint">
-          每个厂商的模板可编辑，<code>{model}</code> 占位符会被替换成请求的模型名（例如 <code>claude-opus-4.6</code>）。
+        <div class="section-desc" style="margin-bottom:10px">
+          ${I18n.t('section.identityPrompt.templateHint')}
         </div>
         <div style="margin-bottom:10px"><input type="text" class="input" data-i18n-placeholder="field.searchProvider.placeholder" placeholder="搜索提供商..." id="identity-search" oninput="App.filterIdentityPrompts(this.value)" style="max-width:280px"></div>
         <div id="identity-prompts-editor" style="display:grid;gap:14px"></div>
@@ -2070,7 +2069,7 @@ const App = {
           sv.textContent = label;
           sv.title = h.commitMessage
             ? `${h.commitMessage}\n${h.commitDate || ''}${h.branch ? ` (${h.branch})` : ''}`
-            : `版本 ${h.version}`;
+            : I18n.t('footer.version') + ' ' + h.version;
         }
         this._versionInfo = h;
       }
@@ -2234,16 +2233,16 @@ const App = {
       this.showWindsurfLoginResult(`
         <div class="section-header">
           <div>
-            <div class="section-title" style="color:var(--success)">✓ 登录成功</div>
-            <div class="section-desc">API Key 已生成${autoAdd ? '并加入账号池' : ''}</div>
+            <div class="section-title" style="color:var(--success)">✓ ${I18n.t('loginResult.success')}</div>
+            <div class="section-desc">${I18n.t('loginResult.apiKeyGenerated', {autoAdd: autoAdd ? I18n.t('loginResult.addedToPool') : ''})}</div>
           </div>
         </div>
         <div class="section-body">
           <table style="background:transparent">
-            <tr><td style="color:var(--text-muted);width:120px">邮箱</td><td>${this.esc(r.email)}</td></tr>
-            <tr><td style="color:var(--text-muted)">姓名</td><td>${this.esc(r.name || '-')}</td></tr>
-            <tr><td style="color:var(--text-muted)">API Key</td><td><code class="break-all">${this.esc(r.apiKey)}</code></td></tr>
-            ${r.account ? `<tr><td style="color:var(--text-muted)">账号 ID</td><td><code>${r.account.id}</code> <span class="badge active">${r.account.status}</span></td></tr>` : ''}
+            <tr><td style="color:var(--text-muted);width:120px">${I18n.t('loginResult.fields.email')}</td><td>${this.esc(r.email)}</td></tr>
+            <tr><td style="color:var(--text-muted)">${I18n.t('loginResult.fields.name')}</td><td>${this.esc(r.name || '-')}</td></tr>
+            <tr><td style="color:var(--text-muted)">${I18n.t('loginResult.fields.apiKey')}</td><td><code class="break-all">${this.esc(r.apiKey)}</code></td></tr>
+            ${r.account ? `<tr><td style="color:var(--text-muted)">${I18n.t('loginResult.fields.accountId')}</td><td><code>${r.account.id}</code> <span class="badge active">${r.account.status}</span></td></tr>` : ''}
           </table>
         </div>`);
       return;
@@ -2251,10 +2250,10 @@ const App = {
     this.showWindsurfLoginResult(`
       <div class="section-header">
         <div>
-          <div class="section-title" style="color:var(--error)">✗ 登录失败</div>
+          <div class="section-title" style="color:var(--error)">${I18n.t('loginResult.fail')}</div>
         </div>
       </div>
-      <div class="section-body"><p class="text-sm">${this.esc(r.error || '未知错误')}</p>${this.getWindsurfLoginFailActions(r)}</div>`);
+      <div class="section-body"><p class="text-sm">${this.esc(r.error || I18n.t('error.unknown'))}</p>${this.getWindsurfLoginFailActions(r)}</div>`);
   },
 
   renderBatchWindsurfLoginResult(results, autoAdd) {
@@ -2263,22 +2262,22 @@ const App = {
     this.showWindsurfLoginResult(`
         <div class="section-header">
         <div>
-          <div class="section-title" style="color:${failCount ? 'var(--warning, #f59e0b)' : 'var(--success)'}">批量导入完成</div>
-          <div class="section-desc">共 ${results.length} 个账号，成功 ${successCount} 个，失败 ${failCount} 个${autoAdd ? '；成功项已自动加入账号池' : ''}</div>
+          <div class="section-title" style="color:${failCount ? 'var(--warning, #f59e0b)' : 'var(--success)'}">${I18n.t('loginResult.batchComplete')}</div>
+          <div class="section-desc">${I18n.t('loginResult.batchDesc', {total: results.length, success: successCount, fail: failCount, autoAdd: autoAdd ? I18n.t('loginResult.addedToPool') : ''})}</div>
         </div>
       </div>
       <div class="section-body tight">
         <div class="table-wrap">
           <table>
-            <thead><tr><th>邮箱</th><th>状态</th><th>说明</th></tr></thead>
+            <thead><tr><th>${I18n.t('table.header.email')}</th><th>${I18n.t('table.header.status')}</th><th>${I18n.t('table.header.note')}</th></tr></thead>
             <tbody>
               ${results.map(r => `
                 <tr>
                   <td>${this.esc(r.email || '-')}</td>
-                  <td><span class="badge ${r.success ? 'active' : 'error'}">${r.success ? '成功' : '失败'}</span></td>
+                  <td><span class="badge ${r.success ? 'active' : 'error'}">${r.success ? I18n.t('batch.success') : I18n.t('batch.fail')}</span></td>
                   <td class="text-sm">${r.success
-                    ? `<span class="break-all"><code>${this.esc(r.apiKey ? r.apiKey.slice(0, 16) + '...' : '-')}</code>${r.account ? ` · 账号 ${this.esc(r.account.id)}` : ''}</span>`
-                    : `<span style="color:var(--error)">${this.esc(r.error || '未知错误')}</span>`}</td>
+                    ? `<span class="break-all"><code>${this.esc(r.apiKey ? r.apiKey.slice(0, 16) + '...' : '-')}</code>${r.account ? ` · ${I18n.t('table.header.account')} ${this.esc(r.account.id)}` : ''}</span>`
+                    : `<span style="color:var(--error)">${this.esc(r.error || I18n.t('error.unknown'))}</span>`}</td>
                 </tr>
               `).join('')}
             </tbody>
@@ -2295,13 +2294,13 @@ const App = {
       if (!line) return;
       const m = line.match(/^(\S+)\s+(.+)$/);
       if (!m) {
-        errors.push(`第 ${idx + 1} 行格式错误`);
+        errors.push(I18n.t('batch.formatError', {line: idx + 1}));
         return;
       }
       const email = m[1].trim();
       const password = m[2].trim();
       if (!email.includes('@') || !password) {
-        errors.push(`第 ${idx + 1} 行格式错误`);
+        errors.push(I18n.t('batch.formatError', {line: idx + 1}));
         return;
       }
       entries.push({ email, password });
@@ -2335,7 +2334,7 @@ const App = {
 
     const btn = document.getElementById('wl-btn');
     btn.disabled = true;
-    btn.innerHTML = '<span class="spinner"></span> 登录中...';
+    btn.innerHTML = '<span class="spinner"></span> ' + I18n.t('status.loading');
 
     const entry = { time: new Date().toISOString(), email, proxy: this.getWindsurfProxyLabel(proxy), status: 'pending' };
 
@@ -2359,23 +2358,23 @@ const App = {
 
     this.pushLoginHistory(entry);
     btn.disabled = false;
-    btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg> 登录';
+    btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg> ' + I18n.t('action.login');
   },
 
   async windsurfLoginBatch() {
     const input = document.getElementById('wl-batch-input').value;
-    if (!input.trim()) return this.toast('请先粘贴批量账号', 'error');
+    if (!input.trim()) return this.toast(I18n.t('batch.pasteFirst'), 'error');
 
     const autoAdd = document.getElementById('wl-auto-add').checked;
     const btn = document.getElementById('wl-batch-btn');
     const lineCount = input.trim().split('\n').filter(l => l.trim()).length;
     btn.disabled = true;
-    btn.innerHTML = '<span class="spinner"></span> 导入中...';
+    btn.innerHTML = '<span class="spinner"></span> ' + I18n.t('batch.importing');
     this.showWindsurfLoginResult(`
       <div class="section-header">
         <div>
-          <div class="section-title">批量导入中...</div>
-          <div class="section-desc">共 ${lineCount} 行，请稍候</div>
+          <div class="section-title">${I18n.t('batch.importing')}</div>
+          <div class="section-desc">${I18n.t('batch.importingDesc', {count: lineCount})}</div>
         </div>
       </div>`);
 
@@ -2384,10 +2383,10 @@ const App = {
       if (!r.success || !Array.isArray(r.results)) {
         this.showWindsurfLoginResult(`
           <div class="section-header">
-            <div><div class="section-title" style="color:var(--error)">✗ 批量导入失败</div></div>
+            <div><div class="section-title" style="color:var(--error)">${I18n.t('loginResult.fail')}</div></div>
           </div>
-          <div class="section-body"><p class="text-sm">${this.esc(r.error || '未知错误')}</p></div>`);
-        return this.toast(r.error || '批量导入失败', 'error');
+          <div class="section-body"><p class="text-sm">${this.esc(r.error || I18n.t('error.unknown'))}</p></div>`);
+        return this.toast(r.error || I18n.t('batch.importFailed'), 'error');
       }
 
       this.renderBatchWindsurfLoginResult(r.results, autoAdd);
@@ -2398,7 +2397,7 @@ const App = {
           status: item.success ? 'success' : `error: ${item.error || 'unknown'}`,
           apiKey: item.success && item.apiKey ? item.apiKey.slice(0, 16) + '...' : undefined,
         })));
-      this.toast(`批量导入完成：成功 ${r.successCount || 0} / 失败 ${r.failCount || 0}`, (r.failCount || 0) ? 'info' : 'success');
+      this.toast(I18n.t('batch.importComplete', {success: r.successCount || 0, fail: r.failCount || 0}), (r.failCount || 0) ? 'info' : 'success');
       if ((r.successCount || 0) > 0) {
         this.loadAccounts();
         document.getElementById('wl-batch-input').value = '';
@@ -2406,13 +2405,13 @@ const App = {
     } catch (err) {
       this.showWindsurfLoginResult(`
         <div class="section-header">
-          <div><div class="section-title" style="color:var(--error)">✗ 批量导入失败</div></div>
+          <div><div class="section-title" style="color:var(--error)">${I18n.t('loginResult.fail')}</div></div>
         </div>
         <div class="section-body"><p class="text-sm">${this.esc(err.message)}</p></div>`);
       this.toast(err.message, 'error');
     } finally {
       btn.disabled = false;
-      btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M3 5h18"/><path d="M3 12h18"/><path d="M3 19h18"/></svg> 批量导入并登录';
+      btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M3 5h18"/><path d="M3 12h18"/><path d="M3 19h18"/></svg> ' + I18n.t('action.batchImport');
     }
   },
 
@@ -2425,13 +2424,13 @@ const App = {
         <td class="text-sm nowrap">${new Date(h.time).toLocaleString()}</td>
         <td>${this.esc(h.email)}</td>
         <td>
-          <span class="badge ${ok ? 'active' : 'error'}">${ok ? '成功' : '失败'}</span>
+          <span class="badge ${ok ? 'active' : 'error'}">${ok ? I18n.t('batch.success') : I18n.t('batch.fail')}</span>
           ${!ok ? `<div class="text-xs" style="color:var(--error);margin-top:3px;max-width:240px;overflow:hidden;text-overflow:ellipsis">${this.esc((h.status||'').replace('error: ',''))}</div>` : ''}
         </td>
         <td class="text-sm">${this.esc(h.proxy || '-')}</td>
-        <td><button class="btn btn-ghost btn-xs" onclick="App.removeLoginHistory(${i})">删除</button></td>
+        <td><button class="btn btn-ghost btn-xs" onclick="App.removeLoginHistory(${i})">${I18n.t('action.delete')}</button></td>
       </tr>`;
-    }).join('') || '<tr class="empty-row"><td colspan="5">暂无登录记录</td></tr>';
+    }).join('') || `<tr class="empty-row"><td colspan="5">${I18n.t('table.empty.loginHistory')}</td></tr>`;
   },
 
   removeLoginHistory(idx) {
@@ -2517,7 +2516,7 @@ const App = {
       const blockedCount = (a.blockedModels || []).length;
       const availCount = tierModels.length - blockedCount;
       const capsHtml = tierModels.length
-        ? `<button class="btn btn-ghost btn-xs" style="min-width:96px" onclick="App.openBlockedModal('${this.escJsAttr(a.id)}')" title="编辑该账号可用模型">
+        ? `<button class="btn btn-ghost btn-xs" style="min-width:96px" onclick="App.openBlockedModal('${this.escJsAttr(a.id)}')" title="${I18n.t('account.editModels')}">
              <span style="color:var(--success,#10b981);font-weight:600">${availCount}</span>
              <span style="color:var(--text-dim)">/${tierModels.length}</span>
              ${blockedCount > 0 ? `<span class="badge warn" style="margin-left:4px">-${blockedCount}</span>` : ''}
@@ -2595,21 +2594,21 @@ const App = {
         <td style="color:${a.errorCount > 0 ? 'var(--error)' : 'inherit'}">${a.errorCount}</td>
         <td class="text-sm nowrap">${a.lastUsed ? new Date(a.lastUsed).toLocaleString() : '-'}</td>
         <td class="nowrap">
-          <code style="cursor:pointer" title="点击复制" onclick="App.copyKey('${this.escJsAttr(a.apiKey)}')">${a.keyPrefix}</code>
+          <code style="cursor:pointer" title="${I18n.t('action.copyTitle')}" onclick="App.copyKey('${this.escJsAttr(a.apiKey)}')">${a.keyPrefix}</code>
         </td>
         <td class="nowrap">
           <div class="btn-group">
-            <button class="btn btn-ghost btn-xs" onclick="App.probeAccount('${this.escJsAttr(a.id)}')" title="探测能力">探测</button>
-            <button class="btn btn-ghost btn-xs" onclick="App.refreshCredits('${this.escJsAttr(a.id)}')" title="刷新余额">余额</button>
+            <button class="btn btn-ghost btn-xs" onclick="App.probeAccount('${this.escJsAttr(a.id)}')" title="${I18n.t('action.probeTitle')}">${I18n.t('action.probe')}</button>
+            <button class="btn btn-ghost btn-xs" onclick="App.refreshCredits('${this.escJsAttr(a.id)}')" title="${I18n.t('account.credits.refreshTitle')}">${I18n.t('table.header.credits')}</button>
             ${a.status === 'active'
-              ? `<button class="btn btn-ghost btn-xs" onclick="App.toggleAccount('${this.escJsAttr(a.id)}','disabled')">停用</button>`
-              : `<button class="btn btn-success btn-xs" onclick="App.toggleAccount('${this.escJsAttr(a.id)}','active')">启用</button>`}
-            <button class="btn btn-ghost btn-xs" onclick="App.resetErrors('${this.escJsAttr(a.id)}')">重置</button>
-            <button class="btn btn-ghost btn-xs" style="color:var(--error)" onclick="App.deleteAccount('${this.escJsAttr(a.id)}')">删除</button>
+              ? `<button class="btn btn-ghost btn-xs" onclick="App.toggleAccount('${this.escJsAttr(a.id)}','disabled')">${I18n.t('action.disable')}</button>`
+              : `<button class="btn btn-success btn-xs" onclick="App.toggleAccount('${this.escJsAttr(a.id)}','active')">${I18n.t('action.enable')}</button>`}
+            <button class="btn btn-ghost btn-xs" onclick="App.resetErrors('${this.escJsAttr(a.id)}')">${I18n.t('action.reset')}</button>
+            <button class="btn btn-ghost btn-xs" style="color:var(--error)" onclick="App.deleteAccount('${this.escJsAttr(a.id)}')">${I18n.t('action.delete')}</button>
           </div>
         </td>
       </tr>`;
-    }).join('') || '<tr class="empty-row"><td colspan="11">暂无账号，请先添加</td></tr>';
+    }).join('') || `<tr class="empty-row"><td colspan="11">${I18n.t('table.empty.accounts')}</td></tr>`;
   },
 
   async refreshCredits(id) {
@@ -2693,16 +2692,16 @@ const App = {
       const availInit = total - blocked.size;
       const html = `
         <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px;padding:8px 10px;background:var(--surface-2);border-radius:6px">
-          <div class="text-xs text-dim">勾选 = 可用；取消 = 对该账号禁用</div>
+          <div class="text-xs text-dim">${I18n.t('modal.blockedModels.hint')}</div>
           <div style="font-size:13px">
-            已启用 <span id="bm-avail" style="color:var(--success,#10b981);font-weight:600">${availInit}</span>
+            ${I18n.t('modal.blockedModels.enabled')} <span id="bm-avail" style="color:var(--success,#10b981);font-weight:600">${availInit}</span>
             <span style="color:var(--text-dim)"> / ${total}</span>
           </div>
         </div>
         <div style="display:flex;gap:6px;margin-bottom:10px">
-          <button class="btn btn-ghost btn-xs" onclick="App.blockedModalToggleAll(true)">全选</button>
-          <button class="btn btn-ghost btn-xs" onclick="App.blockedModalToggleAll(false)">全不选</button>
-          <button class="btn btn-ghost btn-xs" onclick="App.blockedModalInvert()">反选</button>
+          <button class="btn btn-ghost btn-xs" onclick="App.blockedModalToggleAll(true)">${I18n.t('action.selectAll')}</button>
+          <button class="btn btn-ghost btn-xs" onclick="App.blockedModalToggleAll(false)">${I18n.t('action.selectNone')}</button>
+          <button class="btn btn-ghost btn-xs" onclick="App.blockedModalInvert()">${I18n.t('action.invert')}</button>
         </div>
         <div style="max-height:50vh;overflow:auto;padding:2px 2px 2px 0">
           ${Object.entries(groups).map(([provider, models]) => `
@@ -2728,9 +2727,9 @@ const App = {
       // Promise — _bindBlockedModal replaces the OK handler with one that
       // PATCHes and closes itself, so the original resolve() only fires on
       // Cancel, which we ignore.
-      this.confirm(`编辑可用模型 — ${acct.email}`, html, { okText: '保存', html: true, wide: true });
+      this.confirm(I18n.t('modal.blockedModels.title', {email: acct.email}), html, { okText: I18n.t('action.save'), html: true, wide: true });
       setTimeout(() => this._bindBlockedModal(id), 0);
-    } catch (e) { this.toast('打开失败: ' + e.message, 'error'); }
+    } catch (e) { this.toast(I18n.t('error.openFailed') + ': ' + e.message, 'error'); }
   },
 
   // Bind listeners once the blocked-models modal is mounted.
@@ -2781,20 +2780,20 @@ const App = {
       const newBlocked = [];
       root.querySelectorAll('.blocked-model-cb').forEach(cb => { if (!cb.checked) newBlocked.push(cb.dataset.model); });
       okBtn.disabled = true; cancelBtn.disabled = true;
-      okBtn.textContent = '保存中...';
+      okBtn.textContent = I18n.t('status.saving');
       try {
         const r = await self.api('PATCH', `/accounts/${id}`, { blockedModels: newBlocked });
         if (r.success) {
-          self.toast(`已保存：启用 ${root.querySelectorAll('.blocked-model-cb:checked').length} / 禁用 ${newBlocked.length}`, 'success');
+          self.toast(I18n.t('modal.blockedModels.saved', {enabled: root.querySelectorAll('.blocked-model-cb:checked').length, disabled: newBlocked.length}), 'success');
           root.remove();
           self.loadAccounts();
         } else {
-          self.toast(r.error || '保存失败', 'error');
-          okBtn.disabled = false; cancelBtn.disabled = false; okBtn.textContent = '保存';
+          self.toast(r.error || I18n.t('error.saveFailed'), 'error');
+          okBtn.disabled = false; cancelBtn.disabled = false; okBtn.textContent = I18n.t('action.save');
         }
       } catch (e) {
-        self.toast('保存失败: ' + e.message, 'error');
-        okBtn.disabled = false; cancelBtn.disabled = false; okBtn.textContent = '保存';
+        self.toast(I18n.t('error.saveFailed') + ': ' + e.message, 'error');
+        okBtn.disabled = false; cancelBtn.disabled = false; okBtn.textContent = I18n.t('action.save');
       }
     };
   },
@@ -2819,37 +2818,37 @@ const App = {
     const type = document.getElementById('acc-type').value;
     const key = document.getElementById('acc-key').value.trim();
     const label = document.getElementById('acc-label').value.trim();
-    if (!key) return this.toast('请输入 Key 或 Token', 'error');
+    if (!key) return this.toast(I18n.t('toast.enterKeyOrToken'), 'error');
     const body = type === 'api_key' ? { api_key: key, label } : { token: key, label };
     const r = await this.api('POST', '/accounts', body);
-    if (r.success) { this.toast('账号已添加'); document.getElementById('acc-key').value = ''; document.getElementById('acc-label').value = ''; this.loadAccounts(); }
-    else this.toast(r.error || '添加失败', 'error');
+    if (r.success) { this.toast(I18n.t('account.addSuccess')); document.getElementById('acc-key').value = ''; document.getElementById('acc-label').value = ''; this.loadAccounts(); }
+    else this.toast(r.error || I18n.t('toast.addFailed'), 'error');
   },
 
   async toggleAccount(id, status) { await this.api('PATCH', `/accounts/${id}`, { status }); this.loadAccounts(); },
 
   async overrideTier(id, current) {
     const newTier = await this.prompt(
-      '手动设置账号层级',
-      `当前: ${current}。Windsurf Pro 试用有时自动探测失败（issue #8 的连锁影响），手动改成 pro 即可解锁所有 Pro 模型。`,
-      [{ name: 'tier', label: '层级', type: 'select', options: [
-        { value: 'pro', label: 'Pro（解锁所有模型）' },
-        { value: 'free', label: 'Free（仅 gpt-4o-mini 和 gemini-2.5-flash）' },
-        { value: 'unknown', label: 'Unknown（让系统重新判定）' },
+      I18n.t('modal.overrideTier.title'),
+      I18n.t('modal.overrideTier.desc', {current}),
+      [{ name: 'tier', label: I18n.t('field.tier.label'), type: 'select', options: [
+        { value: 'pro', label: I18n.t('modal.overrideTier.options.pro') },
+        { value: 'free', label: I18n.t('modal.overrideTier.options.free') },
+        { value: 'unknown', label: I18n.t('modal.overrideTier.options.unknown') },
       ], value: current }]
     );
     if (!newTier) return;
     await this.api('PATCH', `/accounts/${id}`, { tier: newTier.tier });
-    this.toast(`层级已设为 ${newTier.tier}`, 'success');
+    this.toast(I18n.t('account.tierSet', {tier: newTier.tier}), 'success');
     this.loadAccounts();
   },
-  async resetErrors(id) { await this.api('PATCH', `/accounts/${id}`, { resetErrors: true }); this.loadAccounts(); this.toast('错误已重置'); },
+  async resetErrors(id) { await this.api('PATCH', `/accounts/${id}`, { resetErrors: true }); this.loadAccounts(); this.toast(I18n.t('account.resetErrors')); },
   async deleteAccount(id) {
-    const ok = await this.confirm('删除账号', '此操作不可撤销，确定要删除该账号吗？', { danger: true, okText: '删除' });
+    const ok = await this.confirm(I18n.t('modal.deleteAccount.title'), I18n.t('modal.deleteAccount.desc'), { danger: true, okText: I18n.t('action.delete') });
     if (!ok) return;
     await this.api('DELETE', `/accounts/${id}`);
     this.loadAccounts();
-    this.toast('账号已删除');
+    this.toast(I18n.t('account.deleteSuccess'));
   },
 
   // ─── Models ──────────────────────────────────
@@ -2872,18 +2871,16 @@ const App = {
     }
     sec.classList.remove('hidden');
     const isAllow = this.modelAccessConfig.mode === 'allowlist';
-    document.getElementById('model-list-title').textContent = isAllow ? '允许的模型' : '屏蔽的模型';
-    document.getElementById('model-list-hint').textContent = isAllow
-      ? '只有选中的模型可以使用，未选中的模型将返回 403 错误'
-      : '选中的模型将被屏蔽，未选中的模型可正常使用';
+    document.getElementById('model-list-title').textContent = I18n.t(isAllow ? 'section.modelList.titleAllow' : 'section.modelList.titleBlock');
+    document.getElementById('model-list-hint').textContent = I18n.t(isAllow ? 'section.modelList.descAllow' : 'section.modelList.descBlock');
 
     const current = this.modelAccessConfig.list;
     if (current.length > 0) {
       document.getElementById('model-list-current').innerHTML = `
-        <div class="text-xs text-muted" style="margin-bottom:6px">当前清单 (${current.length})</div>
+        <div class="text-xs text-muted" style="margin-bottom:6px">${I18n.t('model.list.current', {count: current.length})}</div>
         <div class="model-chips">${current.map(m => `<span class="model-chip selected">${this.esc(m)}<span class="remove" onclick="App.removeModelFromList('${this.escJsAttr(m)}')">×</span></span>`).join('')}</div>`;
     } else {
-      document.getElementById('model-list-current').innerHTML = '<div class="text-xs text-dim">清单为空</div>';
+      document.getElementById('model-list-current').innerHTML = `<div class="text-xs text-dim">${I18n.t('model.list.empty')}</div>`;
     }
     this.filterModels();
   },
@@ -2914,14 +2911,14 @@ const App = {
           return `<span class="model-chip ${inList ? 'selected' : ''}" onclick="App.toggleModelInList('${this.escJsAttr(m.id)}')">${this.esc(m.name)}</span>`;
         }).join('')}</div>
       </div>
-    `).join('') || '<div class="text-sm text-dim">没有符合的模型</div>';
+    `).join('') || `<div class="text-sm text-dim">${I18n.t('table.empty.models')}</div>`;
   },
 
   async setModelMode(mode) {
     await this.api('PUT', '/model-access', { mode });
     this.modelAccessConfig.mode = mode;
     this.updateModelListUI();
-    this.toast('模式已更新');
+    this.toast(I18n.t('toast.modeUpdated'));
   },
 
   async toggleModelInList(modelId) {
@@ -2953,15 +2950,15 @@ const App = {
       // Password is never sent down now — show a placeholder when one is
       // stored so the user knows leaving the field blank keeps it.
       document.getElementById('proxy-pass').value = '';
-      document.getElementById('proxy-pass').placeholder = d.global.hasPassword ? '已保存（留空保持原值）' : '代理认证密码';
+      document.getElementById('proxy-pass').placeholder = d.global.hasPassword ? I18n.t('proxy.placeholderSaved') : I18n.t('proxy.placeholderPassword');
       this._globalProxyHasPassword = !!d.global.hasPassword;
       const h = (d.global.host || '').replace(/:\d+$/, '');
-      const authInfo = d.global.username ? `（认证：${d.global.username}）` : '';
-      document.getElementById('proxy-current').textContent = `当前：${d.global.type}://${h}:${d.global.port}${authInfo}`;
+      const authInfo = d.global.username ? `(${I18n.t('proxy.auth')}: ${d.global.username})` : '';
+      document.getElementById('proxy-current').textContent = `${I18n.t('proxy.current')}: ${d.global.type}://${h}:${d.global.port}${authInfo}`;
     } else {
       this._globalProxyHasPassword = false;
-      document.getElementById('proxy-pass').placeholder = '代理认证密码';
-      document.getElementById('proxy-current').textContent = '未配置全局代理';
+      document.getElementById('proxy-pass').placeholder = I18n.t('proxy.placeholderPassword');
+      document.getElementById('proxy-current').textContent = I18n.t('proxy.notConfigured');
     }
     const accts = await this.api('GET', '/accounts');
     const tbody = document.querySelector('#proxy-accounts-table tbody');
@@ -2970,15 +2967,15 @@ const App = {
       const p = pa[a.id];
       return `<tr>
         <td>${this.esc(a.email)} <code class="text-xs">${a.id}</code></td>
-        <td>${p ? `<code>${this.esc(p.type)}://${p.username ? this.esc(p.username) + '@' : ''}${this.esc(p.host)}:${this.esc(String(p.port))}</code>` : '<span class="text-sm text-dim">无（使用全局）</span>'}</td>
+        <td>${p ? `<code>${this.esc(p.type)}://${p.username ? this.esc(p.username) + '@' : ''}${this.esc(p.host)}:${this.esc(String(p.port))}</code>` : `<span class="text-sm text-dim">${I18n.t('proxy.none')}</span>`}</td>
         <td class="nowrap">
           <div class="btn-group">
-            <button class="btn btn-outline btn-xs" onclick="App.editAccountProxy('${this.escJsAttr(a.id)}','${this.escJsAttr(a.email)}')">配置</button>
-            ${p ? `<button class="btn btn-ghost btn-xs" style="color:var(--error)" onclick="App.clearAccountProxy('${this.escJsAttr(a.id)}')">清除</button>` : ''}
+            <button class="btn btn-outline btn-xs" onclick="App.editAccountProxy('${this.escJsAttr(a.id)}','${this.escJsAttr(a.email)}')">${I18n.t('action.configure')}</button>
+            ${p ? `<button class="btn btn-ghost btn-xs" style="color:var(--error)" onclick="App.clearAccountProxy('${this.escJsAttr(a.id)}')">${I18n.t('action.clear')}</button>` : ''}
           </div>
         </td>
       </tr>`;
-    }).join('') || '<tr class="empty-row"><td colspan="3">暂无账号</td></tr>';
+    }).join('') || `<tr class="empty-row"><td colspan="3">${I18n.t('table.empty.accountsProxy')}</td></tr>`;
   },
 
   async saveGlobalProxy() {
@@ -2993,33 +2990,33 @@ const App = {
     // interprets the omission as "keep existing".
     const pwInput = document.getElementById('proxy-pass').value;
     if (pwInput || !this._globalProxyHasPassword) cfg.password = pwInput;
-    if (!cfg.host) return this.toast('请输入代理主机', 'error');
+    if (!cfg.host) return this.toast(I18n.t('toast.enterProxyHost'), 'error');
     await this.api('PUT', '/proxy/global', cfg);
-    this.toast('全局代理已保存');
+    this.toast(I18n.t('toast.globalProxySaved'));
     this.loadProxy();
   },
 
   async clearGlobalProxy() {
     await this.api('DELETE', '/proxy/global');
     ['proxy-host','proxy-port','proxy-user','proxy-pass'].forEach(id => document.getElementById(id).value = '');
-    this.toast('全局代理已清除');
+    this.toast(I18n.t('toast.globalProxyCleared'));
     this.loadProxy();
   },
 
   async editAccountProxy(id, label) {
     const values = await this.prompt(
-      `配置账号代理`,
-      `为账号 ${label} 设置独立代理`,
+      I18n.t('modal.configureProxy.title'),
+      I18n.t('modal.configureProxy.desc', {label}),
       [
-        { name: 'type', label: '类型', type: 'select', value: 'http', options: [
+        { name: 'type', label: I18n.t('field.type.label'), type: 'select', value: 'http', options: [
           { value: 'http', label: 'HTTP' },
           { value: 'https', label: 'HTTPS' },
           { value: 'socks5', label: 'SOCKS5' },
         ]},
-        { name: 'host', label: '主机', placeholder: '例如 proxy.example.com' },
-        { name: 'port', label: '端口', type: 'number', placeholder: '8080' },
-        { name: 'username', label: '用户名', placeholder: '可选' },
-        { name: 'password', label: '密码', type: 'password', placeholder: '可选' },
+        { name: 'host', label: I18n.t('field.host.label'), placeholder: I18n.t('field.host.placeholder') },
+        { name: 'port', label: I18n.t('field.port.label'), type: 'number', placeholder: I18n.t('field.port.placeholder') },
+        { name: 'username', label: I18n.t('field.username.label'), placeholder: I18n.t('field.username.placeholder') },
+        { name: 'password', label: I18n.t('field.passwordProxy.label'), type: 'password', placeholder: I18n.t('field.passwordProxy.placeholder') },
       ]
     );
     if (!values || !values.host) return;
@@ -3030,13 +3027,13 @@ const App = {
       username: values.username || '',
       password: values.password || '',
     });
-    this.toast('账号代理已配置');
+    this.toast(I18n.t('toast.proxyConfigured'));
     this.loadProxy();
   },
 
   async clearAccountProxy(id) {
     await this.api('DELETE', `/proxy/accounts/${id}`);
-    this.toast('账号代理已清除');
+    this.toast(I18n.t('toast.proxyCleared'));
     this.loadProxy();
   },
 
@@ -3185,7 +3182,7 @@ const App = {
         <td class="text-sm">${s.p50Ms || 0} ms</td>
         <td class="text-sm">${s.p95Ms || 0} ms</td>
       </tr>`;
-    }).join('') || '<tr class="empty-row"><td colspan="8">暂无请求数据</td></tr>';
+    }).join('') || `<tr class="empty-row"><td colspan="8">${I18n.t('table.empty.noRequestData')}</td></tr>`;
 
     // Account breakdown
     const accounts = d.accountCounts || {};
@@ -3201,7 +3198,7 @@ const App = {
           <td style="color:${s.errors > 0 ? 'var(--error)' : 'inherit'}">${s.errors}</td>
           <td>${rate}%</td>
         </tr>`;
-      }).join('') || '<tr class="empty-row"><td colspan="5">暂无账号级请求数据</td></tr>';
+      }).join('') || `<tr class="empty-row"><td colspan="5">${I18n.t('table.empty.noAccountRequestData')}</td></tr>`;
     }
 
     // Time-range chart
@@ -3211,24 +3208,24 @@ const App = {
       const h = Math.max(2, (b.requests / maxReq) * 100);
       const errRate = b.requests > 0 ? ((b.errors / b.requests) * 100).toFixed(0) : '0';
       const hr = new Date(b.hour).getHours();
-      return `<div class="bar-wrap"><div class="bar-tooltip"><b>${hr}:00</b><br>${b.requests} 请求 · ${b.errors} 错误 (${errRate}%)</div><div class="bar ${b.errors > 0 ? 'has-errors' : ''}" style="height:${h}%"></div><div class="bar-label">${hr}时</div></div>`;
-    }).join('') || '<div class="text-sm text-dim" style="text-align:center;width:100%;padding:30px">暂无数据</div>';
+      return `<div class="bar-wrap"><div class="bar-tooltip"><b>${hr}:00</b><br>${b.requests} ${I18n.t('table.header.requests')} · ${b.errors} ${I18n.t('table.header.errors')} (${errRate}%)</div><div class="bar ${b.errors > 0 ? 'has-errors' : ''}" style="height:${h}%"></div><div class="bar-label">${hr}${I18n.t('time.hour')}</div></div>`;
+    }).join('') || `<div class="text-sm text-dim" style="text-align:center;width:100%;padding:30px">${I18n.t('table.empty.noData')}</div>`;
 
     this.poll('stats', () => this.loadStats(), 30000);
   },
 
   async resetStats() {
-    const ok = await this.confirm('重置统计', '所有请求统计数据将被清空，此操作不可恢复', { danger: true, okText: '重置' });
+    const ok = await this.confirm(I18n.t('modal.resetStats.title'), I18n.t('modal.resetStats.desc'), { danger: true, okText: I18n.t('action.reset') });
     if (!ok) return;
     await this.api('DELETE', '/stats');
-    this.toast('统计已重置');
+    this.toast(I18n.t('toast.statsReset'));
     this.loadStats();
   },
 
   // ─── Experimental features ───────────────────
   PROVIDER_LABELS: {
     anthropic: 'Anthropic · Claude',
-    openai: 'OpenAI · GPT / o 系列',
+    openai: 'OpenAI · GPT / o Series',
     google: 'Google · Gemini',
     deepseek: 'DeepSeek',
     xai: 'xAI · Grok',
@@ -3440,12 +3437,12 @@ const App = {
         <td class="text-sm">${a.lastUsed ? new Date(a.lastUsed).toLocaleString() : '-'}</td>
         <td class="nowrap">
           <div class="btn-group">
-            ${a.status === 'error' ? `<button class="btn btn-success btn-xs" onclick="App.toggleAccount('${this.escJsAttr(a.id)}','active');setTimeout(()=>App.loadBans(),500)">重新启用</button>` : ''}
-            ${a.errorCount > 0 ? `<button class="btn btn-outline btn-xs" onclick="App.resetErrors('${this.escJsAttr(a.id)}');setTimeout(()=>App.loadBans(),500)">重置错误</button>` : ''}
+            ${a.status === 'error' ? `<button class="btn btn-success btn-xs" onclick="App.toggleAccount('${this.escJsAttr(a.id)}','active');setTimeout(()=>App.loadBans(),500)">${I18n.t('action.enable')}</button>` : ''}
+            ${a.errorCount > 0 ? `<button class="btn btn-outline btn-xs" onclick="App.resetErrors('${this.escJsAttr(a.id)}');setTimeout(()=>App.loadBans(),500)">${I18n.t('action.reset')}</button>` : ''}
           </div>
         </td>
       </tr>`;
-    }).join('') || '<tr class="empty-row"><td colspan="5">暂无账号</td></tr>';
+    }).join('') || `<tr class="empty-row"><td colspan="5">${I18n.t('table.empty.banList')}</td></tr>`;
 
     this.poll('bans', () => this.loadBans(), 30000);
   },
@@ -3453,9 +3450,10 @@ const App = {
   // ─── Helpers ─────────────────────────────────
   fmtDuration(secs) {
     const d = Math.floor(secs / 86400), h = Math.floor((secs % 86400) / 3600), m = Math.floor((secs % 3600) / 60);
-    if (d > 0) return `${d}天 ${h}时 ${m}分`;
-    if (h > 0) return `${h}时 ${m}分`;
-    return `${m}分 ${Math.floor(secs % 60)}秒`;
+    const s = Math.floor(secs % 60);
+    if (d > 0) return `${d}${I18n.t('time.day')} ${h}${I18n.t('time.hour')} ${m}${I18n.t('time.minute')}`;
+    if (h > 0) return `${h}${I18n.t('time.hour')} ${m}${I18n.t('time.minute')}`;
+    return `${m}${I18n.t('time.minute')} ${s}${I18n.t('time.second')}`;
   },
   copyKey(key) {
     const fallback = () => {
@@ -3469,13 +3467,13 @@ const App = {
         ta.select();
         const ok = document.execCommand('copy');
         ta.remove();
-        this.toast(ok ? 'API Key 已复制' : '复制失败，请手动选择', ok ? 'success' : 'error');
+        this.toast(ok ? I18n.t('toast.apiKeyCopied') : I18n.t('toast.copyFailed'), ok ? 'success' : 'error');
       } catch (e) {
-        this.toast('复制失败: ' + e.message, 'error');
+        this.toast(I18n.t('toast.copyFailedError', {error: e.message}), 'error');
       }
     };
     if (navigator.clipboard && window.isSecureContext) {
-      navigator.clipboard.writeText(key).then(() => this.toast('API Key 已复制')).catch(fallback);
+      navigator.clipboard.writeText(key).then(() => this.toast(I18n.t('toast.apiKeyCopied'))).catch(fallback);
     } else {
       fallback();
     }

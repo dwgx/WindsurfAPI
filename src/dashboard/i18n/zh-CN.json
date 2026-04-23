@@ -77,9 +77,11 @@
     "clearPool": "清空对话池",
     "refresh": "刷新",
     "probe": "探测",
+    "probeTitle": "探测能力",
     "enable": "启用",
     "disable": "停用",
     "copy": "复制",
+    "copyTitle": "点击复制",
     "configure": "配置",
     "test": "测试",
     "readClipboard": "读取剪贴板",
@@ -260,6 +262,9 @@
     "type": {
       "label": "类型"
     },
+    "tier": {
+      "label": "层级"
+    },
     "host": {
       "label": "主机",
       "placeholder": "proxy.example.com"
@@ -355,13 +360,17 @@
       "p50": "p50",
       "p95": "p95",
       "errorCount": "错误数",
-      "model": "模型"
+      "model": "模型",
+      "note": "说明"
     },
     "empty": {
       "loginHistory": "暂无登录记录",
       "accounts": "暂无账号，请先添加",
       "accountNotFound": "账号不存在",
       "probeFailed": "探测失败",
+      "noRequestData": "暂无请求数据",
+      "noAccountRequestData": "暂无账号级请求数据",
+      "noData": "暂无数据",
       "noValidAccounts": "暂无可用账号可用于路由",
       "accountsProxy": "暂无账号",
       "modelStats": "暂无模型统计数据",
@@ -472,8 +481,10 @@
     "enable": "启用",
     "disable": "禁用",
     "cascadeReuse": {
-      "title": "启用 Cascade 对话复用",
-      "desc": "默认关闭。开启后对当前对话池立即生效。"
+      "title": "Cascade 对话复用",
+      "desc": "多轮对话时复用同一个 cascade_id，只把最新一条 user 消息发给 Windsurf，让服务端维持上下文缓存。命中时可显著降低 TTFB 与上传体积；未命中或账号/LS 变更会自动回退到新会话。需要客户端保留完整历史并按顺序追加（如 new-api、OpenWebUI）。",
+      "enable": "启用 Cascade 对话复用",
+      "hint": "默认关闭。开启后对当前对话池立即生效。"
     },
     "identityPrompt": {
       "title": "启用模型身份注入",
@@ -507,6 +518,7 @@
       "title": "编辑可用模型 — {{email}}",
       "hint": "勾选 = 可用；取消 = 对该账号禁用",
       "enabled": "已启用",
+      "saved": "已保存：启用 {{enabled}} / 禁用 {{disabled}}",
       "saving": "保存中...",
       "total": "总计"
     },
@@ -590,7 +602,8 @@
     "current": "当前",
     "notConfigured": "未配置全局代理",
     "placeholderSaved": "已保存（留空保持原值）",
-    "placeholderPassword": "代理认证密码"
+    "placeholderPassword": "代理认证密码",
+    "auth": "认证"
   },
 
   "account": {
@@ -600,6 +613,7 @@
     "disableSuccess": "账号已停用",
     "resetErrors": "错误已重置",
     "tierSet": "层级已设为 {{tier}}",
+    "editModels": "编辑可用模型",
     "probe": {
       "doing": "探测中，约需 10-30 秒...",
       "complete": "探测完成：{{result}}",
@@ -609,6 +623,7 @@
       "probeComplete": "探测完成：{{tier}}"
     },
     "credits": {
+      "refreshTitle": "刷新余额",
       "refreshed": "余额已刷新",
       "refreshFailed": "刷新失败",
       "allRefreshed": "余额刷新完成：{{ok}} 成功 / {{fail}} 失败",
@@ -621,9 +636,12 @@
   },
 
   "batch": {
-    "importing": "批量导入中...",
-    "importingDesc": "共 {{count}} 行，请稍候",
+    "pasteFirst": "请先粘贴批量账号",
+    "importing": "导入中...",
+    "importingDesc": "{{count}} 行，请稍候",
     "complete": "批量导入完成",
+    "importFailed": "批量导入失败",
+    "importComplete": "批量导入完成：成功 {{success}} / 失败 {{fail}}",
     "success": "成功",
     "fail": "失败",
     "formatError": "第 {{line}} 行格式错误"
@@ -640,6 +658,7 @@
     "experimentalEnabled": "已启用实验性功能",
     "experimentalDisabled": "已关闭实验性功能",
     "toggleFailed": "切换失败：{{error}}",
+    "modeUpdated": "模式已更新",
     "noTierModels": "该账号层级无可用模型",
     "loginSuccess": "{{label}} 登录成功",
     "loginFailed": "{{label}} 登录失败：{{error}}",
@@ -648,8 +667,19 @@
     "clipboardEmpty": "剪贴板为空",
     "clipboardUnsupported": "当前环境不支持自动读取剪贴板，请手动粘贴",
     "clipboardError": "读取剪贴板失败：{{error}}",
+    "apiKeyCopied": "API Key 已复制",
+    "copyFailed": "复制失败，请手动选择",
+    "copyFailedError": "复制失败：{{error}}",
     "enterEmailPassword": "请输入邮箱和密码",
-    "restarting": "Language Server 重启中..."
+    "restarting": "Language Server 重启中...",
+    "proxyConfigured": "账号代理已配置",
+    "proxyCleared": "账号代理已清除",
+    "globalProxySaved": "全局代理已保存",
+    "globalProxyCleared": "全局代理已清除",
+    "enterProxyHost": "请输入代理主机",
+    "statsReset": "统计已重置",
+    "enterKeyOrToken": "请输入 Key 或 Token",
+    "addFailed": "添加失败"
   },
 
   "log": {
@@ -694,6 +724,7 @@
     "updateFailed": "更新失败",
     "apiError": "API 错误",
     "loadFailed": "加载失败",
+    "openFailed": "打开失败",
     "saveFailed": "保存失败",
     "deleteFailed": "删除失败",
     "networkError": "网络错误",
@@ -753,13 +784,22 @@
       "name": "姓名",
       "apiKey": "API Key",
       "accountId": "账号 ID"
-    }
+    },
+    "successTitle": "登录成功",
+    "addedToPool": "并加入账号池"
   },
 
   "timeRange": {
     "minutesAgo": "{{count}}分钟前",
     "hoursAgo": "{{count}}小时前",
     "daysAgo": "{{count}}天前"
+  },
+
+  "time": {
+    "day": "天",
+    "hour": "时",
+    "minute": "分",
+    "second": "秒"
   },
 
   "prompt": {
