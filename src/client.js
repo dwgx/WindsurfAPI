@@ -235,7 +235,15 @@ export class WindsurfClient {
       let images = [];
       const systemMsgs = messages.filter(m => m.role === 'system');
       const convo = messages.filter(m => m.role === 'user' || m.role === 'assistant');
-      const sysText = systemMsgs.map(m => contentToString(m.content)).join('\n').trim();
+      let sysText = systemMsgs.map(m => contentToString(m.content)).join('\n').trim();
+      // Cascade's SendUserCascadeMessage has no dedicated system slot, so the
+      // caller's system prompt has to ride inside the user-message text field.
+      // Without a wrapper, an upstream model sees content like
+      // "You are Claude Code, Anthropic's official CLI..." arriving on the
+      // user channel and decides the user is attempting a prompt-injection
+      // identity override — it then refuses the whole request. Wrapping in
+      // <system_instructions> makes the boundary unambiguous (fixes #41).
+      if (sysText) sysText = `<system_instructions>\n${sysText}\n</system_instructions>`;
 
       const isResume = !!reuseEntry;
 
