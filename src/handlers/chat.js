@@ -205,12 +205,10 @@ export async function handleChatCompletions(body) {
   const displayModel = modelInfo?.name || reqModel || config.defaultModel;
   const modelEnum = modelInfo?.enumValue || 0;
   const modelUid = modelInfo?.modelUid || null;
-  // Models with a modelUid use the Cascade flow (StartCascade → SendUserCascadeMessage).
-  // Legacy RawGetChatMessage only for models with enumValue>0 and NO modelUid.
-  // Newer models (gemini-3.0, gpt-5.2, etc.) have both enumValue AND modelUid but
-  // their high enum values cause "cannot parse invalid wire-format data" in the
-  // legacy proto endpoint. Cascade handles them correctly via uid string.
-  const useCascade = !!modelUid;
+  // All models now use Cascade flow — Legacy RawGetChatMessage returns empty
+  // text on current LS versions (Windsurf deprecated the raw endpoint).
+  // Cascade handles both modelUid (string) and modelEnum (int) routing.
+  const useCascade = !!(modelUid || modelEnum);
 
   // Tool-call emulation: if the client passed OpenAI-style tools[], we rewrite
   // tool-result turns into synthetic user text and inject the tool protocol
