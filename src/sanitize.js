@@ -21,10 +21,16 @@
  * boundary.
  */
 
-// Literal prefixes that must never appear in output. First-match wins in the
-// order given. The workspace literal is replaced with "." so text like
-// "/tmp/windsurf-workspace/foo.py" becomes "./foo.py" (still readable). The
-// other two go to "[internal]" — no reason a caller should ever see them.
+// Detect the actual project root from this module's path so the sanitizer
+// covers deployments outside /root/WindsurfAPI (e.g. /srv/WindsurfAPI).
+const _repoRoot = (() => {
+  try {
+    const thisFile = new URL(import.meta.url).pathname;
+    // sanitize.js is in src/, so project root is one directory up
+    return thisFile.replace(/\/src\/sanitize\.js$/, '');
+  } catch { return '/root/WindsurfAPI'; }
+})();
+
 const PATTERNS = [
   [/\/tmp\/windsurf-workspace(\/[^\s"'`<>)}\],*;]*)?/g, '.$1'],
   // Cascade's sandbox workspace (per-account wsId). The model sees this path
@@ -34,7 +40,7 @@ const PATTERNS = [
   // to "." so the tool call falls back to cwd, which IS the user's project.
   [/\/home\/user\/projects\/workspace-[a-z0-9]+(\/[^\s"'`<>)}\],*;]*)?/g, '.$1'],
   [/\/opt\/windsurf(?:\/[^\s"'`<>)}\],*;]*)?/g, '[internal]'],
-  [/\/root\/WindsurfAPI(?:\/[^\s"'`<>)}\],*;]*)?/g, '[internal]'],
+  [new RegExp(_repoRoot.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?:\\/[^\\s"\'`<>)}\\],*;]*)?', 'g'), '[internal]'],
 ];
 
 // Bare literals (no path tail) used by the streaming cut-point finder.
@@ -42,7 +48,7 @@ const SENSITIVE_LITERALS = [
   '/tmp/windsurf-workspace',
   '/home/user/projects/workspace-',
   '/opt/windsurf',
-  '/root/WindsurfAPI',
+  _repoRoot,
 ];
 
 // Character class that counts as part of a path body. Mirrors the PATTERNS
