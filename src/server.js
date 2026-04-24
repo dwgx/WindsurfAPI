@@ -11,6 +11,7 @@
  */
 
 import http from 'http';
+import { randomUUID } from 'crypto';
 import { readFileSync, existsSync } from 'fs';
 import { execSync } from 'child_process';
 import { fileURLToPath } from 'url';
@@ -256,10 +257,17 @@ async function route(req, res) {
     }
 
     const result = await handleChatCompletions(body);
+    const modelHeaders = {
+      'x-request-id': 'req-' + randomUUID(),
+      'openai-model': body.model || '',
+      'openai-processing-ms': '0',
+      'openai-version': '2020-10-01',
+    };
     if (result.stream) {
-      res.writeHead(result.status, { 'Access-Control-Allow-Origin': '*', ...result.headers });
+      res.writeHead(result.status, { 'Access-Control-Allow-Origin': '*', ...modelHeaders, ...result.headers });
       await result.handler(res);
     } else {
+      for (const [k, v] of Object.entries(modelHeaders)) res.setHeader(k, v);
       if (result.headers) {
         for (const [k, v] of Object.entries(result.headers)) res.setHeader(k, v);
       }
@@ -281,10 +289,15 @@ async function route(req, res) {
       return json(res, 400, { type: 'error', error: { type: 'invalid_request_error', message: 'messages must be a non-empty array' } });
     }
     const result = await handleMessages(body);
+    const anthropicHeaders = {
+      'request-id': 'req-' + randomUUID(),
+      'anthropic-model': body.model || '',
+    };
     if (result.stream) {
-      res.writeHead(result.status, { 'Access-Control-Allow-Origin': '*', ...result.headers });
+      res.writeHead(result.status, { 'Access-Control-Allow-Origin': '*', ...anthropicHeaders, ...result.headers });
       await result.handler(res);
     } else {
+      for (const [k, v] of Object.entries(anthropicHeaders)) res.setHeader(k, v);
       json(res, result.status, result.body);
     }
     return;

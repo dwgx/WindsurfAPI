@@ -215,13 +215,29 @@ export async function handleChatCompletions(body) {
     max_tokens,
     tools,
     tool_choice,
+    response_format,
   } = body;
-  // `messages` is `let` not `const` so the identity-prompt injection below
-  // can prepend a system turn for the legacy path too.
   let messages = body.messages;
 
+  const wantJson = response_format?.type === 'json_object' || response_format?.type === 'json_schema';
+  if (wantJson) {
+    const jsonHint = '\n\n[IMPORTANT: You MUST respond with valid JSON only. No markdown, no explanation, no code fences. Output a single JSON object.]';
+    messages = messages.map((m, i) => {
+      if (i === messages.length - 1 && m.role === 'user') {
+        const content = typeof m.content === 'string' ? m.content + jsonHint : m.content;
+        return { ...m, content };
+      }
+      return m;
+    });
+  }
+
   const modelKey = resolveModel(reqModel || config.defaultModel);
-  const modelInfo = getModelInfo(modelKey);
+  const wantThinking = !!(body.thinking?.type === 'enabled' || body.reasoning_effort);
+  let effectiveModelKey = modelKey;
+  if (wantThinking && !modelKey.includes('thinking') && getModelInfo(modelKey + '-thinking')) {
+    effectiveModelKey = modelKey + '-thinking';
+  }
+  const modelInfo = getModelInfo(effectiveModelKey) || getModelInfo(modelKey);
   const displayModel = modelInfo?.name || reqModel || config.defaultModel;
   const modelEnum = modelInfo?.enumValue || 0;
   const modelUid = modelInfo?.modelUid || null;

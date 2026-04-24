@@ -9,7 +9,7 @@ HOST = '154.40.36.22'
 USER = 'root'
 PASS = 'iwDN2S9NXGz2'
 
-def run(cmd, timeout=120):
+def run(cmd, timeout=600):
     s = paramiko.SSHClient()
     s.set_missing_host_key_policy(paramiko.AutoAddPolicy())
     s.connect(HOST, username=USER, password=PASS, timeout=10)
