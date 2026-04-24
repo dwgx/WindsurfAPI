@@ -31,18 +31,30 @@ const _repoRoot = (() => {
   } catch { return '/root/WindsurfAPI'; }
 })();
 
-// Placeholder chosen as a parenthesised natural-language phrase because
-// every punctuation-only marker we tried has been re-used by the model
-// as a real path in later turns:
-//   ./tail            → LLM Reads ./src/main.py → ENOENT → loops
-//   [internal]        → LLM runs `ls [internal]` → ENOENT → loops
-//   <redacted-path>   → LLM passes it as file_path arg to Read/Bash →
-//                       ENOENT (Linux) or Errno 22 on Windows → loops
-// A multi-word parenthesised phrase cannot be tokenised as a path or
-// identifier, so clients skip it instead of trying to resolve. Verified
-// with the drift probe (scripts/_agent_drift_probe.py) that previously
-// crashed because sonnet kept calling read_file('<redacted-path>').
-const REDACTED_PATH = '(internal path redacted)';
+// Placeholder chosen as a plain-ASCII, multi-word phrase with NO shell
+// metacharacters. Every previous marker broke at least one consumer:
+//   ./tail                    → LLM Reads ./src/main.py → ENOENT → loops
+//   [internal]                → LLM runs `ls [internal]` → ENOENT → loops
+//   <redacted-path>           → LLM passes to Read/Bash → ENOENT (Linux) /
+//                               Errno 22 (Windows) → loops
+//   (internal path redacted)  → zsh parses `cd (internal path redacted)`
+//                               as glob-qualifier syntax → cryptic
+//                               "unknown file attribute: i" error → Opus
+//                               gets confused and stops calling tools
+// The marker must satisfy three constraints at once:
+//   1. Contains no character that any mainstream shell parses specially
+//      — excludes `( ) [ ] { } < > | & ; $ \` " ' \\ * ?` and whitespace
+//      inside a paired delimiter.
+//   2. Does not look like a path or identifier so the model does not
+//      reuse it as a file_path / cd target on later turns.
+//   3. Reads as descriptive prose when it appears in sanitized output.
+// A plain multi-word phrase with a trailing period satisfies all three:
+// if a client ever does embed it in shell, the words become separate
+// argv entries and `cd` / `Read` fails with a clean, recoverable error
+// (too many arguments / ENOENT once) instead of the cryptic zsh glob
+// qualifier error. Verified with the drift probe
+// (scripts/_agent_drift_probe.py).
+const REDACTED_PATH = 'redacted internal path';
 
 const PATTERNS = [
   [/\/tmp\/windsurf-workspace(?:\/[^\s"'`<>)}\],*;]*)?/g, REDACTED_PATH],
