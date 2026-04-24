@@ -406,47 +406,68 @@ export class WindsurfClient {
       }
       if (images.length) log.info(`Cascade: attaching ${images.length} image(s) to field 6`);
 
-      // Step 2: Send message (retry once on panel-state-not-found)
+      // Step 2: Send message. Retry up to MAX_PANEL_RETRIES on
+      // "panel state not found" — we've seen clients that push a 30KB+
+      // system prompt (opencode + omo plugin issue) where the LS
+      // invalidates panel state almost as fast as we can re-warm it. A
+      // single retry isn't enough there. Each retry does a full warmup
+      // (fresh sessionId + panel init) + fresh StartCascade, with a
+      // small backoff to let the LS settle.
       const sendMessage = async () => {
         const sendProto = buildSendCascadeMessageRequest(this.apiKey, cascadeId, text, modelEnum, modelUid, sessionId, { toolPreamble, images });
         await grpcUnary(
           this.port, this.csrfToken, `${LS_SERVICE}/SendUserCascadeMessage`, grpcFrame(sendProto)
         );
       };
-      try {
-        await sendMessage();
-      } catch (e) {
-        if (!isPanelMissing(e)) throw e;
-        log.warn(`Panel state missing on Send, re-warming + restarting cascade port=${this.port}`);
-        // Cascade expired — fall back to fresh with FULL history.
-        // text was built as resume-only (last message). Rebuild it.
-        if (isResume && convo.length > 1) {
-          const maxHistoryBytes = cascadeHistoryBudget(modelUid);
-          const lines = [];
-          let historyBytes = 0;
-          for (let i = convo.length - 2; i >= 0; i--) {
-            const m = convo[i];
-            const tag = m.role === 'user' ? 'human' : 'assistant';
-            const line = `<${tag}>\n${escapeHistoryTag(contentToString(m.content), tag)}\n</${tag}>`;
-            if (historyBytes + line.length > maxHistoryBytes && lines.length > 0) break;
-            lines.unshift(line);
-            historyBytes += line.length;
-          }
-          const latest = convo[convo.length - 1];
-          const extracted = await extractImages(latest?.content ?? '');
-          text = `The following is a multi-turn conversation. You MUST remember and use all information from prior turns.\n\n${lines.join('\n\n')}\n\n<human>\n${extracted.text}\n</human>`;
-          if (sysText) text = sysText + '\n\n' + text;
-          log.info('Cascade: rebuilt full history after resume failure');
+      const MAX_PANEL_RETRIES = 3;
+      const rebuildFullHistoryText = async () => {
+        if (!(isResume && convo.length > 1)) return;
+        const maxHistoryBytes = cascadeHistoryBudget(modelUid);
+        const lines = [];
+        let historyBytes = 0;
+        for (let i = convo.length - 2; i >= 0; i--) {
+          const m = convo[i];
+          const tag = m.role === 'user' ? 'human' : 'assistant';
+          const line = `<${tag}>\n${escapeHistoryTag(contentToString(m.content), tag)}\n</${tag}>`;
+          if (historyBytes + line.length > maxHistoryBytes && lines.length > 0) break;
+          lines.unshift(line);
+          historyBytes += line.length;
         }
-        await this.warmupCascade(true).catch(() => {});
-        sessionId = getLsEntryByPort(this.port)?.sessionId || randomUUID();
-        const startProto = buildStartCascadeRequest(this.apiKey, sessionId);
-        const startResp = await grpcUnary(
-          this.port, this.csrfToken, `${LS_SERVICE}/StartCascade`, grpcFrame(startProto)
-        );
-        cascadeId = parseStartCascadeResponse(startResp);
-        if (!cascadeId) throw new Error('StartCascade returned empty cascade_id after re-warm');
-        await sendMessage();
+        const latest = convo[convo.length - 1];
+        const extracted = await extractImages(latest?.content ?? '');
+        text = `The following is a multi-turn conversation. You MUST remember and use all information from prior turns.\n\n${lines.join('\n\n')}\n\n<human>\n${extracted.text}\n</human>`;
+        if (sysText) text = sysText + '\n\n' + text;
+        log.info('Cascade: rebuilt full history after resume failure');
+      };
+      let panelRetry = 0;
+      let historyRebuilt = false;
+      while (true) {
+        try {
+          await sendMessage();
+          break;
+        } catch (e) {
+          if (!isPanelMissing(e)) throw e;
+          panelRetry++;
+          if (panelRetry > MAX_PANEL_RETRIES) {
+            throw new Error(`Panel state lost ${panelRetry - 1} times after re-warm — likely an LS-level issue with very large payloads (${text.length} chars). Try reducing system prompt size or tool count.`);
+          }
+          log.warn(`Panel state missing on Send (retry ${panelRetry}/${MAX_PANEL_RETRIES}), payload=${text.length} chars, re-warming port=${this.port}`);
+          // Cascade expired — fall back to fresh with FULL history on first retry
+          if (!historyRebuilt) {
+            await rebuildFullHistoryText();
+            historyRebuilt = true;
+          }
+          await this.warmupCascade(true).catch(err => log.warn(`warmupCascade failed: ${err.message}`));
+          // Small backoff — LS panel state sometimes needs a moment after Init
+          if (panelRetry > 1) await new Promise(r => setTimeout(r, 250 * panelRetry));
+          sessionId = getLsEntryByPort(this.port)?.sessionId || randomUUID();
+          const startProto = buildStartCascadeRequest(this.apiKey, sessionId);
+          const startResp = await grpcUnary(
+            this.port, this.csrfToken, `${LS_SERVICE}/StartCascade`, grpcFrame(startProto)
+          );
+          cascadeId = parseStartCascadeResponse(startResp);
+          if (!cascadeId) throw new Error('StartCascade returned empty cascade_id after re-warm');
+        }
       }
 
       // Step 3: Poll for response.
