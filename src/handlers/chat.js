@@ -290,6 +290,12 @@ export async function handleChatCompletions(body) {
     }
     const tail = lastUserText.length > 140 ? '…' + lastUserText.slice(-140) : lastUserText;
     log.info(`Probe[${reqId}]: model=${reqModel} stream=${!!stream} rf=${response_format?.type || 'none'} tools=${Array.isArray(tools) ? tools.length : 0} reasoning=${body.reasoning_effort || body.thinking?.type || 'none'} ctypes=[${[...contentTypes].join(',')}] turns=${messages?.length || 0} lastUser="${tail.replace(/\n/g, '\\n').replace(/"/g, '\\"')}"`);
+    // Also dump first-user / system content so we can see preambles.
+    for (let mi = 0; mi < Math.min((messages || []).length, 3); mi++) {
+      const m = messages[mi];
+      const c = typeof m?.content === 'string' ? m.content : Array.isArray(m?.content) ? m.content.map(p => p?.type === 'text' ? p.text : `[${p?.type}]`).join('|') : '';
+      log.info(`Probe[${reqId}] msg[${mi}] role=${m?.role} len=${c.length} head="${c.slice(0, 220).replace(/\n/g, '\\n').replace(/"/g, '\\"')}"`);
+    }
   } catch {}
 
   const wantJson = response_format?.type === 'json_object' || response_format?.type === 'json_schema';
