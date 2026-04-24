@@ -31,30 +31,32 @@ const _repoRoot = (() => {
   } catch { return '/root/WindsurfAPI'; }
 })();
 
-// Placeholder chosen as a plain-ASCII, multi-word phrase with NO shell
-// metacharacters. Every previous marker broke at least one consumer:
+// Placeholder is a single Unicode ellipsis (U+2026) — chosen because every
+// previous marker has been re-used by the model in some destructive way:
 //   ./tail                    → LLM Reads ./src/main.py → ENOENT → loops
 //   [internal]                → LLM runs `ls [internal]` → ENOENT → loops
 //   <redacted-path>           → LLM passes to Read/Bash → ENOENT (Linux) /
 //                               Errno 22 (Windows) → loops
 //   (internal path redacted)  → zsh parses `cd (internal path redacted)`
 //                               as glob-qualifier syntax → cryptic
-//                               "unknown file attribute: i" error → Opus
-//                               gets confused and stops calling tools
-// The marker must satisfy three constraints at once:
-//   1. Contains no character that any mainstream shell parses specially
-//      — excludes `( ) [ ] { } < > | & ; $ \` " ' \\ * ?` and whitespace
-//      inside a paired delimiter.
-//   2. Does not look like a path or identifier so the model does not
-//      reuse it as a file_path / cd target on later turns.
-//   3. Reads as descriptive prose when it appears in sanitized output.
-// A plain multi-word phrase with a trailing period satisfies all three:
-// if a client ever does embed it in shell, the words become separate
-// argv entries and `cd` / `Read` fails with a clean, recoverable error
-// (too many arguments / ENOENT once) instead of the cryptic zsh glob
-// qualifier error. Verified with the drift probe
-// (scripts/_agent_drift_probe.py).
-const REDACTED_PATH = 'redacted internal path';
+//                               "unknown file attribute: i" error
+//   redacted internal path    → Opus 4.7 echoes it verbatim into bash
+//                               commands; reads to the model as a
+//                               plausible directory name and the
+//                               failure mode is `cd: too many arguments`
+//                               which still wastes 2-3 turns
+// The ellipsis is the strongest fit for all four constraints at once:
+//   1. Single character, no shell metacharacter so no shell parses it
+//      specially (zsh `cd …` → ENOENT, clean recoverable error).
+//   2. Universally read by humans and LLMs as "content omitted" — there
+//      is essentially zero training data of `cd …` or `Read("…")` as a
+//      legitimate operation, so the model does not fall into the
+//      reuse-as-path loop the other markers triggered.
+//   3. UTF-8-safe (3 bytes) and survives cleanly through SSE, JSON,
+//      gRPC and shell quoting in every codepath we tested.
+//   4. Stays terse so it does not bloat sanitized prose.
+// Verified with the drift probe (scripts/_agent_drift_probe.py).
+const REDACTED_PATH = '…';
 
 const PATTERNS = [
   [/\/tmp\/windsurf-workspace(?:\/[^\s"'`<>)}\],*;]*)?/g, REDACTED_PATH],

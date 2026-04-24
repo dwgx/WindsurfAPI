@@ -118,18 +118,32 @@ const MODEL_PROVIDERS = {
   o3: 'OpenAI', o4: 'OpenAI',
 };
 
-function neutralizeCascadeIdentity(text, modelName) {
+export function neutralizeCascadeIdentity(text, modelName) {
   if (!text || !modelName) return text;
   const provider = MODEL_PROVIDERS[Object.keys(MODEL_PROVIDERS).find(k => modelName.toLowerCase().startsWith(k)) || ''];
   if (!provider) return text;
   return text
+    // First-person identity claims
     .replace(/\bI am Cascade\b/gi, `I am ${modelName}`)
     .replace(/\bI'm Cascade\b/gi, `I'm ${modelName}`)
     .replace(/\bmy name is Cascade\b/gi, `my name is ${modelName}`)
+    // Third-person self-reference common in Cascade prose
     .replace(/\bCascade, an AI coding assistant\b/gi, `${modelName}, an AI assistant`)
+    .replace(/\bCascade is an? (?:AI )?(?:coding )?assistant\b/gi, `${modelName} is an AI assistant`)
+    .replace(/\b(?:As|Acting as) Cascade\b/g, `As ${modelName}`)
+    // Provider attribution
     .replace(/\bCascade, made by (?:Codeium|Windsurf)\b/gi, `${modelName}, made by ${provider}`)
+    .replace(/\b(?:Codeium|Windsurf)(?:['’]s)? Cascade\b/g, modelName)
     .replace(/\bdeveloped by (?:Codeium|Windsurf)\b/gi, `developed by ${provider}`)
-    .replace(/\bcreated by (?:Codeium|Windsurf)\b/gi, `created by ${provider}`);
+    .replace(/\bcreated by (?:Codeium|Windsurf)\b/gi, `created by ${provider}`)
+    .replace(/\bbuilt by (?:Codeium|Windsurf)\b/gi, `built by ${provider}`)
+    // Cascade-flavoured workspace narration. The model regularly says things
+    // like "Cascade's workspace at /tmp/windsurf-workspace" — sanitizeText
+    // already scrubs the path; this strips the lingering "Cascade's" /
+    // "the Cascade" prefix so the sentence reads naturally. The leading
+    // "the " is consumed by the same regex so we don't end up with the
+    // double-article artefact ("the the workspace").
+    .replace(/\b(?:the )?Cascade(?:['’]s)? workspace\b/gi, 'the workspace');
 }
 
 // Rough token estimate (~4 chars/token). Used only to populate the

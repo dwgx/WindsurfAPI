@@ -83,10 +83,20 @@ describe('parseToolCallsFromText', () => {
 
 describe('buildToolPreamble (injection-guard safety)', () => {
   // Regression guard: Claude Code / Opus-class prompt-injection detectors
-  // refuse to honour the injected tool scaffolding if it contains jailbreak-
-  // shaped phrases. Keep the preamble neutral.
-  const tools = [{ type: 'function', function: { name: 'read_file', description: 'Read a file', parameters: { type: 'object', properties: { path: { type: 'string' } } } } }];
-  const preamble = buildToolPreamble(tools);
+  // refuse to honour the injected tool scaffolding when:
+  //   (a) it uses jailbreak-shaped phrasing, OR
+  //   (b) it has the SHAPE of a Claude Code system prompt (a wall of
+  //       `### ToolName` blocks with per-tool ```json schemas) appearing
+  //       in a user turn — the model flags that as "someone pasted a
+  //       system prompt into my user slot" and refuses to call tools.
+  // The fallback stays minimal: protocol one-liner + tool name list only.
+  // Full schemas live in the proto-level tool_calling_section override.
+  const manyTools = [
+    { type: 'function', function: { name: 'Bash', description: 'Run a shell command.', parameters: { type: 'object', properties: { command: { type: 'string' } } } } },
+    { type: 'function', function: { name: 'Read', description: 'Read a file.', parameters: { type: 'object', properties: { file_path: { type: 'string' } } } } },
+    { type: 'function', function: { name: 'Edit', description: 'Edit a file.', parameters: { type: 'object', properties: { file_path: { type: 'string' }, old_string: { type: 'string' }, new_string: { type: 'string' } } } } },
+  ];
+  const preamble = buildToolPreamble(manyTools);
 
   it('does not contain jailbreak-shaped phrasing', () => {
     const banned = [
@@ -102,20 +112,42 @@ describe('buildToolPreamble (injection-guard safety)', () => {
     }
   });
 
-  it('still describes the <tool_call> protocol and lists the function', () => {
-    assert.ok(preamble.includes('<tool_call>'), 'must describe emission format');
-    assert.ok(preamble.includes('read_file'), 'must include function name');
+  it('does not have the shape of a Claude Code system prompt', () => {
+    // No `### ToolName` section headers
+    assert.ok(!/^### /m.test(preamble), `preamble must not use '### ' headers: got ${preamble}`);
+    // No `parameters schema:` / `Parameters:` schema-dump labels
+    assert.ok(!/parameters schema:/i.test(preamble), 'preamble must not dump per-tool schemas');
+    assert.ok(!/^Parameters:/m.test(preamble), 'preamble must not dump per-tool schemas');
+    // No fenced ```json blocks (schemas would live inside these)
+    assert.ok(!/```json/i.test(preamble), 'preamble must not contain fenced json schema blocks');
+    // Stays well under a "system prompt wall of text" size even with many tools
+    assert.ok(preamble.length < 512, `preamble must stay compact (<512 chars); got ${preamble.length}`);
   });
 
-  it('normalizeMessagesForCascade prepends preamble to last user message without jailbreak phrasing', () => {
+  it('still describes the <tool_call> protocol and lists every tool name', () => {
+    assert.ok(preamble.includes('<tool_call>'), 'must describe emission format');
+    for (const t of manyTools) {
+      assert.ok(preamble.includes(t.function.name), `must include function name ${t.function.name}`);
+    }
+  });
+
+  it('normalizeMessagesForCascade prepends preamble to last user message without jailbreak or system-prompt shape', () => {
     const out = normalizeMessagesForCascade(
       [{ role: 'user', content: 'hello' }],
-      tools,
+      manyTools,
     );
     const last = out[out.length - 1];
     assert.equal(last.role, 'user');
     assert.ok(last.content.endsWith('hello'));
     assert.ok(!/IGNORE any earlier/i.test(last.content));
     assert.ok(!/\[Tool-calling context/i.test(last.content));
+    assert.ok(!/^### /m.test(last.content), 'prepended content must not use ### headers');
+    assert.ok(!/```json/i.test(last.content), 'prepended content must not contain ```json fences');
+  });
+
+  it('emits empty string when no usable function tools are present', () => {
+    assert.equal(buildToolPreamble([]), '');
+    assert.equal(buildToolPreamble([{ type: 'other' }]), '');
+    assert.equal(buildToolPreamble([{ type: 'function' }]), '');
   });
 });
