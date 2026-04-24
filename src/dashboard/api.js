@@ -52,8 +52,9 @@ function checkAuth(req) {
 
 async function processWindsurfLogin({ email, password, loginProxy, autoAdd }) {
   if (!email || !password) {
-    const err = new Error('email 和 password 为必填');
+    const err = new Error('ERR_EMAIL_PASSWORD_REQUIRED');
     err.statusCode = 400;
+    err.code = 'ERR_EMAIL_PASSWORD_REQUIRED';
     throw err;
   }
 
@@ -175,7 +176,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
   // ─── Proxy test — try an HTTP CONNECT through the given proxy ──
   if (subpath === '/test-proxy' && method === 'POST') {
     const { host, port, username, password, type = 'http' } = body || {};
-    if (!host || !port) return json(res, 400, { ok: false, error: '缺少 host 或 port' });
+    if (!host || !port) return json(res, 400, { ok: false, error: 'ERR_HOST_PORT_REQUIRED' });
     const startTime = Date.now();
     try {
       const result = await testProxy({ host, port: Number(port), username, password, type });
@@ -210,7 +211,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
           return json(res, 200, {
             ok: false,
             dirty: true,
-            error: '工作区有未提交的修改（SFTP 部署或手动改过代码）。确定要覆盖本地修改用远程最新版本吗？',
+            error: 'ERR_UNCOMMITTED_CHANGES',
             dirtyFiles: dirty.split('\n').slice(0, 20),
           });
         }
@@ -523,7 +524,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
     try {
       const { accounts, proxy: loginProxy, autoAdd } = body || {};
       if (!Array.isArray(accounts) || !accounts.length) {
-        return json(res, 400, { error: 'accounts 为必填数组' });
+        return json(res, 400, { error: 'ERR_ACCOUNTS_REQUIRED' });
       }
 
       const results = [];
@@ -563,9 +564,9 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
   if (subpath === '/batch-import' && method === 'POST') {
     try {
       const { text, autoAdd = true } = body || {};
-      if (!text || typeof text !== 'string') return json(res, 400, { error: '缺少 text 字段' });
+      if (!text || typeof text !== 'string') return json(res, 400, { error: 'ERR_TEXT_REQUIRED' });
       const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
-      if (!lines.length) return json(res, 400, { error: '没有有效行' });
+      if (!lines.length) return json(res, 400, { error: 'ERR_NO_VALID_LINES' });
 
       const results = [];
       for (const line of lines) {
@@ -579,7 +580,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
           email = parts[0];
           password = parts[1];
         } else {
-          results.push({ success: false, email: line.slice(0, 30), error: '格式错误 需要 [proxy] email password' });
+          results.push({ success: false, email: line.slice(0, 30), error: 'ERR_FORMAT_INVALID' });
           continue;
         }
         try {
@@ -616,7 +617,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
   if (subpath === '/oauth-login' && method === 'POST') {
     try {
       const { idToken, refreshToken, email, provider, autoAdd } = body;
-      if (!idToken) return json(res, 400, { error: '缺少 idToken' });
+      if (!idToken) return json(res, 400, { error: 'ERR_IDTOKEN_REQUIRED' });
 
       const proxy = getProxyConfig().global;
       const { apiKey, name } = await reRegisterWithCodeium(idToken, proxy);
@@ -731,7 +732,7 @@ async function gitStatus() {
 const PRIVATE_PROXY_HOST = /^(127\.|10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|169\.254\.|0\.|localhost$|0\.0\.0\.0$)/i;
 
 async function testProxy({ host, port, username, password, type }) {
-  if (PRIVATE_PROXY_HOST.test(host)) throw new Error('代理地址不能指向内网/本机');
+  if (PRIVATE_PROXY_HOST.test(host)) throw new Error('ERR_PROXY_PRIVATE_IP');
   const { isSocks, createSocksTunnel } = await import('../socks.js');
   const tls = await import('node:tls');
   const targetHost = 'api.ipify.org';
@@ -755,11 +756,11 @@ async function testProxy({ host, port, username, password, type }) {
         timeout: 10000,
       });
       req.on('connect', (res, sock) => {
-        if (res.statusCode !== 200) { sock.destroy(); return reject(new Error(`代理返回 HTTP ${res.statusCode}`)); }
+        if (res.statusCode !== 200) { sock.destroy(); return reject(new Error(`ERR_PROXY_HTTP_ERROR:${res.statusCode}`)); }
         resolve(sock);
       });
-      req.on('error', (err) => reject(new Error(`连接失败: ${err.message}`)));
-      req.on('timeout', () => { req.destroy(); reject(new Error('超时（10s）')); });
+      req.on('error', (err) => reject(new Error(`ERR_CONNECTION_FAILED:${err.message}`)));
+      req.on('timeout', () => { req.destroy(); reject(new Error('ERR_TIMEOUT')); });
       req.end();
     });
   }
@@ -777,10 +778,10 @@ async function testProxy({ host, port, username, password, type }) {
         const ip = match ? match[1].trim() : '';
         tlsSock.destroy();
         if (!ip || !/^\d+\.\d+\.\d+\.\d+$/.test(ip)) {
-          return reject(new Error('TLS 隧道建立但返回内容异常'));
+          return reject(new Error('ERR_TLS_TUNNEL_ERROR'));
         }
         resolve({ egressIp: ip, type });
       });
-      tlsSock.on('error', (err) => reject(new Error(`TLS 失败: ${err.message}`)));
+      tlsSock.on('error', (err) => reject(new Error(`ERR_TLS_FAILED:${err.message}`)));
   });
 }

@@ -25,21 +25,26 @@ Turns [Windsurf](https://windsurf.com) (formerly Codeium)'s AI models into **two
 
 ## What is it doing?
 
-```
-     ┌─────────────┐   /v1/chat/completions   ┌────────────┐
-     │ OpenAI SDK  │ ──────────────────────→  │            │
-     │ curl / Frontend │ ←──────────────────────  │            │
-     └─────────────┘   OpenAI JSON + SSE      │ WindsurfAPI│
-                                              │ Node.js    │      ┌──────────────┐       ┌─────────────────┐
-     ┌─────────────┐   /v1/messages           │ (This Service)   │ gRPC │ Language     │ HTTPS │ Windsurf Cloud  │
-     │ Claude Code │ ──────────────────────→  │            │ ───→ │ Server (LS)  │ ────→ │ server.self-    │
-     │ Cline       │ ←──────────────────────  │            │ ←─── │ (Windsurf    │ ←─── │ serve.windsurf  │
-     │ Cursor      │   Anthropic SSE          │            │      │  binary)     │       │ .com            │
-     └─────────────┘                          └────────────┘      └──────────────┘       └─────────────────┘
-                                                    ↑
-                                           Account Pool Round-Robin
-                                            Rate Limit Isolation
-                                                   Failover
+```mermaid
+flowchart LR
+    subgraph Clients
+        A[OpenAI SDK<br>curl / Frontend]
+        B[Claude Code<br>Cline<br>Cursor]
+    end
+
+    subgraph WindsurfAPI["WindsurfAPI (Node.js)"]
+        C[HTTP Service<br>Port 3003]
+        D[Account Pool<br>Round-Robin<br>Rate Limit<br>Failover]
+    end
+
+    E["Language Server<br>(Windsurf binary)"]
+    F[Windsurf Cloud<br>server.self-serve.windsurf.com]
+
+    A -->|"/v1/chat/completions"<br>OpenAI JSON + SSE| C
+    B -->|"/v1/messages"<br>Anthropic SSE| C
+    C <-->|gRPC| E
+    E <-->|HTTPS| F
+    D -.-> C
 ```
 
 **What it does**:
@@ -52,29 +57,26 @@ Turns [Windsurf](https://windsurf.com) (formerly Codeium)'s AI models into **two
 
 The model itself does **not** operate on files — file operations are executed locally by the IDE Agent client (Claude Code, Cline, etc.):
 
-```
- You "Help me fix a bug"         Claude Code                    WindsurfAPI               Windsurf Cloud
-   │                                │                               │                          │
-   │────────────────────────────→  │                               │                          │
-   │                                │  POST /v1/messages            │                          │
-   │                                │  messages + tools + system    │                          │
-   │                                │ ─────────────────────────────→│ Package into Cascade request │
-   │                                │                               │ ──────────────────────→  │
-   │                                │                               │                          │
-   │                                │                               │               Model thinks → returns
-   │                                │                               │               tool_use(edit_file)
-   │                                │                               │ ←──────────────────────  │
-   │                                │ ←── Anthropic SSE ────────────│                          │
-   │                                │   content_block=tool_use      │                          │
-   │                                │                               │                          │
-   │                                │ Execute edit_file() locally   │                          │
-   │                                │ (Read/write local files)      │                          │
-   │                                │                               │                          │
-   │                                │ Send another turn with tool_result │                          │
-   │                                │ ─────────────────────────────→│ ──────────────────────→  │
-   │                                │                                             ... (loop) ...
-   │                                │                               │                          │
-   │  ← Final answer                │                               │                          │
+```mermaid
+sequenceDiagram
+    actor U as You
+    participant CC as Claude Code
+    participant WA as WindsurfAPI
+    participant WC as Windsurf Cloud
+
+    U->>CC: "Help me fix a bug"
+    CC->>WA: POST /v1/messages<br>messages + tools + system
+    WA->>WC: Package into Cascade request
+    WC-->>WA: Model thinks → returns<br>tool_use(edit_file)
+    WA-->>CC: Anthropic SSE<br>content_block=tool_use
+    CC->>CC: Execute edit_file() locally<br>(Read/write local files)
+    CC->>WA: Send tool_result
+    WA->>WC: Continue conversation...
+    loop Conversation Loop
+        WC-->>WA: Response
+        WA-->>CC: SSE stream
+    end
+    CC-->>U: Final answer
 ```
 
 **Key Point**: WindsurfAPI is only responsible for **passing** `tool_use` / `tool_result`. The client CLI is what actually modifies the files.
@@ -165,6 +167,10 @@ LS_PORT=42100
 DASHBOARD_PASSWORD=
 EOF
 
+# Note: Inline comments are supported in .env for unquoted values:
+#   PORT=3003  # Service port
+# Quoted values preserve everything inside the quotes.
+
 node src/index.js
 ```
 
@@ -181,16 +187,16 @@ Open `http://YOUR_IP:3003/dashboard` → Login to get token → Click **Sign in 
 Go to [windsurf.com/show-auth-token](https://windsurf.com/show-auth-token) to copy your token:
 
 ```bash
-curl -X POST http://localhost:3003/auth/login 
-  -H "Content-Type: application/json" 
+curl -X POST http://localhost:3003/auth/login
+  -H "Content-Type: application/json"
   -d '{"token": "YOUR_TOKEN"}'
 ```
 
 **Method 3: Batch**
 
 ```bash
-curl -X POST http://localhost:3003/auth/login 
-  -H "Content-Type: application/json" 
+curl -X POST http://localhost:3003/auth/login
+  -H "Content-Type: application/json"
   -d '{"accounts": [{"token": "t1"}, {"token": "t2"}]}'
 ```
 
@@ -218,9 +224,9 @@ claude                # Use Claude Code as usual
 
 ```bash
 # Raw curl test
-curl http://localhost:3003/v1/messages 
-  -H "Authorization: Bearer YOUR_KEY" 
-  -H "anthropic-version: 2023-06-01" 
+curl http://localhost:3003/v1/messages
+  -H "Authorization: Bearer YOUR_KEY"
+  -H "anthropic-version: 2023-06-01"
   -d '{"model":"claude-opus-4.6","max_tokens":100,"messages":[{"role":"user","content":"Hello"}]}'
 ```
 
@@ -250,12 +256,21 @@ In your client's settings for **Custom OpenAI Compatible**:
 | `PORT` | `3003` | Service port |
 | `API_KEY` | empty | API key required for requests. Leave empty to disable validation. |
 | `DATA_DIR` | project root | Directory for persisted JSON state and `logs/`. Docker deployments should usually use `/data`. |
+| `CODEIUM_API_KEY` | empty | Direct API key from Windsurf (alternative to token-based auth). |
+| `CODEIUM_AUTH_TOKEN` | empty | Token from [windsurf.com/show-auth-token](https://windsurf.com/show-auth-token). |
+| `CODEIUM_EMAIL` | empty | Email for Windsurf account authentication. |
+| `CODEIUM_PASSWORD` | empty | Password for Windsurf account authentication. |
+| `CODEIUM_API_URL` | `https://server.self-serve.windsurf.com` | Windsurf cloud API endpoint. |
 | `DEFAULT_MODEL` | `claude-4.5-sonnet-thinking` | The model to use if `model` is not specified. |
 | `MAX_TOKENS` | `8192` | Default maximum number of response tokens. |
 | `LOG_LEVEL` | `info` | debug / info / warn / error |
 | `LS_BINARY_PATH` | `/opt/windsurf/language_server_linux_x64` | Path to the LS binary. |
 | `LS_PORT` | `42100` | LS gRPC port. |
+| `LS_DATA_DIR` | `/opt/windsurf` | Per-proxy LS data directory root. |
 | `DASHBOARD_PASSWORD` | empty | Dashboard password. Leave empty for no password. |
+| `CASCADE_REUSE_STRICT` | `0` | Set to `1` for strict conversation reuse mode (waits for same fingerprint). |
+| `CASCADE_REUSE_STRICT_RETRY_MS` | `60000` | Retry delay in ms for strict reuse mode. |
+| `CASCADE_REUSE_HASH_SYSTEM` | `0` | Set to `1` to include system messages in conversation reuse hash. |
 
 ## Dashboard Features
 
@@ -305,6 +320,10 @@ deepseek-v3 / v3-2 / r1 · grok-3 / mini / mini-thinking / code-fast-1 · qwen-3
 </details>
 
 > **Free accounts** can only use `gpt-4o-mini` and `gemini-2.5-flash`. Others require Windsurf Pro.
+
+### Language-Following for CJK Users
+
+The service automatically detects Chinese, Japanese, or Korean characters in your messages and injects a language-following hint to ensure the model responds in the same language. This fixes the issue where Claude Code's large English system prompt would override the communication language.
 
 ## Architecture Highlights
 

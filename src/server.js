@@ -138,6 +138,23 @@ async function route(req, res) {
     return handleDashboardApi(method, subpath, body, req, res);
   }
 
+  // ─── Dashboard i18n locale files ────────────────────────
+  if (path.startsWith('/dashboard/i18n/')) {
+    try {
+      const localeFile = path.slice('/dashboard/i18n/'.length);
+      // Security: only allow .json files with alphanumeric/hyphen names
+      if (!localeFile.match(/^[a-zA-Z0-9\-]+\.json$/)) {
+        return json(res, 400, { error: 'Invalid locale file' });
+      }
+      const filePath = join(__dirname, 'dashboard', 'i18n', localeFile);
+      const content = readFileSync(filePath);
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      return res.end(content);
+    } catch {
+      return json(res, 404, { error: 'Locale file not found' });
+    }
+  }
+
   // ─── API endpoints (require API key) ────────────────────
 
   if (!validateApiKey(extractToken(req))) {

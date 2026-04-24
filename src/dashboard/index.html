@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>WindsurfAPI bydwgx1337 控制台</title>
+<title data-i18n="pageTitle.main">WindsurfAPI bydwgx1337 控制台</title>
 <style>
 :root {
   --bg: #09090b;
@@ -1036,7 +1036,7 @@ window._firebaseOAuth = async function(provider) {
       <span id="lang-indicator">中</span> / EN
     </button>
     <span>© Windsurf</span>
-    <span class="ver" id="sidebar-ver" title="版本">v1.2.0</span>
+    <span class="ver" id="sidebar-ver" data-i18n-title="footer.version" title="版本">v1.2.0</span>
   </div>
 </aside>
 
@@ -1047,16 +1047,16 @@ window._firebaseOAuth = async function(provider) {
     <div class="page-header">
       <div>
         <h1 class="page-title" data-i18n="page.overview">仪表盘</h1>
-        <div class="page-subtitle">系统运行状态与关键指标概览</div>
+        <div class="page-subtitle" data-i18n="pageSubtitle.overview">系统运行状态与关键指标概览</div>
       </div>
       <div class="btn-group">
         <button class="btn btn-outline btn-sm" id="btn-check-update" onclick="App.checkUpdate()">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M21 12a9 9 0 0 1-9 9 9 9 0 0 1-6.24-2.52L3 21"/><path d="M3 12a9 9 0 0 1 9-9 9 9 0 0 1 6.24 2.52L21 3"/><path d="M21 3v6h-6"/><path d="M3 21v-6h6"/></svg>
-          检查更新
+          <span data-i18n="action.checkUpdate">检查更新</span>
         </button>
         <button class="btn btn-primary btn-sm hidden" id="btn-apply-update" onclick="App.applyUpdate()">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M12 2v20M2 12h20"/></svg>
-          <span id="btn-apply-update-text">一键更新并重启</span>
+          <span id="btn-apply-update-text" data-i18n="action.applyUpdate">一键更新并重启</span>
         </button>
       </div>
     </div>
@@ -1065,12 +1065,12 @@ window._firebaseOAuth = async function(provider) {
     <div class="section">
       <div class="section-header">
         <div>
-          <div class="section-title">Language Server</div>
-          <div class="section-desc">语言服务器实例状态</div>
+          <div class="section-title" data-i18n="section.lsStatus.title">Language Server</div>
+          <div class="section-desc" data-i18n="section.lsStatus.desc">语言服务器实例状态</div>
         </div>
         <button class="btn btn-outline btn-sm" onclick="App.restartLs()">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
-          重启
+          <span data-i18n="action.restart">重启</span>
         </button>
       </div>
       <div class="section-body">
@@ -1084,26 +1084,26 @@ window._firebaseOAuth = async function(provider) {
     <div class="page-header">
       <div>
         <h1 class="page-title" data-i18n="page.windsurf-login">登录取号</h1>
-        <div class="page-subtitle">支持 Google / GitHub / 邮箱密码 三种方式登录 Windsurf 获取 API Key</div>
+        <div class="page-subtitle" data-i18n="pageSubtitle.windsurf-login">支持 Google / GitHub / 邮箱密码 三种方式登录 Windsurf 获取 API Key</div>
       </div>
     </div>
 
     <div class="section">
       <div class="section-header">
         <div>
-          <div class="section-title">快捷登录（推荐）</div>
-          <div class="section-desc">用你的 Google 或 GitHub 账号直接登录 Windsurf 无需密码</div>
+          <div class="section-title" data-i18n="section.oauthLogin.title">快捷登录（推荐）</div>
+          <div class="section-desc" data-i18n="section.oauthLogin.desc">用你的 Google 或 GitHub 账号直接登录 Windsurf 无需密码</div>
         </div>
       </div>
       <div class="section-body">
         <div style="display:flex;gap:12px;flex-wrap:wrap">
           <button class="btn" onclick="App.oauthLogin('google')" id="oauth-google-btn" style="background:#4285F4;color:#fff;padding:10px 24px;font-weight:600;display:flex;align-items:center;gap:8px">
             <svg width="18" height="18" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.6 20.1H42V20H24v8h11.3C33.9 33.1 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 8 3l5.7-5.7C34 6 29.3 4 24 4 13 4 4 13 4 24s9 20 20 20 20-9 20-20c0-1.3-.2-2.7-.4-3.9z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.5 15.5 18.8 12 24 12c3.1 0 5.8 1.2 8 3l5.7-5.7C34 6 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.6-11.2-8.5l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.1H42V20H24v8h11.3c-.8 2.2-2.2 4.1-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.2-2.7-.4-3.9z"/></svg>
-            Google 登录
+            <span data-i18n="oauth.google">Google 登录</span>
           </button>
           <button class="btn" onclick="App.oauthLogin('github')" id="oauth-github-btn" style="background:#24292e;color:#fff;padding:10px 24px;font-weight:600;display:flex;align-items:center;gap:8px">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.3 3.44 9.8 8.2 11.38.6.11.82-.26.82-.58v-2.03c-3.34.73-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.08-.74.08-.73.08-.73 1.2.08 1.84 1.23 1.84 1.23 1.07 1.83 2.81 1.3 3.5 1 .1-.78.42-1.3.76-1.6-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.13-.3-.54-1.52.12-3.18 0 0 1-.32 3.3 1.23a11.5 11.5 0 016.02 0c2.28-1.55 3.29-1.23 3.29-1.23.66 1.66.25 2.88.12 3.18.77.84 1.24 1.91 1.24 3.22 0 4.61-2.8 5.63-5.48 5.92.43.37.82 1.1.82 2.22v3.29c0 .32.21.7.82.58C20.56 21.8 24 17.3 24 12 24 5.37 18.63 0 12 0z"/></svg>
-            GitHub 登录
+            <span data-i18n="oauth.github">GitHub 登录</span>
           </button>
         </div>
         <div id="oauth-status" style="margin-top:8px;font-size:12px;color:var(--text-muted)"></div>
@@ -1113,49 +1113,49 @@ window._firebaseOAuth = async function(provider) {
     <div class="section">
       <div class="section-header">
         <div>
-          <div class="section-title">邮箱密码登录</div>
-          <div class="section-desc">仅限邮箱+密码注册的账号 第三方登录请用上面的按钮；支持单个登录或按“邮箱 密码”格式批量导入</div>
+          <div class="section-title" data-i18n="section.emailLogin.title">邮箱密码登录</div>
+          <div class="section-desc" data-i18n="section.emailLogin.desc">仅限邮箱+密码注册的账号 第三方登录请用上面的按钮；支持单个登录或按“邮箱 密码”格式批量导入</div>
         </div>
       </div>
       <div class="section-body">
         <div class="field-row">
           <div class="field">
-            <label class="field-label">邮箱</label>
-            <input id="wl-email" class="input" placeholder="your-email@example.com" autocomplete="off">
+            <label class="field-label" data-i18n="field.email.label">邮箱</label>
+            <input id="wl-email" class="input" data-i18n-placeholder="field.email.placeholder" placeholder="your-email@example.com" autocomplete="off">
           </div>
           <div class="field">
-            <label class="field-label">密码</label>
-            <input id="wl-password" class="input" type="password" placeholder="••••••••" autocomplete="off" onkeydown="if(event.key==='Enter')App.windsurfLogin()">
+            <label class="field-label" data-i18n="field.password.label">密码</label>
+            <input id="wl-password" class="input" type="password" data-i18n-placeholder="field.password.placeholder" placeholder="••••••••" autocomplete="off" onkeydown="if(event.key==='Enter')App.windsurfLogin()">
           </div>
         </div>
         <div class="field-row-actions">
           <button class="btn btn-primary" onclick="App.windsurfLogin()" id="wl-btn">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
-            登录
+            <span data-i18n="action.login">登录</span>
           </button>
           <label class="checkbox" style="margin-left:auto">
             <input type="checkbox" id="wl-auto-add" checked>
             <span class="box"></span>
-            <span>登录成功自动加入账号池</span>
+            <span data-i18n="field.autoAdd">登录成功自动加入账号池</span>
           </label>
         </div>
         <div style="margin-top:16px;padding-top:16px;border-top:1px dashed var(--border)">
-          <label class="field-label">批量导入</label>
+          <label class="field-label" data-i18n="field.batchInput.label">批量导入</label>
           <textarea
             id="wl-batch-input"
             class="textarea"
             rows="6"
             placeholder="user1@mail.com  pass123&#10;http://proxy:8080 user2@mail.com  pass456&#10;socks5://user:pass@1.2.3.4:1080 user3@mail.com  pass789"
           ></textarea>
-          <div class="field-hint">每行一个账号。格式：<code>[代理] 邮箱 密码</code>。代理可选，支持 http/socks5。会自动绑定代理到对应账号。</div>
+          <div class="field-hint" data-i18n="field.batchInput.hint">每行一个账号。格式：<code>[代理] 邮箱 密码</code>。代理可选，支持 http/socks5。会自动绑定代理到对应账号。</div>
           <div class="field-row-actions">
             <button class="btn btn-outline" onclick="App.pasteWindsurfBatch()">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>
-              读取剪贴板
+              <span data-i18n="action.readClipboard">读取剪贴板</span>
             </button>
             <button class="btn btn-primary" onclick="App.windsurfLoginBatch()" id="wl-batch-btn">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M3 5h18"/><path d="M3 12h18"/><path d="M3 19h18"/></svg>
-              批量导入并登录
+              <span data-i18n="action.batchImport">批量导入并登录</span>
             </button>
           </div>
         </div>
@@ -1165,14 +1165,14 @@ window._firebaseOAuth = async function(provider) {
     <div class="section" id="wl-proxy-section">
       <div class="section-header">
         <div>
-          <div class="section-title">登录代理（可选）</div>
-          <div class="section-desc">为本次登录指定代理；留空则使用全局代理设置。代理生效后账号的后续聊天请求也会经此代理出站</div>
+          <div class="section-title" data-i18n="section.loginProxy.title">登录代理（可选）</div>
+          <div class="section-desc" data-i18n="section.loginProxy.desc">为本次登录指定代理；留空则使用全局代理设置。代理生效后账号的后续聊天请求也会经此代理出站</div>
         </div>
       </div>
       <div class="section-body">
         <div class="field-row">
           <div class="field" style="max-width:120px">
-            <label class="field-label">类型</label>
+            <label class="field-label" data-i18n="field.type.label">类型</label>
             <select id="wl-proxy-type" class="select">
               <option value="http">HTTP</option>
               <option value="https">HTTPS</option>
@@ -1180,26 +1180,26 @@ window._firebaseOAuth = async function(provider) {
             </select>
           </div>
           <div class="field" style="flex:2">
-            <label class="field-label">主机</label>
-            <input id="wl-proxy-host" class="input" placeholder="留空=使用全局">
+            <label class="field-label" data-i18n="field.proxyHost.label">主机</label>
+            <input id="wl-proxy-host" class="input" data-i18n-placeholder="field.proxyHost.placeholder" placeholder="留空=使用全局">
           </div>
           <div class="field" style="max-width:110px">
-            <label class="field-label">端口</label>
-            <input id="wl-proxy-port" class="input" placeholder="8080" type="number">
+            <label class="field-label" data-i18n="field.port.label">端口</label>
+            <input id="wl-proxy-port" class="input" data-i18n-placeholder="field.port.placeholder" placeholder="8080" type="number">
           </div>
           <div class="field">
-            <label class="field-label">用户名</label>
-            <input id="wl-proxy-user" class="input" placeholder="可选">
+            <label class="field-label" data-i18n="field.username.label">用户名</label>
+            <input id="wl-proxy-user" class="input" data-i18n-placeholder="field.username.placeholder" placeholder="可选">
           </div>
           <div class="field">
-            <label class="field-label">密码</label>
-            <input id="wl-proxy-pass" class="input" type="password" placeholder="可选">
+            <label class="field-label" data-i18n="field.passwordProxy.label">密码</label>
+            <input id="wl-proxy-pass" class="input" type="password" data-i18n-placeholder="field.passwordProxy.placeholder" placeholder="可选">
           </div>
         </div>
         <div style="display:flex;gap:8px;align-items:center;margin-top:10px">
           <button class="btn btn-outline btn-sm" onclick="App.testLoginProxy()" id="wl-proxy-test-btn">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M9 12l2 2 4-4"/><circle cx="12" cy="12" r="10"/></svg>
-            测试代理
+            <span data-i18n="proxy.test.button">测试代理</span>
           </button>
           <span id="wl-proxy-test-result" class="text-sm text-muted"></span>
         </div>
@@ -1211,14 +1211,14 @@ window._firebaseOAuth = async function(provider) {
     <div class="section">
       <div class="section-header">
         <div>
-          <div class="section-title">登录历史</div>
-          <div class="section-desc">本地记录最近 50 条登录操作</div>
+          <div class="section-title" data-i18n="section.loginHistory.title">登录历史</div>
+          <div class="section-desc" data-i18n="section.loginHistory.desc">本地记录最近 50 条登录操作</div>
         </div>
       </div>
       <div class="section-body tight">
         <div class="table-wrap">
           <table id="wl-history-table">
-            <thead><tr><th>时间</th><th>邮箱</th><th>状态</th><th>代理</th><th>操作</th></tr></thead>
+            <thead><tr><th data-i18n="table.header.time">时间</th><th data-i18n="table.header.email">邮箱</th><th data-i18n="table.header.status">状态</th><th data-i18n="table.header.proxy">代理</th><th data-i18n="table.header.action">操作</th></tr></thead>
             <tbody></tbody>
           </table>
         </div>
@@ -1231,16 +1231,16 @@ window._firebaseOAuth = async function(provider) {
     <div class="page-header">
       <div>
         <h1 class="page-title" data-i18n="page.accounts">账号管理</h1>
-        <div class="page-subtitle">维护账号池，探测各账号订阅层级与可用模型</div>
+        <div class="page-subtitle" data-i18n="pageSubtitle.accounts">维护账号池，探测各账号订阅层级与可用模型</div>
       </div>
       <div class="btn-group">
         <button class="btn btn-outline" onclick="App.refreshAllCredits()">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M21 12a9 9 0 0 1-9 9 9 9 0 0 1-6.24-2.52L3 21"/><path d="M3 12a9 9 0 0 1 9-9 9 9 0 0 1 6.24 2.52L21 3"/><path d="M21 3v6h-6"/><path d="M3 21v-6h6"/></svg>
-          刷新余额
+          <span data-i18n="action.refresh">刷新余额</span>
         </button>
         <button class="btn btn-outline" onclick="App.probeAll()">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-          全部探测
+          <span data-i18n="action.probe">全部探测</span>
         </button>
       </div>
     </div>
@@ -1248,35 +1248,35 @@ window._firebaseOAuth = async function(provider) {
     <div class="section">
       <div class="section-header">
         <div>
-          <div class="section-title">添加账号</div>
-          <div class="section-desc">支持 API Key 或 Auth Token 两种方式</div>
+          <div class="section-title" data-i18n="section.addAccount.title">添加账号</div>
+          <div class="section-desc" data-i18n="section.addAccount.desc">支持 API Key 或 Auth Token 两种方式</div>
         </div>
       </div>
       <div class="section-body">
         <div style="padding:8px 12px;margin-bottom:12px;background:var(--surface-2);border-radius:var(--radius);font-size:12px;color:var(--text-muted);line-height:1.6">
-          推荐用 Token 方式添加账号 点
+          <span data-i18n="help.tokenGuide">推荐用 Token 方式添加账号 点</span>
           <a href="https://windsurf.com/show-auth-token" target="_blank" style="color:var(--accent);font-weight:600">windsurf.com/show-auth-token</a>
-          登录后复制 Token 粘贴到下面就行 所有登录方式（邮箱/Google/GitHub）都能用
+          <span data-i18n="help.tokenGuideEnd">登录后复制 Token 粘贴到下面就行 所有登录方式（邮箱/Google/GitHub）都能用</span>
         </div>
         <div class="field-row">
           <div class="field" style="max-width:180px">
-            <label class="field-label">类型</label>
+            <label class="field-label" data-i18n="field.type.label">类型</label>
             <select id="acc-type" class="select">
               <option value="token" selected>Auth Token</option>
               <option value="api_key">API Key</option>
             </select>
           </div>
           <div class="field" style="flex:2">
-            <label class="field-label">Key / Token</label>
-            <input id="acc-key" class="input" placeholder="粘贴 Auth Token（从 windsurf.com/show-auth-token 获取）">
+            <label class="field-label" data-i18n="field.key.label">Key / Token</label>
+            <input id="acc-key" class="input" data-i18n-placeholder="field.key.placeholder" placeholder="粘贴 Auth Token（从 windsurf.com/show-auth-token 获取）">
           </div>
           <div class="field" style="max-width:200px">
-            <label class="field-label">标签</label>
-            <input id="acc-label" class="input" placeholder="可选">
+            <label class="field-label" data-i18n="field.label.label">标签</label>
+            <input id="acc-label" class="input" data-i18n-placeholder="field.label.placeholder" placeholder="可选">
           </div>
         </div>
         <div class="field-row-actions">
-          <button class="btn btn-primary" onclick="App.addAccount()">添加账号</button>
+          <button class="btn btn-primary" onclick="App.addAccount()" data-i18n="action.add">添加账号</button>
         </div>
       </div>
     </div>
@@ -1286,14 +1286,14 @@ window._firebaseOAuth = async function(provider) {
     <div class="section">
       <div class="section-header">
         <div>
-          <div class="section-title">账号列表</div>
-          <div class="section-desc">点击探测按钮可单独更新某个账号的能力信息</div>
+          <div class="section-title" data-i18n="section.accountList.title">账号列表</div>
+          <div class="section-desc" data-i18n="section.accountList.desc">点击探测按钮可单独更新某个账号的能力信息</div>
         </div>
       </div>
       <div class="section-body tight">
         <div class="table-wrap">
           <table id="accounts-table">
-            <thead><tr><th>ID</th><th>标签</th><th>层级</th><th>RPM</th><th>余额</th><th>可用模型</th><th>状态</th><th>错误</th><th>最后使用</th><th>Key</th><th>操作</th></tr></thead>
+            <thead><tr><th data-i18n="table.header.id">ID</th><th data-i18n="table.header.label">标签</th><th data-i18n="table.header.tier">层级</th><th data-i18n="table.header.rpm">RPM</th><th data-i18n="table.header.credits">余额</th><th data-i18n="table.header.models">可用模型</th><th data-i18n="table.header.status">状态</th><th data-i18n="table.header.error">错误</th><th data-i18n="table.header.lastUsed">最后使用</th><th data-i18n="table.header.key">Key</th><th data-i18n="table.header.action">操作</th></tr></thead>
             <tbody></tbody>
           </table>
         </div>
@@ -1306,22 +1306,22 @@ window._firebaseOAuth = async function(provider) {
     <div class="page-header">
       <div>
         <h1 class="page-title" data-i18n="page.models">模型控制</h1>
-        <div class="page-subtitle">配置模型访问策略，限制可用模型范围</div>
+        <div class="page-subtitle" data-i18n="pageSubtitle.models">配置模型访问策略，限制可用模型范围</div>
       </div>
     </div>
 
     <div class="section">
       <div class="section-header">
         <div>
-          <div class="section-title">访问策略</div>
-          <div class="section-desc">选择"全部允许"不限制；"白名单"只允许列出的模型；"黑名单"屏蔽列出的模型</div>
+          <div class="section-title" data-i18n="section.modelPolicy.title">访问策略</div>
+          <div class="section-desc" data-i18n="section.modelPolicy.desc">选择"全部允许"不限制；"白名单"只允许列出的模型；"黑名单"屏蔽列出的模型</div>
         </div>
       </div>
       <div class="section-body">
         <div class="segmented" id="model-mode-group">
-          <label><input type="radio" name="model-mode" value="all" onchange="App.setModelMode(this.value)">全部允许</label>
-          <label><input type="radio" name="model-mode" value="allowlist" onchange="App.setModelMode(this.value)">白名单</label>
-          <label><input type="radio" name="model-mode" value="blocklist" onchange="App.setModelMode(this.value)">黑名单</label>
+          <label><input type="radio" name="model-mode" value="all" onchange="App.setModelMode(this.value)"><span data-i18n="model.mode.all">全部允许</span></label>
+          <label><input type="radio" name="model-mode" value="allowlist" onchange="App.setModelMode(this.value)"><span data-i18n="model.mode.allowlist">白名单</span></label>
+          <label><input type="radio" name="model-mode" value="blocklist" onchange="App.setModelMode(this.value)"><span data-i18n="model.mode.blocklist">黑名单</span></label>
         </div>
       </div>
     </div>
@@ -1329,20 +1329,20 @@ window._firebaseOAuth = async function(provider) {
     <div class="section hidden" id="model-list-section">
       <div class="section-header">
         <div>
-          <div class="section-title" id="model-list-title">模型清单</div>
+          <div class="section-title" id="model-list-title" data-i18n="section.modelList.title">模型清单</div>
           <div class="section-desc" id="model-list-hint"></div>
         </div>
       </div>
       <div class="section-body">
         <div class="field-row">
           <div class="field">
-            <label class="field-label">搜索模型</label>
-            <input id="model-search" class="input" placeholder="输入模型名称筛选..." oninput="App.filterModels()">
+            <label class="field-label" data-i18n="field.searchModel.label">搜索模型</label>
+            <input id="model-search" class="input" data-i18n-placeholder="field.searchModel.placeholder" placeholder="输入模型名称筛选..." oninput="App.filterModels()">
           </div>
           <div class="field" style="max-width:220px">
-            <label class="field-label">供应商</label>
+            <label class="field-label" data-i18n="field.provider.label">供应商</label>
             <select id="model-provider-filter" class="select" onchange="App.filterModels()">
-              <option value="">全部供应商</option>
+              <option value="" data-i18n="field.provider.all">全部供应商</option>
               <option value="anthropic">Anthropic</option>
               <option value="openai">OpenAI</option>
               <option value="google">Google</option>
@@ -1365,21 +1365,21 @@ window._firebaseOAuth = async function(provider) {
     <div class="page-header">
       <div>
         <h1 class="page-title" data-i18n="page.proxy">代理配置</h1>
-        <div class="page-subtitle">全局或按账号配置出口代理，独立代理将启动独立的语言服务器实例</div>
+        <div class="page-subtitle" data-i18n="pageSubtitle.proxy">全局或按账号配置出口代理，独立代理将启动独立的语言服务器实例</div>
       </div>
     </div>
 
     <div class="section">
       <div class="section-header">
         <div>
-          <div class="section-title">全局代理</div>
-          <div class="section-desc">未配置独立代理的账号将使用此配置</div>
+          <div class="section-title" data-i18n="section.globalProxy.title">全局代理</div>
+          <div class="section-desc" data-i18n="section.globalProxy.desc">未配置独立代理的账号将使用此配置</div>
         </div>
       </div>
       <div class="section-body">
         <div class="field-row">
           <div class="field" style="max-width:140px">
-            <label class="field-label">类型</label>
+            <label class="field-label" data-i18n="field.type.label">类型</label>
             <select id="proxy-type" class="select">
               <option value="http">HTTP</option>
               <option value="https">HTTPS</option>
@@ -1387,23 +1387,23 @@ window._firebaseOAuth = async function(provider) {
             </select>
           </div>
           <div class="field">
-            <label class="field-label">主机</label>
-            <input id="proxy-host" class="input" placeholder="proxy.example.com">
+            <label class="field-label" data-i18n="field.host.label">主机</label>
+            <input id="proxy-host" class="input" data-i18n-placeholder="field.host.placeholder" placeholder="proxy.example.com">
           </div>
           <div class="field" style="max-width:140px">
-            <label class="field-label">端口</label>
-            <input id="proxy-port" class="input" type="number" placeholder="8080">
+            <label class="field-label" data-i18n="field.port.label">端口</label>
+            <input id="proxy-port" class="input" type="number" data-i18n-placeholder="field.port.placeholder" placeholder="8080">
           </div>
         </div>
         <div class="field-row mt-3">
           <div class="field">
-            <label class="field-label">用户名</label>
-            <input id="proxy-user" class="input" placeholder="代理认证用户名">
+            <label class="field-label" data-i18n="field.username.label">用户名</label>
+            <input id="proxy-user" class="input" data-i18n-placeholder="field.proxyUser.placeholder" placeholder="代理认证用户名">
           </div>
           <div class="field">
-            <label class="field-label">密码</label>
+            <label class="field-label" data-i18n="field.passwordProxy.label">密码</label>
             <div class="input-group">
-              <input id="proxy-pass" class="input" type="password" placeholder="代理认证密码">
+              <input id="proxy-pass" class="input" type="password" data-i18n-placeholder="field.proxyPass.placeholder" placeholder="代理认证密码">
               <button class="btn btn-outline btn-icon" onclick="const el=document.getElementById('proxy-pass');el.type=el.type==='password'?'text':'password'" title="显示/隐藏">
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>
               </button>
@@ -1411,8 +1411,8 @@ window._firebaseOAuth = async function(provider) {
           </div>
         </div>
         <div class="field-row-actions">
-          <button class="btn btn-primary" onclick="App.saveGlobalProxy()">保存</button>
-          <button class="btn btn-outline" onclick="App.clearGlobalProxy()">清除</button>
+          <button class="btn btn-primary" onclick="App.saveGlobalProxy()" data-i18n="action.save">Save</button>
+          <button class="btn btn-outline" onclick="App.clearGlobalProxy()" data-i18n="action.clear">Clear</button>
           <span id="proxy-current" class="text-sm text-muted" style="margin-left:auto;align-self:center"></span>
         </div>
       </div>
@@ -1421,14 +1421,14 @@ window._firebaseOAuth = async function(provider) {
     <div class="section">
       <div class="section-header">
         <div>
-          <div class="section-title">账号独立代理</div>
-          <div class="section-desc">为特定账号设置专属代理；每个独立代理会启动独立 LS 实例</div>
+          <div class="section-title" data-i18n="section.accountProxy.title">账号独立代理</div>
+          <div class="section-desc" data-i18n="section.accountProxy.desc">为特定账号设置专属代理；每个独立代理会启动独立 LS 实例</div>
         </div>
       </div>
       <div class="section-body tight">
         <div class="table-wrap">
           <table id="proxy-accounts-table">
-            <thead><tr><th>账号</th><th>代理</th><th>操作</th></tr></thead>
+            <thead><tr><th data-i18n="table.header.account">账号</th><th data-i18n="table.header.proxy">代理</th><th data-i18n="table.header.action">操作</th></tr></thead>
             <tbody></tbody>
           </table>
         </div>
@@ -1441,24 +1441,24 @@ window._firebaseOAuth = async function(provider) {
     <div class="page-header">
       <div>
         <h1 class="page-title" data-i18n="page.logs">运行日志</h1>
-        <div class="page-subtitle">通过 SSE 实时流式接收服务端日志</div>
+        <div class="page-subtitle" data-i18n="pageSubtitle.logs">通过 SSE 实时流式接收服务端日志</div>
       </div>
     </div>
     <div class="log-controls">
       <select id="log-level" class="select" style="width:130px" onchange="App.filterLogs()">
-        <option value="">所有级别</option>
+        <option value="" data-i18n="log.level.all">所有级别</option>
         <option value="debug">Debug</option>
         <option value="info">Info</option>
         <option value="warn">Warn</option>
         <option value="error">Error</option>
       </select>
-      <input id="log-search" class="input search" placeholder="搜索日志内容..." oninput="App.debouncedFilterLogs()">
+      <input id="log-search" class="input search" data-i18n-placeholder="log.searchPlaceholder" placeholder="搜索日志内容..." oninput="App.debouncedFilterLogs()">
       <label class="checkbox">
         <input type="checkbox" id="log-autoscroll" checked>
         <span class="box"></span>
-        <span>自动滚动</span>
+        <span data-i18n="field.autoScroll">自动滚动</span>
       </label>
-      <button class="btn btn-outline btn-sm" onclick="App.clearLogView()">清空视图</button>
+      <button class="btn btn-outline btn-sm" onclick="App.clearLogView()" data-i18n="log.clearView">清空视图</button>
     </div>
     <div class="log-container" id="log-container"></div>
   </section>
@@ -1468,24 +1468,24 @@ window._firebaseOAuth = async function(provider) {
     <div class="page-header">
       <div>
         <h1 class="page-title" data-i18n="page.stats">统计分析</h1>
-        <div class="page-subtitle">请求量、成功率、延迟分位数与账号/模型维度统计</div>
+        <div class="page-subtitle" data-i18n="pageSubtitle.stats">请求量、成功率、延迟分位数与账号/模型维度统计</div>
       </div>
       <div class="btn-group">
-        <button class="btn btn-ghost btn-sm" onclick="App.loadStats()" title="刷新">
+        <button class="btn btn-ghost btn-sm" onclick="App.loadStats()" data-i18n-title="action.refresh" title="刷新">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M21 12a9 9 0 0 1-9 9 9 9 0 0 1-6.24-2.52L3 21"/><path d="M3 12a9 9 0 0 1 9-9 9 9 0 0 1 6.24 2.52L21 3"/><path d="M21 3v6h-6"/><path d="M3 21v-6h6"/></svg>
-          刷新
+          <span data-i18n="action.refresh">刷新</span>
         </button>
-        <button class="btn btn-danger btn-sm" onclick="App.resetStats()">重置统计</button>
+        <button class="btn btn-danger btn-sm" onclick="App.resetStats()" data-i18n="action.reset">重置统计</button>
       </div>
     </div>
     <div class="metrics-grid" id="stats-cards"></div>
     <div class="chart">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;flex-wrap:wrap;gap:10px">
-        <h3 style="margin:0">请求量时间序列</h3>
+        <h3 style="margin:0" data-i18n="section.requestChart.title">请求量时间序列</h3>
         <div class="btn-group" role="tablist">
-          <button class="btn btn-ghost btn-xs stats-range-btn" data-range="6" onclick="App.setStatsRange(6)">近 6h</button>
-          <button class="btn btn-ghost btn-xs stats-range-btn active" data-range="24" onclick="App.setStatsRange(24)">近 24h</button>
-          <button class="btn btn-ghost btn-xs stats-range-btn" data-range="72" onclick="App.setStatsRange(72)">近 72h</button>
+          <button class="btn btn-ghost btn-xs stats-range-btn" data-range="6" onclick="App.setStatsRange(6)" data-i18n="range.6h">近 6h</button>
+          <button class="btn btn-ghost btn-xs stats-range-btn active" data-range="24" onclick="App.setStatsRange(24)" data-i18n="range.24h">近 24h</button>
+          <button class="btn btn-ghost btn-xs stats-range-btn" data-range="72" onclick="App.setStatsRange(72)" data-i18n="range.72h">近 72h</button>
         </div>
       </div>
       <div class="bars" id="stats-chart"></div>
@@ -1493,14 +1493,14 @@ window._firebaseOAuth = async function(provider) {
     <div class="section">
       <div class="section-header">
         <div>
-          <div class="section-title">模型使用统计</div>
-          <div class="section-desc">按模型聚合：请求量、成功率、平均耗时与 p50 / p95 延迟分位数</div>
+          <div class="section-title" data-i18n="section.modelStats.title">模型使用统计</div>
+          <div class="section-desc" data-i18n="section.modelStats.desc">按模型聚合：请求量、成功率、平均耗时与 p50 / p95 延迟分位数</div>
         </div>
       </div>
       <div class="section-body tight">
         <div class="table-wrap">
           <table id="model-stats-table">
-            <thead><tr><th>模型</th><th>请求</th><th>成功</th><th>错误</th><th>成功率</th><th>平均</th><th>p50</th><th>p95</th></tr></thead>
+            <thead><tr><th data-i18n="table.header.model">模型</th><th data-i18n="table.header.requests">请求</th><th data-i18n="table.header.success">成功</th><th data-i18n="table.header.errors">错误</th><th data-i18n="table.header.successRate">成功率</th><th data-i18n="table.header.avg">平均</th><th data-i18n="table.header.p50">p50</th><th data-i18n="table.header.p95">p95</th></tr></thead>
             <tbody></tbody>
           </table>
         </div>
@@ -1509,14 +1509,14 @@ window._firebaseOAuth = async function(provider) {
     <div class="section">
       <div class="section-header">
         <div>
-          <div class="section-title">账号维度统计</div>
-          <div class="section-desc">每个账号 ID 前 8 位的请求量与成功率</div>
+          <div class="section-title" data-i18n="section.accountStats.title">账号维度统计</div>
+          <div class="section-desc" data-i18n="section.accountStats.desc">每个账号 ID 前 8 位的请求量与成功率</div>
         </div>
       </div>
       <div class="section-body tight">
         <div class="table-wrap">
           <table id="account-stats-table">
-            <thead><tr><th>账号 ID</th><th>请求</th><th>成功</th><th>错误</th><th>成功率</th></tr></thead>
+            <thead><tr><th data-i18n="table.header.accountId">账号 ID</th><th data-i18n="table.header.requests">请求</th><th data-i18n="table.header.success">成功</th><th data-i18n="table.header.errors">错误</th><th data-i18n="table.header.successRate">成功率</th></tr></thead>
             <tbody></tbody>
           </table>
         </div>
@@ -1529,18 +1529,18 @@ window._firebaseOAuth = async function(provider) {
     <div class="page-header">
       <div>
         <h1 class="page-title" data-i18n="page.bans">异常监测</h1>
-        <div class="page-subtitle">追踪错误账号和异常状态</div>
+        <div class="page-subtitle" data-i18n="pageSubtitle.bans">追踪错误账号和异常状态</div>
       </div>
     </div>
     <div class="metrics-grid" id="ban-cards"></div>
     <div class="section">
       <div class="section-header">
-        <div class="section-title">账号健康状况</div>
+        <div class="section-title" data-i18n="section.banStatus.title">账号健康状况</div>
       </div>
       <div class="section-body tight">
         <div class="table-wrap">
           <table id="ban-table">
-            <thead><tr><th>账号</th><th>状态</th><th>错误数</th><th>最后使用</th><th>操作</th></tr></thead>
+            <thead><tr><th data-i18n="table.header.account">账号</th><th data-i18n="table.header.status">状态</th><th data-i18n="table.header.errorCount">错误数</th><th data-i18n="table.header.lastUsed">最后使用</th><th data-i18n="table.header.action">操作</th></tr></thead>
             <tbody></tbody>
           </table>
         </div>
@@ -1560,7 +1560,7 @@ window._firebaseOAuth = async function(provider) {
         <div class="section-title" data-i18n="credits.contributors">核心贡献者</div>
       </div>
       <div class="section-body" id="credits-body">
-        <div class="text-sm text-dim">加载中…</div>
+        <div class="text-sm text-dim" data-i18n="status.loading">加载中…</div>
       </div>
     </div>
     <div class="section">
@@ -1587,41 +1587,37 @@ window._firebaseOAuth = async function(provider) {
     <div class="page-header">
       <div>
         <h1 class="page-title" data-i18n="page.experimental">实验性功能</h1>
-        <div class="page-subtitle">尚未稳定的优化项；如果发现异常可以随时关闭</div>
+        <div class="page-subtitle" data-i18n="pageSubtitle.experimental">尚未稳定的优化项；如果发现异常可以随时关闭</div>
       </div>
     </div>
     <div class="section">
       <div class="section-header">
-        <div class="section-title">Cascade 对话复用</div>
+        <div class="section-title" data-i18n="section.cascadeReuse.title">Cascade 对话复用</div>
       </div>
       <div class="section-body">
-        <div class="section-desc" style="margin-bottom:12px">
-          多轮对话时复用同一个 <code>cascade_id</code>，只把最新一条 user 消息发给 Windsurf，
-          让服务端维持上下文缓存。命中时可显著降低 TTFB 与上传体积；未命中或账号/LS 变更会自动回退到新会话。
-          需要客户端保留完整历史并按顺序追加（如 new-api、OpenWebUI）。
-        </div>
-        <div style="display:flex;align-items:center;gap:16px;margin-bottom:16px">
+        <div class="section-desc" style="margin-bottom:12px" data-i18n="section.cascadeReuse.desc">多轮对话时复用同一个 cascade_id，只把最新一条 user 消息发给 Windsurf，让服务端维持上下文缓存。命中时可显著降低 TTFB 与上传体积；未命中或账号/LS 变更会自动回退到新会话。需要客户端保留完整历史并按顺序追加（如 new-api、OpenWebUI）。</div>
+        <div style="display:flex;align-items:center;gap:16px;margin-bottom:20px;padding:12px;background:var(--surface-2);border-radius:var(--radius)">
           <label class="switch">
             <input type="checkbox" id="exp-cascade-reuse" onchange="App.toggleExperimental('cascadeConversationReuse', this.checked)">
             <span class="switch-slider"></span>
           </label>
           <div>
-            <div style="font-weight:500">启用 Cascade 对话复用</div>
-            <div class="text-sm text-muted">默认关闭。开启后对当前对话池立即生效。</div>
+            <div style="font-weight:500" data-i18n="section.cascadeReuse.enable">启用 Cascade 对话复用</div>
+            <div class="text-sm text-muted" data-i18n="section.cascadeReuse.hint">默认关闭。开启后对当前对话池立即生效。</div>
           </div>
         </div>
         <div class="metrics-grid" id="exp-pool-cards"></div>
         <div style="margin-top:12px">
-          <button class="btn btn-outline btn-sm" onclick="App.clearConversationPool()">清空对话池</button>
-          <button class="btn btn-ghost btn-sm" onclick="App.loadExperimental()">刷新</button>
+          <button class="btn btn-outline btn-sm" onclick="App.clearConversationPool()" data-i18n="action.clearPool">清空对话池</button>
+          <button class="btn btn-ghost btn-sm" onclick="App.loadExperimental()" data-i18n="action.refresh">刷新</button>
         </div>
       </div>
     </div>
     <div class="section" style="margin-top:24px">
       <div class="section-header">
         <div>
-          <div class="section-title">模型身份注入</div>
-          <div class="section-desc">开启后在每个请求最前面注入一条系统提示词，覆盖 Cascade 自带的 Windsurf 身份；下面每个厂商的模板可自定义，保存后立即生效</div>
+          <div class="section-title" data-i18n="section.identityPrompt.title">模型身份注入</div>
+          <div class="section-desc" data-i18n="section.identityPrompt.desc">开启后在每个请求最前面注入一条系统提示词，覆盖 Cascade 自带的 Windsurf 身份；下面每个厂商的模板可自定义，保存后立即生效</div>
         </div>
       </div>
       <div class="section-body">
@@ -1631,22 +1627,20 @@ window._firebaseOAuth = async function(provider) {
             <span class="switch-slider"></span>
           </label>
           <div style="flex:1">
-            <div style="font-weight:600">启用模型身份注入</div>
-            <div class="text-sm text-muted">默认开启；关闭后下面的模板不起作用</div>
+            <div style="font-weight:600" data-i18n="section.identityPrompt.enable">启用模型身份注入</div>
+            <div class="text-sm text-muted" data-i18n="section.identityPrompt.hint">默认开启；关闭后下面的模板不起作用</div>
           </div>
         </div>
-        <div class="section-desc" style="margin-bottom:10px">
-          每个厂商的模板可编辑，<code>{model}</code> 占位符会被替换成请求的模型名（例如 <code>claude-opus-4.6</code>）。
-        </div>
-        <div style="margin-bottom:10px"><input type="text" class="input" placeholder="搜索提供商..." id="identity-search" oninput="App.filterIdentityPrompts(this.value)" style="max-width:280px"></div>
+        <div class="section-desc" style="margin-bottom:10px" data-i18n="section.identityPrompt.templateHint">每个厂商的模板可编辑，{{model}} 占位符会被替换成请求的模型名（例如 claude-opus-4.6）。</div>
+        <div style="margin-bottom:10px"><input type="text" class="input" data-i18n-placeholder="field.searchProvider.placeholder" placeholder="搜索提供商..." id="identity-search" oninput="App.filterIdentityPrompts(this.value)" style="max-width:280px"></div>
         <div id="identity-prompts-editor" style="display:grid;gap:14px"></div>
       </div>
     </div>
     <div class="section" style="margin-top:24px">
       <div class="section-header">
         <div>
-          <div class="section-title">系统提示词</div>
-          <div class="section-desc">工具注入、对话模式等内置提示词模板。修改后立即生效，点"重置"恢复默认。</div>
+          <div class="section-title" data-i18n="section.systemPrompts.title">系统提示词</div>
+          <div class="section-desc" data-i18n="section.systemPrompts.desc">工具注入、对话模式等内置提示词模板。修改后立即生效，点"重置"恢复默认。</div>
         </div>
       </div>
       <div class="section-body" id="system-prompts-editor" style="display:grid;gap:14px"></div>
@@ -1658,10 +1652,10 @@ window._firebaseOAuth = async function(provider) {
 <div class="login-overlay hidden" id="login-overlay">
   <div class="login-box">
     <div class="login-logo">W</div>
-    <h3>控制台登录</h3>
-    <p>请输入管理密码以继续</p>
-    <input type="password" id="login-password" class="input" placeholder="Dashboard 密码" onkeydown="if(event.key==='Enter')App.login()">
-    <button class="btn btn-primary" onclick="App.login()">登 录</button>
+    <h3 data-i18n="login.title">控制台登录</h3>
+    <p data-i18n="login.subtitle">请输入管理密码以继续</p>
+    <input type="password" id="login-password" class="input" data-i18n-placeholder="login.passwordPlaceholder" placeholder="Dashboard 密码" onkeydown="if(event.key==='Enter')App.login()">
+    <button class="btn btn-primary" onclick="App.login()" data-i18n="login.button">登 录</button>
   </div>
 </div>
 
@@ -1672,42 +1666,125 @@ window._firebaseOAuth = async function(provider) {
 <div class="toast-stack" id="toast-stack"></div>
 
 <script>
-// Minimal i18n: zh-CN default (embedded in HTML), en switches visible text
-// via data-i18n attributes. Only top-level navigation + panel titles
-// translated — detail copy stays Chinese to keep the system lightweight.
-const I18N_EN = {
-  'brand.sub': 'Control Panel',
-  'nav.group.overview': 'Overview',
-  'nav.group.account': 'Accounts',
-  'nav.group.system': 'System',
-  'nav.overview': 'Dashboard',
-  'nav.stats': 'Statistics',
-  'nav.windsurf-login': 'Account Login',
-  'nav.accounts': 'Account Pool',
-  'nav.bans': 'Health Check',
-  'nav.models': 'Model Control',
-  'nav.proxy': 'Proxy',
-  'nav.logs': 'Logs',
-  'nav.experimental': 'Experimental',
-  'nav.group.about': 'About',
-  'nav.credits': 'Credits',
-  'page.overview': 'Dashboard',
-  'page.stats': 'Statistics',
-  'page.windsurf-login': 'Account Login',
-  'page.accounts': 'Account Pool',
-  'page.bans': 'Health Check',
-  'page.models': 'Model Control',
-  'page.proxy': 'Proxy Config',
-  'page.logs': 'Runtime Logs',
-  'page.experimental': 'Experimental Features',
-  'page.credits': 'Credits',
-  'page.credits.sub': 'Thanks to contributors who submitted PRs / audited code / reported issues',
-  'credits.contributors': 'Core Contributors',
-  'credits.cta': 'Want to join this list?',
-  'credits.cta.desc': 'Open an issue or pull request on GitHub — bug fixes, new models, UI improvements, or security findings all get recognised here.',
-  'credits.cta.issue': 'Open Issue',
-  'credits.cta.pr': 'Open PR',
+// Comprehensive i18n system with locale bundles
+const I18n = {
+  locale: 'zh-CN',
+  bundles: {},
+  loaded: false,
+
+  // Load locale bundle from server
+  async loadLocale(lang) {
+    const code = lang === 'zh' ? 'zh-CN' : (lang === 'en' ? 'en' : lang);
+    try {
+      const res = await fetch(`/dashboard/i18n/${code}.json`);
+      if (!res.ok) throw new Error(`Failed to load ${code}`);
+      this.bundles[code] = await res.json();
+      this.loaded = true;
+      return true;
+    } catch (e) {
+      console.error('i18n load failed:', e);
+      return false;
+    }
+  },
+
+  // Get translation with placeholder interpolation
+  t(key, vars = {}) {
+    const code = this.locale === 'zh' ? 'zh-CN' : this.locale;
+    const bundle = this.bundles[code] || {};
+    const keys = key.split('.');
+    let val = bundle;
+    for (const k of keys) {
+      val = val?.[k];
+      if (val === undefined) break;
+    }
+    // Fallback to key if not found
+    if (typeof val !== 'string') {
+      // Try embedded default (for zh-CN, use text from HTML)
+      if (code === 'zh-CN') {
+        const el = document.querySelector(`[data-i18n="${key}"]`);
+        if (el?.dataset.i18nOrig) return el.dataset.i18nOrig;
+      }
+      return key;
+    }
+    // Interpolate {{var}} placeholders
+    return val.replace(/\{\{(\w+)\}\}/g, (_, k) => vars[k] ?? '');
+  },
+
+  // Apply translations to all elements with data-i18n attributes
+  apply(root = document) {
+    // Text content
+    root.querySelectorAll('[data-i18n]').forEach(el => {
+      const key = el.dataset.i18n;
+      const vars = {};
+      // Parse data-i18n-vars if present: "count:5,total:10"
+      if (el.dataset.i18nVars) {
+        el.dataset.i18nVars.split(',').forEach(pair => {
+          const [k, v] = pair.split(':');
+          if (k && v !== undefined) vars[k.trim()] = v.trim();
+        });
+      }
+      const text = this.t(key, vars);
+      // Store original for zh mode
+      if (!el.dataset.i18nOrig) el.dataset.i18nOrig = el.textContent;
+      if (this.locale !== 'zh-CN' && this.locale !== 'zh') {
+        el.textContent = text;
+      } else {
+        el.textContent = el.dataset.i18nOrig;
+      }
+    });
+
+    // Placeholders
+    root.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+      const key = el.dataset.i18nPlaceholder;
+      const text = this.t(key);
+      if (!el.dataset.i18nPlaceholderOrig) el.dataset.i18nPlaceholderOrig = el.placeholder;
+      if (this.locale !== 'zh-CN' && this.locale !== 'zh') {
+        el.placeholder = text;
+      } else {
+        el.placeholder = el.dataset.i18nPlaceholderOrig;
+      }
+    });
+
+    // Title attributes
+    root.querySelectorAll('[data-i18n-title]').forEach(el => {
+      const key = el.dataset.i18nTitle;
+      const text = this.t(key);
+      if (!el.dataset.i18nTitleOrig) el.dataset.i18nTitleOrig = el.title;
+      if (this.locale !== 'zh-CN' && this.locale !== 'zh') {
+        el.title = text;
+      } else {
+        el.title = el.dataset.i18nTitleOrig;
+      }
+    });
+
+    // Update HTML lang attribute
+    document.documentElement.lang = this.locale === 'zh' || this.locale === 'zh-CN' ? 'zh-CN' : 'en';
+
+    // Update language indicator
+    const indicator = document.getElementById('lang-indicator');
+    if (indicator) indicator.textContent = (this.locale === 'zh' || this.locale === 'zh-CN') ? '中' : 'EN';
+  },
+
+  async setLocale(lang) {
+    const code = lang === 'zh' ? 'zh-CN' : (lang === 'en' ? 'en' : lang);
+    if (!this.bundles[code]) {
+      await this.loadLocale(lang);
+    }
+    this.locale = code;
+    localStorage.setItem('lang', lang);
+    this.apply();
+  },
+
+  async init() {
+    const saved = localStorage.getItem('lang');
+    const browser = navigator.language;
+    const defaultLang = saved || (browser.startsWith('zh') ? 'zh' : 'en');
+    await this.setLocale(defaultLang);
+  }
 };
+
+// Global translation helper for JS strings
+function t(key, vars) { return I18n.t(key, vars); }
 
 const App = {
   password: localStorage.getItem('dp') || '',
@@ -1721,25 +1798,14 @@ const App = {
   _filterTimer: null,
 
   applyLang() {
-    const indicator = document.getElementById('lang-indicator');
-    if (indicator) indicator.textContent = this.lang === 'zh' ? '中' : 'EN';
-    document.documentElement.lang = this.lang === 'zh' ? 'zh-CN' : 'en';
-    document.querySelectorAll('[data-i18n]').forEach(el => {
-      const key = el.dataset.i18n;
-      if (this.lang === 'en') {
-        if (!el.dataset.i18nOrig) el.dataset.i18nOrig = el.textContent;
-        const v = I18N_EN[key];
-        if (v) el.textContent = v;
-      } else {
-        if (el.dataset.i18nOrig) el.textContent = el.dataset.i18nOrig;
-      }
-    });
+    // Delegate to new I18n system
+    I18n.apply();
   },
 
   toggleLang() {
-    this.lang = this.lang === 'zh' ? 'en' : 'zh';
-    localStorage.setItem('lang', this.lang);
-    this.applyLang();
+    const newLang = I18n.locale === 'zh' || I18n.locale === 'zh-CN' ? 'en' : 'zh';
+    I18n.setLocale(newLang);
+    this.lang = newLang;
   },
 
   // Register a polling loader. Guarantees exactly one timer per key even if
@@ -1754,7 +1820,9 @@ const App = {
   },
 
   async init() {
-    this.applyLang();
+    // Initialize i18n first
+    await I18n.init();
+    this.lang = I18n.locale === 'zh-CN' ? 'zh' : 'en';
     const auth = await this.api('GET', '/auth');
     if (auth.required && !auth.valid) {
       document.getElementById('login-overlay').classList.remove('hidden');
@@ -1850,8 +1918,8 @@ const App = {
           </div>
           ${opts.html ? descHtml : ''}
           <div class="modal-footer">
-            <button class="btn btn-ghost" data-act="cancel">${this.esc(opts.cancelText || '取消')}</button>
-            <button class="btn ${opts.danger ? 'btn-danger' : 'btn-primary'}" data-act="ok">${this.esc(opts.okText || '确认')}</button>
+            <button class="btn btn-ghost" data-act="cancel">${this.esc(opts.cancelText || I18n.t('button.cancel'))}</button>
+            <button class="btn ${opts.danger ? 'btn-danger' : 'btn-primary'}" data-act="ok">${this.esc(opts.okText || I18n.t('button.confirm'))}</button>
           </div>
         </div>`;
       document.getElementById('modal-container').appendChild(wrap);
@@ -1887,8 +1955,8 @@ const App = {
           </div>
           <div class="modal-body">${fieldHtml}</div>
           <div class="modal-footer">
-            <button class="btn btn-ghost" data-act="cancel">取消</button>
-            <button class="btn btn-primary" data-act="ok">确认</button>
+            <button class="btn btn-ghost" data-act="cancel">${I18n.t('button.cancel')}</button>
+            <button class="btn btn-primary" data-act="ok">${I18n.t('button.confirm')}</button>
           </div>
         </div>`;
       document.getElementById('modal-container').appendChild(wrap);
@@ -1911,29 +1979,29 @@ const App = {
     const apply = document.getElementById('btn-apply-update');
     btn.disabled = true;
     status.classList.remove('hidden');
-    status.innerHTML = '<span class="text-muted">正在检查更新...</span>';
+    status.innerHTML = '<span class="text-muted">' + I18n.t('status.checkingUpdate') + '</span>';
     try {
       const r = await this.api('GET', '/self-update/check');
       if (!r.ok) {
         if (/not a git repository/i.test(r.error || '')) {
           status.innerHTML = `
-            <div style="color:var(--warning,#f59e0b);font-weight:600;margin-bottom:4px">此实例不是 git 部署 一键更新不可用</div>
-            <div class="text-sm text-muted">如果你用 git clone 部署的 需要确保 .git 目录和 WindsurfAPI 源代码目录在一起。SFTP / 压缩包上传的部署请手动替换文件后 pm2 重启</div>`;
+            <div style="color:var(--warning,#f59e0b);font-weight:600;margin-bottom:4px">${I18n.t('status.notGitRepo')}</div>
+            <div class="text-sm text-muted">${I18n.t('status.notGitRepoHint')}</div>`;
           apply.classList.add('hidden');
           return;
         }
-        throw new Error(r.error || '检查失败');
+        throw new Error(r.error || I18n.t('error.apiError'));
       }
       if (r.behind) {
         status.innerHTML = `
-          <div style="color:var(--accent);font-weight:600;margin-bottom:6px">发现新版本</div>
+          <div style="color:var(--accent);font-weight:600;margin-bottom:6px">${I18n.t('status.updateAvailable')}</div>
           <div class="text-sm" style="display:grid;gap:3px">
-            <div>当前: <code>${this.esc(r.commit)}</code> <span class="text-muted">${this.esc(r.localMessage)}</span></div>
-            <div>远程: <code>${this.esc(r.remoteCommit)}</code> <span class="text-muted">${this.esc(r.remoteMessage || '')}</span></div>
+            <div>${I18n.t('status.currentVersion')} <code>${this.esc(r.commit)}</code> <span class="text-muted">${this.esc(r.localMessage)}</span></div>
+            <div>${I18n.t('status.remoteVersion')} <code>${this.esc(r.remoteCommit)}</code> <span class="text-muted">${this.esc(r.remoteMessage || '')}</span></div>
           </div>`;
         apply.classList.remove('hidden');
       } else {
-        status.innerHTML = `<span style="color:var(--success)">✓ 已是最新 (${this.esc(r.commit)}) · ${this.esc(r.localMessage)}</span>`;
+        status.innerHTML = '<span style="color:var(--success)">✓ ' + I18n.t('status.upToDate', {commit: this.esc(r.commit), message: this.esc(r.localMessage)}) + '</span>';
         apply.classList.add('hidden');
       }
     } catch (err) {
@@ -1944,37 +2012,37 @@ const App = {
   },
 
   async applyUpdate() {
-    const ok = await this.confirm('一键更新并重启', '将执行 git pull 并重启 PM2。重启期间 dashboard 会短暂不可用（约 5-10 秒）。确定继续？', { okText: '更新并重启', danger: true });
+    const ok = await this.confirm(I18n.t('button.updateAndRestart'), I18n.t('status.updateAndRestartHint'), { okText: I18n.t('button.updateAndRestart'), danger: true });
     if (!ok) return;
     const status = document.getElementById('update-status');
     const apply = document.getElementById('btn-apply-update');
     apply.disabled = true;
-    status.innerHTML = '<span class="text-muted">正在拉取 + 重启...</span>';
+    status.innerHTML = '<span class="text-muted">' + I18n.t('status.pullingRestarting') + '</span>';
     try {
       let r = await this.api('POST', '/self-update');
       if (r.dirty) {
         const filesList = (r.dirtyFiles || []).slice(0, 10).map(f => this.esc(f)).join('<br>');
         const force = await this.confirm(
-          '工作区有本地修改',
-          `以下文件已被修改但未提交：<br><br><code style="display:block;padding:8px;background:var(--surface-2);font-size:11px;max-height:150px;overflow:auto">${filesList}</code><br>继续将用远程版本覆盖这些修改。非 git 部署（SFTP / 压缩包）请点强制覆盖。`,
-          { okText: '强制覆盖并更新', danger: true, html: true }
+          I18n.t('status.workingDirDirty'),
+          I18n.t('status.workingDirDirtyHint', { files: filesList }),
+          { okText: I18n.t('button.forceOverride'), danger: true, html: true }
         );
         if (!force) {
-          status.innerHTML = '<span class="text-muted">已取消</span>';
+          status.innerHTML = '<span class="text-muted">' + I18n.t('status.cancelled') + '</span>';
           apply.disabled = false;
           return;
         }
         r = await this.api('POST', '/self-update', { forceReset: true });
       }
-      if (!r.ok) throw new Error(r.error || '更新失败');
+      if (!r.ok) throw new Error(r.error || I18n.t('error.updateFailed'));
       if (r.changed) {
         status.innerHTML = `
-          <div style="color:var(--success);font-weight:600;margin-bottom:6px">更新完成 ${this.esc(r.before)} → ${this.esc(r.after)}</div>
-          <div class="text-sm text-muted">服务正在后台重启 约 8 秒后自动刷新页面...</div>
+          <div style="color:var(--success);font-weight:600;margin-bottom:6px">${I18n.t('status.updateComplete', { before: this.esc(r.before), after: this.esc(r.after) })}</div>
+          <div class="text-sm text-muted">${I18n.t('status.restarting')}</div>
           <pre style="margin-top:8px;font-size:11px;max-height:200px;overflow:auto;padding:8px;background:var(--surface-2);border-radius:4px">${this.esc(r.pullOutput || '')}</pre>`;
         setTimeout(() => location.reload(), 8000);
       } else {
-        status.innerHTML = `<span class="text-muted">已是最新，无需更新</span>`;
+        status.innerHTML = '<span class="text-muted">' + I18n.t('status.noUpdateNeeded') + '</span>';
         apply.classList.add('hidden');
       }
     } catch (err) {
@@ -1996,7 +2064,7 @@ const App = {
           sv.textContent = label;
           sv.title = h.commitMessage
             ? `${h.commitMessage}\n${h.commitDate || ''}${h.branch ? ` (${h.branch})` : ''}`
-            : `版本 ${h.version}`;
+            : I18n.t('footer.version') + ' ' + h.version;
         }
         this._versionInfo = h;
       }
@@ -2006,39 +2074,39 @@ const App = {
     const poolCount = (ls.instances || []).length || (ls.running ? 1 : 0);
     document.getElementById('overview-cards').innerHTML = `
       <div class="card success">
-        <div class="card-header"><div class="card-title">活跃账号</div>
+        <div class="card-header"><div class="card-title">${I18n.t('card.activeAccounts.title')}</div>
           <svg class="card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
         </div>
         <div class="card-value">${d.accounts?.active || 0}</div>
-        <div class="card-sub">${d.accounts?.total || 0} 个总账号 · ${d.accounts?.error || 0} 异常</div>
+        <div class="card-sub">${I18n.t('card.activeAccounts.subtitle', { total: d.accounts?.total || 0, error: d.accounts?.error || 0 })}</div>
       </div>
       <div class="card info">
-        <div class="card-header"><div class="card-title">总请求数</div>
+        <div class="card-header"><div class="card-title">${I18n.t('card.totalRequests.title')}</div>
           <svg class="card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
         </div>
         <div class="card-value">${d.totalRequests || 0}</div>
-        <div class="card-sub">成功率 ${d.successRate || 0}%</div>
+        <div class="card-sub">${I18n.t('card.totalRequests.subtitle', { rate: d.successRate || 0 })}</div>
       </div>
       <div class="card">
-        <div class="card-header"><div class="card-title">运行时间</div>
+        <div class="card-header"><div class="card-title">${I18n.t('card.uptime.title')}</div>
           <svg class="card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
         </div>
         <div class="card-value" style="font-size:20px">${uptime}</div>
-        <div class="card-sub">启动于 ${d.startedAt ? new Date(d.startedAt).toLocaleString() : '-'}</div>
+        <div class="card-sub">${I18n.t('card.uptime.subtitle', { time: d.startedAt ? new Date(d.startedAt).toLocaleString() : '-' })}</div>
       </div>
       <div class="card ${ls.running ? 'success' : 'error'}">
-        <div class="card-header"><div class="card-title">Language Server</div>
+        <div class="card-header"><div class="card-title">${I18n.t('card.languageServer.title')}</div>
           <svg class="card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
         </div>
-        <div class="card-value" style="font-size:20px">${ls.running ? '运行中' : '已停止'}</div>
-        <div class="card-sub">${poolCount} 个实例 · 端口 ${ls.port || '-'}</div>
+        <div class="card-value" style="font-size:20px">${I18n.t(ls.running ? 'card.languageServer.running' : 'card.languageServer.stopped')}</div>
+        <div class="card-sub">${I18n.t('card.languageServer.subtitle', { count: poolCount, port: ls.port || '-' })}</div>
       </div>
       <div class="card info">
-        <div class="card-header"><div class="card-title">响应缓存</div>
+        <div class="card-header"><div class="card-title">${I18n.t('card.responseCache.title')}</div>
           <svg class="card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4 3 9 3s9-1.34 9-3"/></svg>
         </div>
         <div class="card-value">${d.cache?.hitRate || '0.0'}%</div>
-        <div class="card-sub">${d.cache?.hits || 0} 命中 / ${d.cache?.misses || 0} 未命中 · ${d.cache?.size || 0}/${d.cache?.maxSize || 0} 条</div>
+        <div class="card-sub">${I18n.t('card.responseCache.subtitle', { hits: d.cache?.hits || 0, misses: d.cache?.misses || 0, size: d.cache?.size || 0, max: d.cache?.maxSize || 0 })}</div>
       </div>
     `;
     const instances = ls.instances || [];
@@ -2049,27 +2117,27 @@ const App = {
             <div class="ls-inst">
               <div class="ls-key">
                 <span class="ls-dot ${i.ready ? '' : 'pending'}"></span>
-                ${this.esc(i.key === 'default' ? '默认实例' : i.key.replace(/^px_/, ''))}
+                ${this.esc(i.key === 'default' ? I18n.t('card.defaultInstance') : i.key.replace(/^px_/, ''))}
               </div>
-              <div class="ls-meta">端口 ${i.port} · PID ${i.pid || '-'}</div>
-              <div class="ls-meta">${this.esc(i.proxy || '无代理')}</div>
+              <div class="ls-meta">${I18n.t('field.port.label')} ${i.port} · PID ${i.pid || '-'}</div>
+              <div class="ls-meta">${this.esc(i.proxy || I18n.t('card.noProxy'))}</div>
             </div>
           `).join('')}
         </div>`;
     } else {
       document.getElementById('ls-status').innerHTML = `
-        <span class="badge ${ls.running ? 'running' : 'stopped'}">${ls.running ? '运行中' : '已停止'}</span>
-        <span class="text-sm text-muted" style="margin-left:12px">PID ${ls.pid || '-'} · 端口 ${ls.port || '-'} · 重启 ${ls.restartCount || 0} 次</span>
+        <span class="badge ${ls.running ? 'running' : 'stopped'}">${I18n.t(ls.running ? 'card.languageServer.running' : 'card.languageServer.stopped')}</span>
+        <span class="text-sm text-muted" style="margin-left:12px">PID ${ls.pid || '-'} · ${I18n.t('field.port.label')} ${ls.port || '-'} · ${I18n.t('card.restarts')} ${ls.restartCount || 0}</span>
       `;
     }
     this.poll('overview', () => this.loadOverview(), 15000);
   },
 
   async restartLs() {
-    const ok = await this.confirm('重启 Language Server', '进行中的请求将会失败，确定要继续吗？', { danger: true, okText: '重启' });
+    const ok = await this.confirm(I18n.t('confirm.restartTitle'), I18n.t('confirm.restartDesc'), { danger: true, okText: I18n.t('button.restart') });
     if (!ok) return;
     await this.api('POST', '/langserver/restart', { confirm: true });
-    this.toast('Language Server 重启中...', 'info');
+    this.toast(I18n.t('toast.restarting'), 'info');
   },
 
   // ─── Windsurf Login ──────────────────────────
@@ -2080,12 +2148,12 @@ const App = {
     const status = document.getElementById('oauth-status');
     const label = provider === 'google' ? 'Google' : 'GitHub';
     if (btn) btn.disabled = true;
-    status.textContent = `正在通过 ${label} 登录...`;
+    status.textContent = I18n.t('oauth.status.loggingIn', { label });
     status.style.color = 'var(--text-muted)';
     try {
-      if (!window._firebaseOAuth) throw new Error('Firebase SDK 加载失败 请刷新页面重试');
+      if (!window._firebaseOAuth) throw new Error(I18n.t('error.firebaseLoadFailed'));
       const cred = await window._firebaseOAuth(provider);
-      status.textContent = `${label} 认证成功 正在注册 Codeium...`;
+      status.textContent = I18n.t('oauth.status.codeiumRegistering', { label });
       const r = await this.api('POST', '/oauth-login', {
         idToken: cred.idToken,
         refreshToken: cred.refreshToken,
@@ -2095,15 +2163,15 @@ const App = {
       });
       if (r.error) throw new Error(r.error);
       status.style.color = '#22c55e';
-      status.textContent = `登录成功 ${r.email || label} 已加入账号池`;
-      this.toast(`${label} 登录成功`, 'success');
+      status.textContent = I18n.t('oauth.status.loginSuccess', { email: r.email || label });
+      this.toast(I18n.t('toast.loginSuccess', { label }), 'success');
       this.loadAccounts();
-      const entry = { time: new Date().toISOString(), email: r.email || label, proxy: '直连', status: 'success', method: label };
+      const entry = { time: new Date().toISOString(), email: r.email || label, proxy: I18n.t('proxy.direct'), status: 'success', method: label };
       this.pushLoginHistory(entry);
     } catch (err) {
       status.style.color = '#ef4444';
-      status.textContent = `${label} 登录失败: ${err.message}`;
-      this.toast(`${label} 登录失败: ${err.message}`, 'error');
+      status.textContent = I18n.t('oauth.status.loginFailed', { label, error: err.message });
+      this.toast(I18n.t('toast.loginFailed', { label, error: err.message }), 'error');
     } finally {
       if (btn) btn.disabled = false;
     }
@@ -2145,12 +2213,12 @@ const App = {
     if (!r.isAuthFail) return '';
     return `
       <div style="margin-top:12px;padding:12px;background:var(--surface-2);border-radius:var(--radius);border-left:3px solid var(--accent)">
-        <div style="font-weight:600;margin-bottom:8px">换个方式试试</div>
+        <div style="font-weight:600;margin-bottom:8px">${I18n.t('oauth.tryAnotherWay')}</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="btn btn-sm" style="background:#4285F4;color:#fff" onclick="App.oauthLogin('google')">Google 登录</button>
-          <button class="btn btn-sm" style="background:#24292e;color:#fff" onclick="App.oauthLogin('github')">GitHub 登录</button>
-          <a class="btn btn-sm btn-outline" href="https://windsurf.com/show-auth-token" target="_blank">复制 Auth Token</a>
-          <button class="btn btn-sm btn-ghost" onclick="document.querySelector('[data-panel=accounts]').click();setTimeout(()=>document.getElementById('acc-key')?.focus(),100)">去账号管理粘贴 Token</button>
+          <button class="btn btn-sm" style="background:#4285F4;color:#fff" onclick="App.oauthLogin('google')">${I18n.t('oauth.google')}</button>
+          <button class="btn btn-sm" style="background:#24292e;color:#fff" onclick="App.oauthLogin('github')">${I18n.t('oauth.github')}</button>
+          <a class="btn btn-sm btn-outline" href="https://windsurf.com/show-auth-token" target="_blank">${I18n.t('oauth.copyAuthToken')}</a>
+          <button class="btn btn-sm btn-ghost" onclick="document.querySelector('[data-panel=accounts]').click();setTimeout(()=>document.getElementById('acc-key')?.focus(),100)">${I18n.t('oauth.pasteToken')}</button>
         </div>
       </div>`;
   },
@@ -2160,16 +2228,16 @@ const App = {
       this.showWindsurfLoginResult(`
         <div class="section-header">
           <div>
-            <div class="section-title" style="color:var(--success)">✓ 登录成功</div>
-            <div class="section-desc">API Key 已生成${autoAdd ? '并加入账号池' : ''}</div>
+            <div class="section-title" style="color:var(--success)">✓ ${I18n.t('loginResult.success')}</div>
+            <div class="section-desc">${I18n.t('loginResult.apiKeyGenerated', {autoAdd: autoAdd ? I18n.t('loginResult.addedToPool') : ''})}</div>
           </div>
         </div>
         <div class="section-body">
           <table style="background:transparent">
-            <tr><td style="color:var(--text-muted);width:120px">邮箱</td><td>${this.esc(r.email)}</td></tr>
-            <tr><td style="color:var(--text-muted)">姓名</td><td>${this.esc(r.name || '-')}</td></tr>
-            <tr><td style="color:var(--text-muted)">API Key</td><td><code class="break-all">${this.esc(r.apiKey)}</code></td></tr>
-            ${r.account ? `<tr><td style="color:var(--text-muted)">账号 ID</td><td><code>${r.account.id}</code> <span class="badge active">${r.account.status}</span></td></tr>` : ''}
+            <tr><td style="color:var(--text-muted);width:120px">${I18n.t('loginResult.fields.email')}</td><td>${this.esc(r.email)}</td></tr>
+            <tr><td style="color:var(--text-muted)">${I18n.t('loginResult.fields.name')}</td><td>${this.esc(r.name || '-')}</td></tr>
+            <tr><td style="color:var(--text-muted)">${I18n.t('loginResult.fields.apiKey')}</td><td><code class="break-all">${this.esc(r.apiKey)}</code></td></tr>
+            ${r.account ? `<tr><td style="color:var(--text-muted)">${I18n.t('loginResult.fields.accountId')}</td><td><code>${r.account.id}</code> <span class="badge active">${r.account.status}</span></td></tr>` : ''}
           </table>
         </div>`);
       return;
@@ -2177,10 +2245,10 @@ const App = {
     this.showWindsurfLoginResult(`
       <div class="section-header">
         <div>
-          <div class="section-title" style="color:var(--error)">✗ 登录失败</div>
+          <div class="section-title" style="color:var(--error)">${I18n.t('loginResult.fail')}</div>
         </div>
       </div>
-      <div class="section-body"><p class="text-sm">${this.esc(r.error || '未知错误')}</p>${this.getWindsurfLoginFailActions(r)}</div>`);
+      <div class="section-body"><p class="text-sm">${this.esc(r.error || I18n.t('error.unknown'))}</p>${this.getWindsurfLoginFailActions(r)}</div>`);
   },
 
   renderBatchWindsurfLoginResult(results, autoAdd) {
@@ -2189,22 +2257,22 @@ const App = {
     this.showWindsurfLoginResult(`
         <div class="section-header">
         <div>
-          <div class="section-title" style="color:${failCount ? 'var(--warning, #f59e0b)' : 'var(--success)'}">批量导入完成</div>
-          <div class="section-desc">共 ${results.length} 个账号，成功 ${successCount} 个，失败 ${failCount} 个${autoAdd ? '；成功项已自动加入账号池' : ''}</div>
+          <div class="section-title" style="color:${failCount ? 'var(--warning, #f59e0b)' : 'var(--success)'}">${I18n.t('loginResult.batchComplete')}</div>
+          <div class="section-desc">${I18n.t('loginResult.batchDesc', {total: results.length, success: successCount, fail: failCount, autoAdd: autoAdd ? I18n.t('loginResult.addedToPool') : ''})}</div>
         </div>
       </div>
       <div class="section-body tight">
         <div class="table-wrap">
           <table>
-            <thead><tr><th>邮箱</th><th>状态</th><th>说明</th></tr></thead>
+            <thead><tr><th>${I18n.t('table.header.email')}</th><th>${I18n.t('table.header.status')}</th><th>${I18n.t('table.header.note')}</th></tr></thead>
             <tbody>
               ${results.map(r => `
                 <tr>
                   <td>${this.esc(r.email || '-')}</td>
-                  <td><span class="badge ${r.success ? 'active' : 'error'}">${r.success ? '成功' : '失败'}</span></td>
+                  <td><span class="badge ${r.success ? 'active' : 'error'}">${r.success ? I18n.t('batch.success') : I18n.t('batch.fail')}</span></td>
                   <td class="text-sm">${r.success
-                    ? `<span class="break-all"><code>${this.esc(r.apiKey ? r.apiKey.slice(0, 16) + '...' : '-')}</code>${r.account ? ` · 账号 ${this.esc(r.account.id)}` : ''}</span>`
-                    : `<span style="color:var(--error)">${this.esc(r.error || '未知错误')}</span>`}</td>
+                    ? `<span class="break-all"><code>${this.esc(r.apiKey ? r.apiKey.slice(0, 16) + '...' : '-')}</code>${r.account ? ` · ${I18n.t('table.header.account')} ${this.esc(r.account.id)}` : ''}</span>`
+                    : `<span style="color:var(--error)">${this.esc(r.error || I18n.t('error.unknown'))}</span>`}</td>
                 </tr>
               `).join('')}
             </tbody>
@@ -2221,13 +2289,13 @@ const App = {
       if (!line) return;
       const m = line.match(/^(\S+)\s+(.+)$/);
       if (!m) {
-        errors.push(`第 ${idx + 1} 行格式错误`);
+        errors.push(I18n.t('batch.formatError', {line: idx + 1}));
         return;
       }
       const email = m[1].trim();
       const password = m[2].trim();
       if (!email.includes('@') || !password) {
-        errors.push(`第 ${idx + 1} 行格式错误`);
+        errors.push(I18n.t('batch.formatError', {line: idx + 1}));
         return;
       }
       entries.push({ email, password });
@@ -2239,29 +2307,29 @@ const App = {
     const el = document.getElementById('wl-batch-input');
     if (!navigator.clipboard || !window.isSecureContext) {
       el?.focus();
-      return this.toast('当前环境不支持自动读取剪贴板，请手动粘贴', 'info');
+      return this.toast(I18n.t('toast.clipboardUnsupported'), 'info');
     }
     try {
       const text = await navigator.clipboard.readText();
-      if (!text) return this.toast('剪贴板为空', 'info');
+      if (!text) return this.toast(I18n.t('toast.clipboardEmpty'), 'info');
       el.value = text;
-      this.toast('已读取剪贴板', 'success');
+      this.toast(I18n.t('toast.clipboardRead'), 'success');
     } catch (err) {
-      this.toast('读取剪贴板失败: ' + err.message, 'error');
+      this.toast(I18n.t('toast.clipboardError', { error: err.message }), 'error');
     }
   },
 
   async windsurfLogin() {
     const email = document.getElementById('wl-email').value.trim();
     const password = document.getElementById('wl-password').value.trim();
-    if (!email || !password) return this.toast('请输入邮箱和密码', 'error');
+    if (!email || !password) return this.toast(I18n.t('toast.enterEmailPassword'), 'error');
 
     const proxy = this.getWindsurfLoginProxy();
     const autoAdd = document.getElementById('wl-auto-add').checked;
 
     const btn = document.getElementById('wl-btn');
     btn.disabled = true;
-    btn.innerHTML = '<span class="spinner"></span> 登录中...';
+    btn.innerHTML = '<span class="spinner"></span> ' + I18n.t('status.loading');
 
     const entry = { time: new Date().toISOString(), email, proxy: this.getWindsurfProxyLabel(proxy), status: 'pending' };
 
@@ -2271,12 +2339,12 @@ const App = {
         entry.status = 'success';
         entry.apiKey = r.apiKey?.slice(0, 16) + '...';
         this.renderSingleWindsurfLoginResult(r, autoAdd);
-        this.toast(autoAdd ? '登录成功，账号已加入' : '登录成功', 'success');
+        this.toast(autoAdd ? I18n.t('toast.loginSuccessAdded') : I18n.t('toast.loginSuccess'), 'success');
         this.loadAccounts();
       } else {
         entry.status = 'error: ' + (r.error || 'unknown');
         this.renderSingleWindsurfLoginResult(r, autoAdd);
-        this.toast(r.error || '登录失败', 'error');
+        this.toast(r.error || I18n.t('toast.loginFailed'), 'error');
       }
     } catch (err) {
       entry.status = 'error: ' + err.message;
@@ -2285,23 +2353,23 @@ const App = {
 
     this.pushLoginHistory(entry);
     btn.disabled = false;
-    btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg> 登录';
+    btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg> ' + I18n.t('action.login');
   },
 
   async windsurfLoginBatch() {
     const input = document.getElementById('wl-batch-input').value;
-    if (!input.trim()) return this.toast('请先粘贴批量账号', 'error');
+    if (!input.trim()) return this.toast(I18n.t('batch.pasteFirst'), 'error');
 
     const autoAdd = document.getElementById('wl-auto-add').checked;
     const btn = document.getElementById('wl-batch-btn');
     const lineCount = input.trim().split('\n').filter(l => l.trim()).length;
     btn.disabled = true;
-    btn.innerHTML = '<span class="spinner"></span> 导入中...';
+    btn.innerHTML = '<span class="spinner"></span> ' + I18n.t('batch.importing');
     this.showWindsurfLoginResult(`
       <div class="section-header">
         <div>
-          <div class="section-title">批量导入中...</div>
-          <div class="section-desc">共 ${lineCount} 行，请稍候</div>
+          <div class="section-title">${I18n.t('batch.importing')}</div>
+          <div class="section-desc">${I18n.t('batch.importingDesc', {count: lineCount})}</div>
         </div>
       </div>`);
 
@@ -2310,10 +2378,10 @@ const App = {
       if (!r.success || !Array.isArray(r.results)) {
         this.showWindsurfLoginResult(`
           <div class="section-header">
-            <div><div class="section-title" style="color:var(--error)">✗ 批量导入失败</div></div>
+            <div><div class="section-title" style="color:var(--error)">${I18n.t('loginResult.fail')}</div></div>
           </div>
-          <div class="section-body"><p class="text-sm">${this.esc(r.error || '未知错误')}</p></div>`);
-        return this.toast(r.error || '批量导入失败', 'error');
+          <div class="section-body"><p class="text-sm">${this.esc(r.error || I18n.t('error.unknown'))}</p></div>`);
+        return this.toast(r.error || I18n.t('batch.importFailed'), 'error');
       }
 
       this.renderBatchWindsurfLoginResult(r.results, autoAdd);
@@ -2324,7 +2392,7 @@ const App = {
           status: item.success ? 'success' : `error: ${item.error || 'unknown'}`,
           apiKey: item.success && item.apiKey ? item.apiKey.slice(0, 16) + '...' : undefined,
         })));
-      this.toast(`批量导入完成：成功 ${r.successCount || 0} / 失败 ${r.failCount || 0}`, (r.failCount || 0) ? 'info' : 'success');
+      this.toast(I18n.t('batch.importComplete', {success: r.successCount || 0, fail: r.failCount || 0}), (r.failCount || 0) ? 'info' : 'success');
       if ((r.successCount || 0) > 0) {
         this.loadAccounts();
         document.getElementById('wl-batch-input').value = '';
@@ -2332,13 +2400,13 @@ const App = {
     } catch (err) {
       this.showWindsurfLoginResult(`
         <div class="section-header">
-          <div><div class="section-title" style="color:var(--error)">✗ 批量导入失败</div></div>
+          <div><div class="section-title" style="color:var(--error)">${I18n.t('loginResult.fail')}</div></div>
         </div>
         <div class="section-body"><p class="text-sm">${this.esc(err.message)}</p></div>`);
       this.toast(err.message, 'error');
     } finally {
       btn.disabled = false;
-      btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M3 5h18"/><path d="M3 12h18"/><path d="M3 19h18"/></svg> 批量导入并登录';
+      btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M3 5h18"/><path d="M3 12h18"/><path d="M3 19h18"/></svg> ' + I18n.t('action.batchImport');
     }
   },
 
@@ -2351,13 +2419,13 @@ const App = {
         <td class="text-sm nowrap">${new Date(h.time).toLocaleString()}</td>
         <td>${this.esc(h.email)}</td>
         <td>
-          <span class="badge ${ok ? 'active' : 'error'}">${ok ? '成功' : '失败'}</span>
+          <span class="badge ${ok ? 'active' : 'error'}">${ok ? I18n.t('batch.success') : I18n.t('batch.fail')}</span>
           ${!ok ? `<div class="text-xs" style="color:var(--error);margin-top:3px;max-width:240px;overflow:hidden;text-overflow:ellipsis">${this.esc((h.status||'').replace('error: ',''))}</div>` : ''}
         </td>
         <td class="text-sm">${this.esc(h.proxy || '-')}</td>
-        <td><button class="btn btn-ghost btn-xs" onclick="App.removeLoginHistory(${i})">删除</button></td>
+        <td><button class="btn btn-ghost btn-xs" onclick="App.removeLoginHistory(${i})">${I18n.t('action.delete')}</button></td>
       </tr>`;
-    }).join('') || '<tr class="empty-row"><td colspan="5">暂无登录记录</td></tr>';
+    }).join('') || `<tr class="empty-row"><td colspan="5">${I18n.t('table.empty.loginHistory')}</td></tr>`;
   },
 
   removeLoginHistory(idx) {
@@ -2380,8 +2448,8 @@ const App = {
           <div class="section">
             <div class="section-header">
               <div>
-                <div class="section-title">语言服务器池</div>
-                <div class="section-desc">${instances.length} 个 LS 实例 · 每个独立代理对应一个进程</div>
+                <div class="section-title">${I18n.t('section.lsPool.sectionTitle')}</div>
+                <div class="section-desc">${I18n.t('section.lsPool.sectionDesc', { count: instances.length })}</div>
               </div>
             </div>
             <div class="section-body">
@@ -2390,10 +2458,10 @@ const App = {
                   <div class="ls-inst">
                     <div class="ls-key">
                       <span class="ls-dot ${i.ready ? '' : 'pending'}"></span>
-                      ${this.esc(i.key === 'default' ? '默认实例' : i.key.replace(/^px_/, ''))}
+                      ${this.esc(i.key === 'default' ? I18n.t('section.lsPool.defaultInstance') : i.key.replace(/^px_/, ''))}
                     </div>
-                    <div class="ls-meta">端口 ${i.port} · PID ${i.pid || '-'}</div>
-                    <div class="ls-meta">${this.esc(i.proxy || '无代理')}</div>
+                    <div class="ls-meta">${I18n.t('section.lsPool.port')} ${i.port} · PID ${i.pid || '-'}</div>
+                    <div class="ls-meta">${this.esc(i.proxy || I18n.t('section.lsPool.noProxy'))}</div>
                   </div>
                 `).join('')}
               </div>
@@ -2404,7 +2472,7 @@ const App = {
       }
     }
     const tbody = document.querySelector('#accounts-table tbody');
-    const tierLabel = { pro: 'PRO', free: 'FREE', expired: '已过期', unknown: '未知' };
+    const tierLabel = { pro: 'PRO', free: 'FREE', expired: I18n.t('tier.expiredLabel'), unknown: I18n.t('tier.unknown') };
     tbody.innerHTML = (d.accounts || []).map(a => {
       const tier = a.tier || 'unknown';
       // GetUserStatus snapshot — authoritative plan/trial/credit info (may be null)
@@ -2436,20 +2504,20 @@ const App = {
       }
       const tierTooltip = usTipLines.length
         ? usTipLines.join('\n')
-        : '点击手动修改层级（探测异常时用）';
+        : I18n.t('status.clickToEditTier');
 
       // Compact summary: avail/total + 编辑 button. Clicking opens modal.
       const tierModels = a.tierModels || [];
       const blockedCount = (a.blockedModels || []).length;
       const availCount = tierModels.length - blockedCount;
       const capsHtml = tierModels.length
-        ? `<button class="btn btn-ghost btn-xs" style="min-width:96px" onclick="App.openBlockedModal('${this.escJsAttr(a.id)}')" title="编辑该账号可用模型">
+        ? `<button class="btn btn-ghost btn-xs" style="min-width:96px" onclick="App.openBlockedModal('${this.escJsAttr(a.id)}')" title="${I18n.t('account.editModels')}">
              <span style="color:var(--success,#10b981);font-weight:600">${availCount}</span>
              <span style="color:var(--text-dim)">/${tierModels.length}</span>
              ${blockedCount > 0 ? `<span class="badge warn" style="margin-left:4px">-${blockedCount}</span>` : ''}
            </button>`
         : `<span class="text-xs text-dim">-</span>`;
-      const rateLimitBadge = a.rateLimited ? ` <span class="badge warn">限流中</span>` : '';
+      const rateLimitBadge = a.rateLimited ? ` <span class="badge warn">${I18n.t('card.rateLimit.badge')}</span>` : '';
       const rpmUsed = a.rpmUsed ?? 0;
       const rpmLimit = a.rpmLimit ?? 0;
       const rpmPct = rpmLimit > 0 ? Math.min(100, Math.round((rpmUsed / rpmLimit) * 100)) : 0;
@@ -2470,9 +2538,9 @@ const App = {
       const cr = a.credits || null;
       let creditCell;
       if (!cr) {
-        creditCell = `<span class="text-xs text-dim">尚未获取</span>`;
+        creditCell = `<span class="text-xs text-dim">${I18n.t('status.notFetched')}</span>`;
       } else if (cr.lastError && cr.percent == null && !cr.prompt?.limit) {
-        creditCell = `<span class="text-xs" style="color:var(--error)" title="${this.esc(cr.lastError)}">获取失败</span>`;
+        creditCell = `<span class="text-xs" style="color:var(--error)" title="${this.esc(cr.lastError)}">${I18n.t('status.fetchFailed')}</span>`;
       } else {
         const planName = cr.planName || '-';
         const fetchedAgo = cr.fetchedAt ? Math.round((Date.now() - cr.fetchedAt) / 60000) + 'm ago' : '-';
@@ -2499,8 +2567,8 @@ const App = {
         ].filter(Boolean).join('\n');
         creditCell = `<div style="min-width:120px" title="${this.esc(tipLines)}">
             <div class="text-xs" style="margin-bottom:2px"><b>${this.esc(planName.slice(0, 12))}</b> <span style="color:var(--text-dim)">${fetchedAgo}</span></div>
-            ${bar('日', cr.dailyPercent)}
-            ${bar('周', cr.weeklyPercent)}
+            ${bar(I18n.t('creditsBar.daily'), cr.dailyPercent)}
+            ${bar(I18n.t('creditsBar.weekly'), cr.weeklyPercent)}
             ${bar('P', promptPct)}
           </div>`;
       }
@@ -2521,87 +2589,87 @@ const App = {
         <td style="color:${a.errorCount > 0 ? 'var(--error)' : 'inherit'}">${a.errorCount}</td>
         <td class="text-sm nowrap">${a.lastUsed ? new Date(a.lastUsed).toLocaleString() : '-'}</td>
         <td class="nowrap">
-          <code style="cursor:pointer" title="点击复制" onclick="App.copyKey('${this.escJsAttr(a.apiKey)}')">${a.keyPrefix}</code>
+          <code style="cursor:pointer" title="${I18n.t('action.copyTitle')}" onclick="App.copyKey('${this.escJsAttr(a.apiKey)}')">${a.keyPrefix}</code>
         </td>
         <td class="nowrap">
           <div class="btn-group">
-            <button class="btn btn-ghost btn-xs" onclick="App.probeAccount('${this.escJsAttr(a.id)}')" title="探测能力">探测</button>
-            <button class="btn btn-ghost btn-xs" onclick="App.refreshCredits('${this.escJsAttr(a.id)}')" title="刷新余额">余额</button>
+            <button class="btn btn-ghost btn-xs" onclick="App.probeAccount('${this.escJsAttr(a.id)}')" title="${I18n.t('action.probeTitle')}">${I18n.t('action.probe')}</button>
+            <button class="btn btn-ghost btn-xs" onclick="App.refreshCredits('${this.escJsAttr(a.id)}')" title="${I18n.t('account.credits.refreshTitle')}">${I18n.t('table.header.credits')}</button>
             ${a.status === 'active'
-              ? `<button class="btn btn-ghost btn-xs" onclick="App.toggleAccount('${this.escJsAttr(a.id)}','disabled')">停用</button>`
-              : `<button class="btn btn-success btn-xs" onclick="App.toggleAccount('${this.escJsAttr(a.id)}','active')">启用</button>`}
-            <button class="btn btn-ghost btn-xs" onclick="App.resetErrors('${this.escJsAttr(a.id)}')">重置</button>
-            <button class="btn btn-ghost btn-xs" style="color:var(--error)" onclick="App.deleteAccount('${this.escJsAttr(a.id)}')">删除</button>
+              ? `<button class="btn btn-ghost btn-xs" onclick="App.toggleAccount('${this.escJsAttr(a.id)}','disabled')">${I18n.t('action.disable')}</button>`
+              : `<button class="btn btn-success btn-xs" onclick="App.toggleAccount('${this.escJsAttr(a.id)}','active')">${I18n.t('action.enable')}</button>`}
+            <button class="btn btn-ghost btn-xs" onclick="App.resetErrors('${this.escJsAttr(a.id)}')">${I18n.t('action.reset')}</button>
+            <button class="btn btn-ghost btn-xs" style="color:var(--error)" onclick="App.deleteAccount('${this.escJsAttr(a.id)}')">${I18n.t('action.delete')}</button>
           </div>
         </td>
       </tr>`;
-    }).join('') || '<tr class="empty-row"><td colspan="11">暂无账号，请先添加</td></tr>';
+    }).join('') || `<tr class="empty-row"><td colspan="11">${I18n.t('table.empty.accounts')}</td></tr>`;
   },
 
   async refreshCredits(id) {
     try {
       const r = await this.api('POST', `/accounts/${id}/refresh-credits`, {});
       if (r.ok) {
-        this.toast('余额已刷新');
+        this.toast(I18n.t('toast.credits.refreshed'));
         this.loadAccounts();
       } else {
-        this.toast(r.error || '刷新失败', 'error');
+        this.toast(r.error || I18n.t('toast.credits.refreshFailed'), 'error');
       }
-    } catch (e) { this.toast('刷新失败: ' + e.message, 'error'); }
+    } catch (e) { this.toast(I18n.t('toast.credits.refreshFailed') + ': ' + e.message, 'error'); }
   },
 
   async refreshAllCredits() {
-    this.toast('正在刷新所有账号余额...', 'info');
+    this.toast(I18n.t('toast.credits.refreshing'), 'info');
     try {
       const r = await this.api('POST', '/accounts/refresh-credits', {});
       if (r.success) {
         const okCount = (r.results || []).filter(x => x.ok).length;
         const failCount = (r.results || []).length - okCount;
-        this.toast(`余额刷新完成：${okCount} 成功 / ${failCount} 失败`);
+        this.toast(I18n.t('toast.credits.allRefreshed', { ok: okCount, fail: failCount }));
         this.loadAccounts();
       } else {
-        this.toast(r.error || '刷新失败', 'error');
+        this.toast(r.error || I18n.t('toast.credits.refreshFailed'), 'error');
       }
-    } catch (e) { this.toast('刷新失败: ' + e.message, 'error'); }
+    } catch (e) { this.toast(I18n.t('toast.credits.refreshFailed') + ': ' + e.message, 'error'); }
   },
 
   async probeAll() {
-    this.toast('全部探测中，依账号数量约需 1-3 分钟...', 'info');
+    this.toast(I18n.t('toast.probe.allDoing'), 'info');
     try {
       const r = await this.api('POST', '/accounts/probe-all', {});
       if (r.success) {
-        const tierLabel = { pro: 'Pro', free: 'Free', expired: '已过期', unknown: '未知' };
-        const summary = (r.results || []).map(x => `${x.email}: ${tierLabel[x.tier] || x.tier || x.error}`).join('；');
-        this.toast('探测完成：' + summary);
+        const tierLabel = { pro: 'Pro', free: 'Free', expired: I18n.t('tier.expiredLabel'), unknown: I18n.t('tier.unknown') };
+        const summary = (r.results || []).map(x => `${x.email}: ${tierLabel[x.tier] || x.tier || x.error}`).join('; ');
+        this.toast(I18n.t('toast.probeAllComplete', { summary }));
         this.loadAccounts();
       } else {
-        this.toast(r.error || '探测失败', 'error');
+        this.toast(r.error || I18n.t('error.probeFailed'), 'error');
       }
-    } catch (e) { this.toast('探测失败: ' + e.message, 'error'); }
+    } catch (e) { this.toast(I18n.t('error.probeFailed') + ': ' + e.message, 'error'); }
   },
 
   async probeAccount(id) {
-    this.toast('探测中，约需 10-30 秒...', 'info');
+    this.toast(I18n.t('toast.probe.doing'), 'info');
     try {
       const r = await this.api('POST', `/accounts/${id}/probe`, {});
       if (r.success) {
-        const tierLabel = { pro: 'Pro', free: 'Free', expired: '已过期', unknown: '未知' };
-        this.toast(`探测完成：${tierLabel[r.tier] || r.tier}`);
+        const tierLabel = { pro: 'Pro', free: 'Free', expired: I18n.t('tier.expiredLabel'), unknown: I18n.t('tier.unknown') };
+        this.toast(I18n.t('toast.probeComplete', { tier: tierLabel[r.tier] || r.tier }));
         this.loadAccounts();
       } else {
-        this.toast(r.error || '探测失败', 'error');
+        this.toast(r.error || I18n.t('error.probeFailed'), 'error');
       }
-    } catch (e) { this.toast('探测失败: ' + e.message, 'error'); }
+    } catch (e) { this.toast(I18n.t('error.probeFailed') + ': ' + e.message, 'error'); }
   },
 
   async openBlockedModal(id) {
     try {
       const d = await this.api('GET', '/accounts', null);
       const acct = (d.accounts || []).find(a => a.id === id);
-      if (!acct) return this.toast('账号不存在', 'error');
+      if (!acct) return this.toast(I18n.t('error.accountNotFound'), 'error');
       const tierModels = acct.tierModels || [];
       const blocked = new Set(acct.blockedModels || []);
-      if (!tierModels.length) return this.toast('该账号层级无可用模型', 'info');
+      if (!tierModels.length) return this.toast(I18n.t('toast.noTierModels'), 'info');
       const providerOf = (m) => {
         if (m.startsWith('claude')) return 'anthropic';
         if (m.startsWith('gpt') || m.startsWith('o3') || m.startsWith('o4')) return 'openai';
@@ -2619,16 +2687,16 @@ const App = {
       const availInit = total - blocked.size;
       const html = `
         <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px;padding:8px 10px;background:var(--surface-2);border-radius:6px">
-          <div class="text-xs text-dim">勾选 = 可用；取消 = 对该账号禁用</div>
+          <div class="text-xs text-dim">${I18n.t('modal.blockedModels.hint')}</div>
           <div style="font-size:13px">
-            已启用 <span id="bm-avail" style="color:var(--success,#10b981);font-weight:600">${availInit}</span>
+            ${I18n.t('modal.blockedModels.enabled')} <span id="bm-avail" style="color:var(--success,#10b981);font-weight:600">${availInit}</span>
             <span style="color:var(--text-dim)"> / ${total}</span>
           </div>
         </div>
         <div style="display:flex;gap:6px;margin-bottom:10px">
-          <button class="btn btn-ghost btn-xs" onclick="App.blockedModalToggleAll(true)">全选</button>
-          <button class="btn btn-ghost btn-xs" onclick="App.blockedModalToggleAll(false)">全不选</button>
-          <button class="btn btn-ghost btn-xs" onclick="App.blockedModalInvert()">反选</button>
+          <button class="btn btn-ghost btn-xs" onclick="App.blockedModalToggleAll(true)">${I18n.t('action.selectAll')}</button>
+          <button class="btn btn-ghost btn-xs" onclick="App.blockedModalToggleAll(false)">${I18n.t('action.selectNone')}</button>
+          <button class="btn btn-ghost btn-xs" onclick="App.blockedModalInvert()">${I18n.t('action.invert')}</button>
         </div>
         <div style="max-height:50vh;overflow:auto;padding:2px 2px 2px 0">
           ${Object.entries(groups).map(([provider, models]) => `
@@ -2654,9 +2722,9 @@ const App = {
       // Promise — _bindBlockedModal replaces the OK handler with one that
       // PATCHes and closes itself, so the original resolve() only fires on
       // Cancel, which we ignore.
-      this.confirm(`编辑可用模型 — ${acct.email}`, html, { okText: '保存', html: true, wide: true });
+      this.confirm(I18n.t('modal.blockedModels.title', {email: acct.email}), html, { okText: I18n.t('action.save'), html: true, wide: true });
       setTimeout(() => this._bindBlockedModal(id), 0);
-    } catch (e) { this.toast('打开失败: ' + e.message, 'error'); }
+    } catch (e) { this.toast(I18n.t('error.openFailed') + ': ' + e.message, 'error'); }
   },
 
   // Bind listeners once the blocked-models modal is mounted.
@@ -2707,20 +2775,20 @@ const App = {
       const newBlocked = [];
       root.querySelectorAll('.blocked-model-cb').forEach(cb => { if (!cb.checked) newBlocked.push(cb.dataset.model); });
       okBtn.disabled = true; cancelBtn.disabled = true;
-      okBtn.textContent = '保存中...';
+      okBtn.textContent = I18n.t('status.saving');
       try {
         const r = await self.api('PATCH', `/accounts/${id}`, { blockedModels: newBlocked });
         if (r.success) {
-          self.toast(`已保存：启用 ${root.querySelectorAll('.blocked-model-cb:checked').length} / 禁用 ${newBlocked.length}`, 'success');
+          self.toast(I18n.t('modal.blockedModels.saved', {enabled: root.querySelectorAll('.blocked-model-cb:checked').length, disabled: newBlocked.length}), 'success');
           root.remove();
           self.loadAccounts();
         } else {
-          self.toast(r.error || '保存失败', 'error');
-          okBtn.disabled = false; cancelBtn.disabled = false; okBtn.textContent = '保存';
+          self.toast(r.error || I18n.t('error.saveFailed'), 'error');
+          okBtn.disabled = false; cancelBtn.disabled = false; okBtn.textContent = I18n.t('action.save');
         }
       } catch (e) {
-        self.toast('保存失败: ' + e.message, 'error');
-        okBtn.disabled = false; cancelBtn.disabled = false; okBtn.textContent = '保存';
+        self.toast(I18n.t('error.saveFailed') + ': ' + e.message, 'error');
+        okBtn.disabled = false; cancelBtn.disabled = false; okBtn.textContent = I18n.t('action.save');
       }
     };
   },
@@ -2745,37 +2813,37 @@ const App = {
     const type = document.getElementById('acc-type').value;
     const key = document.getElementById('acc-key').value.trim();
     const label = document.getElementById('acc-label').value.trim();
-    if (!key) return this.toast('请输入 Key 或 Token', 'error');
+    if (!key) return this.toast(I18n.t('toast.enterKeyOrToken'), 'error');
     const body = type === 'api_key' ? { api_key: key, label } : { token: key, label };
     const r = await this.api('POST', '/accounts', body);
-    if (r.success) { this.toast('账号已添加'); document.getElementById('acc-key').value = ''; document.getElementById('acc-label').value = ''; this.loadAccounts(); }
-    else this.toast(r.error || '添加失败', 'error');
+    if (r.success) { this.toast(I18n.t('account.addSuccess')); document.getElementById('acc-key').value = ''; document.getElementById('acc-label').value = ''; this.loadAccounts(); }
+    else this.toast(r.error || I18n.t('toast.addFailed'), 'error');
   },
 
   async toggleAccount(id, status) { await this.api('PATCH', `/accounts/${id}`, { status }); this.loadAccounts(); },
 
   async overrideTier(id, current) {
     const newTier = await this.prompt(
-      '手动设置账号层级',
-      `当前: ${current}。Windsurf Pro 试用有时自动探测失败（issue #8 的连锁影响），手动改成 pro 即可解锁所有 Pro 模型。`,
-      [{ name: 'tier', label: '层级', type: 'select', options: [
-        { value: 'pro', label: 'Pro（解锁所有模型）' },
-        { value: 'free', label: 'Free（仅 gpt-4o-mini 和 gemini-2.5-flash）' },
-        { value: 'unknown', label: 'Unknown（让系统重新判定）' },
+      I18n.t('modal.overrideTier.title'),
+      I18n.t('modal.overrideTier.desc', {current}),
+      [{ name: 'tier', label: I18n.t('field.tier.label'), type: 'select', options: [
+        { value: 'pro', label: I18n.t('modal.overrideTier.options.pro') },
+        { value: 'free', label: I18n.t('modal.overrideTier.options.free') },
+        { value: 'unknown', label: I18n.t('modal.overrideTier.options.unknown') },
       ], value: current }]
     );
     if (!newTier) return;
     await this.api('PATCH', `/accounts/${id}`, { tier: newTier.tier });
-    this.toast(`层级已设为 ${newTier.tier}`, 'success');
+    this.toast(I18n.t('account.tierSet', {tier: newTier.tier}), 'success');
     this.loadAccounts();
   },
-  async resetErrors(id) { await this.api('PATCH', `/accounts/${id}`, { resetErrors: true }); this.loadAccounts(); this.toast('错误已重置'); },
+  async resetErrors(id) { await this.api('PATCH', `/accounts/${id}`, { resetErrors: true }); this.loadAccounts(); this.toast(I18n.t('account.resetErrors')); },
   async deleteAccount(id) {
-    const ok = await this.confirm('删除账号', '此操作不可撤销，确定要删除该账号吗？', { danger: true, okText: '删除' });
+    const ok = await this.confirm(I18n.t('modal.deleteAccount.title'), I18n.t('modal.deleteAccount.desc'), { danger: true, okText: I18n.t('action.delete') });
     if (!ok) return;
     await this.api('DELETE', `/accounts/${id}`);
     this.loadAccounts();
-    this.toast('账号已删除');
+    this.toast(I18n.t('account.deleteSuccess'));
   },
 
   // ─── Models ──────────────────────────────────
@@ -2798,18 +2866,16 @@ const App = {
     }
     sec.classList.remove('hidden');
     const isAllow = this.modelAccessConfig.mode === 'allowlist';
-    document.getElementById('model-list-title').textContent = isAllow ? '允许的模型' : '屏蔽的模型';
-    document.getElementById('model-list-hint').textContent = isAllow
-      ? '只有选中的模型可以使用，未选中的模型将返回 403 错误'
-      : '选中的模型将被屏蔽，未选中的模型可正常使用';
+    document.getElementById('model-list-title').textContent = I18n.t(isAllow ? 'section.modelList.titleAllow' : 'section.modelList.titleBlock');
+    document.getElementById('model-list-hint').textContent = I18n.t(isAllow ? 'section.modelList.descAllow' : 'section.modelList.descBlock');
 
     const current = this.modelAccessConfig.list;
     if (current.length > 0) {
       document.getElementById('model-list-current').innerHTML = `
-        <div class="text-xs text-muted" style="margin-bottom:6px">当前清单 (${current.length})</div>
+        <div class="text-xs text-muted" style="margin-bottom:6px">${I18n.t('model.list.current', {count: current.length})}</div>
         <div class="model-chips">${current.map(m => `<span class="model-chip selected">${this.esc(m)}<span class="remove" onclick="App.removeModelFromList('${this.escJsAttr(m)}')">×</span></span>`).join('')}</div>`;
     } else {
-      document.getElementById('model-list-current').innerHTML = '<div class="text-xs text-dim">清单为空</div>';
+      document.getElementById('model-list-current').innerHTML = `<div class="text-xs text-dim">${I18n.t('model.list.empty')}</div>`;
     }
     this.filterModels();
   },
@@ -2840,14 +2906,14 @@ const App = {
           return `<span class="model-chip ${inList ? 'selected' : ''}" onclick="App.toggleModelInList('${this.escJsAttr(m.id)}')">${this.esc(m.name)}</span>`;
         }).join('')}</div>
       </div>
-    `).join('') || '<div class="text-sm text-dim">没有符合的模型</div>';
+    `).join('') || `<div class="text-sm text-dim">${I18n.t('table.empty.models')}</div>`;
   },
 
   async setModelMode(mode) {
     await this.api('PUT', '/model-access', { mode });
     this.modelAccessConfig.mode = mode;
     this.updateModelListUI();
-    this.toast('模式已更新');
+    this.toast(I18n.t('toast.modeUpdated'));
   },
 
   async toggleModelInList(modelId) {
@@ -2879,15 +2945,15 @@ const App = {
       // Password is never sent down now — show a placeholder when one is
       // stored so the user knows leaving the field blank keeps it.
       document.getElementById('proxy-pass').value = '';
-      document.getElementById('proxy-pass').placeholder = d.global.hasPassword ? '已保存（留空保持原值）' : '代理认证密码';
+      document.getElementById('proxy-pass').placeholder = d.global.hasPassword ? I18n.t('proxy.placeholderSaved') : I18n.t('proxy.placeholderPassword');
       this._globalProxyHasPassword = !!d.global.hasPassword;
       const h = (d.global.host || '').replace(/:\d+$/, '');
-      const authInfo = d.global.username ? `（认证：${d.global.username}）` : '';
-      document.getElementById('proxy-current').textContent = `当前：${d.global.type}://${h}:${d.global.port}${authInfo}`;
+      const authInfo = d.global.username ? `(${I18n.t('proxy.auth')}: ${d.global.username})` : '';
+      document.getElementById('proxy-current').textContent = `${I18n.t('proxy.current')}: ${d.global.type}://${h}:${d.global.port}${authInfo}`;
     } else {
       this._globalProxyHasPassword = false;
-      document.getElementById('proxy-pass').placeholder = '代理认证密码';
-      document.getElementById('proxy-current').textContent = '未配置全局代理';
+      document.getElementById('proxy-pass').placeholder = I18n.t('proxy.placeholderPassword');
+      document.getElementById('proxy-current').textContent = I18n.t('proxy.notConfigured');
     }
     const accts = await this.api('GET', '/accounts');
     const tbody = document.querySelector('#proxy-accounts-table tbody');
@@ -2896,15 +2962,15 @@ const App = {
       const p = pa[a.id];
       return `<tr>
         <td>${this.esc(a.email)} <code class="text-xs">${a.id}</code></td>
-        <td>${p ? `<code>${this.esc(p.type)}://${p.username ? this.esc(p.username) + '@' : ''}${this.esc(p.host)}:${this.esc(String(p.port))}</code>` : '<span class="text-sm text-dim">无（使用全局）</span>'}</td>
+        <td>${p ? `<code>${this.esc(p.type)}://${p.username ? this.esc(p.username) + '@' : ''}${this.esc(p.host)}:${this.esc(String(p.port))}</code>` : `<span class="text-sm text-dim">${I18n.t('proxy.none')}</span>`}</td>
         <td class="nowrap">
           <div class="btn-group">
-            <button class="btn btn-outline btn-xs" onclick="App.editAccountProxy('${this.escJsAttr(a.id)}','${this.escJsAttr(a.email)}')">配置</button>
-            ${p ? `<button class="btn btn-ghost btn-xs" style="color:var(--error)" onclick="App.clearAccountProxy('${this.escJsAttr(a.id)}')">清除</button>` : ''}
+            <button class="btn btn-outline btn-xs" onclick="App.editAccountProxy('${this.escJsAttr(a.id)}','${this.escJsAttr(a.email)}')">${I18n.t('action.configure')}</button>
+            ${p ? `<button class="btn btn-ghost btn-xs" style="color:var(--error)" onclick="App.clearAccountProxy('${this.escJsAttr(a.id)}')">${I18n.t('action.clear')}</button>` : ''}
           </div>
         </td>
       </tr>`;
-    }).join('') || '<tr class="empty-row"><td colspan="3">暂无账号</td></tr>';
+    }).join('') || `<tr class="empty-row"><td colspan="3">${I18n.t('table.empty.accountsProxy')}</td></tr>`;
   },
 
   async saveGlobalProxy() {
@@ -2919,33 +2985,33 @@ const App = {
     // interprets the omission as "keep existing".
     const pwInput = document.getElementById('proxy-pass').value;
     if (pwInput || !this._globalProxyHasPassword) cfg.password = pwInput;
-    if (!cfg.host) return this.toast('请输入代理主机', 'error');
+    if (!cfg.host) return this.toast(I18n.t('toast.enterProxyHost'), 'error');
     await this.api('PUT', '/proxy/global', cfg);
-    this.toast('全局代理已保存');
+    this.toast(I18n.t('toast.globalProxySaved'));
     this.loadProxy();
   },
 
   async clearGlobalProxy() {
     await this.api('DELETE', '/proxy/global');
     ['proxy-host','proxy-port','proxy-user','proxy-pass'].forEach(id => document.getElementById(id).value = '');
-    this.toast('全局代理已清除');
+    this.toast(I18n.t('toast.globalProxyCleared'));
     this.loadProxy();
   },
 
   async editAccountProxy(id, label) {
     const values = await this.prompt(
-      `配置账号代理`,
-      `为账号 ${label} 设置独立代理`,
+      I18n.t('modal.configureProxy.title'),
+      I18n.t('modal.configureProxy.desc', {label}),
       [
-        { name: 'type', label: '类型', type: 'select', value: 'http', options: [
+        { name: 'type', label: I18n.t('field.type.label'), type: 'select', value: 'http', options: [
           { value: 'http', label: 'HTTP' },
           { value: 'https', label: 'HTTPS' },
           { value: 'socks5', label: 'SOCKS5' },
         ]},
-        { name: 'host', label: '主机', placeholder: '例如 proxy.example.com' },
-        { name: 'port', label: '端口', type: 'number', placeholder: '8080' },
-        { name: 'username', label: '用户名', placeholder: '可选' },
-        { name: 'password', label: '密码', type: 'password', placeholder: '可选' },
+        { name: 'host', label: I18n.t('field.host.label'), placeholder: I18n.t('field.host.placeholder') },
+        { name: 'port', label: I18n.t('field.port.label'), type: 'number', placeholder: I18n.t('field.port.placeholder') },
+        { name: 'username', label: I18n.t('field.username.label'), placeholder: I18n.t('field.username.placeholder') },
+        { name: 'password', label: I18n.t('field.passwordProxy.label'), type: 'password', placeholder: I18n.t('field.passwordProxy.placeholder') },
       ]
     );
     if (!values || !values.host) return;
@@ -2956,13 +3022,13 @@ const App = {
       username: values.username || '',
       password: values.password || '',
     });
-    this.toast('账号代理已配置');
+    this.toast(I18n.t('toast.proxyConfigured'));
     this.loadProxy();
   },
 
   async clearAccountProxy(id) {
     await this.api('DELETE', `/proxy/accounts/${id}`);
-    this.toast('账号代理已清除');
+    this.toast(I18n.t('toast.proxyCleared'));
     this.loadProxy();
   },
 
@@ -3087,10 +3153,10 @@ const App = {
     const fmtUptime = s => s < 60 ? `${s}s` : s < 3600 ? `${Math.floor(s/60)}m` : s < 86400 ? `${(s/3600).toFixed(1)}h` : `${(s/86400).toFixed(1)}d`;
 
     document.getElementById('stats-cards').innerHTML = `
-      <div class="card info"><div class="card-header"><div class="card-title">总请求</div></div><div class="card-value">${totalReq}</div><div class="card-sub">运行 ${fmtUptime(uptimeSec)}</div></div>
-      <div class="card success"><div class="card-header"><div class="card-title">成功</div></div><div class="card-value">${d.successCount || 0}</div><div class="card-sub">成功率 ${successRate}%</div></div>
-      <div class="card error"><div class="card-header"><div class="card-title">错误</div></div><div class="card-value">${d.errorCount || 0}</div><div class="card-sub">失败率 ${totalReq > 0 ? (100-Number(successRate)).toFixed(1) : '0.0'}%</div></div>
-      <div class="card accent"><div class="card-header"><div class="card-title">平均 p95 延迟</div></div><div class="card-value">${avgP95}<span style="font-size:14px;font-weight:400;margin-left:4px">ms</span></div><div class="card-sub">${allP95.length} 个模型</div></div>
+      <div class="card info"><div class="card-header"><div class="card-title">${I18n.t('card.stats.title')}</div></div><div class="card-value">${totalReq}</div><div class="card-sub">${I18n.t('card.stats.subtitle', { time: fmtUptime(uptimeSec) })}</div></div>
+      <div class="card success"><div class="card-header"><div class="card-title">${I18n.t('card.success.title')}</div></div><div class="card-value">${d.successCount || 0}</div><div class="card-sub">${I18n.t('card.success.subtitle', { rate: successRate })}</div></div>
+      <div class="card error"><div class="card-header"><div class="card-title">${I18n.t('card.errors.title')}</div></div><div class="card-value">${d.errorCount || 0}</div><div class="card-sub">${I18n.t('card.errors.subtitle', { rate: totalReq > 0 ? (100-Number(successRate)).toFixed(1) : '0.0' })}</div></div>
+      <div class="card accent"><div class="card-header"><div class="card-title">${I18n.t('card.p95Latency.title')}</div></div><div class="card-value">${avgP95}<span style="font-size:14px;font-weight:400;margin-left:4px">ms</span></div><div class="card-sub">${I18n.t('card.p95Latency.subtitle', { count: allP95.length })}</div></div>
     `;
 
     const models = d.modelCounts || {};
@@ -3111,7 +3177,7 @@ const App = {
         <td class="text-sm">${s.p50Ms || 0} ms</td>
         <td class="text-sm">${s.p95Ms || 0} ms</td>
       </tr>`;
-    }).join('') || '<tr class="empty-row"><td colspan="8">暂无请求数据</td></tr>';
+    }).join('') || `<tr class="empty-row"><td colspan="8">${I18n.t('table.empty.noRequestData')}</td></tr>`;
 
     // Account breakdown
     const accounts = d.accountCounts || {};
@@ -3127,7 +3193,7 @@ const App = {
           <td style="color:${s.errors > 0 ? 'var(--error)' : 'inherit'}">${s.errors}</td>
           <td>${rate}%</td>
         </tr>`;
-      }).join('') || '<tr class="empty-row"><td colspan="5">暂无账号级请求数据</td></tr>';
+      }).join('') || `<tr class="empty-row"><td colspan="5">${I18n.t('table.empty.noAccountRequestData')}</td></tr>`;
     }
 
     // Time-range chart
@@ -3137,24 +3203,24 @@ const App = {
       const h = Math.max(2, (b.requests / maxReq) * 100);
       const errRate = b.requests > 0 ? ((b.errors / b.requests) * 100).toFixed(0) : '0';
       const hr = new Date(b.hour).getHours();
-      return `<div class="bar-wrap"><div class="bar-tooltip"><b>${hr}:00</b><br>${b.requests} 请求 · ${b.errors} 错误 (${errRate}%)</div><div class="bar ${b.errors > 0 ? 'has-errors' : ''}" style="height:${h}%"></div><div class="bar-label">${hr}时</div></div>`;
-    }).join('') || '<div class="text-sm text-dim" style="text-align:center;width:100%;padding:30px">暂无数据</div>';
+      return `<div class="bar-wrap"><div class="bar-tooltip"><b>${hr}:00</b><br>${b.requests} ${I18n.t('table.header.requests')} · ${b.errors} ${I18n.t('table.header.errors')} (${errRate}%)</div><div class="bar ${b.errors > 0 ? 'has-errors' : ''}" style="height:${h}%"></div><div class="bar-label">${hr}${I18n.t('time.hour')}</div></div>`;
+    }).join('') || `<div class="text-sm text-dim" style="text-align:center;width:100%;padding:30px">${I18n.t('table.empty.noData')}</div>`;
 
     this.poll('stats', () => this.loadStats(), 30000);
   },
 
   async resetStats() {
-    const ok = await this.confirm('重置统计', '所有请求统计数据将被清空，此操作不可恢复', { danger: true, okText: '重置' });
+    const ok = await this.confirm(I18n.t('modal.resetStats.title'), I18n.t('modal.resetStats.desc'), { danger: true, okText: I18n.t('action.reset') });
     if (!ok) return;
     await this.api('DELETE', '/stats');
-    this.toast('统计已重置');
+    this.toast(I18n.t('toast.statsReset'));
     this.loadStats();
   },
 
   // ─── Experimental features ───────────────────
   PROVIDER_LABELS: {
     anthropic: 'Anthropic · Claude',
-    openai: 'OpenAI · GPT / o 系列',
+    openai: 'OpenAI · GPT / o Series',
     google: 'Google · Gemini',
     deepseek: 'DeepSeek',
     xai: 'xAI · Grok',
@@ -3174,19 +3240,19 @@ const App = {
     const pool = d.conversationPool || {};
     document.getElementById('exp-pool-cards').innerHTML = `
       <div class="card info">
-        <div class="card-header"><div class="card-title">命中率</div></div>
+        <div class="card-header"><div class="card-title">${I18n.t('card.hitRate.title')}</div></div>
         <div class="card-value">${pool.hitRate || '0.0'}%</div>
-        <div class="card-sub">${pool.hits || 0} 命中 / ${pool.misses || 0} 未命中</div>
+        <div class="card-sub">${I18n.t('card.hitRate.subtitle', { hits: pool.hits || 0, misses: pool.misses || 0 })}</div>
       </div>
       <div class="card">
-        <div class="card-header"><div class="card-title">对话池</div></div>
+        <div class="card-header"><div class="card-title">${I18n.t('card.poolSize.title')}</div></div>
         <div class="card-value">${pool.size || 0}</div>
-        <div class="card-sub">上限 ${pool.maxSize || 0} · TTL ${Math.round((pool.ttlMs || 0) / 60000)} 分钟</div>
+        <div class="card-sub">${I18n.t('card.poolSize.subtitle', { max: pool.maxSize || 0, ttl: Math.round((pool.ttlMs || 0) / 60000) })}</div>
       </div>
       <div class="card">
-        <div class="card-header"><div class="card-title">存储次数</div></div>
+        <div class="card-header"><div class="card-title">${I18n.t('card.stores.title')}</div></div>
         <div class="card-value">${pool.stores || 0}</div>
-        <div class="card-sub">过期 ${pool.expired || 0} · 淘汰 ${pool.evictions || 0}</div>
+        <div class="card-sub">${I18n.t('card.stores.subtitle', { expired: pool.expired || 0, evicted: pool.evictions || 0 })}</div>
       </div>
     `;
 
@@ -3200,14 +3266,18 @@ const App = {
     const sp = await this.api('GET', '/system-prompts');
     const spHolder = document.getElementById('system-prompts-editor');
     if (spHolder) {
-      const labels = {toolReinforcement:'工具调用格式指引',communicationWithTools:'有工具时的通信指令',communicationNoTools:'无工具时的通信指令'};
+      const labels = {
+        toolReinforcement: I18n.t('experimental.toolReinforcement'),
+        communicationWithTools: I18n.t('experimental.communicationWithTools'),
+        communicationNoTools: I18n.t('experimental.communicationNoTools')
+      };
       spHolder.innerHTML = Object.entries(sp.prompts || {}).map(([key, text]) => `
         <div style="border:1px solid var(--border);border-radius:var(--radius);padding:12px;background:var(--surface)">
           <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:8px">
             <div><code style="color:var(--accent);font-weight:600">${key}</code> <span class="text-sm text-muted">${labels[key]||key}</span></div>
             <div class="btn-group">
-              <button class="btn btn-ghost btn-xs" onclick="App.resetSystemPrompt('${key}')">重置</button>
-              <button class="btn btn-primary btn-xs" onclick="App.saveSystemPrompt('${key}')">保存</button>
+              <button class="btn btn-ghost btn-xs" onclick="App.resetSystemPrompt('${key}')">${I18n.t('experimental.default')}</button>
+              <button class="btn btn-primary btn-xs" onclick="App.saveSystemPrompt('${key}')">${I18n.t('experimental.save')}</button>
             </div>
           </div>
           <textarea id="sp-${key}" class="input" rows="3" style="width:100%;font-family:var(--mono);font-size:12px;resize:vertical;line-height:1.5">${this.esc(text)}</textarea>
@@ -3230,17 +3300,17 @@ const App = {
             <div style="display:flex;align-items:center;gap:8px">
               <code style="color:var(--accent);font-weight:600">${provider}</code>
               <span class="text-sm text-muted">${label}</span>
-              ${isDefault ? '' : '<span class="text-xs" style="background:var(--accent);color:#fff;padding:2px 6px;border-radius:3px">已自定义</span>'}
+              ${isDefault ? '' : `<span class="text-xs" style="background:var(--accent);color:#fff;padding:2px 6px;border-radius:3px">${I18n.t('card.custom')}</span>`}
             </div>
             <div class="btn-group">
-              <button class="btn btn-ghost btn-xs" onclick="App.resetIdentityPrompt('${provider}')" ${isDefault ? 'disabled' : ''}>恢复默认</button>
-              <button class="btn btn-primary btn-xs" onclick="App.saveIdentityPrompt('${provider}')">保存</button>
+              <button class="btn btn-ghost btn-xs" onclick="App.resetIdentityPrompt('${provider}')" ${isDefault ? 'disabled' : ''}>${I18n.t('experimental.restoreDefault')}</button>
+              <button class="btn btn-primary btn-xs" onclick="App.saveIdentityPrompt('${provider}')">${I18n.t('experimental.save')}</button>
             </div>
           </div>
           <textarea id="id-prompt-${provider}" class="input" rows="3" style="width:100%;font-family:var(--mono);font-size:12px;resize:vertical;line-height:1.5">${this.esc(text)}</textarea>
         </div>
       `;
-    }).join('') || '<div class="text-muted text-sm">无匹配</div>';
+    }).join('') || `<div class="text-muted text-sm">${I18n.t('experimental.noMatch')}</div>`;
   },
 
   filterIdentityPrompts(v) { this.renderIdentityPrompts(v); },
@@ -3249,21 +3319,21 @@ const App = {
     const ta = document.getElementById(`id-prompt-${provider}`);
     if (!ta) return;
     const v = ta.value.trim();
-    if (!v) return this.toast('模板不能为空', 'error');
+    if (!v) return this.toast(I18n.t('experimental.promptEmpty'), 'error');
     if (!v.includes('{model}')) {
-      const ok = await this.confirm('缺少 {model} 占位符', '保存后该厂商的模型名将无法被替换进提示词。确定继续？', { okText: '仍然保存' });
+      const ok = await this.confirm(I18n.t('experimental.missingPlaceholder'), I18n.t('experimental.missingPlaceholderDesc') || 'Save anyway?', { okText: I18n.t('button.save') });
       if (!ok) return;
     }
     await this.api('PUT', '/identity-prompts', { [provider]: v });
-    this.toast(`${provider} 模板已保存`, 'success');
+    this.toast(`${provider} ${I18n.t('toast.saved')}`, 'success');
     this.loadExperimental();
   },
 
   async resetIdentityPrompt(provider) {
-    const ok = await this.confirm('恢复默认', `确定将 ${provider} 模板恢复到默认？`, { okText: '恢复' });
+    const ok = await this.confirm(I18n.t('experimental.restoreDefault'), `${provider} ${I18n.t('confirm.restoreDefaultDesc') || 'restore to default?'}`, { okText: I18n.t('experimental.restoreDefault') });
     if (!ok) return;
     await this.api('DELETE', `/identity-prompts/${provider}`);
-    this.toast(`${provider} 已恢复默认`, 'success');
+    this.toast(`${provider} ${I18n.t('experimental.restored') || 'restored'}`, 'success');
     this.loadExperimental();
   },
 
@@ -3271,36 +3341,36 @@ const App = {
     const ta = document.getElementById(`sp-${key}`);
     if (!ta) return;
     await this.api('PUT', '/system-prompts', { [key]: ta.value.trim() });
-    this.toast(`${key} 已保存`, 'success');
+    this.toast(`${key} ${I18n.t('toast.saved')}`, 'success');
   },
 
   async resetSystemPrompt(key) {
-    const ok = await this.confirm('重置', `确定将 ${key} 恢复为默认？`, { okText: '重置' });
+    const ok = await this.confirm(I18n.t('action.reset'), `${key} ${I18n.t('confirm.restoreDefaultDesc') || 'restore to default?'}`, { okText: I18n.t('action.reset') });
     if (!ok) return;
     await this.api('DELETE', `/system-prompts/${key}`);
-    this.toast(`${key} 已重置`, 'success');
+    this.toast(`${key} ${I18n.t('experimental.restored') || 'reset'}`, 'success');
     this.loadExperimental();
   },
 
   async testLoginProxy() {
     const host = document.getElementById('wl-proxy-host').value.trim();
     const port = parseInt(document.getElementById('wl-proxy-port').value) || 0;
-    if (!host || !port) return this.toast('请先填主机和端口', 'error');
+    if (!host || !port) return this.toast(I18n.t('toast.enterHostPort'), 'error');
     const type = document.getElementById('wl-proxy-type').value;
     const username = document.getElementById('wl-proxy-user').value.trim();
     const password = document.getElementById('wl-proxy-pass').value;
     const btn = document.getElementById('wl-proxy-test-btn');
     const out = document.getElementById('wl-proxy-test-result');
     btn.disabled = true;
-    out.textContent = '测试中...';
+    out.textContent = I18n.t('status.testing');
     out.style.color = 'var(--text-muted)';
     try {
       const r = await this.api('POST', '/test-proxy', { host, port, username, password, type });
       if (r.ok) {
-        out.textContent = `✓ 连通成功 出口 IP ${r.egressIp} · 耗时 ${r.latencyMs}ms`;
+        out.textContent = I18n.t('status.proxySuccess', { ip: r.egressIp, latency: r.latencyMs });
         out.style.color = 'var(--success)';
       } else {
-        out.textContent = `✗ 失败: ${r.error} · ${r.latencyMs}ms`;
+        out.textContent = I18n.t('status.proxyFailed', { error: r.error, latency: r.latencyMs });
         out.style.color = 'var(--error)';
       }
     } catch (e) {
@@ -3314,19 +3384,19 @@ const App = {
   async toggleExperimental(key, enabled) {
     try {
       await this.api('PUT', '/experimental', { [key]: enabled });
-      this.toast(`${enabled ? '已启用' : '已关闭'}实验性功能`, 'success');
+      this.toast(enabled ? I18n.t('toast.experimentalEnabled') : I18n.t('toast.experimentalDisabled'), 'success');
       this.loadExperimental();
     } catch (e) {
-      this.toast('切换失败：' + e.message, 'error');
+      this.toast(I18n.t('toast.toggleFailed', { error: e.message }), 'error');
       this.loadExperimental();
     }
   },
 
   async clearConversationPool() {
-    const ok = await this.confirm('清空对话池', '当前所有进行中的 Cascade 会话都将放弃复用，确定继续吗？', { okText: '清空' });
+    const ok = await this.confirm(I18n.t('action.clearPool'), I18n.t('confirm.clearPoolDesc') || 'All active Cascade sessions will be cleared. Continue?', { okText: I18n.t('action.clearPool') });
     if (!ok) return;
     const r = await this.api('DELETE', '/experimental/conversation-pool');
-    this.toast(`已清空 ${r.cleared || 0} 条会话`, 'success');
+    this.toast(`${I18n.t('toast.cleared')} ${r.cleared || 0}`, 'success');
     this.loadExperimental();
   },
 
@@ -3337,19 +3407,19 @@ const App = {
     const errored = accounts.filter(a => a.status === 'error' || a.errorCount > 0);
     document.getElementById('ban-cards').innerHTML = `
       <div class="card ${errored.length > 0 ? 'error' : 'success'}">
-        <div class="card-header"><div class="card-title">异常账号</div></div>
+        <div class="card-header"><div class="card-title">${I18n.t('card.abnormalAccounts.title')}</div></div>
         <div class="card-value">${errored.length}</div>
-        <div class="card-sub">共 ${accounts.length} 个账号</div>
+        <div class="card-sub">${I18n.t('card.abnormalAccounts.subtitle', { count: accounts.length })}</div>
       </div>
       <div class="card warn">
-        <div class="card-header"><div class="card-title">已停用</div></div>
+        <div class="card-header"><div class="card-title">${I18n.t('card.disabled.title')}</div></div>
         <div class="card-value">${accounts.filter(a => a.status === 'error').length}</div>
-        <div class="card-sub">自动错误停用</div>
+        <div class="card-sub">${I18n.t('card.disabled.subtitle')}</div>
       </div>
       <div class="card info">
-        <div class="card-header"><div class="card-title">限流中</div></div>
+        <div class="card-header"><div class="card-title">${I18n.t('card.rateLimit.title')}</div></div>
         <div class="card-value">${accounts.filter(a => a.rateLimited).length}</div>
-        <div class="card-sub">暂时不参与调度</div>
+        <div class="card-sub">${I18n.t('card.rateLimit.subtitle')}</div>
       </div>
     `;
     const tbody = document.querySelector('#ban-table tbody');
@@ -3362,12 +3432,12 @@ const App = {
         <td class="text-sm">${a.lastUsed ? new Date(a.lastUsed).toLocaleString() : '-'}</td>
         <td class="nowrap">
           <div class="btn-group">
-            ${a.status === 'error' ? `<button class="btn btn-success btn-xs" onclick="App.toggleAccount('${this.escJsAttr(a.id)}','active');setTimeout(()=>App.loadBans(),500)">重新启用</button>` : ''}
-            ${a.errorCount > 0 ? `<button class="btn btn-outline btn-xs" onclick="App.resetErrors('${this.escJsAttr(a.id)}');setTimeout(()=>App.loadBans(),500)">重置错误</button>` : ''}
+            ${a.status === 'error' ? `<button class="btn btn-success btn-xs" onclick="App.toggleAccount('${this.escJsAttr(a.id)}','active');setTimeout(()=>App.loadBans(),500)">${I18n.t('action.enable')}</button>` : ''}
+            ${a.errorCount > 0 ? `<button class="btn btn-outline btn-xs" onclick="App.resetErrors('${this.escJsAttr(a.id)}');setTimeout(()=>App.loadBans(),500)">${I18n.t('action.reset')}</button>` : ''}
           </div>
         </td>
       </tr>`;
-    }).join('') || '<tr class="empty-row"><td colspan="5">暂无账号</td></tr>';
+    }).join('') || `<tr class="empty-row"><td colspan="5">${I18n.t('table.empty.banList')}</td></tr>`;
 
     this.poll('bans', () => this.loadBans(), 30000);
   },
@@ -3375,9 +3445,10 @@ const App = {
   // ─── Helpers ─────────────────────────────────
   fmtDuration(secs) {
     const d = Math.floor(secs / 86400), h = Math.floor((secs % 86400) / 3600), m = Math.floor((secs % 3600) / 60);
-    if (d > 0) return `${d}天 ${h}时 ${m}分`;
-    if (h > 0) return `${h}时 ${m}分`;
-    return `${m}分 ${Math.floor(secs % 60)}秒`;
+    const s = Math.floor(secs % 60);
+    if (d > 0) return `${d}${I18n.t('time.day')} ${h}${I18n.t('time.hour')} ${m}${I18n.t('time.minute')}`;
+    if (h > 0) return `${h}${I18n.t('time.hour')} ${m}${I18n.t('time.minute')}`;
+    return `${m}${I18n.t('time.minute')} ${s}${I18n.t('time.second')}`;
   },
   copyKey(key) {
     const fallback = () => {
@@ -3391,13 +3462,13 @@ const App = {
         ta.select();
         const ok = document.execCommand('copy');
         ta.remove();
-        this.toast(ok ? 'API Key 已复制' : '复制失败，请手动选择', ok ? 'success' : 'error');
+        this.toast(ok ? I18n.t('toast.apiKeyCopied') : I18n.t('toast.copyFailed'), ok ? 'success' : 'error');
       } catch (e) {
-        this.toast('复制失败: ' + e.message, 'error');
+        this.toast(I18n.t('toast.copyFailedError', {error: e.message}), 'error');
       }
     };
     if (navigator.clipboard && window.isSecureContext) {
-      navigator.clipboard.writeText(key).then(() => this.toast('API Key 已复制')).catch(fallback);
+      navigator.clipboard.writeText(key).then(() => this.toast(I18n.t('toast.apiKeyCopied'))).catch(fallback);
     } else {
       fallback();
     }

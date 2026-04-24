@@ -1,0 +1,841 @@
+{
+  "_meta": {
+    "name": "English",
+    "code": "en"
+  },
+
+  "brand": {
+    "sub": "Control Panel"
+  },
+
+  "nav": {
+    "group": {
+      "overview": "Overview",
+      "account": "Accounts",
+      "system": "System",
+      "about": "About"
+    },
+    "overview": "Dashboard",
+    "stats": "Statistics",
+    "windsurf-login": "Account Login",
+    "accounts": "Account Pool",
+    "bans": "Health Check",
+    "models": "Model Control",
+    "proxy": "Proxy",
+    "logs": "Logs",
+    "experimental": "Experimental",
+    "credits": "Credits"
+  },
+
+  "page": {
+    "overview": "Dashboard",
+    "stats": "Statistics",
+    "windsurf-login": "Account Login",
+    "accounts": "Account Pool",
+    "bans": "Health Check",
+    "models": "Model Control",
+    "proxy": "Proxy Config",
+    "logs": "Runtime Logs",
+    "experimental": "Experimental Features",
+    "credits": "Credits"
+  },
+
+  "pageTitle": {
+    "main": "WindsurfAPI bydwgx1337 Control Panel"
+  },
+
+  "pageSubtitle": {
+    "overview": "System status and key metrics overview",
+    "windsurf-login": "Login to Windsurf via Google / GitHub / Email to get API Key",
+    "accounts": "Manage account pool, probe subscription tiers and available models",
+    "models": "Configure model access policies, limit available model scope",
+    "proxy": "Configure global or per-account exit proxies; each dedicated proxy spawns an independent Language Server instance",
+    "logs": "Receive server logs in real-time via SSE streaming",
+    "stats": "Request volume, success rate, latency percentiles and account/model dimension stats",
+    "bans": "Track error accounts and abnormal status",
+    "experimental": "Unstable optimizations; disable anytime if issues occur",
+    "credits": "Thanks to contributors who submitted PRs / audited code / reported issues"
+  },
+
+  "button": {
+    "cancel": "Cancel",
+    "confirm": "Confirm",
+    "forceOverride": "Force Overwrite & Update",
+    "save": "Save",
+    "restart": "Restart",
+    "updateAndRestart": "Update and Restart"
+  },
+
+  "action": {
+    "checkUpdate": "Check Update",
+    "applyUpdate": "Update & Restart",
+    "restart": "Restart",
+    "reset": "Reset",
+    "save": "Save",
+    "clearPool": "Clear Pool",
+    "login": "Login",
+    "clear": "Clear",
+    "cancel": "Cancel",
+    "confirm": "Confirm",
+    "delete": "Delete",
+    "refresh": "Refresh",
+    "probe": "Probe",
+    "probeTitle": "Probe capabilities",
+    "enable": "Enable",
+    "disable": "Disable",
+    "copy": "Copy",
+    "copyTitle": "Click to copy",
+    "configure": "Configure",
+    "test": "Test",
+    "readClipboard": "Read Clipboard",
+    "batchImport": "Batch Import & Login",
+    "paste": "Paste",
+    "add": "Add",
+    "close": "Close",
+    "edit": "Edit",
+    "selectAll": "Select All",
+    "selectNone": "Select None",
+    "invert": "Invert",
+    "showPassword": "Show/Hide Password"
+  },
+
+  "status": {
+    "active": "Active",
+    "disabled": "Disabled",
+    "error": "Error",
+    "running": "Running",
+    "stopped": "Stopped",
+    "success": "Success",
+    "failed": "Failed",
+    "pending": "Pending",
+    "unknown": "Unknown",
+    "rateLimited": "Rate Limited",
+    "loading": "Loading...",
+    "saving": "Saving...",
+    "testing": "Testing...",
+    "updateAndRestartHint": "Update and restart the service",
+    "proxySuccess": "✓ Connected. Egress IP {{ip}} · {{latency}}ms",
+    "proxyFailed": "✗ Failed: {{error}} · {{latency}}ms",
+    "checkingUpdate": "Checking for updates...",
+    "updateAvailable": "Update available",
+    "currentVersion": "Current:",
+    "remoteVersion": "Remote:",
+    "upToDate": "✓ Up to date ({{commit}}) · {{message}}",
+    "pullingRestarting": "Pulling + restarting...",
+    "cancelled": "Cancelled",
+    "noUpdateNeeded": "Already up to date, no update needed",
+    "updateComplete": "Update complete {{before}} → {{after}}",
+    "restarting": "Service restarting in background, page will auto-refresh in ~8 seconds...",
+    "notGitRepo": "Not a git repository",
+    "notGitRepoHint": "Ensure .git directory is present for one-click updates",
+    "workingDirDirty": "Working directory has local changes",
+    "workingDirDirtyHint": "The following files have local changes:<br>{{files}}<br>Continue will overwrite with remote version.",
+    "notFetched": "Not fetched",
+    "fetchFailed": "Fetch failed",
+    "clickToEditTier": "Click to manually edit tier (use when probe fails)"
+  },
+
+  "tier": {
+    "pro": "PRO",
+    "free": "FREE",
+    "expired": "Expired",
+    "unknown": "Unknown",
+    "expiredLabel": "Expired"
+  },
+
+  "creditsBar": {
+    "daily": "D",
+    "weekly": "W",
+    "monthly": "M"
+  },
+
+  "section": {
+    "banStatus": {
+      "title": "Health Status"
+    },
+    "lsStatus": {
+      "title": "Language Server",
+      "desc": "Language Server instance status"
+    },
+    "oauthLogin": {
+      "title": "Quick Login (Recommended)",
+      "desc": "Login to Windsurf directly with your Google or GitHub account — no password needed"
+    },
+    "emailLogin": {
+      "title": "Email & Password Login",
+      "desc": "For accounts registered with email+password only. Third-party login please use buttons above. Supports single login or batch import in \"[proxy] email password\" format."
+    },
+    "loginProxy": {
+      "title": "Login Proxy (Optional)",
+      "desc": "Specify a proxy for this login session; leave empty to use global proxy. When proxy takes effect, subsequent chat requests will also egress through this proxy."
+    },
+    "loginHistory": {
+      "title": "Login History",
+      "desc": "Local record of last 50 login operations"
+    },
+    "addAccount": {
+      "title": "Add Account",
+      "desc": "Supports both API Key and Auth Token methods",
+      "hint": "Recommended: Use Token method. Visit {{link}} after logging in, copy the Token and paste below. Works with all login methods (Email/Google/GitHub)."
+    },
+    "accountList": {
+      "title": "Account List",
+      "desc": "Click probe button to update capability info for a specific account"
+    },
+    "modelPolicy": {
+      "title": "Access Policy",
+      "desc": "Choose \"Allow All\" for no restrictions; \"Allowlist\" only permits listed models; \"Blocklist\" blocks listed models"
+    },
+    "modelList": {
+      "title": "Model List",
+      "titleAllow": "Allowed Models",
+      "titleBlock": "Blocked Models",
+      "descAllow": "Only selected models are allowed; unselected models return 403 error",
+      "descBlock": "Selected models will be blocked; unselected models work normally",
+      "search": "Search models...",
+      "provider": "Provider"
+    },
+    "globalProxy": {
+      "title": "Global Proxy",
+      "desc": "Accounts without dedicated proxy will use this configuration"
+    },
+    "accountProxy": {
+      "title": "Per-Account Proxy",
+      "desc": "Set dedicated proxy for specific accounts; each dedicated proxy spawns an independent LS instance"
+    },
+    "identityInjection": {
+      "title": "Model Identity Injection",
+      "desc": "When enabled, injects a system prompt at the start of each request, overriding Cascade's built-in Windsurf identity; each provider's template below can be customized and takes effect immediately after saving."
+    },
+    "cascadeReuse": {
+      "title": "Cascade Conversation Reuse",
+      "desc": "Reuse the same cascade_id across multi-turn conversations, only sending the latest user message to Windsurf. Let the server maintain context cache. Significantly reduces TTFB and upload volume on cache hits; automatically falls back to new session on cache miss or account/LS change. Requires client to retain full history and append in order (e.g., new-api, OpenWebUI).",
+      "enable": "Enable Cascade Conversation Reuse",
+      "hint": "Disabled by default. When enabled, takes effect immediately on current conversation pool."
+    },
+    "identityPrompt": {
+      "title": "Model Identity Prompt",
+      "desc": "Inject model identity system prompt at the start of each request.",
+      "enable": "Enable Model Identity Injection",
+      "hint": "Enabled by default; templates below won't work when disabled.",
+      "templateHint": "Each provider's template is editable. {{model}} placeholder will be replaced with the requested model name."
+    },
+    "systemPrompts": {
+      "title": "System Prompts",
+      "desc": "Tool injection, conversation mode and other built-in prompt templates. Changes take effect immediately; click \"Reset\" to restore defaults."
+    },
+    "lsPool": {
+      "title": "Language Server Pool",
+      "desc": "{{count}} LS instances · one process per dedicated proxy",
+      "sectionTitle": "Language Server Pool",
+      "sectionDesc": "Dedicated Language Server instances per proxy",
+      "port": "Port",
+      "defaultInstance": "Default Instance",
+      "noProxy": "No proxy"
+    },
+    "modelStats": {
+      "title": "Model Usage Statistics",
+      "desc": "Aggregated by model: requests, success count, error count, success rate, avg duration and p50/p95 latency percentiles"
+    },
+    "accountStats": {
+      "title": "Account Dimension Statistics",
+      "desc": "Request volume and success rate per account ID (first 8 chars)"
+    },
+    "accountHealth": {
+      "title": "Account Health Status"
+    },
+    "requestChart": {
+      "title": "Request Volume Time Series"
+    }
+  },
+
+  "help": {
+    "token": "Recommended: Use Token method. Visit {{link}} after logging in, copy the Token and paste below. Works with all login methods (Email/Google/GitHub).",
+    "tokenGuide": "Recommended: Use Token method. Visit ",
+    "tokenGuideEnd": " after logging in, copy the Token and paste below. Works with all login methods (Email/Google/GitHub)."
+  },
+
+  "field": {
+    "email": {
+      "label": "Email",
+      "placeholder": "your-email@example.com"
+    },
+    "password": {
+      "label": "Password",
+      "placeholder": "••••••••"
+    },
+    "type": {
+      "label": "Type"
+    },
+    "tier": {
+      "label": "Tier"
+    },
+    "provider": {
+      "label": "Provider",
+      "all": "All Providers"
+    },
+    "searchModel": {
+      "label": "Search Model",
+      "placeholder": "Enter model name to filter..."
+    },
+    "proxyUser": {
+      "placeholder": "Proxy auth username"
+    },
+    "proxyPass": {
+      "placeholder": "Proxy auth password"
+    },
+    "searchProvider": {
+      "placeholder": "Search providers..."
+    },
+    "host": {
+      "label": "Host",
+      "placeholder": "proxy.example.com"
+    },
+    "port": {
+      "label": "Port",
+      "placeholder": "8080"
+    },
+    "username": {
+      "label": "Username",
+      "placeholder": "Optional"
+    },
+    "passwordProxy": {
+      "label": "Password",
+      "placeholder": "Optional"
+    },
+    "key": {
+      "label": "Key / Token",
+      "placeholder": "Paste Auth Token (from windsurf.com/show-auth-token)"
+    },
+    "label": {
+      "label": "Label",
+      "placeholder": "Optional"
+    },
+    "batchInput": {
+      "label": "Batch Import",
+      "hint": "One account per line. Format: [proxy] email password. Proxy is optional, supports http/socks5. Proxy will be automatically bound to corresponding account."
+    },
+    "proxyType": {
+      "label": "Type"
+    },
+    "proxyHost": {
+      "label": "Host",
+      "placeholder": "Leave empty = use global"
+    },
+    "providerFilter": {
+      "label": "Provider"
+    },
+    "logLevel": {
+      "label": "Log Level"
+    },
+    "identitySearch": {
+      "placeholder": "Search providers..."
+    },
+    "search": {
+      "label": "Search",
+      "placeholder": "Search..."
+    },
+    "autoScroll": "Auto-scroll",
+    "autoAdd": "Auto-add to pool after login"
+  },
+
+  "table": {
+    "header": {
+      "time": "Time",
+      "email": "Email",
+      "status": "Status",
+      "proxy": "Proxy",
+      "action": "Action",
+      "id": "ID",
+      "label": "Label",
+      "tier": "Tier",
+      "rpm": "RPM",
+      "credits": "Credits",
+      "models": "Available Models",
+      "error": "Error",
+      "lastUsed": "Last Used",
+      "key": "Key",
+      "accountId": "Account ID",
+      "account": "Account",
+      "requests": "Requests",
+      "success": "Success",
+      "errors": "Errors",
+      "successRate": "Success Rate",
+      "avg": "Avg",
+      "p50": "p50",
+      "p95": "p95",
+      "errorCount": "Error Count",
+      "model": "Model",
+      "note": "Note"
+    },
+    "empty": {
+      "loginHistory": "No login records",
+      "accounts": "No accounts yet, please add one first",
+      "accountsProxy": "No accounts",
+      "modelStats": "No model statistics available",
+      "accountStats": "No account statistics available",
+      "banList": "No abnormal accounts",
+      "models": "No matching models",
+      "credits": "Loading...",
+      "accountNotFound": "Account not found",
+      "noValidAccounts": "No valid accounts available for routing",
+      "probeFailed": "Probe failed",
+      "noRequestData": "No request data",
+      "noAccountRequestData": "No account-level request data",
+      "noData": "No data"
+    }
+  },
+
+  "card": {
+    "activeAccounts": {
+      "title": "Active Accounts",
+      "subtitle": "{{total}} total · {{error}} abnormal"
+    },
+    "totalRequests": {
+      "title": "Total Requests",
+      "subtitle": "{{rate}}% success rate"
+    },
+    "uptime": {
+      "title": "Uptime",
+      "subtitle": "Started at {{time}}"
+    },
+    "languageServer": {
+      "title": "Language Server",
+      "running": "Running",
+      "stopped": "Stopped",
+      "subtitle": "{{count}} instances · Port {{port}}"
+    },
+    "responseCache": {
+      "title": "Response Cache",
+      "subtitle": "{{hits}} hit / {{misses}} miss · {{size}}/{{max}} entries"
+    },
+    "banStats": {
+      "title": "Health Overview"
+    },
+    "abnormalAccounts": {
+      "title": "Abnormal Accounts",
+      "subtitle": "Total {{count}} accounts"
+    },
+    "disabled": {
+      "title": "Disabled",
+      "subtitle": "Auto-disabled due to errors"
+    },
+    "rateLimit": {
+      "title": "Rate Limited",
+      "badge": "Rate Limited",
+      "subtitle": "Temporarily excluded from scheduling"
+    },
+    "stats": {
+      "title": "Total Requests",
+      "subtitle": "Running {{time}}"
+    },
+    "success": {
+      "title": "Success",
+      "subtitle": "{{rate}}% success rate"
+    },
+    "errors": {
+      "title": "Errors",
+      "subtitle": "{{rate}}% failure rate"
+    },
+    "p95Latency": {
+      "title": "Avg p95 Latency",
+      "subtitle": "{{count}} models"
+    },
+    "hitRate": {
+      "title": "Hit Rate",
+      "subtitle": "{{hits}} hit / {{misses}} miss"
+    },
+    "poolSize": {
+      "title": "Pool Size",
+      "subtitle": "Max {{max}} · TTL {{ttl}} min"
+    },
+    "stores": {
+      "title": "Stores",
+      "subtitle": "Expired {{expired}} · Evicted {{evicted}}"
+    },
+    "defaultInstance": "Default Instance",
+    "noProxy": "No proxy",
+    "restarts": "restarts",
+    "custom": "Customized"
+  },
+
+  "login": {
+    "title": "Control Panel Login",
+    "subtitle": "Please enter the admin password to continue",
+    "passwordPlaceholder": "Dashboard Password",
+    "button": "Login"
+  },
+
+  "range": {
+    "6h": "Last 6h",
+    "24h": "Last 24h",
+    "72h": "Last 72h"
+  },
+
+  "credits": {
+    "contributors": "Core Contributors",
+    "cta": {
+      "title": "Want to join this list?",
+      "desc": "Open an issue or pull request on GitHub — bug fixes, new models, UI improvements, or security findings all get recognised here.",
+      "issue": "Open Issue",
+      "pr": "Open PR"
+    }
+  },
+
+  "experimental": {
+    "enable": "Enable",
+    "disable": "Disable",
+    "cascadeReuse": {
+      "title": "Enable Cascade Conversation Reuse",
+      "desc": "Disabled by default. When enabled, takes effect immediately on current conversation pool.",
+      "enable": "Enable Cascade Conversation Reuse",
+      "hint": "Disabled by default. When enabled, takes effect immediately on current conversation pool."
+    },
+    "identityPrompt": {
+      "title": "Enable Model Identity Injection",
+      "desc": "Enabled by default; templates below won't work when disabled."
+    },
+    "templateHint": "Each provider's template is editable. {{model}} placeholder will be replaced with the requested model name (e.g., claude-opus-4.6).",
+    "clearPool": "Clear Conversation Pool",
+    "refresh": "Refresh",
+    "noMatch": "No matches",
+    "restoreDefault": "Restore Default",
+    "save": "Save",
+    "default": "Default",
+    "toolReinforcement": "Tool Call Format Guide",
+    "communicationWithTools": "Communication with Tools",
+    "communicationNoTools": "Communication without Tools",
+    "promptEmpty": "Template cannot be empty",
+    "missingPlaceholder": "Missing {model} placeholder",
+    "missingPlaceholderDesc": "After saving, the provider's model name won't be replaced in the prompt. Continue?",
+    "restored": "restored"
+  },
+
+  "confirm": {
+    "restartTitle": "Restart Language Server",
+    "restartDesc": "In-progress requests will fail. Continue?",
+    "restoreDefaultDesc": "restore to default?",
+    "clearPoolDesc": "All active Cascade sessions will be cleared. Continue?"
+  },
+
+  "modal": {
+    "blockedModels": {
+      "title": "Edit Available Models — {{email}}",
+      "hint": "Checked = available; Uncheck = disabled for this account",
+      "enabled": "Enabled",
+      "saved": "Saved: enabled {{enabled}} / disabled {{disabled}}",
+      "saving": "Saving...",
+      "total": "Total"
+    },
+    "restartLS": {
+      "title": "Restart Language Server",
+      "desc": "In-progress requests will fail. Continue?"
+    },
+    "deleteAccount": {
+      "title": "Delete Account",
+      "desc": "This action cannot be undone. Delete this account?"
+    },
+    "resetStats": {
+      "title": "Reset Statistics",
+      "desc": "Clear all statistics data?"
+    },
+    "overrideTier": {
+      "title": "Manually Set Account Tier",
+      "desc": "Current: {{current}}. Windsurf Pro trial sometimes fails auto-detection (issue #8 side effect), manually change to pro to unlock all Pro models.",
+      "options": {
+        "pro": "Pro (unlock all models)",
+        "free": "Free (gpt-4o-mini and gemini-2.5-flash only)",
+        "unknown": "Unknown (let system re-evaluate)"
+      }
+    },
+    "applyUpdate": {
+      "title": "Update & Restart",
+      "desc": "Will execute git pull and restart PM2. Dashboard will be briefly unavailable during restart (about 5-10 seconds). Continue?"
+    },
+    "dirtyWorktree": {
+      "title": "Local Changes in Working Directory",
+      "desc": "The following files have been modified but not committed:<br><br><code>{{files}}</code><br>Continuing will overwrite local changes with remote version. For non-git deployments (SFTP / zip), click force overwrite.",
+      "forceUpdate": "Force Overwrite & Update"
+    },
+    "configureProxy": {
+      "title": "Configure Account Proxy",
+      "desc": "Set dedicated proxy for account {{label}}"
+    }
+  },
+
+  "oauth": {
+    "tryAnotherWay": "Try Another Way",
+    "google": "Google Login",
+    "github": "GitHub Login",
+    "copyAuthToken": "Copy Auth Token",
+    "pasteToken": "Paste Token in Account Management",
+    "status": {
+      "loading": "Logging in via {{provider}}...",
+      "success": "Login successful! {{email}} added to pool",
+      "codeium": "{{provider}} auth successful, registering with Codeium...",
+      "firebaseError": "Firebase SDK failed to load, please refresh and retry",
+      "loggingIn": "Logging in via {{label}}...",
+      "codeiumRegistering": "{{label}} auth success, registering Codeium...",
+      "loginSuccess": "Login successful {{email}} added to pool",
+      "loginFailed": "{{label}} login failed: {{error}}"
+    }
+  },
+
+  "update": {
+    "checking": "Checking for updates...",
+    "newVersion": "New version found",
+    "current": "Current",
+    "remote": "Remote",
+    "latest": "Already up to date",
+    "applying": "Pulling + restarting...",
+    "complete": "Update complete",
+    "restarting": "Service restarting in background, page will auto-refresh in ~8 seconds...",
+    "cancelled": "Cancelled",
+    "notGit": "Not a git deployment — one-click update unavailable",
+    "notGitDesc": "If you deployed via git clone, ensure .git directory is with WindsurfAPI source. For SFTP / zip uploads, manually replace files and pm2 restart.",
+    "upToDate": "Already up to date, no update needed"
+  },
+
+  "proxy": {
+    "test": {
+      "button": "Test Proxy",
+      "result": "Result"
+    },
+    "none": "None (use global)",
+    "direct": "Direct",
+    "global": "Global",
+    "current": "Current",
+    "notConfigured": "No global proxy configured",
+    "placeholderSaved": "Saved (leave empty to keep)",
+    "placeholderPassword": "Proxy auth password",
+    "auth": "Auth"
+  },
+
+  "account": {
+    "addSuccess": "Account added",
+    "deleteSuccess": "Account deleted",
+    "enableSuccess": "Account enabled",
+    "disableSuccess": "Account disabled",
+    "resetErrors": "Errors reset",
+    "tierSet": "Tier set to {{tier}}",
+    "editModels": "Edit available models",
+    "probe": {
+      "doing": "Probing, takes about 10-30 seconds...",
+      "complete": "Probe complete: {{result}}",
+      "allDoing": "Probing all accounts, takes 1-3 minutes depending on count...",
+      "allComplete": "Probe complete: {{summary}}",
+      "probeAllComplete": "Probe complete: {{summary}}",
+      "probeComplete": "Probe complete: {{tier}}"
+    },
+    "credits": {
+      "refreshTitle": "Refresh credits",
+      "refreshed": "Credits refreshed",
+      "refreshFailed": "Refresh failed",
+      "allRefreshed": "All account credits refreshed: {{ok}} success / {{fail}} failed",
+      "refreshing": "Refreshing all account credits...",
+      "refreshingAll": "Refreshing all account credits..."
+    },
+    "ls": {
+      "restarting": "Language Server restarting..."
+    }
+  },
+
+  "batch": {
+    "pasteFirst": "Please paste batch accounts first",
+    "importing": "Importing...",
+    "importingDesc": "{{count}} lines, please wait",
+    "complete": "Batch import complete",
+    "importFailed": "Batch import failed",
+    "importComplete": "Batch import complete: success {{success}} / failed {{fail}}",
+    "success": "Success",
+    "fail": "Fail",
+    "formatError": "Line {{line}} format error"
+  },
+
+  "toast": {
+    "copied": "Copied",
+    "saved": "Saved",
+    "cleared": "Cleared",
+    "refresh": "Refresh",
+    "error": "Error",
+    "loading": "Loading...",
+    "enterHostPort": "Please enter host and port first",
+    "experimentalEnabled": "Experimental feature enabled",
+    "experimentalDisabled": "Experimental feature disabled",
+    "toggleFailed": "Toggle failed: {{error}}",
+    "modeUpdated": "Mode updated",
+    "noTierModels": "No models available for this account tier",
+    "loginSuccess": "{{label}} login successful",
+    "loginFailed": "{{label}} login failed: {{error}}",
+    "loginSuccessAdded": "Login successful, account added to pool",
+    "clipboardRead": "Clipboard read",
+    "clipboardEmpty": "Clipboard is empty",
+    "clipboardUnsupported": "Current environment doesn't support auto clipboard read, please paste manually",
+    "clipboardError": "Failed to read clipboard: {{error}}",
+    "apiKeyCopied": "API Key copied",
+    "copyFailed": "Copy failed, please select manually",
+    "copyFailedError": "Copy failed: {{error}}",
+    "enterEmailPassword": "Please enter email and password",
+    "restarting": "Language Server restarting...",
+    "proxyConfigured": "Account proxy configured",
+    "proxyCleared": "Account proxy cleared",
+    "globalProxySaved": "Global proxy saved",
+    "globalProxyCleared": "Global proxy cleared",
+    "enterProxyHost": "Please enter proxy host",
+    "statsReset": "Statistics reset",
+    "enterKeyOrToken": "Please enter Key or Token",
+    "addFailed": "Add failed",
+    "probe": {
+      "doing": "Probing, takes about 10-30 seconds...",
+      "probeComplete": "Probe complete: {{tier}}",
+      "allDoing": "Probing all accounts, takes 1-3 minutes depending on count...",
+      "probeAllComplete": "Probe complete: {{summary}}"
+    },
+    "probeComplete": "Probe complete: {{tier}}",
+    "probeAllComplete": "Probe complete: {{summary}}",
+    "credits": {
+      "refreshed": "Credits refreshed",
+      "refreshFailed": "Failed to refresh credits",
+      "refreshing": "Refreshing credits...",
+      "allRefreshed": "All account credits refreshed: {{ok}} success / {{fail}} failed"
+    }
+  },
+
+  "log": {
+    "level": {
+      "all": "All Levels",
+      "debug": "Debug",
+      "info": "Info",
+      "warn": "Warn",
+      "error": "Error"
+    },
+    "searchPlaceholder": "Search log content...",
+    "clearView": "Clear View",
+    "viaSSE": "via SSE real-time streaming"
+  },
+
+  "model": {
+    "mode": {
+      "all": "Allow All",
+      "allowlist": "Allowlist",
+      "blocklist": "Blocklist"
+    },
+    "provider": {
+      "all": "All Providers",
+      "anthropic": "Anthropic",
+      "openai": "OpenAI",
+      "google": "Google",
+      "deepseek": "DeepSeek",
+      "xai": "xAI",
+      "alibaba": "Alibaba",
+      "moonshot": "Moonshot",
+      "windsurf": "Windsurf"
+    },
+    "list": {
+      "current": "Current List ({{count}})",
+      "empty": "List is empty"
+    }
+  },
+
+  "error": {
+    "generic": "An error occurred",
+    "unknown": "Unknown error",
+    "updateFailed": "Update failed",
+    "apiError": "API error",
+    "loadFailed": "Failed to load",
+    "probeFailed": "Probe failed",
+    "accountNotFound": "Account not found",
+    "openFailed": "Failed to open",
+    "saveFailed": "Save failed",
+    "deleteFailed": "Delete failed",
+    "networkError": "Network error",
+    "authRequired": "Please login first",
+    "clipboardNotSupported": "Current environment doesn't support clipboard auto-read, please paste manually",
+    "clipboardEmpty": "Clipboard is empty",
+    "clipboardReadFailed": "Failed to read clipboard",
+    "firebaseLoadFailed": "Firebase SDK failed to load, please refresh and retry",
+    "ERR_EMAIL_PASSWORD_REQUIRED": "Email and password are required",
+    "ERR_HOST_PORT_REQUIRED": "Host and port are required",
+    "ERR_UNCOMMITTED_CHANGES": "Working directory has uncommitted changes. Force overwrite?",
+    "ERR_ACCOUNTS_REQUIRED": "Accounts array is required",
+    "ERR_TEXT_REQUIRED": "Text field is required",
+    "ERR_NO_VALID_LINES": "No valid lines found",
+    "ERR_FORMAT_INVALID": "Invalid format. Expected: [proxy] email password",
+    "ERR_IDTOKEN_REQUIRED": "ID token is required",
+    "ERR_PROXY_PRIVATE_IP": "Proxy cannot point to private/local address",
+    "ERR_PROXY_HTTP_ERROR": "Proxy returned HTTP error",
+    "ERR_CONNECTION_FAILED": "Connection failed",
+    "ERR_TIMEOUT": "Timeout (10s)",
+    "ERR_TLS_TUNNEL_ERROR": "TLS tunnel established but returned abnormal content",
+    "ERR_TLS_FAILED": "TLS failed",
+    "ERR_LOGIN_FAILED": "Login failed",
+    "ERR_EMAIL_NOT_FOUND": "Email not registered for password login. If registered via Google/GitHub OAuth, use OAuth buttons or visit windsurf.com/show-auth-token to copy Auth Token",
+    "ERR_INVALID_PASSWORD": "Invalid password",
+    "ERR_INVALID_CREDENTIALS": "Invalid email or password",
+    "ERR_NO_PASSWORD_SET": "No password set for this account. Use Google/GitHub OAuth or visit windsurf.com/show-auth-token to copy Auth Token",
+    "ERR_USER_DISABLED": "Account has been disabled",
+    "ERR_TOO_MANY_ATTEMPTS": "Too many attempts. Please try again later",
+    "ERR_INVALID_EMAIL": "Invalid email format",
+    "ERR_CODEIUM_REGISTER_FAILED": "Codeium registration failed",
+    "ERR_AUTH1_TOKEN_MISSING": "Auth1 response missing token",
+    "ERR_POSTAUTH_FAILED": "Windsurf PostAuth failed",
+    "ERR_TOKEN_FETCH_FAILED": "Failed to fetch one-time auth token",
+    "ERR_FIREBASE_TOKEN_MISSING": "Firebase response missing idToken"
+  },
+
+  "footer": {
+    "version": "Version",
+    "langToggle": "Switch language"
+  },
+
+  "placeholder": {
+    "noProxy": "No proxy"
+  },
+
+  "loginResult": {
+    "success": "✓ Login Successful",
+    "apiKeyGenerated": "API Key generated{{autoAdd}}",
+    "fail": "✗ Login Failed",
+    "batchComplete": "Batch Import Complete",
+    "batchDesc": "Total {{total}} accounts, {{success}} success, {{fail}} fail{{autoAdd}}",
+    "tryOther": "Try Another Way",
+    "oauthHint": "If Google/GitHub OAuth was used to register, password login won't work. Use the Google/GitHub buttons above, or visit {{link}} to copy Auth Token then manually add in Account Pool page.",
+    "fields": {
+      "email": "Email",
+      "name": "Name",
+      "apiKey": "API Key",
+      "accountId": "Account ID"
+    },
+    "successTitle": "Login Success",
+    "addedToPool": "and added to account pool"
+  },
+
+  "timeRange": {
+    "minutesAgo": "{{count}}m ago",
+    "hoursAgo": "{{count}}h ago",
+    "daysAgo": "{{count}}d ago"
+  },
+
+  "time": {
+    "day": "d",
+    "hour": "h",
+    "minute": "m",
+    "second": "s"
+  },
+
+  "prompt": {
+    "editor": {
+      "reset": "Reset",
+      "search": "Search providers...",
+      "templateHint": "{{model}} placeholder will be replaced with the requested model name."
+    }
+  },
+
+  "ls": {
+    "defaultInstance": "Default Instance",
+    "noProxy": "No proxy",
+    "port": "Port",
+    "pid": "PID",
+    "restartCount": "Restarts"
+  }
+}

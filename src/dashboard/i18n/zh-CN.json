@@ -1,0 +1,841 @@
+{
+  "_meta": {
+    "name": "简体中文",
+    "code": "zh-CN"
+  },
+
+  "brand": {
+    "sub": "管理控制台"
+  },
+
+  "nav": {
+    "group": {
+      "overview": "概览",
+      "account": "账号",
+      "system": "系统",
+      "about": "关于"
+    },
+    "overview": "仪表盘",
+    "stats": "统计分析",
+    "windsurf-login": "登录取号",
+    "accounts": "账号管理",
+    "bans": "异常监测",
+    "models": "模型控制",
+    "proxy": "代理配置",
+    "logs": "运行日志",
+    "experimental": "实验性功能",
+    "credits": "致谢"
+  },
+
+  "pageTitle": {
+    "main": "WindsurfAPI bydwgx1337 控制台"
+  },
+
+  "page": {
+    "overview": "仪表盘",
+    "stats": "统计分析",
+    "windsurf-login": "登录取号",
+    "accounts": "账号管理",
+    "bans": "异常监测",
+    "models": "模型控制",
+    "proxy": "代理配置",
+    "logs": "运行日志",
+    "experimental": "实验性功能",
+    "credits": "致谢"
+  },
+
+  "pageSubtitle": {
+    "overview": "系统运行状态与关键指标概览",
+    "windsurf-login": "支持 Google / GitHub / 邮箱密码 三种方式登录 Windsurf 获取 API Key",
+    "accounts": "维护账号池，探测各账号订阅层级与可用模型",
+    "models": "配置模型访问策略，限制可用模型范围",
+    "proxy": "全局或按账号配置出口代理，独立代理将启动独立的语言服务器实例",
+    "logs": "通过 SSE 实时流式接收服务端日志",
+    "stats": "请求量、成功率、延迟分位数与账号/模型维度统计",
+    "bans": "追踪错误账号和异常状态",
+    "experimental": "尚未稳定的优化项；如果发现异常可以随时关闭",
+    "credits": "感谢以下朋友为项目提交 PR / 审计代码 / 修复问题"
+  },
+
+  "button": {
+    "cancel": "取消",
+    "confirm": "确认",
+    "forceOverride": "强制覆盖并更新",
+    "save": "保存",
+    "restart": "重启",
+    "updateAndRestart": "更新并重启"
+  },
+
+  "action": {
+    "checkUpdate": "检查更新",
+    "applyUpdate": "一键更新并重启",
+    "restart": "重启",
+    "login": "登录",
+    "save": "保存",
+    "clear": "清除",
+    "cancel": "取消",
+    "confirm": "确认",
+    "delete": "删除",
+    "reset": "重置",
+    "clearPool": "清空对话池",
+    "refresh": "刷新",
+    "probe": "探测",
+    "probeTitle": "探测能力",
+    "enable": "启用",
+    "disable": "停用",
+    "copy": "复制",
+    "copyTitle": "点击复制",
+    "configure": "配置",
+    "test": "测试",
+    "readClipboard": "读取剪贴板",
+    "batchImport": "批量导入并登录",
+    "paste": "粘贴",
+    "add": "添加",
+    "close": "关闭",
+    "edit": "编辑",
+    "selectAll": "全选",
+    "selectNone": "全不选",
+    "invert": "反选",
+    "showPassword": "显示/隐藏密码"
+  },
+
+  "status": {
+    "active": "正常",
+    "disabled": "已禁用",
+    "error": "错误",
+    "running": "运行中",
+    "stopped": "已停止",
+    "success": "成功",
+    "failed": "失败",
+    "pending": "待处理",
+    "unknown": "未知",
+    "rateLimited": "限速中",
+    "loading": "加载中…",
+    "testing": "测试中…",
+    "saving": "保存中…",
+    "updateAndRestartHint": "更新并重启服务",
+    "proxySuccess": "✓ 连通成功 出口 IP {{ip}} · 耗时 {{latency}}ms",
+    "proxyFailed": "✗ 失败: {{error}} · {{latency}}ms",
+    "checkingUpdate": "正在检查更新…",
+    "updateAvailable": "发现新版本",
+    "currentVersion": "当前版本",
+    "remoteVersion": "远程版本",
+    "upToDate": "✓ 已是最新 ({{commit}}) · {{message}}",
+    "pullingRestarting": "正在拉取 + 重启…",
+    "cancelled": "已取消",
+    "noUpdateNeeded": "已是最新，无需更新",
+    "updateComplete": "更新完成 {{before}} → {{after}}",
+    "restarting": "服务正在后台重启 约 8 秒后自动刷新页面…",
+    "notGitRepo": "非 git 部署 — 一键更新不可用",
+    "notGitRepoHint": "如果你是通过 git clone 部署的，请确保 .git 目录随 WindsurfAPI 源码一起上传",
+    "workingDirDirty": "工作区有本地修改",
+    "workingDirDirtyHint": "以下文件已被修改但未提交：<br>{{files}}<br>继续将用远程版本覆盖这些修改。",
+    "notFetched": "尚未获取",
+    "fetchFailed": "获取失败",
+    "clickToEditTier": "点击手动修改层级（探测异常时用）"
+  },
+
+  "tier": {
+    "pro": "PRO",
+    "free": "FREE",
+    "expired": "已过期",
+    "unknown": "未知",
+    "expiredLabel": "已过期"
+  },
+
+  "creditsBar": {
+    "daily": "日",
+    "weekly": "周",
+    "monthly": "月"
+  },
+
+  "section": {
+    "banStatus": {
+      "title": "健康状态"
+    },
+    "lsStatus": {
+      "title": "Language Server",
+      "desc": "语言服务器实例状态"
+    },
+    "oauthLogin": {
+      "title": "快捷登录（推荐）",
+      "desc": "用你的 Google 或 GitHub 账号直接登录 Windsurf 无需密码"
+    },
+    "emailLogin": {
+      "title": "邮箱密码登录",
+      "desc": "仅限邮箱+密码注册的账号 第三方登录请用上面的按钮；支持单个登录或按「邮箱 密码」格式批量导入"
+    },
+    "loginProxy": {
+      "title": "登录代理（可选）",
+      "desc": "为本次登录指定代理；留空则使用全局代理设置。代理生效后账号的后续聊天请求也会经此代理出站"
+    },
+    "loginHistory": {
+      "title": "登录历史",
+      "desc": "本地记录最近 50 条登录操作"
+    },
+    "addAccount": {
+      "title": "添加账号",
+      "desc": "支持 API Key 或 Auth Token 两种方式",
+      "hint": "推荐用 Token 方式添加账号 点 {{link}} 登录后复制 Token 粘贴到下面就行 所有登录方式（邮箱/Google/GitHub）都能用"
+    },
+    "accountList": {
+      "title": "账号列表",
+      "desc": "点击探测按钮可单独更新某个账号的能力信息"
+    },
+    "modelPolicy": {
+      "title": "访问策略",
+      "desc": "选择「全部允许」不限制；「白名单」只允许列出的模型；「黑名单」屏蔽列出的模型"
+    },
+    "modelList": {
+      "title": "模型清单",
+      "titleAllow": "允许的模型",
+      "titleBlock": "屏蔽的模型",
+      "descAllow": "只有选中的模型可以使用，未选中的模型将返回 403 错误",
+      "descBlock": "选中的模型将被屏蔽，未选中的模型可正常使用",
+      "search": "搜索模型...",
+      "provider": "供应商"
+    },
+    "globalProxy": {
+      "title": "全局代理",
+      "desc": "未配置独立代理的账号将使用此配置"
+    },
+    "accountProxy": {
+      "title": "账号独立代理",
+      "desc": "为特定账号设置专属代理；每个独立代理会启动独立 LS 实例"
+    },
+    "cascadeReuse": {
+      "title": "Cascade 对话复用",
+      "desc": "多轮对话时复用同一个 cascade_id，只把最新一条 user 消息发给 Windsurf，让服务端维持上下文缓存。命中时可显著降低 TTFB 与上传体积；未命中或账号/LS 变更会自动回退到新会话。需要客户端保留完整历史并按顺序追加（如 new-api、OpenWebUI）。",
+      "enable": "启用 Cascade 对话复用",
+      "hint": "默认关闭。开启后对当前对话池立即生效。"
+    },
+    "identityPrompt": {
+      "title": "模型身份提示词",
+      "desc": "在每个请求开头注入模型身份系统提示词。",
+      "enable": "启用模型身份注入",
+      "hint": "默认开启；关闭后下面的模板不起作用",
+      "templateHint": "每个厂商的模板可编辑，{{model}} 占位符会被替换成请求的模型名（例如 claude-opus-4.6）。"
+    },
+    "identityInjection": {
+      "title": "模型身份注入",
+      "desc": "开启后在每个请求最前面注入一条系统提示词，覆盖 Cascade 自带的 Windsurf 身份；下面每个厂商的模板可自定义，保存后立即生效"
+    },
+    "systemPrompts": {
+      "title": "系统提示词",
+      "desc": "工具注入、对话模式等内置提示词模板。修改后立即生效，点「重置」恢复默认。"
+    },
+    "lsPool": {
+      "title": "语言服务器池",
+      "desc": "{{count}} 个 LS 实例 · 每个独立代理对应一个进程",
+      "sectionTitle": "语言服务器池",
+      "sectionDesc": "{{count}} 个 LS 实例 · 每个独立代理对应一个进程",
+      "port": "端口",
+      "defaultInstance": "默认实例",
+      "noProxy": "无代理"
+    },
+    "modelStats": {
+      "title": "模型使用统计",
+      "desc": "按模型聚合：请求量、成功率、平均耗时与 p50 / p95 延迟分位数"
+    },
+    "accountStats": {
+      "title": "账号维度统计",
+      "desc": "每个账号 ID 前 8 位的请求量与成功率"
+    },
+    "accountHealth": {
+      "title": "账号健康状况"
+    },
+    "requestChart": {
+      "title": "请求量时间序列"
+    }
+  },
+
+  "help": {
+    "token": "推荐用 Token 方式添加账号 点 {{link}} 登录后复制 Token 粘贴到下面就行 所有登录方式（邮箱/Google/GitHub）都能用",
+    "tokenGuide": "推荐用 Token 方式添加账号 点 ",
+    "tokenGuideEnd": " 登录后复制 Token 粘贴到下面就行 所有登录方式（邮箱/Google/GitHub）都能用"
+  },
+
+  "field": {
+    "email": {
+      "label": "邮箱",
+      "placeholder": "your-email@example.com"
+    },
+    "password": {
+      "label": "密码",
+      "placeholder": "••••••••"
+    },
+    "type": {
+      "label": "类型"
+    },
+    "tier": {
+      "label": "层级"
+    },
+    "host": {
+      "label": "主机",
+      "placeholder": "proxy.example.com"
+    },
+    "port": {
+      "label": "端口",
+      "placeholder": "8080"
+    },
+    "username": {
+      "label": "用户名",
+      "placeholder": "可选"
+    },
+    "passwordProxy": {
+      "label": "密码",
+      "placeholder": "可选"
+    },
+    "key": {
+      "label": "Key / Token",
+      "placeholder": "粘贴 Auth Token（从 windsurf.com/show-auth-token 获取）"
+    },
+    "label": {
+      "label": "标签",
+      "placeholder": "可选"
+    },
+    "batchInput": {
+      "label": "批量导入",
+      "hint": "每行一个账号。格式：[代理] 邮箱 密码。代理可选，支持 http/socks5。会自动绑定代理到对应账号。"
+    },
+    "proxyType": {
+      "label": "类型"
+    },
+    "proxyHost": {
+      "label": "主机",
+      "placeholder": "留空=使用全局"
+    },
+    "provider": {
+      "label": "供应商",
+      "all": "全部供应商"
+    },
+    "proxyUser": {
+      "placeholder": "代理认证用户名"
+    },
+    "proxyPass": {
+      "placeholder": "代理认证密码"
+    },
+    "searchProvider": {
+      "placeholder": "搜索提供商..."
+    },
+    "search": {
+      "label": "搜索",
+      "placeholder": "搜索..."
+    },
+    "searchModel": {
+      "label": "搜索模型",
+      "placeholder": "输入模型名称筛选..."
+    },
+    "providerFilter": {
+      "label": "供应商"
+    },
+    "logLevel": {
+      "label": "日志级别"
+    },
+    "identitySearch": {
+      "placeholder": "搜索提供商..."
+    },
+    "autoScroll": "自动滚动",
+    "autoAdd": "登录成功自动加入账号池"
+  },
+
+  "table": {
+    "header": {
+      "time": "时间",
+      "email": "邮箱",
+      "status": "状态",
+      "proxy": "代理",
+      "action": "操作",
+      "id": "ID",
+      "label": "标签",
+      "tier": "层级",
+      "rpm": "RPM",
+      "credits": "余额",
+      "models": "可用模型",
+      "error": "错误",
+      "lastUsed": "最后使用",
+      "key": "Key",
+      "accountId": "账号 ID",
+      "account": "账号",
+      "requests": "请求",
+      "success": "成功",
+      "errors": "错误",
+      "successRate": "成功率",
+      "avg": "平均",
+      "p50": "p50",
+      "p95": "p95",
+      "errorCount": "错误数",
+      "model": "模型",
+      "note": "说明"
+    },
+    "empty": {
+      "loginHistory": "暂无登录记录",
+      "accounts": "暂无账号，请先添加",
+      "accountNotFound": "账号不存在",
+      "probeFailed": "探测失败",
+      "noRequestData": "暂无请求数据",
+      "noAccountRequestData": "暂无账号级请求数据",
+      "noData": "暂无数据",
+      "noValidAccounts": "暂无可用账号可用于路由",
+      "accountsProxy": "暂无账号",
+      "modelStats": "暂无模型统计数据",
+      "accountStats": "暂无账号统计数据",
+      "banList": "暂无异常账号",
+      "models": "没有符合的模型",
+      "credits": "加载中…"
+    }
+  },
+
+  "card": {
+    "activeAccounts": {
+      "title": "活跃账号",
+      "subtitle": "{{total}} 个总账号 · {{error}} 异常"
+    },
+    "totalRequests": {
+      "title": "总请求数",
+      "subtitle": "成功率 {{rate}}%"
+    },
+    "uptime": {
+      "title": "运行时间",
+      "subtitle": "启动于 {{time}}"
+    },
+    "languageServer": {
+      "title": "Language Server",
+      "running": "运行中",
+      "stopped": "已停止",
+      "subtitle": "{{count}} 个实例 · 端口 {{port}}"
+    },
+    "responseCache": {
+      "title": "响应缓存",
+      "subtitle": "{{hits}} 命中 / {{misses}} 未命中 · {{size}}/{{max}} 条"
+    },
+    "banStats": {
+      "title": "健康概览"
+    },
+    "abnormalAccounts": {
+      "title": "异常账号",
+      "subtitle": "共 {{count}} 个账号"
+    },
+    "disabled": {
+      "title": "已停用",
+      "subtitle": "自动错误停用"
+    },
+    "rateLimit": {
+      "title": "限流中",
+      "badge": "限流中",
+      "subtitle": "暂时不参与调度"
+    },
+    "stats": {
+      "title": "总请求",
+      "subtitle": "运行 {{time}}"
+    },
+    "success": {
+      "title": "成功",
+      "subtitle": "成功率 {{rate}}%"
+    },
+    "errors": {
+      "title": "错误",
+      "subtitle": "失败率 {{rate}}%"
+    },
+    "p95Latency": {
+      "title": "平均 p95 延迟",
+      "subtitle": "{{count}} 个模型"
+    },
+    "hitRate": {
+      "title": "命中率",
+      "subtitle": "{{hits}} 命中 / {{misses}} 未命中"
+    },
+    "poolSize": {
+      "title": "对话池",
+      "subtitle": "上限 {{max}} · TTL {{ttl}} 分钟"
+    },
+    "stores": {
+      "title": "存储次数",
+      "subtitle": "过期 {{expired}} · 淘汰 {{evicted}}"
+    },
+    "defaultInstance": "默认实例",
+    "noProxy": "无代理",
+    "restarts": "重启",
+    "custom": "已自定义"
+  },
+
+  "login": {
+    "title": "控制台登录",
+    "subtitle": "请输入管理密码以继续",
+    "passwordPlaceholder": "Dashboard 密码",
+    "button": "登 录"
+  },
+
+  "range": {
+    "6h": "近 6小时",
+    "24h": "近 24小时",
+    "72h": "近 72小时"
+  },
+
+  "credits": {
+    "contributors": "核心贡献者",
+    "cta": {
+      "title": "想加入这份名单？",
+      "desc": "欢迎到 GitHub 提 issue 或 pull request — 不管是修 bug、加模型、改 UI 还是发现安全问题，都会被记录在这里。",
+      "issue": "提 issue",
+      "pr": "提 PR"
+    }
+  },
+
+  "experimental": {
+    "enable": "启用",
+    "disable": "禁用",
+    "cascadeReuse": {
+      "title": "Cascade 对话复用",
+      "desc": "多轮对话时复用同一个 cascade_id，只把最新一条 user 消息发给 Windsurf，让服务端维持上下文缓存。命中时可显著降低 TTFB 与上传体积；未命中或账号/LS 变更会自动回退到新会话。需要客户端保留完整历史并按顺序追加（如 new-api、OpenWebUI）。",
+      "enable": "启用 Cascade 对话复用",
+      "hint": "默认关闭。开启后对当前对话池立即生效。"
+    },
+    "identityPrompt": {
+      "title": "启用模型身份注入",
+      "desc": "默认开启；关闭后下面的模板不起作用。"
+    },
+    "templateHint": "每个厂商的模板可编辑，{{model}} 占位符会被替换成请求的模型名（例如 claude-opus-4.6）。",
+    "clearPool": "清空对话池",
+    "refresh": "刷新",
+    "noMatch": "无匹配",
+    "restoreDefault": "恢复默认",
+    "save": "保存",
+    "default": "默认",
+    "toolReinforcement": "工具调用格式指引",
+    "communicationWithTools": "有工具时的通信指令",
+    "communicationNoTools": "无工具时的通信指令",
+    "promptEmpty": "模板不能为空",
+    "missingPlaceholder": "缺少 {model} 占位符",
+    "missingPlaceholderDesc": "保存后该厂商的模型名将无法被替换进提示词。确定继续？",
+    "restored": "已恢复"
+  },
+
+  "confirm": {
+    "restartTitle": "重启 Language Server",
+    "restartDesc": "进行中的请求将会失败，确定要继续吗？",
+    "restoreDefaultDesc": "恢复到默认？",
+    "clearPoolDesc": "当前所有进行中的 Cascade 会话都将被清除，确定继续吗？"
+  },
+
+  "modal": {
+    "blockedModels": {
+      "title": "编辑可用模型 — {{email}}",
+      "hint": "勾选 = 可用；取消 = 对该账号禁用",
+      "enabled": "已启用",
+      "saved": "已保存：启用 {{enabled}} / 禁用 {{disabled}}",
+      "saving": "保存中...",
+      "total": "总计"
+    },
+    "restartLS": {
+      "title": "重启 Language Server",
+      "desc": "进行中的请求将会失败，确定要继续吗？"
+    },
+    "deleteAccount": {
+      "title": "删除账号",
+      "desc": "此操作不可撤销，确定要删除该账号吗？"
+    },
+    "resetStats": {
+      "title": "重置统计",
+      "desc": "清空所有统计数据？"
+    },
+    "overrideTier": {
+      "title": "手动设置账号层级",
+      "desc": "当前：{{current}}。Windsurf Pro 试用有时自动探测失败（issue #8 的连锁影响），手动改成 pro 即可解锁所有 Pro 模型。",
+      "options": {
+        "pro": "Pro（解锁所有模型）",
+        "free": "Free（仅 gpt-4o-mini 和 gemini-2.5-flash）",
+        "unknown": "Unknown（让系统重新判定）"
+      }
+    },
+    "applyUpdate": {
+      "title": "一键更新并重启",
+      "desc": "将执行 git pull 并重启 PM2。重启期间 dashboard 会短暂不可用（约 5-10 秒）。确定继续？"
+    },
+    "dirtyWorktree": {
+      "title": "工作区有本地修改",
+      "desc": "以下文件已被修改但未提交：<br><br><code>{{files}}</code><br>继续将用远程版本覆盖这些修改。非 git 部署（SFTP / 压缩包）请点强制覆盖。",
+      "forceUpdate": "强制覆盖并更新"
+    },
+    "configureProxy": {
+      "title": "配置账号代理",
+      "desc": "为账号 {{label}} 设置独立代理"
+    }
+  },
+
+  "oauth": {
+    "tryAnotherWay": "换个方式试试",
+    "google": "Google 登录",
+    "github": "GitHub 登录",
+    "copyAuthToken": "复制 Auth Token",
+    "pasteToken": "去账号管理粘贴 Token",
+    "status": {
+      "loading": "正在通过 {{provider}} 登录...",
+      "success": "登录成功 {{email}} 已加入账号池",
+      "codeium": "{{provider}} 认证成功 正在注册 Codeium...",
+      "firebaseError": "Firebase SDK 加载失败 请刷新页面重试",
+      "loggingIn": "正在通过 {{label}} 登录...",
+      "codeiumRegistering": "{{label}} 认证成功 正在注册 Codeium...",
+      "loginSuccess": "登录成功 {{email}} 已加入账号池",
+      "loginFailed": "{{label}} 登录失败: {{error}}"
+    }
+  },
+
+  "update": {
+    "checking": "正在检查更新...",
+    "newVersion": "发现新版本",
+    "current": "当前",
+    "remote": "远程",
+    "latest": "已是最新",
+    "applying": "正在拉取 + 重启...",
+    "complete": "更新完成",
+    "restarting": "服务正在后台重启 约 8 秒后自动刷新页面...",
+    "cancelled": "已取消",
+    "notGit": "此实例不是 git 部署 一键更新不可用",
+    "notGitDesc": "如果你用 git clone 部署的 需要确保 .git 目录和 WindsurfAPI 源代码目录在一起。SFTP / 压缩包上传的部署请手动替换文件后 pm2 重启",
+    "upToDate": "已是最新，无需更新"
+  },
+
+  "proxy": {
+    "test": {
+      "button": "测试代理",
+      "result": "结果"
+    },
+    "none": "无（使用全局）",
+    "direct": "直连",
+    "global": "全局",
+    "current": "当前",
+    "notConfigured": "未配置全局代理",
+    "placeholderSaved": "已保存（留空保持原值）",
+    "placeholderPassword": "代理认证密码",
+    "auth": "认证"
+  },
+
+  "account": {
+    "addSuccess": "账号已添加",
+    "deleteSuccess": "账号已删除",
+    "enableSuccess": "账号已启用",
+    "disableSuccess": "账号已停用",
+    "resetErrors": "错误已重置",
+    "tierSet": "层级已设为 {{tier}}",
+    "editModels": "编辑可用模型",
+    "probe": {
+      "doing": "探测中，约需 10-30 秒...",
+      "complete": "探测完成：{{result}}",
+      "allDoing": "全部探测中，依账号数量约需 1-3 分钟...",
+      "allComplete": "探测完成：{{summary}}",
+      "probeAllComplete": "探测完成：{{summary}}",
+      "probeComplete": "探测完成：{{tier}}"
+    },
+    "credits": {
+      "refreshTitle": "刷新余额",
+      "refreshed": "余额已刷新",
+      "refreshFailed": "刷新失败",
+      "allRefreshed": "余额刷新完成：{{ok}} 成功 / {{fail}} 失败",
+      "refreshing": "正在刷新所有账号余额...",
+      "refreshingAll": "正在刷新所有账号余额..."
+    },
+    "ls": {
+      "restarting": "Language Server 重启中..."
+    }
+  },
+
+  "batch": {
+    "pasteFirst": "请先粘贴批量账号",
+    "importing": "导入中...",
+    "importingDesc": "{{count}} 行，请稍候",
+    "complete": "批量导入完成",
+    "importFailed": "批量导入失败",
+    "importComplete": "批量导入完成：成功 {{success}} / 失败 {{fail}}",
+    "success": "成功",
+    "fail": "失败",
+    "formatError": "第 {{line}} 行格式错误"
+  },
+
+  "toast": {
+    "copied": "已复制",
+    "saved": "已保存",
+    "cleared": "已清空",
+    "refresh": "已刷新",
+    "error": "错误",
+    "loading": "加载中...",
+    "enterHostPort": "请先填主机和端口",
+    "experimentalEnabled": "已启用实验性功能",
+    "experimentalDisabled": "已关闭实验性功能",
+    "toggleFailed": "切换失败：{{error}}",
+    "modeUpdated": "模式已更新",
+    "noTierModels": "该账号层级无可用模型",
+    "loginSuccess": "{{label}} 登录成功",
+    "loginFailed": "{{label}} 登录失败：{{error}}",
+    "loginSuccessAdded": "登录成功，账号已加入账号池",
+    "clipboardRead": "已读取剪贴板",
+    "clipboardEmpty": "剪贴板为空",
+    "clipboardUnsupported": "当前环境不支持自动读取剪贴板，请手动粘贴",
+    "clipboardError": "读取剪贴板失败：{{error}}",
+    "apiKeyCopied": "API Key 已复制",
+    "copyFailed": "复制失败，请手动选择",
+    "copyFailedError": "复制失败：{{error}}",
+    "enterEmailPassword": "请输入邮箱和密码",
+    "restarting": "Language Server 重启中...",
+    "proxyConfigured": "账号代理已配置",
+    "proxyCleared": "账号代理已清除",
+    "globalProxySaved": "全局代理已保存",
+    "globalProxyCleared": "全局代理已清除",
+    "enterProxyHost": "请输入代理主机",
+    "statsReset": "统计已重置",
+    "enterKeyOrToken": "请输入 Key 或 Token",
+    "addFailed": "添加失败",
+    "probe": {
+      "doing": "探测中，约需 10-30 秒...",
+      "probeComplete": "探测完成：{{tier}}",
+      "allDoing": "探测所有账号中，约需 1-3 分钟（视数量而定）...",
+      "probeAllComplete": "探测完成：{{summary}}"
+    },
+    "probeComplete": "探测完成：{{tier}}",
+    "probeAllComplete": "探测完成：{{summary}}",
+    "credits": {
+      "refreshed": "余额已刷新",
+      "refreshFailed": "刷新余额失败",
+      "refreshing": "正在刷新余额...",
+      "allRefreshed": "余额刷新完成：{{ok}} 成功 / {{fail}} 失败"
+    }
+  },
+
+  "log": {
+    "level": {
+      "all": "所有级别",
+      "debug": "Debug",
+      "info": "Info",
+      "warn": "Warn",
+      "error": "Error"
+    },
+    "searchPlaceholder": "搜索日志内容...",
+    "clearView": "清空视图",
+    "viaSSE": "通过 SSE 实时流式接收"
+  },
+
+  "model": {
+    "mode": {
+      "all": "全部允许",
+      "allowlist": "白名单",
+      "blocklist": "黑名单"
+    },
+    "provider": {
+      "all": "全部供应商",
+      "anthropic": "Anthropic",
+      "openai": "OpenAI",
+      "google": "Google",
+      "deepseek": "DeepSeek",
+      "xai": "xAI",
+      "alibaba": "Alibaba",
+      "moonshot": "Moonshot",
+      "windsurf": "Windsurf"
+    },
+    "list": {
+      "current": "当前清单 ({{count}})",
+      "empty": "清单为空"
+    }
+  },
+
+  "error": {
+    "generic": "发生错误",
+    "unknown": "未知错误",
+    "updateFailed": "更新失败",
+    "apiError": "API 错误",
+    "loadFailed": "加载失败",
+    "probeFailed": "探测失败",
+    "accountNotFound": "账号未找到",
+    "openFailed": "打开失败",
+    "saveFailed": "保存失败",
+    "deleteFailed": "删除失败",
+    "networkError": "网络错误",
+    "authRequired": "请先登录",
+    "clipboardNotSupported": "当前环境不支持自动读取剪贴板，请手动粘贴",
+    "clipboardEmpty": "剪贴板为空",
+    "clipboardReadFailed": "读取剪贴板失败",
+    "firebaseLoadFailed": "Firebase SDK 加载失败 请刷新页面重试",
+    "ERR_EMAIL_PASSWORD_REQUIRED": "email 和 password 为必填",
+    "ERR_HOST_PORT_REQUIRED": "缺少 host 或 port",
+    "ERR_UNCOMMITTED_CHANGES": "工作区有未提交的修改（SFTP 部署或手动改过代码）。确定要覆盖本地修改用远程最新版本吗？",
+    "ERR_ACCOUNTS_REQUIRED": "accounts 为必填数组",
+    "ERR_TEXT_REQUIRED": "缺少 text 字段",
+    "ERR_NO_VALID_LINES": "没有有效行",
+    "ERR_FORMAT_INVALID": "格式错误 需要 [proxy] email password",
+    "ERR_IDTOKEN_REQUIRED": "缺少 idToken",
+    "ERR_PROXY_PRIVATE_IP": "代理地址不能指向内网/本机",
+    "ERR_PROXY_HTTP_ERROR": "代理返回 HTTP 错误",
+    "ERR_CONNECTION_FAILED": "连接失败",
+    "ERR_TIMEOUT": "超时（10s）",
+    "ERR_TLS_TUNNEL_ERROR": "TLS 隧道建立但返回内容异常",
+    "ERR_TLS_FAILED": "TLS 失败",
+    "ERR_LOGIN_FAILED": "登录失败",
+    "ERR_EMAIL_NOT_FOUND": "该邮箱未注册邮箱密码登录方式。若通过 Google/GitHub OAuth 注册，请使用 OAuth 按钮或访问 windsurf.com/show-auth-token 复制 Auth Token",
+    "ERR_INVALID_PASSWORD": "密码错误",
+    "ERR_INVALID_CREDENTIALS": "邮箱或密码错误",
+    "ERR_NO_PASSWORD_SET": "该账号未设置密码登录方式。使用 Google/GitHub OAuth 或访问 windsurf.com/show-auth-token 复制 Auth Token",
+    "ERR_USER_DISABLED": "账号已被停用",
+    "ERR_TOO_MANY_ATTEMPTS": "尝试太多次 请稍后再试",
+    "ERR_INVALID_EMAIL": "邮箱格式错误",
+    "ERR_CODEIUM_REGISTER_FAILED": "Codeium 注册失败",
+    "ERR_AUTH1_TOKEN_MISSING": "Auth1 回应缺少 token",
+    "ERR_POSTAUTH_FAILED": "Windsurf PostAuth 失败",
+    "ERR_TOKEN_FETCH_FAILED": "获取一次性 Auth Token 失败",
+    "ERR_FIREBASE_TOKEN_MISSING": "Firebase 回应缺少 idToken"
+  },
+
+  "footer": {
+    "version": "版本",
+    "langToggle": "切换语言"
+  },
+
+  "placeholder": {
+    "noProxy": "无代理"
+  },
+
+  "loginResult": {
+    "success": "✓ 登录成功",
+    "apiKeyGenerated": "API Key 已生成{{autoAdd}}",
+    "fail": "✗ 登录失败",
+    "batchComplete": "批量导入完成",
+    "batchDesc": "共 {{total}} 个账号，成功 {{success}} 个，失败 {{fail}} 个{{autoAdd}}",
+    "tryOther": "换个方式试试",
+    "oauthHint": "若你用 Google/GitHub 注册的 Windsurf 账号 此处密码登录不适用 请用页面顶部的 Google / GitHub 登录按钮 或访问 {{link}} 复制 Auth Token 后在「账号管理」页手动添加",
+    "fields": {
+      "email": "邮箱",
+      "name": "姓名",
+      "apiKey": "API Key",
+      "accountId": "账号 ID"
+    },
+    "successTitle": "登录成功",
+    "addedToPool": "并加入账号池"
+  },
+
+  "timeRange": {
+    "minutesAgo": "{{count}}分钟前",
+    "hoursAgo": "{{count}}小时前",
+    "daysAgo": "{{count}}天前"
+  },
+
+  "time": {
+    "day": "天",
+    "hour": "时",
+    "minute": "分",
+    "second": "秒"
+  },
+
+  "prompt": {
+    "editor": {
+      "reset": "重置",
+      "search": "搜索提供商...",
+      "templateHint": "{{model}} 占位符会被替换成请求的模型名。"
+    }
+  },
+
+  "ls": {
+    "defaultInstance": "默认实例",
+    "noProxy": "无代理",
+    "port": "端口",
+    "pid": "PID",
+    "restartCount": "重启次数"
+  }
+}

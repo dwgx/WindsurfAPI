@@ -163,21 +163,22 @@ function httpsRequest(url, opts, postData, proxy) {
 
 // ─── Login flow ───────────────────────────────────────────
 
-function createFriendlyAuthError(prefix, detail, fallback = '登录失败') {
-  const oauthHint = '若你用 Google/GitHub 注册的 Windsurf 账号 此处密码登录不适用 请用页面顶部的 Google / GitHub 登录按钮 或访问 https://windsurf.com/show-auth-token 复制 Auth Token 后在「账号管理」页手动添加';
+function createFriendlyAuthError(prefix, detail, fallback = 'ERR_LOGIN_FAILED') {
   const normalized = String(detail || '').trim();
-  const friendly = {
-    'EMAIL_NOT_FOUND': `该邮箱未注册邮箱密码登录方式（${oauthHint}）`,
-    'INVALID_PASSWORD': `密码错误（${oauthHint}）`,
-    'INVALID_LOGIN_CREDENTIALS': `邮箱或密码错误（${oauthHint}）`,
-    'Invalid email or password': `邮箱或密码错误（${oauthHint}）`,
-    'No password set. Please log in with Google or GitHub.': `该账号未设置密码登录方式（${oauthHint}）`,
-    'No password set': `该账号未设置密码登录方式（${oauthHint}）`,
-    'USER_DISABLED': '账号已被停用',
-    'TOO_MANY_ATTEMPTS_TRY_LATER': '尝试太多次 请稍后再试',
-    'INVALID_EMAIL': '邮箱格式错误',
-  }[normalized] || normalized || fallback;
-  const err = new Error(`${prefix}: ${friendly}`);
+  // Map Firebase/Auth1 error codes to our error codes
+  const errorCodeMap = {
+    'EMAIL_NOT_FOUND': 'ERR_EMAIL_NOT_FOUND',
+    'INVALID_PASSWORD': 'ERR_INVALID_PASSWORD',
+    'INVALID_LOGIN_CREDENTIALS': 'ERR_INVALID_CREDENTIALS',
+    'Invalid email or password': 'ERR_INVALID_CREDENTIALS',
+    'No password set. Please log in with Google or GitHub.': 'ERR_NO_PASSWORD_SET',
+    'No password set': 'ERR_NO_PASSWORD_SET',
+    'USER_DISABLED': 'ERR_USER_DISABLED',
+    'TOO_MANY_ATTEMPTS_TRY_LATER': 'ERR_TOO_MANY_ATTEMPTS',
+    'INVALID_EMAIL': 'ERR_INVALID_EMAIL',
+  };
+  const errorCode = errorCodeMap[normalized] || normalized || fallback;
+  const err = new Error(errorCode);
   err.isAuthFail = [
     'EMAIL_NOT_FOUND',
     'INVALID_PASSWORD',
@@ -187,6 +188,7 @@ function createFriendlyAuthError(prefix, detail, fallback = '登录失败') {
     'No password set',
   ].includes(normalized);
   err.firebaseCode = normalized || undefined;
+  err.code = errorCode;
   return err;
 }
 
@@ -203,7 +205,7 @@ async function registerWithCodeium(token, fingerprint, proxy) {
   const regRes = await httpsRequest(CODEIUM_REGISTER_URL, { method: 'POST', headers: regHeaders }, regBody, proxy);
 
   if (regRes.status >= 400 || !regRes.data.api_key) {
-    throw new Error(`Codeium 註冊失敗: ${JSON.stringify(regRes.data).slice(0, 200)}`);
+    throw new Error(`ERR_CODEIUM_REGISTER_FAILED:${JSON.stringify(regRes.data).slice(0, 200)}`);
   }
 
   return regRes.data;
@@ -215,12 +217,12 @@ async function windsurfLoginViaAuth1(email, password, fingerprint, proxy) {
   const loginRes = await httpsRequest(AUTH1_PASSWORD_LOGIN_URL, { method: 'POST', headers: loginHeaders }, loginBody, proxy);
 
   if (loginRes.status >= 400 || loginRes.data?.detail) {
-    throw createFriendlyAuthError('Windsurf Auth1 登入失败', loginRes.data?.detail, '登录失败');
+    throw createFriendlyAuthError('Auth1', loginRes.data?.detail, 'ERR_LOGIN_FAILED');
   }
 
   const auth1Token = loginRes.data?.token;
   if (!auth1Token) {
-    throw new Error(`Windsurf Auth1 回应缺少 token: ${JSON.stringify(loginRes.data).slice(0, 200)}`);
+    throw new Error(`ERR_AUTH1_TOKEN_MISSING:${JSON.stringify(loginRes.data).slice(0, 200)}`);
   }
 
   log.info(`Auth1 login OK: ${email}`);
@@ -230,7 +232,7 @@ async function windsurfLoginViaAuth1(email, password, fingerprint, proxy) {
   const bridgeRes = await httpsRequest(WINDSURF_POST_AUTH_URL, { method: 'POST', headers: bridgeHeaders }, bridgeBody, proxy);
 
   if (bridgeRes.status >= 400 || !bridgeRes.data?.sessionToken) {
-    throw new Error(`Windsurf PostAuth 失败: ${JSON.stringify(bridgeRes.data).slice(0, 200)}`);
+    throw new Error(`ERR_POSTAUTH_FAILED:${JSON.stringify(bridgeRes.data).slice(0, 200)}`);
   }
 
   const sessionToken = bridgeRes.data.sessionToken;
@@ -241,7 +243,7 @@ async function windsurfLoginViaAuth1(email, password, fingerprint, proxy) {
   const ottRes = await httpsRequest(WINDSURF_ONE_TIME_TOKEN_URL, { method: 'POST', headers: ottHeaders }, ottBody, proxy);
 
   if (ottRes.status >= 400 || !ottRes.data?.authToken) {
-    throw new Error(`获取一次性 Auth Token 失败: ${JSON.stringify(ottRes.data).slice(0, 200)}`);
+    throw new Error(`ERR_TOKEN_FETCH_FAILED:${JSON.stringify(ottRes.data).slice(0, 200)}`);
   }
 
   const reg = await registerWithCodeium(ottRes.data.authToken, fingerprint, proxy);
@@ -269,11 +271,11 @@ async function windsurfLoginViaFirebase(email, password, fingerprint, proxy) {
 
   if (fbRes.data.error) {
     const msg = fbRes.data.error.message || 'Unknown Firebase error';
-    throw createFriendlyAuthError('Firebase 登入失败', msg, msg);
+    throw createFriendlyAuthError('Firebase', msg, msg);
   }
 
   const idToken = fbRes.data.idToken;
-  if (!idToken) throw new Error('Firebase 回應缺少 idToken');
+  if (!idToken) throw new Error('ERR_FIREBASE_TOKEN_MISSING');
 
   log.info(`Firebase login OK: ${email}, UID=${fbRes.data.localId}`);
 
@@ -313,7 +315,7 @@ export async function windsurfLogin(email, password, proxy = null) {
   const auth1Method = auth1Connections?.auth_method?.method;
   if (auth1Method === 'auth1') {
     if (auth1Connections?.auth_method?.has_password === false) {
-      throw createFriendlyAuthError('Windsurf Auth1 登入失败', 'No password set. Please log in with Google or GitHub.');
+      throw createFriendlyAuthError('Auth1', 'No password set. Please log in with Google or GitHub.');
     }
     return await windsurfLoginViaAuth1(email, password, fingerprint, proxy);
   }
