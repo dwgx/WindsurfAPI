@@ -146,6 +146,73 @@ export function neutralizeCascadeIdentity(text, modelName) {
     .replace(/\b(?:the )?Cascade(?:['’]s)? workspace\b/gi, 'the workspace');
 }
 
+/**
+ * Lift authoritative environment facts from the caller's request so they
+ * can be re-emitted into the proto-level tool_calling_section override.
+ *
+ * Why this exists: Claude Code (and most Anthropic-format clients) put
+ * working-directory / git / platform info in an `<env>` block inside the
+ * system prompt or a `<system-reminder>` user block. That information IS
+ * forwarded to Cascade (client.js prepends sysText to the user text), but
+ * Cascade's own planner system prompt is structurally more authoritative
+ * to the upstream model than user-message text — and Cascade's prompt
+ * tells the model "your workspace is /tmp/windsurf-workspace". Result:
+ * Opus issues LS / Read against /tmp/windsurf-workspace instead of the
+ * user's real cwd, and confidently narrates the contents of an empty
+ * scratch dir back as if it were the user's project.
+ *
+ * Lifting cwd into tool_calling_section gives it equal authority weight
+ * inside the model's mental model, and the surrounding wording in
+ * buildToolPreambleForProto explicitly tells the model to prefer THIS
+ * environment over any prior workspace assumption.
+ *
+ * Parser is intentionally lenient: it scans every message's text content
+ * (string or content-block array) and pulls out the standard Claude Code
+ * `<env>` keys. If nothing is found, returns '' and the override gets no
+ * environment block (existing behaviour preserved).
+ */
+export function extractCallerEnvironment(messages) {
+  if (!Array.isArray(messages)) return '';
+  const seen = new Set();
+  const out = [];
+
+  // Patterns are anchored to start-of-line so they won't false-positive
+  // on body text that mentions e.g. "the working directory in the docs".
+  // Allowed key forms cover Claude Code's `<env>` block, OpenAI Codex'
+  // `<system-reminder>`, and the loose `cwd:` form some agents emit.
+  const PATTERNS = [
+    ['cwd', /(?:^|\n)\s*(?:Working directory|cwd|<cwd>)\s*[:=]\s*([^\n<]+)/i, (v) => `- Working directory: ${v}`],
+    ['git', /(?:^|\n)\s*Is directory a git repo\s*[:=]\s*([^\n<]+)/i, (v) => `- Is the directory a git repo: ${v}`],
+    ['platform', /(?:^|\n)\s*Platform\s*[:=]\s*([^\n<]+)/i, (v) => `- Platform: ${v}`],
+    ['os', /(?:^|\n)\s*OS Version\s*[:=]\s*([^\n<]+)/i, (v) => `- OS version: ${v}`],
+  ];
+
+  for (const m of messages) {
+    if (!m) continue;
+    let content;
+    if (typeof m.content === 'string') content = m.content;
+    else if (Array.isArray(m.content)) content = m.content.filter(p => p?.type === 'text').map(p => p.text || '').join('\n');
+    else continue;
+    if (!content) continue;
+
+    for (const [key, re, fmt] of PATTERNS) {
+      if (seen.has(key)) continue;
+      const match = content.match(re);
+      if (match) {
+        const value = match[1].trim();
+        // Reject obvious garbage (empty after trim, control chars, our own
+        // redaction marker leaking back in).
+        if (!value || /[\x00-\x1f]/.test(value) || value === '…') continue;
+        seen.add(key);
+        out.push(fmt(value));
+      }
+    }
+    if (seen.size === PATTERNS.length) break;
+  }
+
+  return out.join('\n');
+}
+
 // Rough token estimate (~4 chars/token). Used only to populate the
 // OpenAI-compatible `usage.prompt_tokens_details.cached_tokens` field so
 // upstream billing/dashboards (new-api) can recognise our local cache hits.
@@ -332,7 +399,12 @@ export async function handleChatCompletions(body) {
   // Also inject into the last user message as fallback — some models in
   // NO_TOOL mode ignore the SectionOverride entirely and refuse to call
   // tools unless they see the definitions in the conversation itself. (#22)
-  const toolPreamble = emulateTools ? buildToolPreambleForProto(tools || [], tool_choice) : '';
+  // Lift the caller's environment hints (cwd, git status, platform) into
+  // the proto-level system slot so Cascade's authoritative planner system
+  // prompt can no longer override them with /tmp/windsurf-workspace
+  // priors. See extractCallerEnvironment() above for the parser.
+  const callerEnv = emulateTools ? extractCallerEnvironment(messages) : '';
+  const toolPreamble = emulateTools ? buildToolPreambleForProto(tools || [], tool_choice, callerEnv) : '';
   let cascadeMessages = emulateTools
     ? normalizeMessagesForCascade(messages, tools)
     : [...messages];
