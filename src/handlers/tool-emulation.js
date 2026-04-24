@@ -147,7 +147,37 @@ export function buildToolPreambleForProto(tools, toolChoice) {
 }
 
 function safeParseJson(s) {
-  try { return JSON.parse(s); } catch { return null; }
+  if (typeof s !== 'string') return null;
+  // Fast path
+  try { return JSON.parse(s); } catch { /* fall through */ }
+  // Lenient path — small models sometimes tack on a trailing `}`/`]` or
+  // wrap the block in stray whitespace / code fences / BOM. Scan from the
+  // first `{` or `[` and grab the first balanced block that parses. Seen
+  // in the wild with claude-4.5-haiku emitting
+  //   <tool_call>{"name":"read_file","arguments":{"path":"x"}}}</tool_call>
+  // (note the triple `}`), which previously left the <tool_call> literal
+  // in the response verbatim and broke client tool dispatch.
+  const t = s.trim();
+  const start = t.search(/[\[{]/);
+  if (start < 0) return null;
+  const open = t[start];
+  const close = open === '{' ? '}' : ']';
+  let depth = 0, inStr = false, esc = false;
+  for (let i = start; i < t.length; i++) {
+    const c = t[i];
+    if (esc) { esc = false; continue; }
+    if (c === '\\' && inStr) { esc = true; continue; }
+    if (c === '"') { inStr = !inStr; continue; }
+    if (inStr) continue;
+    if (c === open) depth++;
+    else if (c === close) {
+      depth--;
+      if (depth === 0) {
+        try { return JSON.parse(t.slice(start, i + 1)); } catch { return null; }
+      }
+    }
+  }
+  return null;
 }
 
 /**
