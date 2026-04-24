@@ -176,15 +176,35 @@ export function extractCallerEnvironment(messages) {
   const seen = new Set();
   const out = [];
 
-  // Patterns are anchored to start-of-line so they won't false-positive
-  // on body text that mentions e.g. "the working directory in the docs".
-  // Allowed key forms cover Claude Code's `<env>` block, OpenAI Codex'
-  // `<system-reminder>`, and the loose `cwd:` form some agents emit.
+  // Match the cwd phrasing every Anthropic-format client we have seen in
+  // the wild emits, while staying narrow enough that prose mentions like
+  // "the working directory in the docs" don't trip it. Two formats matter:
+  //
+  //   (a) Canonical `<env>` key/value block (older Claude Code, opencode,
+  //       Cline): `Working directory: /path` on its own line. Must allow
+  //       a leading `<env>` tag, optional `-`/`*` bullet prefix, and `:`
+  //       or `=` separator.
+  //
+  //   (b) Claude Code 2.1+ prose system prompt: `…and the current working
+  //       directory is /path.`  No newline anchor, no separator, the path
+  //       just trails the phrase. (Confirmed via the env-NOT-lifted probe
+  //       diagnostic against Claude Code v2.1.114.)
+  //
+  // The capture group is locked to `[/~]…` so we only grab actual-looking
+  // paths — "the working directory you choose" or similar abstract prose
+  // never has a `/` or `~` in the captured slot and is rejected.
+  const PATH_TAIL = `[\\/~][^\\s\`'"<>\\n.,;)]+`;
   const PATTERNS = [
-    ['cwd', /(?:^|\n)\s*(?:Working directory|cwd|<cwd>)\s*[:=]\s*([^\n<]+)/i, (v) => `- Working directory: ${v}`],
-    ['git', /(?:^|\n)\s*Is directory a git repo\s*[:=]\s*([^\n<]+)/i, (v) => `- Is the directory a git repo: ${v}`],
-    ['platform', /(?:^|\n)\s*Platform\s*[:=]\s*([^\n<]+)/i, (v) => `- Platform: ${v}`],
-    ['os', /(?:^|\n)\s*OS Version\s*[:=]\s*([^\n<]+)/i, (v) => `- OS version: ${v}`],
+    ['cwd', new RegExp(
+      // Form (a): line-anchored key/value
+      `(?:^|\\n)\\s*(?:[-*]\\s+)?(?:Working directory|cwd|<cwd>)\\s*[:=]\\s*\`?(${PATH_TAIL})\`?` +
+      // Form (b): prose "current working directory is /path"
+      `|(?:current\\s+working\\s+directory(?:\\s+is)?)\\s*[:=]?\\s*\`?(${PATH_TAIL})\`?`,
+      'i'
+    ), (v) => `- Working directory: ${v}`],
+    ['git', /(?:^|\n)\s*(?:[-*]\s+)?Is directory a git repo\s*[:=]\s*([^\n<]+)/i, (v) => `- Is the directory a git repo: ${v}`],
+    ['platform', /(?:^|\n)\s*(?:[-*]\s+)?Platform\s*[:=]\s*([^\n<]+)/i, (v) => `- Platform: ${v}`],
+    ['os', /(?:^|\n)\s*(?:[-*]\s+)?OS Version\s*[:=]\s*([^\n<]+)/i, (v) => `- OS version: ${v}`],
   ];
 
   for (const m of messages) {
@@ -199,7 +219,9 @@ export function extractCallerEnvironment(messages) {
       if (seen.has(key)) continue;
       const match = content.match(re);
       if (match) {
-        const value = match[1].trim();
+        // The cwd pattern has two alternative capture groups (one per
+        // accepted form); the others have one. Pick the first non-empty.
+        const value = (match[1] || match[2] || '').trim();
         // Reject obvious garbage (empty after trim, control chars, our own
         // redaction marker leaking back in).
         if (!value || /[\x00-\x1f]/.test(value) || value === '…') continue;
@@ -405,6 +427,29 @@ export async function handleChatCompletions(body) {
   // priors. See extractCallerEnvironment() above for the parser.
   const callerEnv = emulateTools ? extractCallerEnvironment(messages) : '';
   const toolPreamble = emulateTools ? buildToolPreambleForProto(tools || [], tool_choice, callerEnv) : '';
+  // Diagnostic: surface whether environment lifting actually fired so a real
+  // request log immediately tells us if Claude Code 2.x changed `<env>` block
+  // wording, or if the extraction guard rejected a valid hint. Cheap to log,
+  // and the alternative is a 200-char Probe head that hides the env block.
+  if (emulateTools) {
+    if (callerEnv) {
+      const compact = callerEnv.replace(/\s+/g, ' ').slice(0, 200);
+      log.info(`Chat[${reqId}]: env lifted into tool_calling_section: ${compact}`);
+    } else {
+      // Hunt for env-shaped substrings so we can see WHY the extractor
+      // missed (e.g. Claude Code put cwd in a freeform paragraph instead
+      // of the canonical `Working directory: …` line).
+      let probe = '';
+      for (const m of (messages || [])) {
+        const c = typeof m?.content === 'string' ? m.content
+          : Array.isArray(m?.content) ? m.content.filter(p => p?.type === 'text').map(p => p.text || '').join('\n')
+          : '';
+        const hit = c.match(/[^.\n]{0,40}(?:working directory|cwd|<env>|<cwd>)[^.\n]{0,80}/i);
+        if (hit) { probe = hit[0].replace(/\s+/g, ' ').slice(0, 160); break; }
+      }
+      log.info(`Chat[${reqId}]: env NOT lifted (extractor returned empty)${probe ? '; nearest env-shaped substring in messages: ' + probe : '; no env-shaped substring found in any message'}`);
+    }
+  }
   let cascadeMessages = emulateTools
     ? normalizeMessagesForCascade(messages, tools)
     : [...messages];

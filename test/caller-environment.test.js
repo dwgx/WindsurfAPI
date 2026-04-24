@@ -61,10 +61,35 @@ describe('extractCallerEnvironment', () => {
     assert.equal(extractCallerEnvironment(messages), '');
   });
 
-  it('does not match prose mentions of "working directory" inside paragraphs', () => {
-    // Anchored to start-of-line so embedded prose stays unmatched.
+  it('lifts cwd from Claude Code 2.1+ prose form (no key/value separator)', () => {
+    // Real Claude Code v2.1.114 system prompt embeds cwd in prose, e.g.:
+    //   "You are an interactive agent that helps users with software
+    //    engineering tasks and the current working directory is /Users/.../proj."
+    // The line-anchored key/value form does not match; we fall back to a
+    // looser "current working directory is /path" pattern that requires the
+    // captured slot to actually look like a path (`[/~]…`).
     const messages = [
-      { role: 'user', content: 'Note: the working directory in the docs is shown as /tmp.' },
+      { role: 'system', content: 'You are an interactive agent that helps users with software engineering tasks and the current working directory is /Users/jaxyu/IdeaProjects/flux-panel. Match the user\'s language.' },
+      { role: 'user', content: 'check the project' },
+    ];
+    const result = extractCallerEnvironment(messages);
+    assert.match(result, /- Working directory: \/Users\/jaxyu\/IdeaProjects\/flux-panel/);
+  });
+
+  it('lifts cwd from prose form with backticks around the path', () => {
+    const messages = [
+      { role: 'system', content: 'The current working directory is `/Users/dev/proj`.' },
+    ];
+    assert.match(extractCallerEnvironment(messages), /- Working directory: \/Users\/dev\/proj/);
+  });
+
+  it('does not match abstract prose without an actual path', () => {
+    // "the working directory you choose" / "the working directory in the
+    // docs" never has a `/` or `~` in the captured slot, so the path-tail
+    // guard rejects it.
+    const messages = [
+      { role: 'user', content: 'Note: the working directory you choose is up to you.' },
+      { role: 'user', content: 'See the working directory in the docs.' },
     ];
     assert.equal(extractCallerEnvironment(messages), '');
   });
