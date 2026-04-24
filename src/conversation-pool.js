@@ -32,7 +32,11 @@ function positiveIntEnv(name, fallback) {
 const POOL_TTL_MS = positiveIntEnv('CASCADE_POOL_TTL_MS', 30 * 60 * 1000);
 const POOL_MAX = 500;
 
-// fingerprint -> { cascadeId, sessionId, lsPort, apiKey, createdAt, lastAccess }
+// fingerprint -> {
+//   cascadeId, sessionId, lsPort, apiKey,
+//   stepOffset, generatorOffset,
+//   createdAt, lastAccess
+// }
 const _pool = new Map();
 
 const stats = { hits: 0, misses: 0, stores: 0, evictions: 0, expired: 0 };
@@ -181,6 +185,8 @@ export function checkin(fingerprint, entry) {
     sessionId: entry.sessionId,
     lsPort: entry.lsPort,
     apiKey: entry.apiKey,
+    stepOffset: Number.isFinite(entry.stepOffset) ? entry.stepOffset : 0,
+    generatorOffset: Number.isFinite(entry.generatorOffset) ? entry.generatorOffset : 0,
     createdAt: entry.createdAt || now,
     lastAccess: now,
   });

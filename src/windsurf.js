@@ -573,8 +573,12 @@ export function buildGetGeneratorMetadataRequest(cascadeId, offset = 0) {
  * }
  *
  * Returns null if nothing reported; otherwise an aggregated
- * {inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens} summed
- * across every generator invocation (multi-model trajectories sum).
+ * {inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens, entryCount}
+ * summed across every generator invocation (multi-model trajectories sum).
+ *
+ * `entryCount` is the number of generator-metadata records returned by this
+ * response. On resumed cascades we use it as the next offset so prior-turn
+ * usage is not counted again.
  */
 export function parseGeneratorMetadata(buf) {
   const fields = parseFields(buf);
@@ -609,7 +613,13 @@ export function parseGeneratorMetadata(buf) {
     }
   }
   if (!found) return null;
-  return { inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens };
+  return {
+    inputTokens,
+    outputTokens,
+    cacheReadTokens,
+    cacheWriteTokens,
+    entryCount: metaEntries.length,
+  };
 }
 
 // ─── Cascade response parsers ──────────────────────────────
