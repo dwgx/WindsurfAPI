@@ -743,6 +743,19 @@ export class WindsurfClient {
       } else {
         log.info('Cascade done', summary);
       }
+      // When the polling loop times out (max_wait) instead of seeing a
+      // clean idle_done, the model has been generating tokens continuously
+      // for ~3 minutes without ever yielding a stop signal. Knowing what
+      // those tokens look like is the only way to diagnose whether it's a
+      // generation loop, a tool-call format the parser is rejecting, or
+      // mid-thought truncation. Dump head + tail of the accumulated text
+      // (capped) so a single log line shows the symptom shape.
+      if (endReason === 'max_wait' && totalYielded > 0) {
+        const accum = chunks.map(c => c.text || '').join('');
+        const head = accum.slice(0, 400).replace(/\s+/g, ' ');
+        const tail = accum.length > 800 ? accum.slice(-400).replace(/\s+/g, ' ') : '';
+        log.warn(`Cascade max_wait dump: head="${head}"${tail ? ` ... tail="${tail}"` : ''}`);
+      }
 
       onEnd?.(chunks);
 
