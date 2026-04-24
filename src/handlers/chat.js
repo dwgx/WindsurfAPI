@@ -232,6 +232,19 @@ export function extractCallerEnvironment(messages) {
     if (seen.size === PATTERNS.length) break;
   }
 
+  // Only emit an environment block if we actually have the cwd. Platform /
+  // OS / git status without cwd are useless for the original goal (tell
+  // the model where to run tools) AND adding them anyway makes the
+  // tool_calling_section preamble look like a system prompt with no
+  // real signal — which trips Opus 4.7's injection guard, observed live
+  // when Claude Code v2.1.114 (which does NOT include cwd in its system
+  // prompt) caused us to emit an env block containing only Platform +
+  // OS Version, and Opus refused with "the message I received is a
+  // system prompt for Claude Code along with truncated tool output".
+  // Sticking to the rule "no cwd → no block" both removes the noise and
+  // lets the model learn cwd via its own `pwd` tool call (which already
+  // works on every Anthropic-format client we have tested).
+  if (!seen.has('cwd')) return '';
   return out.join('\n');
 }
 
