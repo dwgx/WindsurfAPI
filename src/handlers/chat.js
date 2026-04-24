@@ -295,7 +295,15 @@ export async function handleChatCompletions(body) {
     effectiveModelKey = modelKey + '-thinking';
   }
   const modelInfo = getModelInfo(effectiveModelKey) || getModelInfo(modelKey);
-  const displayModel = modelInfo?.name || reqModel || config.defaultModel;
+  // Return the user's original model name in response.model / response headers
+  // so external test harnesses (e.g. hvoy.ai "model signature" check) see
+  // exactly what they sent, not a Windsurf-internal alias like
+  // `claude-opus-4-7-medium`. Fall back to the canonical name if the request
+  // omitted model. Identity-prompt injection uses `identityModelName` to
+  // pick a name the model itself recognises (strips the `-medium`/`-low`/
+  // `-high` reasoning-effort suffix Windsurf tags on).
+  const displayModel = reqModel || modelInfo?.name || config.defaultModel;
+  const identityModelName = (modelInfo?.name || displayModel).replace(/-(medium|low|high|mini)$/, '');
   const modelEnum = modelInfo?.enumValue || 0;
   const modelUid = modelInfo?.modelUid || null;
   // Cascade requires either a valid modelUid (string) or a recognized modelEnum.
@@ -339,7 +347,7 @@ export async function handleChatCompletions(body) {
   // reasoning models like opus-4-7. (#22)
   const clientHasSystem = Array.isArray(messages) && messages.some(m => m?.role === 'system');
   if (isExperimentalEnabled('modelIdentityPrompt') && modelInfo?.provider && !clientHasSystem) {
-    const identityText = buildIdentitySystemMessage(displayModel, modelInfo.provider);
+    const identityText = buildIdentitySystemMessage(identityModelName, modelInfo.provider);
     if (identityText) {
       const sysMsg = { role: 'system', content: identityText };
       cascadeMessages = [sysMsg, ...cascadeMessages];
