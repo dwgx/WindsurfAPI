@@ -243,20 +243,33 @@ export function normalizeMessagesForCascade(messages, tools) {
     out.push(m);
   }
 
-  // Inject the preamble into the LAST user message (not as a separate system
-  // block). Cascade LS has a strong baked-in system prompt that overpowers
-  // additional system messages — Claude will respond "those aren't my tools"
-  // if we put the tool schema in a system slot. Wrapping the user turn with
-  // [context] ... [end context] + original question treats the tool instructions
-  // as part of the current request, which Claude reliably follows.
+  // Inject the preamble into the LAST user message that carries an actual
+  // user query — NOT a synthetic <tool_result> wrapper. The proto-level
+  // tool_calling_section / additional_instructions_section already carry
+  // the authoritative tool protocol; the user-message fallback only exists
+  // to bootstrap models that ignore the proto override on the very first
+  // turn. Re-injecting it on every later turn (where the last user message
+  // is a tool_result) makes Opus see a "Tools available this turn: …"
+  // banner immediately before a tool_result block — which it reliably
+  // pattern-matches as conversation truncation / prompt injection and
+  // refuses to continue ("the conversation got mixed up — fragments of
+  // tool output without a clear request"). Live-confirmed against Claude
+  // Code v2.1.114 / Opus 4.7: by turn ~22 the model would emit 40KB+ of
+  // confused prose with zero tool_calls and hit max_wait. Skipping the
+  // preamble on tool_result turns lets Opus stay in tool-using mode for
+  // the full conversation, matching native-Anthropic-API behaviour.
   const preamble = buildToolPreamble(tools);
   if (preamble) {
     for (let i = out.length - 1; i >= 0; i--) {
-      if (out[i].role === 'user') {
-        const cur = typeof out[i].content === 'string' ? out[i].content : JSON.stringify(out[i].content ?? '');
-        out[i] = { ...out[i], content: preamble + '\n\n' + cur };
-        break;
-      }
+      if (out[i].role !== 'user') continue;
+      const cur = typeof out[i].content === 'string' ? out[i].content : JSON.stringify(out[i].content ?? '');
+      // Skip synthetic tool_result-only turns; they are not a place to
+      // re-introduce tools. (A user turn that happens to MENTION the
+      // marker but also has real text is fine — only pure tool_result
+      // wrappers are skipped.)
+      if (/^\s*<tool_result\b/.test(cur)) break;
+      out[i] = { ...out[i], content: preamble + '\n\n' + cur };
+      break;
     }
   }
 

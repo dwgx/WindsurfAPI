@@ -151,3 +151,75 @@ describe('buildToolPreamble (injection-guard safety)', () => {
     assert.equal(buildToolPreamble([{ type: 'function' }]), '');
   });
 });
+
+describe('normalizeMessagesForCascade (preamble placement regression)', () => {
+  // Live-confirmed bug against Claude Code v2.1.114 / Opus 4.7: prepending
+  // the "Tools available this turn: …" banner to the LAST user message at
+  // every turn means that on multi-turn conversations the banner lands
+  // immediately before a synthetic <tool_result> block (because tool_result
+  // turns are rewritten into role:'user'). Opus pattern-matches that shape
+  // as a truncated/injected conversation and refuses to keep using tools,
+  // emitting "the conversation got mixed up — fragments of tool output
+  // without a clear request" and rambling for tens of KB until max_wait.
+  // The fix: only inject the user-message preamble on real user turns,
+  // never on synthetic tool_result turns.
+  const tools = [
+    { type: 'function', function: { name: 'Bash', description: 'Shell.', parameters: { type: 'object' } } },
+  ];
+
+  it('injects preamble on a first-turn real user message', () => {
+    const out = normalizeMessagesForCascade(
+      [{ role: 'user', content: '帮我读一下 README' }],
+      tools,
+    );
+    assert.equal(out.length, 1);
+    assert.ok(out[0].content.startsWith('Tools available this turn:'),
+      `expected preamble prefix, got: ${out[0].content.slice(0, 80)}`);
+    assert.ok(out[0].content.endsWith('帮我读一下 README'));
+  });
+
+  it('does NOT inject preamble when the last user message is a synthetic tool_result', () => {
+    const out = normalizeMessagesForCascade(
+      [
+        { role: 'user', content: '帮我读一下 README' },
+        { role: 'assistant', content: '', tool_calls: [
+          { id: 'call_1', type: 'function', function: { name: 'Bash', arguments: '{"command":"cat README.md"}' } },
+        ] },
+        { role: 'tool', tool_call_id: 'call_1', content: 'README contents…' },
+      ],
+      tools,
+    );
+    // The first user turn must NOT have a preamble (it isn't the LAST user
+    // message); the rewritten tool_result turn must NOT have a preamble
+    // (it's a synthetic wrapper, not a real user message).
+    assert.equal(out[0].role, 'user');
+    assert.ok(!out[0].content.startsWith('Tools available this turn:'),
+      'first-turn user must not be polluted when a tool_result follows');
+    const last = out[out.length - 1];
+    assert.equal(last.role, 'user');
+    assert.ok(last.content.startsWith('<tool_result'),
+      `expected pure tool_result wrapper, got: ${last.content.slice(0, 80)}`);
+    assert.ok(!last.content.includes('Tools available this turn:'),
+      'tool_result turn must not be polluted with the user-message preamble');
+  });
+
+  it('still injects on the latest real user turn even when older turns contain tool_results', () => {
+    const out = normalizeMessagesForCascade(
+      [
+        { role: 'user', content: 'first request' },
+        { role: 'assistant', content: '', tool_calls: [
+          { id: 'call_1', type: 'function', function: { name: 'Bash', arguments: '{"command":"pwd"}' } },
+        ] },
+        { role: 'tool', tool_call_id: 'call_1', content: '/tmp' },
+        { role: 'assistant', content: 'done.' },
+        { role: 'user', content: 'follow-up question' },
+      ],
+      tools,
+    );
+    const last = out[out.length - 1];
+    assert.equal(last.role, 'user');
+    assert.ok(last.content.startsWith('Tools available this turn:'),
+      'latest real user turn must receive the preamble');
+    assert.ok(last.content.endsWith('follow-up question'));
+  });
+});
