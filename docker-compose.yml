@@ -1,8 +1,6 @@
 services:
   windsurf-api:
-    build:
-      context: .
-      dockerfile: Dockerfile
+    image: ghcr.io/dwgx/windsurf-api:latest
     # Remove container_name to allow Compose to scale replicas
     restart: unless-stopped
     init: true
