@@ -2,6 +2,7 @@
  * OpenAI-compatible HTTP server with multi-account management.
  *
  *   POST /v1/chat/completions       — chat completions
+ *   POST /v1/responses              - OpenAI Responses API
  *   GET  /v1/models                 — list models
  *   POST /auth/login                — add account (email+password / token / api_key)
  *   GET  /auth/accounts             — list all accounts
@@ -22,6 +23,7 @@ import {
 } from './auth.js';
 import { handleChatCompletions } from './handlers/chat.js';
 import { handleMessages } from './handlers/messages.js';
+import { handleResponses } from './handlers/responses.js';
 import { handleModels } from './handlers/models.js';
 import { handleDashboardApi } from './dashboard/api.js';
 import { config, log } from './config.js';
@@ -284,6 +286,44 @@ async function route(req, res) {
     return;
   }
 
+  if (path === '/v1/responses' && method === 'POST') {
+    if (!isAuthenticated()) {
+      return json(res, 503, {
+        error: { message: 'No active accounts. POST /auth/login to add accounts.', type: 'auth_error' },
+      });
+    }
+
+    let body;
+    try { body = JSON.parse(await readBody(req)); } catch {
+      return json(res, 400, { error: { message: 'Invalid JSON', type: 'invalid_request' } });
+    }
+    if (body.input == null) {
+      return json(res, 400, { error: { message: 'input is required', type: 'invalid_request' } });
+    }
+
+    const reqStartedAt = Date.now();
+    const result = await handleResponses(body);
+    const processingMs = Date.now() - reqStartedAt;
+    const modelHeaders = {
+      'x-request-id': 'req-' + randomUUID(),
+      'openai-model': body.model || '',
+      'openai-processing-ms': String(processingMs),
+      'openai-version': '2020-10-01',
+      'openai-organization': 'org-windsurf-proxy',
+    };
+    if (result.stream) {
+      res.writeHead(result.status, { 'Access-Control-Allow-Origin': '*', ...modelHeaders, ...result.headers });
+      await result.handler(res);
+    } else {
+      for (const [k, v] of Object.entries(modelHeaders)) res.setHeader(k, v);
+      if (result.headers) {
+        for (const [k, v] of Object.entries(result.headers)) res.setHeader(k, v);
+      }
+      json(res, result.status, result.body);
+    }
+    return;
+  }
+
   // Anthropic Messages API — Claude Code compatibility
   if (path === '/v1/messages' && method === 'POST') {
     if (!isAuthenticated()) {
@@ -353,6 +393,7 @@ export function startServer() {
   server.listen({ port: config.port, host: '0.0.0.0' }, () => {
     log.info(`Server on http://0.0.0.0:${config.port}`);
     log.info('  POST /v1/chat/completions');
+    log.info('  POST /v1/responses');
     log.info('  GET  /v1/models');
     log.info('  POST /auth/login          (add account)');
     log.info('  GET  /auth/accounts       (list accounts)');
