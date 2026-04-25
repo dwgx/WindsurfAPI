@@ -218,6 +218,21 @@ nav .nav-cta:hover{background:var(--coral-deep);color:#fff}
 .panel-icon{width:24px;height:24px;border-radius:5px;display:inline-flex;align-items:center;justify-content:center;background:var(--coral-wash);color:var(--coral-deep);font-family:var(--serif);font-size:.78rem;font-weight:600;flex-shrink:0}
 .panel-head h4{font-family:var(--sans);font-size:.9rem;font-weight:600}
 .panel-card p{font-size:.8rem;color:var(--muted);line-height:1.5}
+.contrib-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(290px,1fr));gap:1rem;margin-top:1.5rem}
+.contrib-card{background:var(--paper);border:1px solid var(--rule);border-radius:10px;padding:1.1rem 1.2rem;transition:all .2s ease;text-decoration:none;color:inherit;display:block}
+.contrib-card:hover{border-color:var(--coral-soft);transform:translateY(-2px);box-shadow:0 8px 20px -8px rgba(26,22,18,.08)}
+.contrib-head{display:flex;align-items:flex-start;gap:.8rem;margin-bottom:.7rem}
+.contrib-avatar{width:48px;height:48px;border-radius:50%;border:1px solid var(--rule);background:var(--coral-wash);object-fit:cover;flex-shrink:0}
+.contrib-meta{min-width:0;flex:1}
+.contrib-name{font-family:var(--sans);font-weight:600;font-size:.95rem;color:var(--ink);display:flex;align-items:center;gap:.45rem;flex-wrap:wrap;line-height:1.3}
+.contrib-prs{font-family:var(--mono,ui-monospace,monospace);font-size:.74rem;color:var(--muted);margin-top:.25rem;letter-spacing:.02em}
+.contrib-weight{display:inline-flex;align-items:center;padding:1px 7px;border-radius:4px;font-family:var(--mono,ui-monospace,monospace);font-size:.68rem;font-weight:700;letter-spacing:.6px;line-height:1.55}
+.contrib-weight-S-plus{background:linear-gradient(135deg,#f3c677,#d97706);color:#3a2806;box-shadow:0 0 0 1px rgba(217,119,6,.25)}
+.contrib-weight-S{background:#c2410c;color:#fff7ed}
+.contrib-weight-A-plus{background:#d97706;color:#fffbeb}
+.contrib-weight-A{background:var(--coral-wash);color:var(--coral-deep);border:1px solid var(--coral-soft)}
+.contrib-weight-B-plus{background:transparent;color:var(--muted);border:1px dashed var(--rule)}
+.contrib-summary{font-size:.82rem;color:var(--muted);line-height:1.65}
 
 /* ── Deploy ── */
 .deploy-tabs{display:flex;gap:.3rem;margin-bottom:1.5rem;border-bottom:1px solid var(--rule);padding-bottom:-1px}
@@ -759,6 +774,111 @@ client = OpenAI(
   </div>
 </section>
 
+<!-- ── Contributors ── -->
+<section class="contributors-section" id="contributors" style="padding:5rem 0">
+  <div class="container">
+    <div class="reveal">
+      <div class="kicker">致謝 · Credits</div>
+      <h2 class="section-title">這些朋友把這個專案<em>撐起來</em>了。</h2>
+      <p class="section-sub">每一條 PR 都附上 root-cause 分析；每一個 root-cause 都對應半夜在 Issues 區罵 Claude 的瞬間。權重按貢獻次數與精準度排，不是按代碼行數。</p>
+    </div>
+
+    <div class="contrib-grid reveal">
+      <a class="contrib-card" href="https://github.com/aict666" target="_blank" rel="noopener">
+        <div class="contrib-head">
+          <img class="contrib-avatar" src="https://github.com/aict666.png?size=128" alt="aict666" loading="lazy" onerror="this.style.visibility='hidden'">
+          <div class="contrib-meta">
+            <div class="contrib-name">@aict666 <span class="contrib-weight contrib-weight-S-plus">S+</span></div>
+            <div class="contrib-prs">PR #44 · #51 · #53 · #54</div>
+          </div>
+        </div>
+        <p class="contrib-summary">四連刀。Opus 4.7 注入守衛繞行重寫、redact 標記血淚迭代到 U+2026 省略號、Pro/Trial tier 被誤降級的 inferTier 補丁、tool preamble 從 1600 字符瘦身到 330。每個 PR 都是 root-cause 直擊。</p>
+      </a>
+
+      <a class="contrib-card" href="https://github.com/baily-zhang" target="_blank" rel="noopener">
+        <div class="contrib-head">
+          <img class="contrib-avatar" src="https://github.com/baily-zhang.png?size=128" alt="baily-zhang" loading="lazy" onerror="this.style.visibility='hidden'">
+          <div class="contrib-meta">
+            <div class="contrib-name">@baily-zhang <span class="contrib-weight contrib-weight-S-plus">S+</span></div>
+            <div class="contrib-prs">PR #36 · #45 · #61</div>
+          </div>
+        </div>
+        <p class="contrib-summary">cascade reuse / fingerprint / trajectory offset 整套機器的實質 maintainer。從修 0% 命中率，到切斷舊 step 重放，到 Opus 4.7 多模態上下文爆炸，三次都在同一條技術線上深耕到底。</p>
+      </a>
+
+      <a class="contrib-card" href="https://github.com/youfak" target="_blank" rel="noopener">
+        <div class="contrib-head">
+          <img class="contrib-avatar" src="https://github.com/youfak.png?size=128" alt="youfak" loading="lazy" onerror="this.style.visibility='hidden'">
+          <div class="contrib-meta">
+            <div class="contrib-name">@youfak <span class="contrib-weight contrib-weight-A-plus">A+</span></div>
+            <div class="contrib-prs">PR #26</div>
+          </div>
+        </div>
+        <p class="contrib-summary">Docker 零依賴適配一整套：Dockerfile / docker-compose.yml / DATA_DIR 持久化 / CRLF pipefail 修復 / LS 重啟兜底。讓這個項目從「裸跑 pm2」邁進「docker compose up」。</p>
+      </a>
+
+      <a class="contrib-card" href="https://github.com/motto1" target="_blank" rel="noopener">
+        <div class="contrib-head">
+          <img class="contrib-avatar" src="https://github.com/motto1.png?size=128" alt="motto1" loading="lazy" onerror="this.style.visibility='hidden'">
+          <div class="contrib-meta">
+            <div class="contrib-name">@motto1 <span class="contrib-weight contrib-weight-A">A</span></div>
+            <div class="contrib-prs">PR #20</div>
+          </div>
+        </div>
+        <p class="contrib-summary">逆向 Windsurf 官網真正使用的 Auth1 登入鏈路 —— 4 步流程還原 + 批量導入 + 剪貼板讀取，補上 Firebase 路徑早已不是主鏈路的缺口。</p>
+      </a>
+
+      <a class="contrib-card" href="https://github.com/smeinecke" target="_blank" rel="noopener">
+        <div class="contrib-head">
+          <img class="contrib-avatar" src="https://github.com/smeinecke.png?size=128" alt="smeinecke" loading="lazy" onerror="this.style.visibility='hidden'">
+          <div class="contrib-meta">
+            <div class="contrib-name">@smeinecke <span class="contrib-weight contrib-weight-A">A</span></div>
+            <div class="contrib-prs">PR #43</div>
+          </div>
+        </div>
+        <p class="contrib-summary">Dashboard 完整 i18n 國際化 —— 14 個 commit 把每處硬編碼中文改成 I18n.t() 調用，再加 check-i18n.js 校驗防漏。從半成品翻譯到真正中英雙語切換。</p>
+      </a>
+
+      <a class="contrib-card" href="https://github.com/abwuge" target="_blank" rel="noopener">
+        <div class="contrib-head">
+          <img class="contrib-avatar" src="https://github.com/abwuge.png?size=128" alt="abwuge" loading="lazy" onerror="this.style.visibility='hidden'">
+          <div class="contrib-meta">
+            <div class="contrib-name">@abwuge <span class="contrib-weight contrib-weight-B-plus">B+</span></div>
+            <div class="contrib-prs">PR #58</div>
+          </div>
+        </div>
+        <p class="contrib-summary">首次貢獻就解了部署死鎖。docker-compose 起來後所有容器持續 Restart 的兩個成因（nginx zone 缺失 + config.js join 漏 import），+3 / -2 surgical 全堵上。</p>
+      </a>
+
+      <a class="contrib-card" href="https://github.com/dd373156" target="_blank" rel="noopener">
+        <div class="contrib-head">
+          <img class="contrib-avatar" src="https://github.com/dd373156.png?size=128" alt="dd373156" loading="lazy" onerror="this.style.visibility='hidden'">
+          <div class="contrib-meta">
+            <div class="contrib-name">@dd373156 <span class="contrib-weight contrib-weight-B-plus">B+</span></div>
+            <div class="contrib-prs">PR #1</div>
+          </div>
+        </div>
+        <p class="contrib-summary">首位外部貢獻者。MODEL_TIER_ACCESS.pro 是模塊載入時的快照，雲端動態合併進來的 claude-opus-4-7-* 永遠進不了 Pro 列表。一行 getter 修。三步 curl 復現寫得教科書級。</p>
+      </a>
+
+      <a class="contrib-card" href="https://github.com/colin1112a" target="_blank" rel="noopener">
+        <div class="contrib-head">
+          <img class="contrib-avatar" src="https://github.com/colin1112a.png?size=128" alt="colin1112a" loading="lazy" onerror="this.style.visibility='hidden'">
+          <div class="contrib-meta">
+            <div class="contrib-name">@colin1112a <span class="contrib-weight contrib-weight-B-plus">B+</span></div>
+            <div class="contrib-prs">PR #13</div>
+          </div>
+        </div>
+        <p class="contrib-summary">早期代碼審查先行者，一個 PR 涵蓋 15 個安全 / 並發 / 資源管理 bug：XSS 轉義、grpc HTTP/2 池、16MB frame 上限、varint BigInt。雖未直接合並，方向都對，後續多項被獨立重做。</p>
+      </a>
+    </div>
+
+    <p class="reveal" style="text-align:center;margin-top:2rem;font-size:.85rem;color:var(--muted)">
+      想加入這份名單？到 <a href="https://github.com/dwgx/WindsurfAPI/issues" target="_blank" rel="noopener" style="color:var(--coral-deep)">Issues</a> 提 bug 或到 <a href="https://github.com/dwgx/WindsurfAPI/pulls" target="_blank" rel="noopener" style="color:var(--coral-deep)">Pull requests</a> 直接動手都歡迎。
+    </p>
+  </div>
+</section>
+
 <!-- ── Footer ── -->
 <footer>
   <div class="container">
@@ -786,7 +906,7 @@ client = OpenAI(
       </div>
     </div>
     <div class="footer-bottom">
-      <span>Contributors: <a href="https://github.com/dd373156">@dd373156</a> · <a href="https://github.com/colin1112a">@colin1112a</a> · <a href="https://github.com/motto1">@motto1</a> · <a href="https://github.com/youfak">@youfak</a></span>
+      <span>Contributors: <a href="https://github.com/aict666">@aict666</a> · <a href="https://github.com/baily-zhang">@baily-zhang</a> · <a href="https://github.com/youfak">@youfak</a> · <a href="https://github.com/motto1">@motto1</a> · <a href="https://github.com/smeinecke">@smeinecke</a> · <a href="https://github.com/abwuge">@abwuge</a> · <a href="https://github.com/dd373156">@dd373156</a> · <a href="https://github.com/colin1112a">@colin1112a</a> · <a href="#contributors" style="opacity:.7">完整名單 ↑</a></span>
       <span>&copy; 2026 dwgx</span>
     </div>
   </div>
