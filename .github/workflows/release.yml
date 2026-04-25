@@ -35,7 +35,8 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
-            type=raw,value=latest
+            # Only tag as latest for stable releases (no pre-release suffix like -rc, -alpha, -beta)
+            type=raw,value=latest,enable=${{ !contains(github.ref_name, '-') }}
             # v2.0.6 -> 2.0.6
             type=semver,pattern={{version}}
             # v2.0.6 -> 2.0
