@@ -208,8 +208,26 @@ function safeParseJson(s) {
  * - Rewrites assistant messages that carry tool_calls so the model sees its
  *   own prior emissions in the canonical <tool_call> format
  */
-export function normalizeMessagesForCascade(messages, tools) {
+function contentTextForPreambleCheck(content) {
+  if (typeof content === 'string') return content;
+  if (!Array.isArray(content)) return JSON.stringify(content ?? '');
+  return content
+    .filter(p => typeof p?.text === 'string')
+    .map(p => p.text)
+    .join('');
+}
+
+function prependPreambleToContent(content, preamble) {
+  if (Array.isArray(content)) {
+    return [{ type: 'text', text: `${preamble}\n\n` }, ...content];
+  }
+  const cur = typeof content === 'string' ? content : JSON.stringify(content ?? '');
+  return `${preamble}\n\n${cur}`;
+}
+
+export function normalizeMessagesForCascade(messages, tools, options = {}) {
   if (!Array.isArray(messages)) return messages;
+  const injectUserPreamble = options.injectUserPreamble !== false;
   const out = [];
 
   for (const m of messages) {
@@ -259,16 +277,16 @@ export function normalizeMessagesForCascade(messages, tools) {
   // preamble on tool_result turns lets Opus stay in tool-using mode for
   // the full conversation, matching native-Anthropic-API behaviour.
   const preamble = buildToolPreamble(tools);
-  if (preamble) {
+  if (preamble && injectUserPreamble) {
     for (let i = out.length - 1; i >= 0; i--) {
       if (out[i].role !== 'user') continue;
-      const cur = typeof out[i].content === 'string' ? out[i].content : JSON.stringify(out[i].content ?? '');
+      const cur = contentTextForPreambleCheck(out[i].content);
       // Skip synthetic tool_result-only turns; they are not a place to
       // re-introduce tools. (A user turn that happens to MENTION the
       // marker but also has real text is fine — only pure tool_result
       // wrappers are skipped.)
       if (/^\s*<tool_result\b/.test(cur)) break;
-      out[i] = { ...out[i], content: preamble + '\n\n' + cur };
+      out[i] = { ...out[i], content: prependPreambleToContent(out[i].content, preamble) };
       break;
     }
   }

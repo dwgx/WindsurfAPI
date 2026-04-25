@@ -222,4 +222,37 @@ describe('normalizeMessagesForCascade (preamble placement regression)', () => {
       'latest real user turn must receive the preamble');
     assert.ok(last.content.endsWith('follow-up question'));
   });
+
+  it('preserves multimodal user content when adding the fallback preamble', () => {
+    const imageData = 'a'.repeat(200);
+    const out = normalizeMessagesForCascade(
+      [{ role: 'user', content: [
+        { type: 'image', source: { type: 'base64', media_type: 'image/png', data: imageData } },
+        { type: 'text', text: '解释这张图' },
+      ] }],
+      tools,
+    );
+    assert.equal(out.length, 1);
+    assert.ok(Array.isArray(out[0].content), 'multimodal content must stay as content blocks');
+    assert.equal(out[0].content[0].type, 'text');
+    assert.ok(out[0].content[0].text.startsWith('Tools available this turn:'));
+    assert.equal(out[0].content[1].type, 'image');
+    const injectedText = out[0].content
+      .filter(p => p?.type === 'text')
+      .map(p => p.text)
+      .join('\n');
+    assert.ok(!injectedText.includes(imageData), 'base64 must not be copied into text blocks');
+  });
+
+  it('can disable user-message fallback for Opus 4.7 multimodal turns', () => {
+    const image = { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'b'.repeat(200) } };
+    const out = normalizeMessagesForCascade(
+      [{ role: 'user', content: [image, { type: 'text', text: 'what is this?' }] }],
+      tools,
+      { injectUserPreamble: false },
+    );
+    assert.ok(Array.isArray(out[0].content));
+    assert.deepEqual(out[0].content[0], image);
+    assert.equal(out[0].content[1].text, 'what is this?');
+  });
 });

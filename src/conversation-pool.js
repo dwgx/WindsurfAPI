@@ -93,6 +93,19 @@ function stripMetaTags(s) {
   return stripped;
 }
 
+function canonicalContentBlock(part) {
+  if (typeof part?.text === 'string') return part.text;
+  const type = String(part?.type || '').toLowerCase();
+  if (type === 'image' || type === 'image_url' || type === 'input_image'
+    || type === 'document' || type === 'file' || type === 'input_file'
+    || part?.source?.type === 'base64' || part?.image_url) {
+    return `[${type || 'binary'} omitted]`;
+  }
+  const raw = JSON.stringify(part ?? '');
+  if (/"data"\s*:\s*"[A-Za-z0-9+/=]{128,}"/.test(raw)) return '[binary omitted]';
+  return raw;
+}
+
 /**
  * Canonicalise a message list for hashing. Strips anything that could drift
  * between turns (id, name, tool metadata, client meta-tags) and normalises
@@ -102,7 +115,7 @@ function canonicalise(messages) {
   return messages.map(m => {
     let raw;
     if (typeof m.content === 'string') raw = m.content;
-    else if (Array.isArray(m.content)) raw = m.content.map(p => (typeof p?.text === 'string' ? p.text : JSON.stringify(p))).join('');
+    else if (Array.isArray(m.content)) raw = m.content.map(p => canonicalContentBlock(p)).join('');
     else raw = JSON.stringify(m.content ?? '');
     return { role: m.role, content: stripMetaTags(raw) };
   });

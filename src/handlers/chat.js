@@ -103,14 +103,39 @@ const CASCADE_REUSE_STRICT_RETRY_MS = (() => {
   const n = parseInt(process.env.CASCADE_REUSE_STRICT_RETRY_MS || '', 10);
   return Number.isFinite(n) && n > 0 ? n : 60_000;
 })();
+const OPUS47_TOOL_EMULATED_REUSE = process.env.OPUS47_TOOL_EMULATED_REUSE !== '0';
+const OPUS47_STRICT_REUSE = process.env.OPUS47_STRICT_REUSE !== '0';
 
-// Only non-tool Cascade turns are eligible for cascade_id reuse. Tool-
-// emulated requests (Claude Code / Cline / Cursor with OpenAI tools[])
-// carry <tool_call>/<tool_result> bodies that change every turn, so the
-// fingerprint almost never matches anyway — bypassing the pool avoids
-// wasted checkout/checkin round-trips and keeps the pool clean. (PR #50)
-export function shouldUseCascadeReuse({ useCascade, emulateTools }) {
-  return !!useCascade && !emulateTools;
+function isOpus47Model(modelKey = '') {
+  return /^claude-opus-4-7(?:-|$)/i.test(String(modelKey || ''));
+}
+
+// Tool-emulated requests are normally kept out of cascade_id reuse because
+// <tool_call>/<tool_result> bodies drift across turns. Opus 4.7 + Claude Code
+// is the exception: replaying the full prompt/tools/image history is worse
+// than preserving the exact upstream cascade, so enable a narrow local path.
+export function shouldUseCascadeReuse({ useCascade, emulateTools, modelKey, allowToolReuse = OPUS47_TOOL_EMULATED_REUSE }) {
+  if (!useCascade) return false;
+  if (!emulateTools) return true;
+  return !!allowToolReuse && isOpus47Model(modelKey);
+}
+
+function shouldForceCascadeReuse({ emulateTools, modelKey }) {
+  return !!emulateTools && OPUS47_TOOL_EMULATED_REUSE && isOpus47Model(modelKey);
+}
+
+export function shouldUseStrictCascadeReuse({ emulateTools, modelKey, strict = CASCADE_REUSE_STRICT, allowOpus47Strict = OPUS47_STRICT_REUSE }) {
+  return !!strict || (!!emulateTools && !!allowOpus47Strict && isOpus47Model(modelKey));
+}
+
+function hasMultimodalContent(messages) {
+  if (!Array.isArray(messages)) return false;
+  return messages.some(m => Array.isArray(m?.content) && m.content.some(p => {
+    const type = String(p?.type || '').toLowerCase();
+    return type === 'image' || type === 'image_url' || type === 'input_image'
+      || type === 'document' || type === 'file' || type === 'input_file'
+      || p?.source?.type === 'base64' || p?.image_url;
+  }));
 }
 
 function strictReuseRetryMs(availability) {
@@ -530,8 +555,12 @@ export async function handleChatCompletions(body) {
       log.info(`Chat[${reqId}]: env NOT lifted (extractor returned empty)${probe ? '; nearest env-shaped substring in messages: ' + probe : '; no env-shaped substring found in any message'}`);
     }
   }
+  const disableUserToolFallback = emulateTools && isOpus47Model(modelKey) && hasMultimodalContent(messages);
+  if (disableUserToolFallback) {
+    log.info(`Chat[${reqId}]: disabled user-message tool fallback for Opus 4.7 multimodal turn`);
+  }
   let cascadeMessages = emulateTools
-    ? normalizeMessagesForCascade(messages, tools)
+    ? normalizeMessagesForCascade(messages, tools, { injectUserPreamble: !disableUserToolFallback })
     : [...messages];
 
   // Note: previous versions injected (a) a CJK language-following hint into
@@ -622,7 +651,9 @@ export async function handleChatCompletions(body) {
   // instead of replaying the whole history.
   //
   // Conversation reuse lets Cascade keep server-side context across turns.
-  const reuseEnabled = shouldUseCascadeReuse({ useCascade, emulateTools }) && isExperimentalEnabled('cascadeConversationReuse');
+  const reuseEnabled = shouldUseCascadeReuse({ useCascade, emulateTools, modelKey })
+    && (isExperimentalEnabled('cascadeConversationReuse') || shouldForceCascadeReuse({ emulateTools, modelKey }));
+  const strictReuse = shouldUseStrictCascadeReuse({ emulateTools, modelKey });
   const fpBefore = reuseEnabled ? fingerprintBefore(messages, modelKey) : null;
   let reuseEntry = reuseEnabled ? poolCheckout(fpBefore) : null;
   let checkedOutReuseEntry = reuseEntry;
@@ -657,7 +688,7 @@ export async function handleChatCompletions(body) {
         }
         if (!acct) {
           log.info(`Chat[${reqId}]: reuse MISS — owning account not available after 5s wait`);
-          if (CASCADE_REUSE_STRICT && checkedOutReuseEntry && fpBefore) {
+          if (strictReuse && checkedOutReuseEntry && fpBefore) {
             const availability = getAccountAvailability(checkedOutReuseEntry.apiKey, modelKey);
             const retryAfterMs = strictReuseRetryMs(availability);
             poolCheckin(fpBefore, checkedOutReuseEntry);
@@ -694,7 +725,7 @@ export async function handleChatCompletions(body) {
         if (!rl.hasCapacity) {
           log.warn(`Preflight: ${acct.email} has no capacity (remaining=${rl.messagesRemaining}), skipping`);
           markRateLimited(acct.apiKey, 5 * 60 * 1000, modelKey);
-          if (CASCADE_REUSE_STRICT && checkedOutReuseEntry && fpBefore && checkedOutReuseEntry.apiKey === acct.apiKey) {
+          if (strictReuse && checkedOutReuseEntry && fpBefore && checkedOutReuseEntry.apiKey === acct.apiKey) {
             const availability = getAccountAvailability(acct.apiKey, modelKey);
             const retryAfterMs = strictReuseRetryMs(availability);
             poolCheckin(fpBefore, checkedOutReuseEntry);
@@ -747,7 +778,7 @@ export async function handleChatCompletions(body) {
     const errType = result.body?.error?.type;
     // Rate limit: this account is done for this model, try the next one
     if (errType === 'rate_limit_exceeded') {
-      if (CASCADE_REUSE_STRICT && checkedOutReuseEntry && fpBefore && checkedOutReuseEntry.apiKey === acct.apiKey) {
+      if (strictReuse && checkedOutReuseEntry && fpBefore && checkedOutReuseEntry.apiKey === acct.apiKey) {
         const availability = getAccountAvailability(acct.apiKey, modelKey);
         const retryAfterMs = strictReuseRetryMs(availability);
         poolCheckin(fpBefore, checkedOutReuseEntry);
@@ -883,7 +914,7 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
 
     // Check the cascade back into the pool under the *post-turn* fingerprint
     // so the next request in the same conversation can resume it.
-    if (poolCtx && cascadeMeta?.cascadeId && allText) {
+    if (poolCtx && cascadeMeta?.cascadeId && (allText || toolCalls.length)) {
       const fpAfter = fingerprintAfter(messages, modelKey);
       poolCheckin(fpAfter, {
         cascadeId: cascadeMeta.cascadeId,
@@ -1071,10 +1102,12 @@ function streamResponse(id, created, model, modelKey, messages, cascadeMessages,
       let accText = '';
       let accThinking = '';
 
-      // Cascade conversation pool (experimental, stream path) — bypassed in
-      // tool-emulation mode because the fingerprint can't collapse turns
-      // whose bodies carry <tool_call>/<tool_result> markup.
-      const reuseEnabled = shouldUseCascadeReuse({ useCascade, emulateTools }) && isExperimentalEnabled('cascadeConversationReuse');
+      // Cascade conversation pool (stream path). Opus 4.7 tool-emulated
+      // requests opt in even when the global experiment toggle is off, because
+      // replaying full Claude Code history is what triggers context blowups.
+      const reuseEnabled = shouldUseCascadeReuse({ useCascade, emulateTools, modelKey })
+        && (isExperimentalEnabled('cascadeConversationReuse') || shouldForceCascadeReuse({ emulateTools, modelKey }));
+      const strictReuse = shouldUseStrictCascadeReuse({ emulateTools, modelKey });
       const fpBefore = reuseEnabled ? fingerprintBefore(messages, modelKey) : null;
       let reuseEntry = reuseEnabled ? poolCheckout(fpBefore) : null;
       let checkedOutReuseEntry = reuseEntry;
@@ -1188,7 +1221,7 @@ function streamResponse(id, created, model, modelKey, messages, cascadeMessages,
               }
               if (!acct) {
                 log.info(`Chat[${reqId}]: reuse MISS — owning account not available after 5s wait`);
-                if (CASCADE_REUSE_STRICT && checkedOutReuseEntry && fpBefore) {
+                if (strictReuse && checkedOutReuseEntry && fpBefore) {
                   const availability = getAccountAvailability(checkedOutReuseEntry.apiKey, modelKey);
                   const retryAfterMs = strictReuseRetryMs(availability);
                   lastErr = new Error(strictReuseMessage(model, retryAfterMs, availability.reason));
@@ -1215,7 +1248,7 @@ function streamResponse(id, created, model, modelKey, messages, cascadeMessages,
               if (!rl.hasCapacity) {
                 log.warn(`Preflight: ${acct.email} has no capacity (remaining=${rl.messagesRemaining}), skipping`);
                 markRateLimited(acct.apiKey, 5 * 60 * 1000, modelKey);
-                if (CASCADE_REUSE_STRICT && checkedOutReuseEntry && fpBefore && checkedOutReuseEntry.apiKey === acct.apiKey) {
+                if (strictReuse && checkedOutReuseEntry && fpBefore && checkedOutReuseEntry.apiKey === acct.apiKey) {
                   const availability = getAccountAvailability(acct.apiKey, modelKey);
                   const retryAfterMs = strictReuseRetryMs(availability);
                   lastErr = new Error(strictReuseMessage(model, retryAfterMs, availability.reason));
@@ -1272,7 +1305,7 @@ function streamResponse(id, created, model, modelKey, messages, cascadeMessages,
             emitContent(pathStreamText.flush());
             emitThinking(pathStreamThinking.flush());
             // Pool check-in on success (cascade only)
-            if (reuseEnabled && cascadeResult?.cascadeId && accText) {
+            if (reuseEnabled && cascadeResult?.cascadeId && (accText || collectedToolCalls.length)) {
               const fpAfter = fingerprintAfter(messages, modelKey);
               poolCheckin(fpAfter, {
                 cascadeId: cascadeResult.cascadeId,
@@ -1333,7 +1366,7 @@ function streamResponse(id, created, model, modelKey, messages, cascadeMessages,
             if (err.isModelError && !isRateLimit && !isInternal) {
               updateCapability(currentApiKey, modelKey, false, 'model_error');
             }
-            if (isRateLimit && CASCADE_REUSE_STRICT && checkedOutReuseEntry && fpBefore && checkedOutReuseEntry.apiKey === currentApiKey) {
+            if (isRateLimit && strictReuse && checkedOutReuseEntry && fpBefore && checkedOutReuseEntry.apiKey === currentApiKey) {
               log.info(`Chat[${reqId}]: strict reuse preserved cascade after rate limit`);
               break;
             }
