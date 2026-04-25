@@ -4731,7 +4731,7 @@ const App = {
       weightLabel: '第四次出手 · 三件事打包修',
       mergedAt: '2026-04-25',
       title: 'fix: bring Claude Code tool-call flow back to Anthropic-equivalent behaviour',
-      summary: '一个 PR 解了三个独立 regression。① tool preamble 从 1600 字符瘦身到 330 字符 —— 老版本的 ### Tool / parameters schema: / ```json {…} 形态正是 Claude Code 自家 system prompt 的指纹，出现在 user 槽位时 Opus 4.7 会判 "pasted system prompt" 拒答。② redact 标记升到第 6 代单字符 U+2026 省略号 `…`：第 5 代 redacted internal path 仍被 Opus 塞进 cd redacted internal path && git ... 浪费 2-3 turn；新 marker 0 ASCII word char + 0 shell 元字符 + 训练数据里没 cd … 当真路径的样本，模型不会再当参数用。③ neutralizeCascadeIdentity 加 5 个新 pattern（Cascade is an? AI assistant / As Cascade / Codeium\\'s Cascade / built by Codeium / Cascade\\'s workspace），漏网的 Cascade 自称口吻全部封死。回归套装含 banned-shape regex 锁死未来不会再倒退到含 ASCII 字符的 marker。',
+      summary: '一个 PR 解了三个独立 regression。① tool preamble 从 1600 字符瘦身到 330 字符 —— 老版本的 ### Tool / parameters schema: / ```json {…} 形态正是 Claude Code 自家 system prompt 的指纹，出现在 user 槽位时 Opus 4.7 会判 "pasted system prompt" 拒答。② redact 标记升到第 6 代单字符 U+2026 省略号 `…`：第 5 代 redacted internal path 仍被 Opus 塞进 cd redacted internal path && git ... 浪费 2-3 turn；新 marker 0 ASCII word char + 0 shell 元字符 + 训练数据里没 cd … 当真路径的样本，模型不会再当参数用。③ neutralizeCascadeIdentity 加 5 个新 pattern（Cascade is an? AI assistant / As Cascade / Codeium\'s Cascade / built by Codeium / Cascade\'s workspace），漏网的 Cascade 自称口吻全部封死。回归套装含 banned-shape regex 锁死未来不会再倒退到含 ASCII 字符的 marker。',
     },
     {
       login: 'aict666',
