@@ -12,7 +12,7 @@ import { existsSync, mkdirSync, writeFileSync } from 'fs';
 import { execSync } from 'child_process';
 import { log } from './config.js';
 import { extractImages } from './image.js';
-import { grpcFrame, grpcUnary, grpcStream } from './grpc.js';
+import { closeSessionForPort, grpcFrame, grpcUnary, grpcStream } from './grpc.js';
 import { getLsEntryByPort } from './langserver.js';
 import {
   buildRawGetChatMessageRequest, parseRawResponse,
@@ -28,6 +28,28 @@ import {
 } from './windsurf.js';
 
 const LS_SERVICE = '/exa.language_server_pb.LanguageServerService';
+
+export function isCascadeTransportError(err) {
+  const msg = String(err?.message || err || '');
+  return /pending stream has been canceled|ECONNRESET|ERR_HTTP2|session closed|stream closed|panel state/i.test(msg);
+}
+
+function markCascadeTransportError(err) {
+  if (!err || typeof err !== 'object') return err;
+  err.isModelError = true;
+  err.kind = 'transient_stall';
+  err.isCascadeTransportError = true;
+  return err;
+}
+
+function resetCascadeTransportState(port) {
+  // Cascade warmup 的 HTTP/2 取消代表当前 LS 会话不可靠，清掉复用状态后让下一次请求重新建会话。
+  closeSessionForPort(port);
+  const lsEntry = getLsEntryByPort(port);
+  if (!lsEntry) return;
+  lsEntry.workspaceInit = null;
+  lsEntry.sessionId = null;
+}
 
 function isImageLikeBlock(part) {
   const type = String(part?.type || '').toLowerCase();
@@ -300,23 +322,30 @@ export class WindsurfClient {
     const workspacePath = `/home/user/projects/workspace-${wsId}`;
     const workspaceUri = `file://${workspacePath}`;
 
+    const handleWarmupError = (stage, err) => {
+      log.warn(`${stage}: ${err.message}`);
+      if (!isCascadeTransportError(err)) return;
+      resetCascadeTransportState(this.port);
+      throw markCascadeTransportError(new Error(`${stage}: ${err.message}`));
+    };
+
     lsEntry.workspaceInit = (async () => {
       try {
         const initProto = buildInitializePanelStateRequest(this.apiKey, sessionId);
         await grpcUnary(this.port, this.csrfToken,
           `${LS_SERVICE}/InitializeCascadePanelState`, grpcFrame(initProto), 5000);
-      } catch (e) { log.warn(`InitializeCascadePanelState: ${e.message}`); }
+      } catch (e) { handleWarmupError('InitializeCascadePanelState', e); }
       try {
         ensureWorkspaceDir(workspacePath);
         const addWsProto = buildAddTrackedWorkspaceRequest(workspacePath);
         await grpcUnary(this.port, this.csrfToken,
           `${LS_SERVICE}/AddTrackedWorkspace`, grpcFrame(addWsProto), 5000);
-      } catch (e) { log.warn(`AddTrackedWorkspace: ${e.message}`); }
+      } catch (e) { handleWarmupError('AddTrackedWorkspace', e); }
       try {
         const trustProto = buildUpdateWorkspaceTrustRequest(this.apiKey, workspaceUri, true, sessionId);
         await grpcUnary(this.port, this.csrfToken,
           `${LS_SERVICE}/UpdateWorkspaceTrust`, grpcFrame(trustProto), 5000);
-      } catch (e) { log.warn(`UpdateWorkspaceTrust: ${e.message}`); }
+      } catch (e) { handleWarmupError('UpdateWorkspaceTrust', e); }
       log.info(`Cascade workspace init complete for LS port=${this.port}`);
     })().catch(e => {
       lsEntry.workspaceInit = null;
@@ -349,7 +378,7 @@ export class WindsurfClient {
     // One-shot per-LS workspace init (idempotent; typically pre-warmed at
     // LS startup). Falls back to a local session id if the LS entry is gone.
     const lsEntry = getLsEntryByPort(this.port);
-    await this.warmupCascade().catch(() => {});
+    await this.warmupCascade();
     let sessionId = reuseEntry?.sessionId || lsEntry?.sessionId || randomUUID();
 
     // "panel state not found" means the LS forgot the panel for our sessionId
@@ -379,7 +408,7 @@ export class WindsurfClient {
       } catch (e) {
         if (!isPanelMissing(e)) throw e;
         log.warn(`Panel state missing, re-warming LS port=${this.port}`);
-        await this.warmupCascade(true).catch(() => {});
+        await this.warmupCascade(true);
         sessionId = getLsEntryByPort(this.port)?.sessionId || randomUUID();
         reuseEntry = null; // cascade expired — treat as fresh
         cascadeId = await openCascade();
@@ -531,7 +560,12 @@ export class WindsurfClient {
             await rebuildFullHistoryText();
             historyRebuilt = true;
           }
-          await this.warmupCascade(true).catch(err => log.warn(`warmupCascade failed: ${err.message}`));
+          try {
+            await this.warmupCascade(true);
+          } catch (err) {
+            if (isCascadeTransportError(err)) throw err;
+            log.warn(`warmupCascade failed: ${err.message}`);
+          }
           // Small backoff — LS panel state sometimes needs a moment after Init
           if (panelRetry > 1) await new Promise(r => setTimeout(r, 250 * panelRetry));
           sessionId = getLsEntryByPort(this.port)?.sessionId || randomUUID();
@@ -894,6 +928,10 @@ export class WindsurfClient {
       return chunks;
 
     } catch (err) {
+      if (isCascadeTransportError(err)) {
+        resetCascadeTransportState(this.port);
+        markCascadeTransportError(err);
+      }
       onError?.(err);
       throw err;
     }
