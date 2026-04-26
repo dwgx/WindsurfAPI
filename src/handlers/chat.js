@@ -80,6 +80,81 @@ export function chatStreamError(message, type = 'upstream_error', code = null) {
   return { error: { message: sanitizeText(message || 'Upstream stream error'), type, code } };
 }
 
+export function applyToolPreambleBudget(toolPreamble, tools, toolChoice, callerEnv, limits = {}) {
+  const softBytes = parseInt(
+    limits.softBytes ?? process.env.TOOL_PREAMBLE_SOFT_BYTES ?? '24000',
+    10,
+  );
+  const hardBytes = parseInt(
+    limits.hardBytes ?? process.env.TOOL_PREAMBLE_HARD_BYTES ?? '48000',
+    10,
+  );
+  const full = typeof toolPreamble === 'string' ? toolPreamble : '';
+  const fullBytes = Buffer.byteLength(full, 'utf8');
+
+  if (!full) {
+    return {
+      toolPreamble: full,
+      fullBytes,
+      compact: '',
+      compactBytes: 0,
+      softBytes,
+      hardBytes,
+      decision: 'none',
+    };
+  }
+
+  if (fullBytes <= softBytes) {
+    return {
+      toolPreamble: full,
+      fullBytes,
+      compact: '',
+      compactBytes: 0,
+      softBytes,
+      hardBytes,
+      decision: 'full',
+    };
+  }
+
+  const compact = buildCompactToolPreambleForProto(tools || [], toolChoice, callerEnv);
+  const compactBytes = Buffer.byteLength(compact, 'utf8');
+  const compactUsable = !!compact && compactBytes > 0 && compactBytes <= hardBytes && compactBytes < fullBytes;
+
+  if (compactUsable) {
+    return {
+      toolPreamble: compact,
+      fullBytes,
+      compact,
+      compactBytes,
+      softBytes,
+      hardBytes,
+      decision: 'compact',
+    };
+  }
+
+  if (fullBytes <= hardBytes) {
+    return {
+      toolPreamble: full,
+      fullBytes,
+      compact,
+      compactBytes,
+      softBytes,
+      hardBytes,
+      decision: 'full_over_soft',
+    };
+  }
+
+  return {
+    toolPreamble: full,
+    fullBytes,
+    compact,
+    compactBytes,
+    softBytes,
+    hardBytes,
+    decision: 'reject',
+  };
+}
+
 /**
  * Extract a clean JSON payload from a model response. Handles three common
  * shapes a non-constrained-decoding model produces when asked for JSON:
@@ -607,17 +682,20 @@ export async function handleChatCompletions(body, context = {}) {
   // knows what tools exist and how to invoke them, just not parameter
   // shapes. Past the hard cap we abort with a 413-style 400 so callers
   // can trim instead of failing in panel-state retries.
-  const TOOL_PREAMBLE_SOFT_BYTES = parseInt(process.env.TOOL_PREAMBLE_SOFT_BYTES || '24000', 10);
-  const TOOL_PREAMBLE_HARD_BYTES = parseInt(process.env.TOOL_PREAMBLE_HARD_BYTES || '48000', 10);
   if (emulateTools && toolPreamble) {
-    const fullBytes = Buffer.byteLength(toolPreamble, 'utf8');
-    if (fullBytes > TOOL_PREAMBLE_HARD_BYTES) {
-      log.warn(`Probe[${reqId}]: toolPreamble ${Math.round(fullBytes / 1024)}KB exceeds hard cap ${Math.round(TOOL_PREAMBLE_HARD_BYTES / 1024)}KB; rejecting (${(tools || []).length} tools)`);
+    const budget = applyToolPreambleBudget(toolPreamble, tools || [], tool_choice, callerEnv);
+    if (budget.decision === 'reject') {
+      const compactInfo = budget.compactBytes
+        ? `; compact fallback still ${Math.round(budget.compactBytes / 1024)}KB`
+        : '; compact fallback unavailable';
+      log.warn(
+        `Probe[${reqId}]: toolPreamble ${Math.round(budget.fullBytes / 1024)}KB exceeds hard cap ${Math.round(budget.hardBytes / 1024)}KB${compactInfo}; rejecting (${(tools || []).length} tools)`,
+      );
       return {
         status: 400,
         body: {
           error: {
-            message: `Tool definitions are too large (${Math.round(fullBytes / 1024)}KB > ${Math.round(TOOL_PREAMBLE_HARD_BYTES / 1024)}KB). Reduce the number of tools or shorten parameter schemas.`,
+            message: `Tool definitions are too large (${Math.round(budget.fullBytes / 1024)}KB > ${Math.round(budget.hardBytes / 1024)}KB). Reduce the number of tools or shorten parameter schemas.`,
             type: 'invalid_request_error',
             param: 'tools',
             code: 'tool_preamble_too_large',
@@ -625,11 +703,15 @@ export async function handleChatCompletions(body, context = {}) {
         },
       };
     }
-    if (fullBytes > TOOL_PREAMBLE_SOFT_BYTES) {
-      const compact = buildCompactToolPreambleForProto(tools || [], tool_choice, callerEnv);
-      const compactBytes = Buffer.byteLength(compact, 'utf8');
-      log.warn(`Probe[${reqId}]: toolPreamble ${Math.round(fullBytes / 1024)}KB exceeds soft cap ${Math.round(TOOL_PREAMBLE_SOFT_BYTES / 1024)}KB; falling back to names-only preamble (${Math.round(compactBytes / 1024)}KB, ${(tools || []).length} tools)`);
-      toolPreamble = compact;
+    if (budget.decision === 'compact') {
+      log.warn(
+        `Probe[${reqId}]: toolPreamble ${Math.round(budget.fullBytes / 1024)}KB exceeds soft/hard budget; falling back to names-only preamble (${Math.round(budget.compactBytes / 1024)}KB, ${(tools || []).length} tools)`,
+      );
+      toolPreamble = budget.toolPreamble;
+    } else if (budget.decision === 'full_over_soft') {
+      log.warn(
+        `Probe[${reqId}]: toolPreamble ${Math.round(budget.fullBytes / 1024)}KB exceeds soft cap ${Math.round(budget.softBytes / 1024)}KB, but compact fallback was not smaller/usable; keeping full preamble (${(tools || []).length} tools)`,
+      );
     }
   }
   // Diagnostic: surface whether environment lifting actually fired so a real
