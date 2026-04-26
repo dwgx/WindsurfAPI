@@ -262,8 +262,13 @@ export function neutralizeCascadeIdentity(text, modelName) {
  * `<env>` keys. If nothing is found, returns '' and the override gets no
  * environment block (existing behaviour preserved).
  */
-export function extractCallerEnvironment(messages) {
+export function extractCallerEnvironment(messages, options = {}) {
   if (!Array.isArray(messages)) return '';
+  const allowed = new Set(
+    Array.isArray(options.fields) && options.fields.length
+      ? options.fields.map(v => String(v || '').toLowerCase())
+      : ['cwd', 'git', 'platform', 'os']
+  );
   const seen = new Set();
   const out = [];
 
@@ -307,6 +312,7 @@ export function extractCallerEnvironment(messages) {
     if (!content) continue;
 
     for (const [key, re, fmt] of PATTERNS) {
+      if (!allowed.has(key)) continue;
       if (seen.has(key)) continue;
       const match = content.match(re);
       if (match) {
@@ -335,8 +341,15 @@ export function extractCallerEnvironment(messages) {
   // Sticking to the rule "no cwd → no block" both removes the noise and
   // lets the model learn cwd via its own `pwd` tool call (which already
   // works on every Anthropic-format client we have tested).
-  if (!seen.has('cwd')) return '';
+  if (!allowed.has('cwd') || !seen.has('cwd')) return '';
   return out.join('\n');
+}
+
+export function resolveForwardedCallerEnvironment(messages, options = {}) {
+  const enabled = options.enabled == null ? !!config.forwardCallerEnv : !!options.enabled;
+  if (!enabled) return '';
+  const fields = Array.isArray(options.fields) ? options.fields : config.forwardCallerEnvFields;
+  return extractCallerEnvironment(messages, { fields });
 }
 
 // Rough token estimate (~4 chars/token). Used only to populate the
@@ -447,29 +460,29 @@ export async function handleChatCompletions(body, context = {}) {
   const checkMessageRateLimitFn = context.checkMessageRateLimit || checkMessageRateLimit;
   const waitForAccountFn = context.waitForAccount || waitForAccount;
 
-  // Probe diagnostics: dump compact request shape for every call, plus a
-  // tail of the last user turn. Keeps us able to see how third-party
-  // verifiers (hvoy.ai) actually probe PDF / JSON / thinking capabilities
-  // without exposing full conversation content.
+  // Probe diagnostics: default to structure-only metadata, with optional
+  // prompt sampling when LOG_PROMPT_SAMPLES=1.
   try {
     const contentTypes = new Set();
-    let lastUserText = '';
+    let lastUserBytes = 0;
     for (const m of (messages || [])) {
       if (typeof m?.content === 'string') contentTypes.add('string');
       else if (Array.isArray(m.content)) for (const p of m.content) contentTypes.add(p?.type || typeof p);
       if (m?.role === 'user') {
         const c = m.content;
-        lastUserText = typeof c === 'string'
+        const lastUserText = typeof c === 'string'
           ? c
           : Array.isArray(c) ? c.filter(p => p?.type === 'text').map(p => p.text || '').join(' ') : '';
+        lastUserBytes = lastUserText.length;
       }
     }
-    log.info(`Probe[${reqId}]: model=${reqModel} stream=${!!stream} rf=${response_format?.type || 'none'} tools=${Array.isArray(tools) ? tools.length : 0} reasoning=${body.reasoning_effort || body.thinking?.type || 'none'} ctypes=[${[...contentTypes].join(',')}] turns=${messages?.length || 0} lastUser=${requestLogSummary(lastUserText, 140)}`);
-    // Also dump first-user / system content so we can see preambles.
-    for (let mi = 0; mi < Math.min((messages || []).length, 3); mi++) {
-      const m = messages[mi];
-      const c = typeof m?.content === 'string' ? m.content : Array.isArray(m?.content) ? m.content.map(p => p?.type === 'text' ? p.text : `[${p?.type}]`).join('|') : '';
-      log.info(`Probe[${reqId}] msg[${mi}] role=${m?.role} ${requestLogSummary(c)}`);
+    log.info(`Probe[${reqId}]: model=${reqModel} stream=${!!stream} rf=${response_format?.type || 'none'} tools=${Array.isArray(tools) ? tools.length : 0} reasoning=${body.reasoning_effort || body.thinking?.type || 'none'} ctypes=[${[...contentTypes].join(',')}] turns=${messages?.length || 0} lastUserBytes=${lastUserBytes}`);
+    if (config.logPromptSamples) {
+      for (let mi = 0; mi < Math.min((messages || []).length, 3); mi++) {
+        const m = messages[mi];
+        const c = typeof m?.content === 'string' ? m.content : Array.isArray(m?.content) ? m.content.map(p => p?.type === 'text' ? p.text : `[${p?.type}]`).join('|') : '';
+        log.info(`Probe[${reqId}] msg[${mi}] role=${m?.role} ${requestLogSummary(c)}`);
+      }
     }
   } catch {}
 
@@ -580,7 +593,7 @@ export async function handleChatCompletions(body, context = {}) {
   // the proto-level system slot so Cascade's authoritative planner system
   // prompt can no longer override them with /tmp/windsurf-workspace
   // priors. See extractCallerEnvironment() above for the parser.
-  const callerEnv = emulateTools ? extractCallerEnvironment(messages) : '';
+  const callerEnv = emulateTools ? resolveForwardedCallerEnvironment(messages) : '';
   const toolPreamble = emulateTools ? buildToolPreambleForProto(tools || [], tool_choice, callerEnv) : '';
   // Diagnostic: surface whether environment lifting actually fired so a real
   // request log immediately tells us if Claude Code 2.x changed `<env>` block

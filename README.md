@@ -146,25 +146,39 @@ bash install-ls.sh
 #   macOS:   "$HOME/Library/Application Support/Windsurf/resources/app/extensions/windsurf/bin/language_server_macos_arm"
 #   Linux:   "$HOME/.windsurf/bin/language_server_linux_x64"
 #            或  /opt/Windsurf/resources/app/extensions/windsurf/bin/language_server_linux_x64
-#   Windows: %APPDATA%\Windsurf\bin\language_server_windows_x64.exe
-#
 #   # 从本地桌面端装：
 #   bash install-ls.sh /path/to/language_server_linux_x64
 #
 # LS binary 一换，/v1/models 立刻就能看到最新模型目录了（云端自动发现）。
 
 cat > .env << 'EOF'
+HOST=127.0.0.1
 PORT=3003
 API_KEY=
 DEFAULT_MODEL=gpt-4o-mini
 MAX_TOKENS=8192
 LOG_LEVEL=info
 LS_BINARY_PATH=/opt/windsurf/language_server_linux_x64
+LS_DATA_DIR=/opt/windsurf/data
 LS_PORT=42100
 DASHBOARD_PASSWORD=
+FORWARD_CALLER_ENV=0
+LOG_PROMPT_SAMPLES=0
+ENABLE_REVEAL_API_KEY=0
+ENABLE_SELF_UPDATE=0
+ENABLE_BATCH_LOGIN=0
+ENABLE_TOKEN_REFRESH=1
+ENABLE_LS_RESTART=0
 EOF
 
-node src/index.js
+# 本机安全启动（推荐）
+npm run start:local
+
+# 或直接用启动器
+node scripts/start.js local
+
+# 若要显式公网监听，必须配置认证
+node scripts/start.js public --api-key your-api-key --dashboard-password your-dashboard-password
 ```
 
 ## 加账号
@@ -249,15 +263,25 @@ curl http://localhost:3003/v1/messages \
 
 | 变量 | 默认值 | 干嘛的 |
 |---|---|---|
+| `HOST` | `127.0.0.1` | 监听地址。默认仅本机可访问；若改为 `0.0.0.0` 等外网地址，且 `API_KEY` 与 `DASHBOARD_PASSWORD` 都为空，服务会拒绝启动。 |
 | `PORT` | `3003` | 服务端口 |
-| `API_KEY` | 空 | 调 API 要带的密钥 留空就不验证 |
+| `API_KEY` | 空 | 调 API 要带的密钥。建议公网/内网暴露时必须配置。 |
 | `DATA_DIR` | 项目根目录 | 持久化 JSON 状态和 `logs/` 的目录，Docker 推荐设成 `/data` |
 | `DEFAULT_MODEL` | `claude-4.5-sonnet-thinking` | 不传 model 用哪个 |
 | `MAX_TOKENS` | `8192` | 默认最大回复 token 数 |
 | `LOG_LEVEL` | `info` | debug / info / warn / error |
-| `LS_BINARY_PATH` | `/opt/windsurf/language_server_linux_x64` | LS 二进制位置 |
+| `LS_BINARY_PATH` | Linux 默认 `/opt/windsurf/language_server_linux_x64` | LS 二进制位置。macOS 可显式指定 `~/.windsurf/language_server_macos_{arm|x64}`。 |
+| `LS_DATA_DIR` | Linux 默认 `/opt/windsurf/data` | LS 数据目录根路径。macOS 可显式指定 `~/.windsurf/data`。 |
 | `LS_PORT` | `42100` | LS gRPC 端口 |
 | `DASHBOARD_PASSWORD` | 空 | 后台密码 留空不设密码 |
+| `FORWARD_CALLER_ENV` | `0` | 是否把调用方 `<env>` 信息（cwd/platform 等）注入上游提示。默认关闭。 |
+| `FORWARD_CALLER_ENV_FIELDS` | 空 | `FORWARD_CALLER_ENV=1` 时可选字段白名单：`cwd,git,platform,os` |
+| `LOG_PROMPT_SAMPLES` | `0` | 是否记录请求内容采样日志。默认仅记录结构化元信息。 |
+| `ENABLE_REVEAL_API_KEY` | `0` | Dashboard 完整 key reveal 接口开关。默认关闭。 |
+| `ENABLE_SELF_UPDATE` | `0` | 是否允许 Dashboard 执行自更新（`/self-update*`）。默认关闭。 |
+| `ENABLE_BATCH_LOGIN` | `0` | 是否允许 Dashboard 批量登录/批量导入。默认关闭。 |
+| `ENABLE_TOKEN_REFRESH` | `1` | 是否允许 Dashboard 手动刷新账号 token。默认开启。 |
+| `ENABLE_LS_RESTART` | `0` | 是否允许 Dashboard 重启语言服务器。默认关闭。 |
 
 ## Dashboard 功能面板
 

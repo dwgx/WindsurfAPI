@@ -20,6 +20,7 @@ import { dirname, join } from 'path';
 import {
   validateApiKey, isAuthenticated, getAccountList, getAccountCount,
   addAccountByEmail, addAccountByToken, addAccountByKey, removeAccount,
+  canAccessVerboseHealth,
 } from './auth.js';
 import { handleChatCompletions } from './handlers/chat.js';
 import { handleMessages } from './handlers/messages.js';
@@ -105,7 +106,7 @@ async function route(req, res) {
       accounts: counts,
     };
     const qs = new URL(req.url, 'http://localhost').searchParams;
-    if (qs.get('verbose') === '1' && validateApiKey(extractToken(req))) {
+    if (qs.get('verbose') === '1' && canAccessVerboseHealth(extractToken(req))) {
       try {
         const { poolStats } = await import('./conversation-pool.js');
         const { cacheStats } = await import('./cache.js');
@@ -383,7 +384,7 @@ export function startServer() {
         process.exit(1);
       }
       log.warn(`Port ${config.port} in use, retry ${retryCount}/${maxRetries} in 3s...`);
-      setTimeout(() => server.listen(config.port, '0.0.0.0'), 3000);
+      setTimeout(() => server.listen(config.port, config.host), 3000);
     } else {
       log.error('Server error:', err);
     }
@@ -391,8 +392,8 @@ export function startServer() {
 
   server.getActiveRequests = () => activeRequests.size;
 
-  server.listen({ port: config.port, host: '0.0.0.0' }, () => {
-    log.info(`Server on http://0.0.0.0:${config.port}`);
+  server.listen({ port: config.port, host: config.host }, () => {
+    log.info(`Server on http://${config.host}:${config.port}`);
     log.info('  POST /v1/chat/completions');
     log.info('  POST /v1/responses');
     log.info('  GET  /v1/models');

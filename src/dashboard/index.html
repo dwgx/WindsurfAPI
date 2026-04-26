@@ -2285,7 +2285,7 @@ const I18n = {
 function t(key, vars) { return I18n.t(key, vars); }
 
 const App = {
-  password: localStorage.getItem('dp') || '',
+  password: sessionStorage.getItem('dp') || '',
   lang: localStorage.getItem('lang') || 'zh',
   sseConn: null,
   logEntries: [],
@@ -2337,7 +2337,7 @@ const App = {
 
   login() {
     this.password = document.getElementById('login-password').value;
-    localStorage.setItem('dp', this.password);
+    sessionStorage.setItem('dp', this.password);
     this.init();
   },
 
@@ -2517,7 +2517,7 @@ const App = {
     apply.disabled = true;
     status.innerHTML = '<span class="text-muted">' + I18n.t('status.pullingRestarting') + '</span>';
     try {
-      let r = await this.api('POST', '/self-update');
+      let r = await this.api('POST', '/self-update', { confirm: true });
       if (r.dirty) {
         const filesList = (r.dirtyFiles || []).slice(0, 10).map(f => this.esc(f)).join('<br>');
         const force = await this.confirm(
@@ -2530,7 +2530,7 @@ const App = {
           apply.disabled = false;
           return;
         }
-        r = await this.api('POST', '/self-update', { forceReset: true });
+        r = await this.api('POST', '/self-update', { confirm: true, forceReset: true, confirmForceReset: true });
       }
       if (!r.ok) throw new Error(r.error || I18n.t('error.updateFailed'));
       if (r.changed) {
@@ -3091,7 +3091,7 @@ const App = {
         <td style="color:${a.errorCount > 0 ? 'var(--error)' : 'inherit'}">${a.errorCount}</td>
         <td class="text-sm nowrap">${a.lastUsed ? new Date(a.lastUsed).toLocaleString() : '-'}</td>
         <td class="nowrap">
-          <code style="cursor:pointer" title="${I18n.t('action.copyTitle')}" onclick="App.copyKey('${this.escJsAttr(a.apiKey)}')">${a.keyPrefix}</code>
+          <code style="cursor:pointer" title="${I18n.t('action.copyTitle')}" onclick="App.copyAccountKey('${this.escJsAttr(a.id)}')">${a.keyPrefix}</code>
         </td>
         <td class="nowrap">
           <div class="btn-group">
@@ -3267,7 +3267,7 @@ const App = {
             </div>
             <div class="detail-kv">
               <span class="k">${T('runtime.accountId')}</span><span class="v"><code>${a.id}</code></span>
-              <span class="k">${T('runtime.apiKey')}</span><span class="v"><code style="cursor:pointer" onclick="App.copyKey('${this.escJsAttr(a.apiKey)}')" title="${I18n.t('action.copyTitle')}">${a.keyPrefix}</code></span>
+              <span class="k">${T('runtime.apiKey')}</span><span class="v"><code style="cursor:pointer" onclick="App.copyAccountKey('${this.escJsAttr(a.id)}')" title="${I18n.t('action.copyTitle')}">${a.keyPrefix}</code></span>
               ${cr.lastError ? `<span class="k">${T('runtime.lastError')}</span><span class="v" style="color:var(--error);font-size:11px">${this.esc(cr.lastError).slice(0, 80)}</span>` : ''}
             </div>
           </div>
@@ -3706,8 +3706,7 @@ const App = {
   //
   // Uses fetch + ReadableStream instead of EventSource so the dashboard
   // password rides in an X-Dashboard-Password header rather than a ?pwd=
-  // query string (URL-logged in proxies, browser history). checkAuth()
-  // in dashboard/api.js still accepts ?pwd= as a fallback.
+  // query string (URL-logged in proxies, browser history).
   loadLogs() {
     if (this.sseConn) { try { this.sseConn.close(); } catch {} this.sseConn = null; }
     this.logEntries = [];
@@ -4702,6 +4701,14 @@ const App = {
     } else {
       fallback();
     }
+  },
+  async copyAccountKey(accountId) {
+    const r = await this.api('POST', `/account/${encodeURIComponent(accountId)}/reveal-key`, {});
+    if (!r || !r.success || !r.apiKey) {
+      this.toast(r?.error || I18n.t('toast.copyFailed'), 'error');
+      return;
+    }
+    this.copyKey(r.apiKey);
   },
   // Hand-maintained roster of external contributors. Update here when a
   // new PR lands; the dashboard Credits panel renders straight from this.

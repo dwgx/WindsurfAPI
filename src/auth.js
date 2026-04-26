@@ -707,39 +707,54 @@ export function isAuthenticated() {
   return accounts.some(a => a.status === 'active');
 }
 
-export function getAccountList() {
+function serializeAccount(a, now, includeSecrets = false) {
+  const rpmLimit = rpmLimitFor(a);
+  const rpmUsed = pruneRpmHistory(a, now);
+  const out = {
+    id: a.id,
+    email: a.email,
+    method: a.method,
+    status: a.status,
+    errorCount: a.errorCount,
+    lastUsed: a.lastUsed ? new Date(a.lastUsed).toISOString() : null,
+    addedAt: new Date(a.addedAt).toISOString(),
+    keyPrefix: a.apiKey.slice(0, 8) + '...',
+    tier: a.tier || 'unknown',
+    capabilities: a.capabilities || {},
+    lastProbed: a.lastProbed || 0,
+    rateLimitedUntil: a.rateLimitedUntil || 0,
+    rateLimited: !!(a.rateLimitedUntil && a.rateLimitedUntil > now),
+    modelRateLimits: a._modelRateLimits ? Object.fromEntries(
+      Object.entries(a._modelRateLimits).filter(([, v]) => v > now)
+    ) : {},
+    rpmUsed,
+    rpmLimit,
+    credits: a.credits || null,
+    blockedModels: a.blockedModels || [],
+    availableModels: getAvailableModelsForAccount(a),
+    tierModels: getTierModels(a.tier || 'unknown'),
+    userStatus: a.userStatus || null,
+    userStatusLastFetched: a.userStatusLastFetched || 0,
+  };
+  if (includeSecrets) {
+    out.apiKey = a.apiKey;
+    out.refreshToken = a.refreshToken || '';
+    out.idToken = a.idToken || '';
+  }
+  return out;
+}
+
+export function getAccountList(options = {}) {
+  const includeSecrets = !!options.includeSecrets;
   const now = Date.now();
-  return accounts.map(a => {
-    const rpmLimit = rpmLimitFor(a);
-    const rpmUsed = pruneRpmHistory(a, now);
-    return {
-      id: a.id,
-      email: a.email,
-      method: a.method,
-      status: a.status,
-      errorCount: a.errorCount,
-      lastUsed: a.lastUsed ? new Date(a.lastUsed).toISOString() : null,
-      addedAt: new Date(a.addedAt).toISOString(),
-      keyPrefix: a.apiKey.slice(0, 8) + '...',
-      apiKey: a.apiKey,
-      tier: a.tier || 'unknown',
-      capabilities: a.capabilities || {},
-      lastProbed: a.lastProbed || 0,
-      rateLimitedUntil: a.rateLimitedUntil || 0,
-      rateLimited: !!(a.rateLimitedUntil && a.rateLimitedUntil > now),
-      modelRateLimits: a._modelRateLimits ? Object.fromEntries(
-        Object.entries(a._modelRateLimits).filter(([, v]) => v > now)
-      ) : {},
-      rpmUsed,
-      rpmLimit,
-      credits: a.credits || null,
-      blockedModels: a.blockedModels || [],
-      availableModels: getAvailableModelsForAccount(a),
-      tierModels: getTierModels(a.tier || 'unknown'),
-      userStatus: a.userStatus || null,
-      userStatusLastFetched: a.userStatusLastFetched || 0,
-    };
-  });
+  return accounts.map(a => serializeAccount(a, now, includeSecrets));
+}
+
+export function getAccountById(id, options = {}) {
+  const includeSecrets = !!options.includeSecrets;
+  const account = accounts.find(a => a.id === id);
+  if (!account) return null;
+  return serializeAccount(account, Date.now(), includeSecrets);
 }
 
 /**
@@ -1081,11 +1096,33 @@ export function validateApiKey(key) {
   return key === config.apiKey;
 }
 
+export function isLocalBindHost(bindHost) {
+  const host = String(bindHost || '').trim().toLowerCase();
+  return host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '[::1]';
+}
+
+function isWildcardBindHost(bindHost) {
+  const host = String(bindHost || '').trim().toLowerCase();
+  return !host || host === '0.0.0.0' || host === '::' || host === '[::]';
+}
+
+export function isExternalBindHost(bindHost) {
+  if (isWildcardBindHost(bindHost)) return true;
+  return !isLocalBindHost(bindHost);
+}
+
+export function shouldRejectInsecureExternalBind(bindHost, apiKey = config.apiKey, dashboardPassword = config.dashboardPassword) {
+  return isExternalBindHost(bindHost) && !apiKey && !dashboardPassword;
+}
+
+export function canAccessVerboseHealth(key, configuredApiKey = config.apiKey) {
+  if (!configuredApiKey) return false;
+  return key === configuredApiKey;
+}
+
 export function shouldEmitNoAuthWarning(bindHost, hasKey) {
   if (hasKey) return false;
-  const host = String(bindHost || '').trim().toLowerCase();
-  if (!host || host === '0.0.0.0' || host === '::') return true;
-  return !(host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '[::1]');
+  return isExternalBindHost(bindHost);
 }
 
 export function emitNoAuthWarnings(bindHost = '0.0.0.0') {

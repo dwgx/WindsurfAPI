@@ -14,14 +14,14 @@ import { existsSync } from 'fs';
 import http2 from 'http2';
 import net from 'net';
 import { resolve } from 'path';
-import { log } from './config.js';
+import { config, log } from './config.js';
 import { closeSessionForPort } from './grpc.js';
 
-const DEFAULT_BINARY = '/opt/windsurf/language_server_linux_x64';
+const DEFAULT_BINARY = config.lsBinaryPath;
 const DEFAULT_PORT = 42100;
 const DEFAULT_CSRF = 'windsurf-api-csrf-fixed-token';
 const DEFAULT_API_URL = 'https://server.self-serve.windsurf.com';
-const DEFAULT_DATA_ROOT = '/opt/windsurf/data';
+const DEFAULT_DATA_ROOT = config.lsDataDir;
 
 // Pool: key -> { process, port, csrfToken, proxy, startedAt, ready }
 const _pool = new Map();
@@ -56,6 +56,35 @@ function proxyUrl(proxy) {
     ? `${encodeURIComponent(proxy.username)}:${encodeURIComponent(proxy.password || '')}@`
     : '';
   return `http://${auth}${proxy.host}:${proxy.port || 8080}`;
+}
+
+const LS_ENV_ALLOWLIST = [
+  'HOME', 'PATH', 'LANG', 'TMPDIR', 'TMP', 'TEMP',
+  'HTTP_PROXY', 'HTTPS_PROXY', 'NO_PROXY',
+  'http_proxy', 'https_proxy', 'no_proxy',
+];
+
+export function buildLanguageServerEnv(source = process.env, options = {}) {
+  const env = {};
+  for (const key of LS_ENV_ALLOWLIST) {
+    if (source[key] != null && source[key] !== '') env[key] = source[key];
+  }
+  if (!env.HOME) {
+    env.HOME = source.HOME || '/root';
+  }
+  const pUrl = options.proxyUrl || null;
+  if (pUrl) {
+    env.HTTPS_PROXY = pUrl;
+    env.HTTP_PROXY = pUrl;
+    env.https_proxy = pUrl;
+    env.http_proxy = pUrl;
+  }
+  if (options.extra && typeof options.extra === 'object') {
+    for (const [k, v] of Object.entries(options.extra)) {
+      if (v != null && v !== '') env[k] = String(v);
+    }
+  }
+  return env;
 }
 
 export function redactProxyUrl(urlOrProxy) {
@@ -161,18 +190,8 @@ export async function ensureLs(proxy = null) {
       '--detect_proxy=false',
     ];
 
-    // Fall back to /root only when HOME isn't already set (e.g. a systemd
-    // unit without User=). VPS deployments already have HOME in env; forcing
-    // /root broke macOS/Windows dev runs where LS expects the real $HOME.
-    const env = { ...process.env };
-    if (!env.HOME) env.HOME = '/root';
     const pUrl = proxyUrl(proxy);
-    if (pUrl) {
-      env.HTTPS_PROXY = pUrl;
-      env.HTTP_PROXY = pUrl;
-      env.https_proxy = pUrl;
-      env.http_proxy = pUrl;
-    }
+    const env = buildLanguageServerEnv(process.env, { proxyUrl: pUrl });
 
     // One-shot readable warning when the LS binary is missing — the generic
     // ENOENT from spawn leaves users guessing which file is expected.

@@ -6,6 +6,8 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js",
+    "start:local": "node scripts/start.js local",
+    "start:public": "node scripts/start.js public",
     "dev": "node --watch src/index.js",
     "test": "node --test test/*.test.js"
   },

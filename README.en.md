@@ -149,29 +149,39 @@ bash install-ls.sh
 #   macOS:   "$HOME/Library/Application Support/Windsurf/resources/app/extensions/windsurf/bin/language_server_macos_arm"
 #   Linux:   "$HOME/.windsurf/bin/language_server_linux_x64"
 #            or /opt/Windsurf/resources/app/extensions/windsurf/bin/language_server_linux_x64
-#   Windows: %APPDATA%\Windsurf\bin\language_server_windows_x64.exe
-#
 #   # Install from the local desktop copy:
 #   bash install-ls.sh /path/to/language_server_linux_x64
 #
 # Once swapped, /v1/models will auto-discover the newer catalog from the cloud.
 
 cat > .env << 'EOF'
+HOST=127.0.0.1
 PORT=3003
 API_KEY=
 DEFAULT_MODEL=gpt-4o-mini
 MAX_TOKENS=8192
 LOG_LEVEL=info
 LS_BINARY_PATH=/opt/windsurf/language_server_linux_x64
+LS_DATA_DIR=/opt/windsurf/data
 LS_PORT=42100
 DASHBOARD_PASSWORD=
+FORWARD_CALLER_ENV=0
+LOG_PROMPT_SAMPLES=0
+ENABLE_REVEAL_API_KEY=0
+ENABLE_SELF_UPDATE=0
+ENABLE_BATCH_LOGIN=0
+ENABLE_TOKEN_REFRESH=1
+ENABLE_LS_RESTART=0
 EOF
 
-# Note: Inline comments are supported in .env for unquoted values:
-#   PORT=3003  # Service port
-# Quoted values preserve everything inside the quotes.
+# Safe local start (recommended)
+npm run start:local
 
-node src/index.js
+# Or invoke the launcher directly
+node scripts/start.js local
+
+# For explicit public bind, configure auth first
+node scripts/start.js public --api-key your-api-key --dashboard-password your-dashboard-password
 ```
 
 ## Add Accounts
@@ -253,8 +263,9 @@ In your client's settings for **Custom OpenAI Compatible**:
 
 | Variable | Default | Description |
 |---|---|---|
+| `HOST` | `127.0.0.1` | Bind address. Secure default is localhost-only. If set to `0.0.0.0` (or other non-local host) while both `API_KEY` and `DASHBOARD_PASSWORD` are empty, startup is refused. |
 | `PORT` | `3003` | Service port |
-| `API_KEY` | empty | API key required for requests. Leave empty to disable validation. |
+| `API_KEY` | empty | API key required for requests. Strongly recommended for any non-local deployment. |
 | `DATA_DIR` | project root | Directory for persisted JSON state and `logs/`. Docker deployments should usually use `/data`. |
 | `CODEIUM_API_KEY` | empty | Direct API key from Windsurf (alternative to token-based auth). |
 | `CODEIUM_AUTH_TOKEN` | empty | Token from [windsurf.com/show-auth-token](https://windsurf.com/show-auth-token). |
@@ -264,10 +275,18 @@ In your client's settings for **Custom OpenAI Compatible**:
 | `DEFAULT_MODEL` | `claude-4.5-sonnet-thinking` | The model to use if `model` is not specified. |
 | `MAX_TOKENS` | `8192` | Default maximum number of response tokens. |
 | `LOG_LEVEL` | `info` | debug / info / warn / error |
-| `LS_BINARY_PATH` | `/opt/windsurf/language_server_linux_x64` | Path to the LS binary. |
+| `LS_BINARY_PATH` | Linux default: `/opt/windsurf/language_server_linux_x64` | Path to the LS binary. On macOS, set it explicitly to `~/.windsurf/language_server_macos_{arm|x64}` if needed. |
+| `LS_DATA_DIR` | Linux default: `/opt/windsurf/data` | Per-proxy LS data directory root. On macOS, set it explicitly to `~/.windsurf/data` if needed. |
 | `LS_PORT` | `42100` | LS gRPC port. |
-| `LS_DATA_DIR` | `/opt/windsurf` | Per-proxy LS data directory root. |
 | `DASHBOARD_PASSWORD` | empty | Dashboard password. Leave empty for no password. |
+| `FORWARD_CALLER_ENV` | `0` | Whether to forward caller `<env>` hints (cwd/platform, etc.) upstream. Disabled by default. |
+| `FORWARD_CALLER_ENV_FIELDS` | empty | Optional allowlist when `FORWARD_CALLER_ENV=1`: `cwd,git,platform,os`. |
+| `LOG_PROMPT_SAMPLES` | `0` | Enables prompt-content sampling logs. Default logging remains metadata-only. |
+| `ENABLE_REVEAL_API_KEY` | `0` | Enables full API key reveal endpoint in dashboard. Disabled by default. |
+| `ENABLE_SELF_UPDATE` | `0` | Enables dashboard self-update endpoints (`/self-update*`). Disabled by default. |
+| `ENABLE_BATCH_LOGIN` | `0` | Enables dashboard batch login/import endpoints. Disabled by default. |
+| `ENABLE_TOKEN_REFRESH` | `1` | Enables manual dashboard token refresh endpoint. Enabled by default. |
+| `ENABLE_LS_RESTART` | `0` | Enables dashboard language-server restart endpoint. Disabled by default. |
 | `CASCADE_REUSE_STRICT` | `0` | Set to `1` for strict conversation reuse mode (waits for same fingerprint). |
 | `CASCADE_REUSE_STRICT_RETRY_MS` | `60000` | Retry delay in ms for strict reuse mode. |
 | `CASCADE_REUSE_HASH_SYSTEM` | `0` | Set to `1` to include system messages in conversation reuse hash. |

@@ -9,7 +9,7 @@ import {
   removeAccount, setAccountStatus, resetAccountErrors, updateAccountLabel,
   isAuthenticated, probeAccount, ensureLsForAccount,
   refreshCredits, refreshAllCredits,
-  setAccountBlockedModels, setAccountTokens, setAccountTier,
+  setAccountBlockedModels, setAccountTokens, setAccountTier, getAccountById,
 } from '../auth.js';
 import { restartLsForProxy } from '../langserver.js';
 import { getLsStatus, stopLanguageServer, startLanguageServer, isLanguageServerRunning } from '../langserver.js';
@@ -29,6 +29,31 @@ function maskApiKey(key = '') {
   const s = String(key || '');
   if (s.length <= 12) return s ? `${s.slice(0, 4)}***` : '';
   return `${s.slice(0, 8)}***${s.slice(-4)}`;
+}
+
+export function isAdminFeatureEnabled(feature, options = {}) {
+  const flags = options.flags || config;
+  if (feature === 'self-update') return !!flags.enableSelfUpdate;
+  if (feature === 'batch-login') return !!flags.enableBatchLogin;
+  if (feature === 'token-refresh') return !!flags.enableTokenRefresh;
+  if (feature === 'ls-restart') return !!flags.enableLsRestart;
+  return false;
+}
+
+function requestActor(req) {
+  const headers = req?.headers || {};
+  const xff = headers['x-forwarded-for'];
+  if (typeof xff === 'string' && xff.trim()) return xff.split(',')[0].trim();
+  if (Array.isArray(xff) && xff.length) return String(xff[0] || '').trim() || 'unknown';
+  return req?.socket?.remoteAddress || 'unknown';
+}
+
+function auditAdminAction(action, req, details = {}) {
+  const fields = Object.entries(details)
+    .filter(([, value]) => value != null && value !== '')
+    .map(([key, value]) => `${key}=${String(value).replace(/\s+/g, '_')}`);
+  const suffix = fields.length ? ` ${fields.join(' ')}` : '';
+  log.info(`Dashboard admin action: ${action} actor=${requestActor(req)}${suffix}`);
 }
 
 export function buildBatchProxyBinding(result, proxy) {
@@ -52,25 +77,17 @@ function json(res, status, body) {
   const data = JSON.stringify(body);
   res.writeHead(status, {
     'Content-Type': 'application/json',
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET, POST, PUT, PATCH, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, X-Dashboard-Password',
   });
   res.end(data);
 }
 
-function checkAuth(req) {
-  // Header is preferred (set by fetch). EventSource can't set custom headers,
-  // so /logs/stream etc. also accept ?pwd=... as fallback.
-  let pw = req.headers['x-dashboard-password'] || '';
-  if (!pw) {
-    try {
-      const qs = new URL(req.url, 'http://x').searchParams;
-      pw = qs.get('pwd') || '';
-    } catch {}
-  }
-  if (config.dashboardPassword) return pw === config.dashboardPassword;
-  if (config.apiKey) return pw === config.apiKey;
+export function checkDashboardAuth(req, options = {}) {
+  const dashboardPassword = options.dashboardPassword ?? config.dashboardPassword;
+  const apiKey = options.apiKey ?? config.apiKey;
+  const headers = req?.headers || {};
+  let pw = headers['x-dashboard-password'] || '';
+  if (dashboardPassword) return pw === dashboardPassword;
+  if (apiKey) return pw === apiKey;
   return true;
 }
 
@@ -120,7 +137,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
   if (method === 'OPTIONS') return json(res, 204, '');
 
   // Auth check (except for auth verification endpoint)
-  if (subpath !== '/auth' && !checkAuth(req)) {
+  if (subpath !== '/auth' && !checkDashboardAuth(req)) {
     return json(res, 401, { error: 'Unauthorized. Set X-Dashboard-Password header.' });
   }
 
@@ -128,7 +145,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
   if (subpath === '/auth') {
     const needsAuth = !!(config.dashboardPassword || config.apiKey);
     if (!needsAuth) return json(res, 200, { required: false });
-    return json(res, 200, { required: true, valid: checkAuth(req) });
+    return json(res, 200, { required: true, valid: checkDashboardAuth(req) });
   }
 
   // ─── Overview ─────────────────────────────────────────
@@ -195,6 +212,10 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
 
   // ─── Self-update: pull latest code + restart PM2 ──────
   if (subpath === '/self-update/check' && method === 'GET') {
+    if (!isAdminFeatureEnabled('self-update')) {
+      return json(res, 403, { error: 'Self-update is disabled. Set ENABLE_SELF_UPDATE=1 to enable.' });
+    }
+    auditAdminAction('self-update.check', req);
     try {
       const info = await gitStatus();
       return json(res, 200, { ok: true, ...info });
@@ -203,6 +224,16 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
     }
   }
   if (subpath === '/self-update' && method === 'POST') {
+    if (!isAdminFeatureEnabled('self-update')) {
+      return json(res, 403, { error: 'Self-update is disabled. Set ENABLE_SELF_UPDATE=1 to enable.' });
+    }
+    if (!body?.confirm) {
+      return json(res, 400, { error: 'Send { confirm: true } to run self-update' });
+    }
+    if (body?.forceReset && !body?.confirmForceReset) {
+      return json(res, 400, { error: 'Send { forceReset: true, confirmForceReset: true } to allow hard reset' });
+    }
+    auditAdminAction('self-update.apply', req, { forceReset: !!body?.forceReset });
     try {
       const before = await gitStatus();
       // Guard: working tree must be clean (ignoring untracked files like
@@ -213,7 +244,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
       // instead of a raw git message.
       const dirty = (await runGit(['status', '--porcelain', '-uno'])).trim();
       if (dirty) {
-        const allowForce = !!(body && body.forceReset);
+        const allowForce = !!(body && body.forceReset && body.confirmForceReset);
         if (!allowForce) {
           return json(res, 200, {
             ok: false,
@@ -393,7 +424,6 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
       'Connection': 'keep-alive',
-      'Access-Control-Allow-Origin': '*',
       'X-Accel-Buffering': 'no',
     });
     res.write('retry: 3000\n\n');
@@ -463,14 +493,23 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
       codeiumApiUrl: config.codeiumApiUrl,
       hasApiKey: !!config.apiKey,
       hasDashboardPassword: !!config.dashboardPassword,
+      allowRevealApiKey: !!config.enableRevealApiKey,
+      allowSelfUpdate: !!config.enableSelfUpdate,
+      allowBatchLogin: !!config.enableBatchLogin,
+      allowTokenRefresh: !!config.enableTokenRefresh,
+      allowLsRestart: !!config.enableLsRestart,
     });
   }
 
   // ─── Language Server ──────────────────────────────────
   if (subpath === '/langserver/restart' && method === 'POST') {
+    if (!isAdminFeatureEnabled('ls-restart')) {
+      return json(res, 403, { error: 'Language server restart is disabled. Set ENABLE_LS_RESTART=1 to enable.' });
+    }
     if (!body.confirm) {
       return json(res, 400, { error: 'Send { confirm: true } to restart language server' });
     }
+    auditAdminAction('langserver.restart', req);
     stopLanguageServer();
     setTimeout(async () => {
       try {
@@ -529,11 +568,15 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
   }
 
   if (subpath === '/windsurf-login/batch' && method === 'POST') {
+    if (!isAdminFeatureEnabled('batch-login')) {
+      return json(res, 403, { error: 'Batch login is disabled. Set ENABLE_BATCH_LOGIN=1 to enable.' });
+    }
     try {
       const { accounts, proxy: loginProxy, autoAdd } = body || {};
       if (!Array.isArray(accounts) || !accounts.length) {
         return json(res, 400, { error: 'ERR_ACCOUNTS_REQUIRED' });
       }
+      auditAdminAction('windsurf-login.batch', req, { count: accounts.length, autoAdd: autoAdd !== false });
 
       const results = [];
       for (const acct of accounts) {
@@ -570,11 +613,15 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
   // ─── Batch proxy + account import ─────────────────────
   // POST /batch-import — each line: "proxy email password" or "email password"
   if (subpath === '/batch-import' && method === 'POST') {
+    if (!isAdminFeatureEnabled('batch-login')) {
+      return json(res, 403, { error: 'Batch login is disabled. Set ENABLE_BATCH_LOGIN=1 to enable.' });
+    }
     try {
       const { text, autoAdd = true } = body || {};
       if (!text || typeof text !== 'string') return json(res, 400, { error: 'ERR_TEXT_REQUIRED' });
       const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
       if (!lines.length) return json(res, 400, { error: 'ERR_NO_VALID_LINES' });
+      auditAdminAction('batch-import.login', req, { count: lines.length, autoAdd: !!autoAdd });
 
       const results = [];
       for (const line of lines) {
@@ -649,8 +696,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
   // POST /accounts/:id/rate-limit — check capacity for a single account
   const rateLimitCheck = subpath.match(/^\/accounts\/([^/]+)\/rate-limit$/);
   if (rateLimitCheck && method === 'POST') {
-    const list = getAccountList();
-    const acct = list.find(a => a.id === rateLimitCheck[1]);
+    const acct = getAccountById(rateLimitCheck[1], { includeSecrets: true });
     if (!acct) return json(res, 404, { error: 'Account not found' });
     try {
       const proxy = getEffectiveProxy(acct.id) || null;
@@ -663,8 +709,12 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
 
   const revealKey = subpath.match(/^\/account\/([^/]+)\/reveal-key$/);
   if (revealKey && method === 'POST') {
-    const acct = getAccountList().find(a => a.id === revealKey[1]);
+    if (!config.enableRevealApiKey) {
+      return json(res, 403, { error: 'API key reveal is disabled. Set ENABLE_REVEAL_API_KEY=1 to enable.' });
+    }
+    const acct = getAccountById(revealKey[1], { includeSecrets: true });
     if (!acct) return json(res, 404, { error: 'Account not found' });
+    auditAdminAction('account.reveal-key', req, { accountId: acct.id });
     return json(res, 200, { success: true, apiKey: acct.apiKey });
   }
 
@@ -672,10 +722,13 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
   // POST /accounts/:id/refresh-token — manually refresh Firebase token
   const tokenRefresh = subpath.match(/^\/accounts\/([^/]+)\/refresh-token$/);
   if (tokenRefresh && method === 'POST') {
-    const list = getAccountList();
-    const acct = list.find(a => a.id === tokenRefresh[1]);
+    if (!isAdminFeatureEnabled('token-refresh')) {
+      return json(res, 403, { error: 'Token refresh is disabled. Set ENABLE_TOKEN_REFRESH=1 to enable.' });
+    }
+    const acct = getAccountById(tokenRefresh[1], { includeSecrets: true });
     if (!acct) return json(res, 404, { error: 'Account not found' });
     if (!acct.refreshToken) return json(res, 400, { error: 'Account has no refresh token' });
+    auditAdminAction('account.refresh-token', req, { accountId: acct.id });
     try {
       const proxy = getEffectiveProxy(acct.id) || null;
       const { idToken, refreshToken: newRefresh } = await refreshFirebaseToken(acct.refreshToken, proxy);

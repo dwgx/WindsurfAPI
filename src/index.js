@@ -1,16 +1,29 @@
 // Logger must be imported first to patch log functions before other modules use them
 import './dashboard/logger.js';
-import { emitNoAuthWarnings, initAuth, isAuthenticated, saveAccountsSync } from './auth.js';
+import { emitNoAuthWarnings, initAuth, isAuthenticated, saveAccountsSync, shouldRejectInsecureExternalBind } from './auth.js';
 import { startLanguageServer, waitForReady, isLanguageServerRunning, stopLanguageServer } from './langserver.js';
 import { startServer } from './server.js';
 import { config, log } from './config.js';
-import { existsSync } from 'fs';
+import { existsSync, mkdirSync, readdirSync, rmSync } from 'fs';
 import { execSync } from 'child_process';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { VERSION, BRAND } from './version.js';
 import { abortActiveSse } from './sse-registry.js';
 export { VERSION, BRAND };
+
+function resetWorkspace() {
+  const wsBase = config.workspaceDir;
+  try {
+    mkdirSync(wsBase, { recursive: true });
+    for (const name of readdirSync(wsBase)) {
+      rmSync(join(wsBase, name), { recursive: true, force: true });
+    }
+  } catch {}
+  try {
+    mkdirSync(join(config.lsDataDir, 'db'), { recursive: true });
+  } catch {}
+}
 
 async function main() {
   const banner = `
@@ -24,19 +37,20 @@ async function main() {
 `;
   console.log(banner);
   console.log(`  OpenAI-compatible proxy for Windsurf — by dwgx1337\n`);
-  emitNoAuthWarnings('0.0.0.0');
+  if (shouldRejectInsecureExternalBind(config.host)) {
+    log.error(`Refusing to start with HOST=${config.host} while API_KEY and DASHBOARD_PASSWORD are both empty.`);
+    log.error('Set HOST=127.0.0.1 for local-only mode, or configure API_KEY / DASHBOARD_PASSWORD before external bind.');
+    process.exit(1);
+  }
+  emitNoAuthWarnings(config.host);
 
   // Start language server binary.
   // Auto-install if missing — users repeatedly miss the manual install step
   // and open "request crashes" issues (see #18), so we just do it ourselves.
-  // Skipped on Windows (LS is Linux-only) and when install-ls.sh isn't present.
+  // Skipped when install-ls.sh isn't present.
   const binaryPath = config.lsBinaryPath;
-  if (!existsSync(binaryPath) && process.platform === 'win32') {
-    log.warn('Windows detected: the Language Server binary is Linux/macOS only.');
-    log.warn('Options: (1) Use Docker (see docker-compose.yml), (2) Use WSL2, or');
-    log.warn('(3) Point LS_BINARY_PATH to a Windsurf desktop app language_server binary.');
-  }
-  if (!existsSync(binaryPath) && process.platform !== 'win32') {
+  const canAutoInstallLs = process.platform === 'linux' || process.platform === 'darwin';
+  if (!existsSync(binaryPath) && canAutoInstallLs) {
     const scriptPath = (() => {
       try {
         const here = dirname(fileURLToPath(import.meta.url));
@@ -60,16 +74,9 @@ async function main() {
   }
 
   if (existsSync(binaryPath)) {
-    try {
-      // Wipe the workspace on every startup. If we don't, files created by
-      // previous chat sessions (e.g. Claude "editing" config.yaml/lru_cache.py
-      // via the baked-in Cascade tool prompts) persist and pollute the next
-      // request — the model sees them at session init and starts narrating
-      // edits to files the caller never mentioned.
-      const wsSuffix = process.env.HOSTNAME ? `-${process.env.HOSTNAME}` : '';
-      const wsBase = `/tmp/windsurf-workspace${wsSuffix}`;
-      execSync(`mkdir -p /opt/windsurf/data/db "${wsBase}" && rm -rf "${wsBase}"/* "${wsBase}"/.[!.]* 2>/dev/null || true`, { stdio: 'ignore' });
-    } catch {}
+    // Reset LS workspace each startup; using Node fs APIs keeps this
+    // cross-platform and avoids Linux-specific shell assumptions.
+    resetWorkspace();
 
     await startLanguageServer({
       binaryPath,
