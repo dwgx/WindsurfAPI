@@ -1,6 +1,7 @@
 import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { annotateRiskyReadToolResult, handleMessages } from '../src/handlers/messages.js';
+import { applyJsonResponseHint, isExplicitJsonRequested } from '../src/handlers/chat.js';
 
 describe('Anthropic messages request translation', () => {
   afterEach(() => {
@@ -122,5 +123,38 @@ describe('Anthropic messages request translation', () => {
       annotateRiskyReadToolResult(bashStub, { toolName: 'Bash', isError: true }),
       bashStub,
     );
+  });
+
+  it('detects explicit JSON requests without response_format', () => {
+    assert.equal(isExplicitJsonRequested([
+      { role: 'user', content: 'Read package.json and answer only compact JSON with name and version.' },
+    ]), true);
+    assert.equal(isExplicitJsonRequested([
+      { role: 'user', content: 'Tell me about JSON as a data format.' },
+    ]), false);
+  });
+
+  it('adds JSON-only guidance for clients that ask for JSON in text', () => {
+    const messages = applyJsonResponseHint([
+      { role: 'user', content: 'Read package.json and answer only compact JSON with name and version.' },
+    ]);
+
+    assert.match(messages[0].content, /Respond with valid JSON only/);
+    assert.match(messages.at(-1).content, /single parseable JSON object/);
+  });
+
+  it('keeps JSON-only guidance on the latest real user turn when the current turn is a tool_result', () => {
+    const messages = applyJsonResponseHint([
+      { role: 'user', content: 'Read package.json and answer only compact JSON with name and version.' },
+      { role: 'assistant', content: '', tool_calls: [
+        { id: 'toolu_1', type: 'function', function: { name: 'Read', arguments: '{"file_path":"package.json"}' } },
+      ] },
+      { role: 'tool', tool_call_id: 'toolu_1', content: '{"name":"windsurf-api","version":"2.0.11"}' },
+    ]);
+
+    const realUser = messages.find(m => m.role === 'user' && typeof m.content === 'string' && m.content.includes('Read package.json'));
+    const toolResult = messages.find(m => m.role === 'tool');
+    assert.match(realUser.content, /single parseable JSON object/);
+    assert.doesNotMatch(toolResult.content, /single parseable JSON object/);
   });
 });

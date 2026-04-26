@@ -132,6 +132,57 @@ function extractJsonPayload(text) {
   return trimmed;
 }
 
+function textFromMessageContent(content) {
+  if (typeof content === 'string') return content;
+  if (Array.isArray(content)) {
+    return content
+      .filter(p => typeof p?.text === 'string')
+      .map(p => p.text)
+      .join('\n');
+  }
+  return '';
+}
+
+export function isExplicitJsonRequested(messages) {
+  if (!Array.isArray(messages)) return false;
+  for (const m of messages) {
+    if (m?.role !== 'user') continue;
+    const text = textFromMessageContent(m.content);
+    if (!text || /^\s*<tool_result\b/i.test(text)) continue;
+    if (/\b(?:compact\s+)?JSON\b/i.test(text) && /\b(?:answer|respond|return|output|containing|with|only|valid)\b/i.test(text)) {
+      return true;
+    }
+    if (/\bJSON\s+(?:object|only|format)\b/i.test(text)) return true;
+    if (/\b(?:answer|respond|return|output)\s+only\s+(?:with\s+)?(?:valid\s+)?JSON\b/i.test(text)) return true;
+  }
+  return false;
+}
+
+function appendJsonHintToContent(content, hint) {
+  if (typeof content === 'string') return content + hint;
+  if (Array.isArray(content)) return [...content, { type: 'text', text: hint }];
+  return content;
+}
+
+export function applyJsonResponseHint(messages, responseFormat) {
+  let jsonHint = '\n\n[You MUST respond with valid JSON only. No markdown code fences, no explanation text, no prefix/suffix. Your entire response must be a single parseable JSON object. If tool results contain the requested values, put those values into JSON fields rather than describing them in prose.';
+  if (responseFormat?.type === 'json_schema' && responseFormat?.json_schema?.schema) {
+    jsonHint += ' Conform to this JSON Schema:\n' + JSON.stringify(responseFormat.json_schema.schema);
+  }
+  jsonHint += ']';
+
+  const sysJsonMsg = { role: 'system', content: 'Respond with valid JSON only. No markdown, no code fences, no explanation. Output must be parseable by JSON.parse().' };
+  const out = [sysJsonMsg, ...(Array.isArray(messages) ? messages : [])];
+  for (let i = out.length - 1; i >= 1; i--) {
+    if (out[i]?.role !== 'user') continue;
+    const text = textFromMessageContent(out[i].content);
+    if (/^\s*<tool_result\b/i.test(text)) continue;
+    out[i] = { ...out[i], content: appendJsonHintToContent(out[i].content, jsonHint) };
+    break;
+  }
+  return out;
+}
+
 const CASCADE_REUSE_STRICT = process.env.CASCADE_REUSE_STRICT === '1';
 const CASCADE_REUSE_STRICT_RETRY_MS = (() => {
   const n = parseInt(process.env.CASCADE_REUSE_STRICT_RETRY_MS || '', 10);
@@ -628,21 +679,10 @@ export async function handleChatCompletions(body, context = {}) {
     }
   }
 
-  const wantJson = response_format?.type === 'json_object' || response_format?.type === 'json_schema';
+  const explicitJson = isExplicitJsonRequested(messages);
+  const wantJson = response_format?.type === 'json_object' || response_format?.type === 'json_schema' || explicitJson;
   if (wantJson) {
-    let jsonHint = '\n\n[You MUST respond with valid JSON only. No markdown code fences, no explanation text, no prefix/suffix. Your entire response must be a single parseable JSON object.';
-    if (response_format?.type === 'json_schema' && response_format?.json_schema?.schema) {
-      jsonHint += ' Conform to this JSON Schema:\n' + JSON.stringify(response_format.json_schema.schema);
-    }
-    jsonHint += ']';
-    const sysJsonMsg = { role: 'system', content: 'Respond with valid JSON only. No markdown, no code fences, no explanation. Output must be parseable by JSON.parse().' };
-    messages = [sysJsonMsg, ...messages.map((m, i) => {
-      if (i === messages.length - 1 && m.role === 'user') {
-        const content = typeof m.content === 'string' ? m.content + jsonHint : m.content;
-        return { ...m, content };
-      }
-      return m;
-    })];
+    messages = applyJsonResponseHint(messages, response_format);
   }
 
   const modelKey = resolveModel(reqModel || config.defaultModel);
