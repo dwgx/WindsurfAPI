@@ -187,6 +187,18 @@ function strictReuseMessage(model, retryMs, reason = 'temporarily unavailable') 
 }
 
 export function rateLimitCooldownMs(message = '') {
+  const reset = String(message || '').match(/resets?\s+in\s*:?\s*((?:(?:\d+)\s*[hms]\s*)+)/i);
+  if (reset) {
+    let total = 0;
+    for (const part of reset[1].matchAll(/(\d+)\s*([hms])/gi)) {
+      const n = Number(part[1]);
+      const unit = part[2].toLowerCase();
+      if (unit === 'h') total += n * 60 * 60 * 1000;
+      else if (unit === 'm') total += n * 60 * 1000;
+      else total += n * 1000;
+    }
+    if (total > 0) return total;
+  }
   const m = String(message || '').match(/(?:retry (?:after|in)|after)\s+(\d+)\s*(seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h)/i);
   if (m) {
     const n = Number(m[1]);

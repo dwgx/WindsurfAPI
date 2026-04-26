@@ -64,6 +64,15 @@ describe('rate-limit handling', () => {
     assert.equal(rateLimitCooldownMs('quota hit'), 60000);
   });
 
+  it('parses Cascade reset windows into real model cooldowns', () => {
+    assert.equal(
+      rateLimitCooldownMs('Reached message rate limit for this model. Please try again later. Resets in: 2h59m58s (trace ID: abc)'),
+      (2 * 60 * 60 * 1000) + (59 * 60 * 1000) + (58 * 1000)
+    );
+    assert.equal(rateLimitCooldownMs('Resets in: 59s'), 59000);
+    assert.equal(rateLimitCooldownMs('resets in 3h'), 3 * 60 * 60 * 1000);
+  });
+
   it('does not extend an existing cooldown when a later 429 arrives for the same model', async () => {
     const account = addTestAccount('max-extend');
     const modelKey = 'gemini-2.5-flash';
