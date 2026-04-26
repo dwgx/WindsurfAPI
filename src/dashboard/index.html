@@ -4755,136 +4755,22 @@ const App = {
       fallback();
     }
   },
-  // Hand-maintained roster of external contributors. Update here when a
-  // new PR lands; the dashboard Credits panel renders straight from this.
-  CONTRIBUTORS: [
-    {
-      login: 'baily-zhang',
-      pr: 62,
-      weight: 'S+',
-      weightLabel: '第四次出手 · dashboard inline-script 静态解析 regression 防御',
-      mergedAt: '2026-04-25',
-      title: 'fix(dashboard): 修复 Credits 文案导致控制台空白',
-      summary: 'commit 60fcd5a 写新 Credits 文案时 Codeium 那个所有格在 inline single-quoted JS string 里被过度转义，整个 dashboard 主脚本 parse fail —— 页面能开但 stats / accounts 等 panel 全空白。几小时内发现修字面 + 新加 test/dashboard-syntax.test.js 用 V8 静态解析 inline script blocks，未来同类 escape / copy 错误下次直接卡 npm test 阶段，比 live UI 砖掉强。',
-    },
-    {
-      login: 'baily-zhang',
-      pr: 61,
-      weight: 'S+',
-      weightLabel: '第三次出手 + Opus 4.7 多模态体验救星',
-      mergedAt: '2026-04-25',
-      title: 'fix: 修复 Opus 4.7 Claude Code 上下文爆炸',
-      summary: 'Claude Code 走 Opus 4.7 + 图片 + tools 时反代把整个 Claude Code system prompt（含 billing header）+ 工具 fallback + 图片 base64 全塞进 user 文本通道，连续图片轮历史指数膨胀触发 Opus 4.7 prompt-injection 拒答。修法五件事：图片 / 二进制 block 在历史里只留占位符不再嵌 base64；Claude Code 长 system prompt 压缩去除 billing header；Opus 4.7 多模态工具请求禁用 user-message tool fallback（proto 层 SectionOverride 已经 carry 工具）；Opus 4.7 工具请求启用窄范围 cascade reuse + 严格账号绑定避免 retry 全量重放；fingerprint 不再 hash 图片 base64。回归测试覆盖每一条。和 PR #36 / #45 合起来 baily-zhang 已是反代复用机制的实质 maintainer。',
-    },
-    {
-      login: 'abwuge',
-      pr: 58,
-      weight: 'B+',
-      weightLabel: 'Docker 部署关键修复 · 首次贡献',
-      mergedAt: '2026-04-25',
-      title: 'fix: nginx shared memory zone + 缺失的 join import',
-      summary: '新人首次贡献就解了部署死锁。docker-compose 起来后所有 windsurf 容器（windsurf-lb + 三个 API 副本）持续 Restart：nginx upstream 用了 `server windsurf-api:3003 resolve` 动态解析但没配 `zone`，nginx 直接拒绝启动；Node 这边 src/config.js:38 实际调用 `join()` 但顶部 import 漏写，replica-data-dir 路径 hit 时 ReferenceError 进程崩。两处单行修，docker compose 立刻能起。PR 描述里那句"~~这么简单的问题，难道没人用 docker 吗？~~" 本人勿删。',
-    },
-    {
-      login: 'aict666',
-      pr: 54,
-      weight: 'S+',
-      weightLabel: '第四次出手 · 三件事打包修',
-      mergedAt: '2026-04-25',
-      title: 'fix: bring Claude Code tool-call flow back to Anthropic-equivalent behaviour',
-      summary: '一个 PR 解了三个独立 regression。① tool preamble 从 1600 字符瘦身到 330 字符 —— 老版本的 ### Tool / parameters schema: / ```json {…} 形态正是 Claude Code 自家 system prompt 的指纹，出现在 user 槽位时 Opus 4.7 会判 "pasted system prompt" 拒答。② redact 标记升到第 6 代单字符 U+2026 省略号 `…`：第 5 代 redacted internal path 仍被 Opus 塞进 cd redacted internal path && git ... 浪费 2-3 turn；新 marker 0 ASCII word char + 0 shell 元字符 + 训练数据里没 cd … 当真路径的样本，模型不会再当参数用。③ neutralizeCascadeIdentity 加 5 个新 pattern（Cascade is an? AI assistant / As Cascade / Codeium\'s Cascade / built by Codeium / Cascade\'s workspace），漏网的 Cascade 自称口吻全部封死。回归套装含 banned-shape regex 锁死未来不会再倒退到含 ASCII 字符的 marker。',
-    },
-    {
-      login: 'aict666',
-      pr: 53,
-      weight: 'S+',
-      weightLabel: '第二次出手 · redact marker shell 安全',
-      mergedAt: '2026-04-24',
-      title: 'fix(#24): redact marker must have no shell metacharacters',
-      summary: '第 4 代 redact marker `(internal path redacted)` 被 Opus 4.7 塞进 `cd (internal path redacted) && git branch -a`，zsh 把 `(…)` 解析成 glob-qualifier 报 `unknown file attribute: i`，模型见到这种诡异错误就 derail。aict666 的根因诊断细到 zsh 的 glob qualifier 词法 —— 一个文件 API 安全的 marker 不一定是 shell 安全的。换成 `redacted internal path`（无 shell 元字符 / 无路径形状），加两条 banned regex 锁死 marker 形状，未来若再出新 marker test 会卡住。',
-    },
-    {
-      login: 'aict666',
-      pr: 51,
-      weight: 'S+',
-      weightLabel: '最高信任级别：root-cause 精准、测试齐全、诊断可追溯',
-      mergedAt: '2026-04-24',
-      title: 'fix: 重写 tool preamble 去 jailbreak 措辞，绕过 Opus 4.7 injection guard',
-      summary: 'Opus-class 模型走 /v1/messages 时完全不 emit <tool_call>，直接回复"The pasted content appears to be a prompt-injection attempt"。root cause 精确到 TOOL_PROTOCOL_HEADER 里三段越狱措辞（IGNORE any earlier / For THIS request only / [Tool-calling context] 栅栏）被 Opus 自己的 injection detector 反杀。重写成中性的 "The following functions are available for this turn"，保留 <tool_call> 协议合同与 parser 不动，附带 3 条 banned-regex 回归测试防止未来倒退。PR body 可以直接发 Anthropic 论坛。',
-    },
-    {
-      login: 'baily-zhang',
-      pr: 45,
-      weight: 'S',
-      weightLabel: '根因修复：上下文重放 / usage 累加',
-      mergedAt: '2026-04-24',
-      title: 'fix: 切断 Cascade 复用时的旧 step 重放（alpha→alphabeta→alphabeta…）',
-      summary: '复用 cascade_id 时 GetCascadeTrajectorySteps 每次都从 step 0 拉，结果旧 step 的 assistant text 被重放到新轮里，输出变成 "alpha" → "alphabeta" → "alphabetabeta"；usage 也累加成整条 cascade 的总量。修法是把 stepOffset / generatorOffset 随 pool entry 持久化，每次复用时从上次的 offset 继续拉。给 PR #36 之后仍报胡言乱语的用户找回最后一块拼图。',
-    },
-    {
-      login: 'aict666',
-      pr: 44,
-      weight: 'S+',
-      weightLabel: '账号 tier 识别的关键修复',
-      mergedAt: '2026-04-24',
-      title: 'fix(auth): 阻止 non-premium 调用把 Pro/Trial 降级为 free',
-      summary: 'updateCapability 在每次成功 chat 后无条件 inferTier() 覆写 account.tier。inferTier 只认 claude-opus-4.6 / sonnet-4.6 作为 Pro 证据，Pro 账号只要调用 gemini-2.5-flash 或 gpt-4o-mini 一次就被悄悄降级到 free，后续请求按 free 限制，Dashboard 显示 FREE。修法是当 GetUserStatus 已经给过权威 tier（userStatusLastFetched > 0 或 tierManual=true）时跳过 inferTier 回退。probeAccount 原本有手动 restore 工作绕过，chat handler 路径没有，每个真实 API 调用都在偷偷降级账号。',
-    },
-    {
-      login: 'smeinecke',
-      pr: 43,
-      weight: 'A',
-      weightLabel: '国际化基础设施贡献者',
-      mergedAt: '2026-04-24',
-      title: 'feat: Dashboard 完整 i18n 国际化',
-      summary: '14 个 commit 把所有硬编码中文改成 I18n.t() 调用，补齐 en.json / zh-CN.json 缺键，加 check-i18n.js 扫 JavaScript 里的 I18n.t() key 确保 locale 里都有对应翻译。让 Dashboard 真正能中英双语切换，不是翻了一半的半成品。',
-    },
-    {
-      login: 'baily-zhang',
-      pr: 36,
-      weight: 'S',
-      weightLabel: '上下文丢失根因修复者',
-      mergedAt: '2026-04-22',
-      title: 'fix: fingerprint 只 hash 稳定轮，消除 0% 复用命中',
-      summary: 'Claude Code 每次重构 assistant content（数组 ↔ 字符串 ↔ 含 tool_use blocks）而 system prompt 又含动态项目状态，老 fingerprint 把这两者 hash 进去导致永不匹配。改成只 hash user + tool_result 两类稳定轮，system prompt 通过 CASCADE_REUSE_HASH_SYSTEM=1 opt-in。外加可配置历史 budget（1m 模型更大默认）+ LS_DATA_DIR override。#24 "胡言乱语"爆发后的第一块拼图，和 PR #45 合起来算这条线上最彻底的修复。',
-    },
-    {
-      login: 'youfak',
-      pr: 26,
-      weight: 'A+',
-      weightLabel: '部署体验贡献者：Docker 零依赖适配',
-      mergedAt: '2026-04-22',
-      title: 'feat: Docker 全套部署 + DATA_DIR + LS 重启兜底',
-      summary: 'Dockerfile / docker-compose.yml / .dockerignore / .gitattributes 一整套，配 DATA_DIR 配置项把 accounts.json / stats.json / logs/ 等持久化文件统一收敛到可挂载的数据目录。附带修两个 LS 稳定性问题：Windows 宿主机构建时 install-ls.sh 的 CRLF 会导致容器内 set: pipefail 报错；Dashboard 点重启 LS 时若启动失败会把整个 Node 进程打崩。',
-    },
-    {
-      login: 'motto1',
-      pr: 20,
-      weight: 'A',
-      weightLabel: '登录取号链路还原',
-      mergedAt: '2026-04-21',
-      title: 'fix(dashboard): 补上 Windsurf 官网实际使用的 Auth1 登录链路',
-      summary: '官网可以登但 Dashboard 登录失败 —— 原因是旧 Firebase 路径已不是主链路。逆向补出 /_devin-auth/connections → /_devin-auth/password/login → WindsurfPostAuth → GetOneTimeAuthToken 四步流程，保留旧 Firebase 作为兜底，再顺手加了邮箱/密码批量导入 + 剪贴板读取。',
-    },
-    {
-      login: 'dd373156',
-      pr: 1,
-      weight: 'B+',
-      weightLabel: '首位外部 PR 贡献者',
-      mergedAt: '2026-04-20',
-      title: 'fix(models): 让 pro tier 识别到云端动态合并的模型',
-      summary: 'MODEL_TIER_ACCESS.pro 引用的是 ALL_MODEL_KEYS —— 模块加载时的 Object.keys(MODELS) 快照。mergeCloudModels 启动后加进来的五个 claude-opus-4-7-* 永远不在这个冻结数组里，每个请求都 403 model_not_entitled。一行改成 getter 让每次访问都重新枚举 live MODELS dict。三步 curl 复现写得教科书级。',
-    },
-    {
-      login: 'colin1112a',
-      pr: 13,
-      weight: 'B+',
-      weightLabel: '早期代码审查先行者（PR 未合但方向正确）',
-      mergedAt: '2026-04-21',
-      title: 'fix: 一次性审计并提交 15 个安全 / 并发 / 资源管理 bug',
-      summary: '系统性扫了一遍仓库提了 CRITICAL/HIGH/MEDIUM 15 条修复建议：XSS 转义、shell 注入防护、10MB body 上限、auth 路由顺序、gRPC 双回调保护、LS pool 并发竞态、HTTP/2 frame 16MB 上限、varint BigInt 支持。PR 因改动面过大未直接合并，但其中多项被后续独立重做。',
-    },
-  ],
+  // Roster lives in /dashboard/data/contributors.json so default UI
+  // and sketch UI share one source of truth. Fetched at panel-open.
+  CONTRIBUTORS_CACHE: null,
+  async fetchContributors() {
+    if (this.CONTRIBUTORS_CACHE) return this.CONTRIBUTORS_CACHE;
+    try {
+      const res = await fetch('/dashboard/data/contributors.json');
+      if (!res.ok) throw new Error(`status ${res.status}`);
+      const data = await res.json();
+      this.CONTRIBUTORS_CACHE = Array.isArray(data?.contributors) ? data.contributors : [];
+    } catch (e) {
+      console.error('fetchContributors failed:', e);
+      this.CONTRIBUTORS_CACHE = [];
+    }
+    return this.CONTRIBUTORS_CACHE;
+  },
   contributorRarity(weight) {
     if (weight === 'S+') return 'UR';
     if (weight === 'S' || weight === 'A+') return 'SSR';
@@ -4912,10 +4798,11 @@ const App = {
     );
     return groups;
   },
-  loadCredits() {
+  async loadCredits() {
     const body = document.getElementById('credits-body');
     if (!body) return;
-    const groups = this.groupContributors(this.CONTRIBUTORS);
+    const list = await this.fetchContributors();
+    const groups = this.groupContributors(list);
     body.innerHTML = `<div class="contributor-list">${groups.map(g => {
       const latest = g.latest;
       const count = g.prs.length;

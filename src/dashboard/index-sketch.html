@@ -3197,42 +3197,90 @@ const App = {
   },
 
   /* ── credits page ── */
+  CONTRIBUTORS_CACHE: null,
+  async fetchContributors() {
+    if (this.CONTRIBUTORS_CACHE) return this.CONTRIBUTORS_CACHE;
+    try {
+      const r = await fetch('/dashboard/data/contributors.json');
+      if (!r.ok) throw new Error(`status ${r.status}`);
+      const data = await r.json();
+      this.CONTRIBUTORS_CACHE = Array.isArray(data?.contributors) ? data.contributors : [];
+    } catch (e) {
+      console.error('fetchContributors failed:', e);
+      this.CONTRIBUTORS_CACHE = [];
+    }
+    return this.CONTRIBUTORS_CACHE;
+  },
+  weightRank(w) { return ({ 'S+': 6, 'S': 5, 'A+': 4, 'A': 3, 'B+': 2, 'B': 1 })[w] || 0; },
+  contributorRarity(weight) {
+    if (weight === 'S+') return 'UR';
+    if (weight === 'S' || weight === 'A+') return 'SSR';
+    return 'SR';
+  },
+  groupContributors(list) {
+    const map = new Map();
+    for (const c of list) {
+      if (!map.has(c.login)) map.set(c.login, { login: c.login, prs: [] });
+      map.get(c.login).prs.push(c);
+    }
+    const groups = [];
+    for (const g of map.values()) {
+      g.prs.sort((a, b) => (b.mergedAt || '').localeCompare(a.mergedAt || ''));
+      g.latest = g.prs[0];
+      g.topWeight = g.prs.reduce((best, p) => this.weightRank(p.weight) > this.weightRank(best) ? p.weight : best, '');
+      groups.push(g);
+    }
+    groups.sort((a, b) =>
+      this.weightRank(b.topWeight) - this.weightRank(a.topWeight)
+      || (b.latest.mergedAt || '').localeCompare(a.latest.mergedAt || '')
+    );
+    return groups;
+  },
   async loadCredits() {
-    /* Backend has no /credits endpoint (the production UI ships its
-       CONTRIBUTORS list inline). Try the call; if it 404s, fall back to
-       a thin pointer to the GitHub PR list. Sketch is the experimental
-       skin — full contributor cards are intentionally out of scope. */
     const body = document.getElementById('credits-body');
     if (!body) return;
-    let list = [];
-    try {
-      const r = await this.api('GET', '/credits');
-      list = Array.isArray(r?.contributors) ? r.contributors : [];
-    } catch {}
-    if (list.length) {
-      body.innerHTML = `<div style="display:flex;flex-direction:column;gap:12px">${list.map(c => `
-        <div style="display:flex;gap:14px;padding:12px;border:1px dashed var(--rule-soft)">
-          ${c.avatar ? `<img src="${this.esc(c.avatar)}" alt="" style="width:48px;height:48px;border-radius:50%;border:1.5px solid var(--ink)">` : `<span class="avatar-letter" style="width:48px;height:48px;font-size:22px">${this.esc((c.name||'?')[0].toUpperCase())}</span>`}
-          <div style="flex:1;min-width:0">
-            <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">
-              <a href="${this.esc(c.url)}" target="_blank" class="serif" style="font-size:18px;color:var(--ink);text-decoration:none">${this.esc(c.name)}</a>
-              <span class="text-mute text-xs">${c.mergedAt ? new Date(c.mergedAt).toLocaleDateString() : ''}</span>
-            </div>
-            <div style="margin-top:4px">${this.esc(c.title || '')}</div>
-            ${c.summary ? `<div class="text-mute text-sm mt-2">${this.esc(c.summary)}</div>` : ''}
-          </div>
-        </div>`).join('')}</div>`;
+    const list = await this.fetchContributors();
+    if (!list.length) {
+      body.innerHTML = `<div class="text-mute italic">no contributors</div>`;
       return;
     }
-    body.innerHTML = `
-      <div style="padding:14px;border:1px dashed var(--rule-soft)">
-        <div class="serif" style="font-size:18px;margin-bottom:6px">Contributors</div>
-        <div class="text-mute text-sm" data-zh="完整贡献者名单在默认皮里展示。这里只放一个外链。" data-en="Full contributor cards live in the default skin. Sketch UI just links out.">完整贡献者名单在默认皮里展示。这里只放一个外链。</div>
-        <div style="margin-top:10px;display:flex;gap:14px;flex-wrap:wrap">
-          <a href="https://github.com/dwgx/WindsurfAPI/pulls?q=is%3Apr+is%3Amerged" target="_blank">Merged pull requests <svg class="ic" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg></a>
-          <a href="https://github.com/dwgx/WindsurfAPI/graphs/contributors" target="_blank">GitHub contributor graph <svg class="ic" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg></a>
+    const groups = this.groupContributors(list);
+    body.innerHTML = `<div style="display:flex;flex-direction:column;gap:14px">${groups.map(g => {
+      const latest = g.latest;
+      const count = g.prs.length;
+      const rarity = this.contributorRarity(g.topWeight);
+      const histItems = g.prs.map(p => {
+        const r = this.contributorRarity(p.weight);
+        return `<li style="margin:8px 0;padding-left:10px;border-left:1.5px solid var(--rule-soft)">
+          <div style="display:flex;gap:8px;align-items:baseline;flex-wrap:wrap">
+            <a class="serif" style="color:var(--ink);text-decoration:underline dotted" target="_blank" rel="noopener" href="https://github.com/dwgx/WindsurfAPI/pull/${p.pr}">PR #${p.pr}</a>
+            <span class="text-mute text-xs">${this.esc(p.mergedAt || '')}</span>
+            ${p.weight ? `<span class="stamp" style="font-size:11px;padding:1px 8px;margin-top:0">${this.esc(r)}</span>` : ''}
+            ${p.weightLabel ? `<span class="text-mute text-xs">${this.esc(p.weightLabel)}</span>` : ''}
+          </div>
+          <div style="margin-top:3px">${this.esc(p.title)}</div>
+          <div class="text-mute text-sm" style="margin-top:3px">${this.esc(p.summary)}</div>
+        </li>`;
+      }).join('');
+      return `<div style="display:flex;gap:14px;padding:14px;border:1px dashed var(--rule-soft);background:var(--paper)">
+        <img src="https://github.com/${this.esc(g.login)}.png?size=128" alt="${this.esc(g.login)}" loading="lazy" onerror="this.style.visibility='hidden'" style="width:56px;height:56px;border-radius:50%;border:1.5px solid var(--ink);flex-shrink:0">
+        <div style="flex:1;min-width:0">
+          <div style="display:flex;gap:10px;align-items:baseline;flex-wrap:wrap">
+            <a href="https://github.com/${this.esc(g.login)}" target="_blank" rel="noopener" class="serif" style="font-size:20px;color:var(--ink);text-decoration:none">@${this.esc(g.login)}</a>
+            ${g.topWeight ? `<span class="stamp" style="font-size:13px;padding:1px 10px;margin-top:0">${this.esc(rarity)}</span>` : ''}
+            <span class="text-mute text-sm">×${count}</span>
+            <span style="flex:1"></span>
+            <a class="text-sm" style="color:var(--ink);text-decoration:underline dotted" target="_blank" rel="noopener" href="https://github.com/dwgx/WindsurfAPI/pull/${latest.pr}">PR #${latest.pr}</a>
+            <span class="text-mute text-xs">${this.esc(latest.mergedAt || '')}</span>
+          </div>
+          <div class="serif" style="margin-top:6px;font-size:16px">${this.esc(latest.title)}</div>
+          <details style="margin-top:6px">
+            <summary class="text-mute text-sm" style="cursor:pointer">${count > 1 ? `${count} 次贡献 · 展开历史` : '查看详情'}</summary>
+            <ol style="list-style:none;padding:0;margin:8px 0 0">${histItems}</ol>
+          </details>
         </div>
       </div>`;
+    }).join('')}</div>`;
   },
 };
 

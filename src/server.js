@@ -180,6 +180,25 @@ async function route(req, res) {
     }
   }
 
+  // ─── Dashboard data files (contributors, etc.) ──────────
+  // Same shape as i18n: tight regex on the basename, served as JSON.
+  // Used by both default and sketch UIs as the single source of truth
+  // for hand-maintained roster data so the two skins stay in sync.
+  if (path.startsWith('/dashboard/data/')) {
+    try {
+      const dataFile = path.slice('/dashboard/data/'.length);
+      if (!dataFile.match(/^[a-zA-Z0-9\-]+\.json$/)) {
+        return json(res, 400, { error: 'Invalid data file' });
+      }
+      const filePath = join(__dirname, 'dashboard', 'data', dataFile);
+      const content = readFileSync(filePath);
+      res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8' });
+      return res.end(content);
+    } catch {
+      return json(res, 404, { error: 'Data file not found' });
+    }
+  }
+
   // ─── API endpoints (require API key) ────────────────────
 
   if (!validateApiKey(extractToken(req))) {
