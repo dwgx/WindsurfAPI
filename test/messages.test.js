@@ -1,6 +1,6 @@
 import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { annotateRiskyReadToolResult, handleMessages } from '../src/handlers/messages.js';
+import { annotateRiskyReadToolResult, extractCallerSubKey, handleMessages } from '../src/handlers/messages.js';
 import { applyJsonResponseHint, extractRequestedJsonKeys, isExplicitJsonRequested, stabilizeJsonPayload } from '../src/handlers/chat.js';
 
 describe('Anthropic messages request translation', () => {
@@ -194,6 +194,92 @@ describe('Anthropic messages request translation', () => {
     assert.equal(capturedBody.response_format?.type, 'json_schema');
     assert.deepEqual(capturedBody.response_format.json_schema.schema, schema);
     assert.equal(capturedBody.response_format.json_schema.strict, true);
+  });
+
+  it('extracts a stable per-user sub key from Claude Code metadata.user_id JSON', () => {
+    const userIdJson = JSON.stringify({
+      device_id: '42a4480e6ef9848582c0452f45ea155a89ed9b296d91700b7226973bb83f4495',
+      account_uuid: '',
+      session_id: '76f83892-d2e3-4248-8006-6d3c64955db4',
+    });
+    const a = extractCallerSubKey({ metadata: { user_id: userIdJson } });
+    assert.equal(typeof a, 'string');
+    assert.equal(a.length, 16);
+    // Same input -> same key (stability)
+    assert.equal(extractCallerSubKey({ metadata: { user_id: userIdJson } }), a);
+    // Different device_id -> different key (multi-user isolation)
+    const b = extractCallerSubKey({
+      metadata: { user_id: JSON.stringify({ device_id: 'different-device', session_id: '76f83892-d2e3-4248-8006-6d3c64955db4' }) },
+    });
+    assert.notEqual(a, b);
+  });
+
+  it('falls back through user_id fields when device_id is missing', () => {
+    const sessionOnly = extractCallerSubKey({
+      metadata: { user_id: JSON.stringify({ session_id: 'sess-1' }) },
+    });
+    const acctOnly = extractCallerSubKey({
+      metadata: { user_id: JSON.stringify({ account_uuid: 'acct-1' }) },
+    });
+    assert.equal(sessionOnly.length, 16);
+    assert.equal(acctOnly.length, 16);
+    assert.notEqual(sessionOnly, acctOnly);
+  });
+
+  it('treats plain-string user_id as the tag (older Anthropic SDK shape)', () => {
+    const out = extractCallerSubKey({ metadata: { user_id: 'plain-string-id' } });
+    assert.equal(out.length, 16);
+  });
+
+  it('returns empty when metadata or user_id is missing or empty', () => {
+    assert.equal(extractCallerSubKey({}), '');
+    assert.equal(extractCallerSubKey({ metadata: {} }), '');
+    assert.equal(extractCallerSubKey({ metadata: { user_id: '' } }), '');
+    assert.equal(extractCallerSubKey(null), '');
+    assert.equal(extractCallerSubKey(undefined), '');
+  });
+
+  it('augments context.callerKey with metadata.user_id sub-key on the chat handler call', async () => {
+    let capturedContext = null;
+    await handleMessages({
+      model: 'claude-sonnet-4.6',
+      metadata: { user_id: JSON.stringify({ device_id: 'device-A' }) },
+      messages: [{ role: 'user', content: 'hi' }],
+    }, {
+      callerKey: 'api:abc123',
+      async handleChatCompletions(_body, ctx) {
+        capturedContext = ctx;
+        return {
+          status: 200,
+          body: {
+            choices: [{ index: 0, message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
+            usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+          },
+        };
+      },
+    });
+    assert.match(capturedContext.callerKey, /^api:abc123:user:[0-9a-f]{16}$/);
+  });
+
+  it('leaves callerKey unchanged when no metadata.user_id is present', async () => {
+    let capturedContext = null;
+    await handleMessages({
+      model: 'claude-sonnet-4.6',
+      messages: [{ role: 'user', content: 'hi' }],
+    }, {
+      callerKey: 'api:abc123',
+      async handleChatCompletions(_body, ctx) {
+        capturedContext = ctx;
+        return {
+          status: 200,
+          body: {
+            choices: [{ index: 0, message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
+            usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+          },
+        };
+      },
+    });
+    assert.equal(capturedContext.callerKey, 'api:abc123');
   });
 
   it('preserves thinking.type=adaptive (Claude Code 2.x sonnet default) when forwarding', async () => {

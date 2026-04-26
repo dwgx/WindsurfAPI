@@ -11,12 +11,41 @@
  * No buffering, so first-token latency matches the upstream Cascade stream.
  */
 
-import { randomUUID } from 'crypto';
+import { createHash, randomUUID } from 'crypto';
 import { handleChatCompletions } from './chat.js';
 import { log } from '../config.js';
 
 function genMsgId() {
   return 'msg_' + randomUUID().replace(/-/g, '').slice(0, 24);
+}
+
+function sha256Hex(value) {
+  return createHash('sha256').update(String(value || '')).digest('hex');
+}
+
+// Real Claude Code 2.1.120 traffic carries metadata.user_id as a
+// JSON-encoded string with shape {device_id, account_uuid, session_id}.
+// Older Anthropic SDK clients send a plain string. The proxy currently
+// derives callerKey from API key + IP/UA, which means every Claude Code
+// client behind the same key shares one cascade pool — leading to cross-
+// device session bleed. Extract a stable per-user tag from metadata so
+// the pool can isolate concurrent users.
+export function extractCallerSubKey(body) {
+  const userId = body?.metadata?.user_id;
+  if (typeof userId !== 'string' || !userId) return '';
+  let parsed = null;
+  try { parsed = JSON.parse(userId); } catch {}
+  let tag = '';
+  if (parsed && typeof parsed === 'object') {
+    tag = parsed.device_id || parsed.deviceId
+      || parsed.session_id || parsed.sessionId
+      || parsed.account_uuid || parsed.accountUuid
+      || '';
+  } else {
+    tag = userId;
+  }
+  if (!tag) return '';
+  return sha256Hex(tag).slice(0, 16);
 }
 
 // ─── Anthropic → OpenAI request translation ──────────────────
@@ -458,9 +487,17 @@ export async function handleMessages(body, context = {}) {
   const wantStream = !!body.stream;
   const openaiBody = anthropicToOpenAI(body);
   const chatHandler = context.handleChatCompletions || handleChatCompletions;
+  // Augment callerKey with the per-user tag from metadata.user_id when
+  // present so the cascade pool can isolate concurrent Claude Code users
+  // sharing one API key. Bare API-key callers and other client SDKs that
+  // do not send metadata.user_id keep the original callerKey unchanged.
+  const subKey = extractCallerSubKey(body);
+  const effectiveContext = subKey
+    ? { ...context, callerKey: `${context.callerKey || ''}:user:${subKey}` }
+    : context;
 
   if (!wantStream) {
-    const result = await chatHandler({ ...openaiBody, stream: false }, context);
+    const result = await chatHandler({ ...openaiBody, stream: false }, effectiveContext);
     if (result.status !== 200) {
       return {
         status: result.status,
@@ -479,7 +516,7 @@ export async function handleMessages(body, context = {}) {
   // Streaming path — ask handleChatCompletions for its streaming handler and
   // point its writes at our translator shim. This lets the upstream Cascade
   // poll loop drive the downstream SSE in real time — no buffer-then-replay.
-  const streamResult = await chatHandler({ ...openaiBody, stream: true }, context);
+  const streamResult = await chatHandler({ ...openaiBody, stream: true }, effectiveContext);
 
   if (!streamResult.stream) {
     // The OpenAI path returned a non-stream error (e.g. 403 model_not_entitled)
