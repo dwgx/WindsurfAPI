@@ -21,7 +21,9 @@ const DEFAULT_BINARY = '/opt/windsurf/language_server_linux_x64';
 const DEFAULT_PORT = 42100;
 const DEFAULT_CSRF = 'windsurf-api-csrf-fixed-token';
 const DEFAULT_API_URL = 'https://server.self-serve.windsurf.com';
-const DEFAULT_DATA_ROOT = '/opt/windsurf/data';
+const DEFAULT_DATA_ROOT = process.platform === 'win32'
+  ? resolve(process.cwd(), 'windsurf-data')
+  : '/opt/windsurf/data';
 
 // Pool: key -> { process, port, csrfToken, proxy, startedAt, ready }
 const _pool = new Map();
@@ -47,7 +49,7 @@ function dataDirForKey(key) {
   const root = process.env.LS_DATA_DIR
     ? resolve(process.cwd(), process.env.LS_DATA_DIR)
     : DEFAULT_DATA_ROOT;
-  return `${root}/${key}`;
+  return resolve(root, key);
 }
 
 function proxyUrl(proxy) {
@@ -149,7 +151,7 @@ export async function ensureLs(proxy = null) {
     }
 
     const dataDir = dataDirForKey(key);
-    try { mkdirSync(`${dataDir}/db`, { recursive: true }); } catch (e) { log.warn(`mkdirSync ${dataDir}/db: ${e.message}`); }
+    try { mkdirSync(resolve(dataDir, 'db'), { recursive: true }); } catch (e) { log.warn(`mkdirSync ${dataDir}/db: ${e.message}`); }
 
     const args = [
       `--api_server_url=${_apiServerUrl}`,
@@ -157,7 +159,7 @@ export async function ensureLs(proxy = null) {
       `--csrf_token=${DEFAULT_CSRF}`,
       `--register_user_url=https://api.codeium.com/register_user/`,
       `--codeium_dir=${dataDir}`,
-      `--database_dir=${dataDir}/db`,
+      `--database_dir=${resolve(dataDir, 'db')}`,
       '--detect_proxy=false',
     ];
 
@@ -165,7 +167,7 @@ export async function ensureLs(proxy = null) {
     // unit without User=). VPS deployments already have HOME in env; forcing
     // /root broke macOS/Windows dev runs where LS expects the real $HOME.
     const env = { ...process.env };
-    if (!env.HOME) env.HOME = '/root';
+    if (!env.HOME) env.HOME = process.platform === 'win32' ? (env.USERPROFILE || 'C:\\Users\\Default') : '/root';
     const pUrl = proxyUrl(proxy);
     if (pUrl) {
       env.HTTPS_PROXY = pUrl;
@@ -204,22 +206,52 @@ export async function ensureLs(proxy = null) {
     });
     proc.on('exit', (code, signal) => {
       log.warn(`LS instance ${key} exited: code=${code} signal=${signal}`);
-      if (code === 1) {
-        log.error('LS crashed on startup. Common causes:');
-        log.error('  1. Binary incompatible with this OS/arch — re-download with: bash install-ls.sh');
-        log.error('  2. Missing glibc/libstdc++ — run: ldd ' + _binaryPath + ' | grep "not found"');
-        log.error('  3. Binary corrupted — delete and re-download: rm ' + _binaryPath + ' && bash install-ls.sh');
-        log.error('  4. Port already in use — check: lsof -i :' + port);
-      }
-      const gone = _pool.get(key);
-      _pool.delete(key);
-      if (gone?.port) {
-        // Drop the pooled HTTP/2 session so the next request to the
-        // replacement LS opens a fresh one instead of writing into a
-        // dead socket (grpc.js caches one session per port).
-        closeSessionForPort(gone.port);
-        import('./conversation-pool.js').then(m => m.invalidateFor({ lsPort: gone.port })).catch(() => {});
-      }
+      // On Windows, the LS binary uses a manager+child architecture. The
+      // manager can exit (code=1) while the child process — which actually
+      // listens on the gRPC port — continues running. Check if the port is
+      // still alive before destroying the pool entry.
+      isPortInUse(port).then(alive => {
+        if (alive) {
+          log.info(`LS manager for ${key} exited but port ${port} still alive — keeping pool entry (child process survived)`);
+          const entry = _pool.get(key);
+          if (entry) {
+            entry.process = null; // manager is gone, but child lives
+            // Watchdog: periodically verify the child is still alive.
+            // Without this, a late child death leaves a stale pool entry
+            // that causes all gRPC calls to hang until timeout.
+            const healthTimer = setInterval(async () => {
+              if (!await isPortInUse(port)) {
+                clearInterval(healthTimer);
+                log.warn(`LS child for ${key} on port ${port} died — removing pool entry`);
+                _pool.delete(key);
+                closeSessionForPort(port);
+                import('./conversation-pool.js').then(m => m.invalidateFor({ lsPort: port })).catch(() => {});
+              }
+            }, 30000);
+            healthTimer.unref();
+          }
+          return;
+        }
+        if (code === 1) {
+          log.error('LS crashed on startup. Common causes:');
+          log.error('  1. Binary incompatible with this OS/arch — re-download with: bash install-ls.sh');
+          log.error('  2. Missing glibc/libstdc++ — run: ldd ' + _binaryPath + ' | grep "not found"');
+          log.error('  3. Binary corrupted — delete and re-download: rm ' + _binaryPath + ' && bash install-ls.sh');
+          log.error('  4. Port already in use — check: lsof -i :' + port);
+        }
+        const gone = _pool.get(key);
+        _pool.delete(key);
+        if (gone?.port) {
+          // Drop the pooled HTTP/2 session so the next request to the
+          // replacement LS opens a fresh one instead of writing into a
+          // dead socket (grpc.js caches one session per port).
+          closeSessionForPort(gone.port);
+          import('./conversation-pool.js').then(m => m.invalidateFor({ lsPort: gone.port })).catch(() => {});
+        }
+      }).catch(() => {
+        // isPortInUse failed — assume dead, clean up
+        _pool.delete(key);
+      });
     });
     proc.on('error', (err) => {
       if (err.code === 'ENOEXEC') {

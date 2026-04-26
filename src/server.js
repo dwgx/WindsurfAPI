@@ -90,7 +90,14 @@ async function route(req, res) {
   const { method } = req;
   const path = req.url.split('?')[0];
 
-  if (method === 'OPTIONS') return json(res, 204, '');
+  if (method === 'OPTIONS') {
+    res.writeHead(204, {
+      'Access-Control-Allow-Origin': '*',
+      'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-api-key, anthropic-version',
+    });
+    return res.end();
+  }
   if (path === '/health') {
     const counts = getAccountCount();
     const body = {
@@ -413,6 +420,11 @@ export function startServer() {
     log.info('  POST /auth/login          (add account)');
     log.info('  GET  /auth/accounts       (list accounts)');
     log.info('  DELETE /auth/accounts/:id (remove account)');
+    // SEC-1: Warn about plaintext HTTP on non-loopback interfaces
+    if (config.port !== 443) {
+      log.warn('⚠ Server is running plain HTTP — API keys and tokens transit in cleartext.');
+      log.warn('  For production use, put behind nginx/caddy with TLS or bind to 127.0.0.1.');
+    }
   });
   return server;
 }

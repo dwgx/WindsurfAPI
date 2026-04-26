@@ -23,12 +23,14 @@
 
 // Detect the actual project root from this module's path so the sanitizer
 // covers deployments outside /root/WindsurfAPI (e.g. /srv/WindsurfAPI).
+import { fileURLToPath as _fileURLToPath } from 'url';
 const _repoRoot = (() => {
   try {
-    const thisFile = new URL(import.meta.url).pathname;
-    // sanitize.js is in src/, so project root is one directory up
-    return thisFile.replace(/\/src\/sanitize\.js$/, '');
-  } catch { return '/root/WindsurfAPI'; }
+    const thisFile = _fileURLToPath(import.meta.url);
+    // sanitize.js is in src/, so project root is one directory up.
+    // Handle both / and \ separators for cross-platform support.
+    return thisFile.replace(/[/\\]src[/\\]sanitize\.js$/, '');
+  } catch { return process.cwd(); }
 })();
 
 // Placeholder is a single Unicode ellipsis (U+2026) — chosen because every

@@ -4,7 +4,7 @@ import { emitNoAuthWarnings, initAuth, isAuthenticated, saveAccountsSync } from 
 import { startLanguageServer, waitForReady, isLanguageServerRunning, stopLanguageServer } from './langserver.js';
 import { startServer } from './server.js';
 import { config, log } from './config.js';
-import { existsSync } from 'fs';
+import { existsSync, mkdirSync, rmSync, readdirSync } from 'fs';
 import { execSync } from 'child_process';
 import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
@@ -67,8 +67,24 @@ async function main() {
       // request — the model sees them at session init and starts narrating
       // edits to files the caller never mentioned.
       const wsSuffix = process.env.HOSTNAME ? `-${process.env.HOSTNAME}` : '';
-      const wsBase = `/tmp/windsurf-workspace${wsSuffix}`;
-      execSync(`mkdir -p /opt/windsurf/data/db "${wsBase}" && rm -rf "${wsBase}"/* "${wsBase}"/.[!.]* 2>/dev/null || true`, { stdio: 'ignore' });
+      // Cross-platform workspace path: use OS temp dir on Windows
+      const tmpDir = process.platform === 'win32'
+        ? (process.env.TEMP || process.env.TMP || 'C:\\Temp')
+        : '/tmp';
+      const wsBase = join(tmpDir, `windsurf-workspace${wsSuffix}`);
+      // Cross-platform: use Node.js fs instead of Linux shell commands
+      const lsDataDir = process.env.LS_DATA_DIR || (process.platform === 'win32'
+        ? join(process.cwd(), 'windsurf-data', 'db')
+        : '/opt/windsurf/data/db');
+      mkdirSync(lsDataDir, { recursive: true });
+      mkdirSync(wsBase, { recursive: true });
+      // Clean workspace contents
+      try {
+        const items = readdirSync(wsBase);
+        for (const item of items) {
+          rmSync(join(wsBase, item), { recursive: true, force: true });
+        }
+      } catch {}
     } catch {}
 
     await startLanguageServer({

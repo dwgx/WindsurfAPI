@@ -66,8 +66,9 @@ const META_TAG_NAMES = new Set([
 ]);
 
 function buildMetaTagRe() {
+  const escaped = [...META_TAG_NAMES].map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
   return new RegExp(
-    `<(${[...META_TAG_NAMES].join('|')})[^>]*>[\\s\\S]*?</\\1>`,
+    `<(${escaped.join('|')})[^>]*>[\\s\\S]*?</\\1>`,
     'g'
   );
 }
