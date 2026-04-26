@@ -78,8 +78,28 @@ describe('responsesToChat', () => {
     assert.equal(out.messages.length, 1);
     assert.deepEqual(out.messages[0], { role: 'user', content: [{ type: 'text', text: 'Run it' }] });
     assert.deepEqual(out.tools, [
-      { type: 'function', function: { name: 'Bash', description: 'Run shell', parameters: { type: 'object' } } },
+      { type: 'function', function: { name: 'Bash', description: 'Run shell', parameters: { type: 'object' } }, __response_tool: { type: 'function', namespace: '', originalName: 'Bash' } },
     ]);
+  });
+
+  it('flattens namespace tools with a separator-safe encoded name', () => {
+    const out = responsesToChat({
+      tools: [
+        {
+          type: 'namespace',
+          name: 'mcp__desktop_commander',
+          tools: [
+            { type: 'function', name: 'read_file', description: 'Read file', parameters: { type: 'object' } },
+          ],
+        },
+      ],
+    });
+    assert.equal(out.tools[0].function.name, 'mcp__desktop_commander__read_file');
+    assert.deepEqual(out.tools[0].__response_tool, {
+      type: 'namespace',
+      namespace: 'mcp__desktop_commander',
+      originalName: 'read_file',
+    });
   });
 
   it('maps function_call and function_call_output items to chat tool turns', () => {
@@ -143,6 +163,60 @@ describe('chatToResponse', () => {
     assert.equal(response.output[0].call_id, 'call_1');
     assert.equal(response.output[0].name, 'Bash');
     assert.equal(response.output[0].arguments, '{"command":"pwd"}');
+  });
+
+  it('preserves flattened metadata for custom, web_search, and namespace tools', async () => {
+    const result = await handleResponses({
+      model: 'claude-sonnet-4.6',
+      input: 'Use native tools',
+      tools: [
+        { type: 'custom', name: 'runner', description: 'Run shell' },
+        { type: 'web_search', description: 'Search the web' },
+        {
+          type: 'namespace',
+          name: 'mcp__desktop_commander',
+          tools: [
+            { type: 'function', name: 'read_file', description: 'Read file', parameters: { type: 'object' } },
+          ],
+        },
+      ],
+    }, {
+      async handleChatCompletions(body) {
+        assert.equal(body.tools[0].function.name, 'runner');
+        assert.equal(body.tools[1].function.name, 'web_search');
+        assert.equal(body.tools[2].function.name, 'mcp__desktop_commander__read_file');
+        return {
+          status: 200,
+          body: {
+            created: 123,
+            model: body.model,
+            choices: [{
+              index: 0,
+              message: {
+                role: 'assistant',
+                content: null,
+                tool_calls: [
+                  { id: 'call_custom', type: 'function', function: { name: 'runner', arguments: '{"input":"echo hi"}' } },
+                  { id: 'call_search', type: 'function', function: { name: 'web_search', arguments: '{"query":"codex"}' } },
+                  { id: 'call_ns', type: 'function', function: { name: 'mcp__desktop_commander__read_file', arguments: '{"path":"README.md"}' } },
+                ],
+              },
+              finish_reason: 'tool_calls',
+            }],
+          },
+        };
+      },
+    });
+    assert.equal(result.status, 200);
+    const response = result.body;
+    assert.equal(response.output[0].type, 'custom_tool_call');
+    assert.equal(response.output[0].name, 'runner');
+    assert.equal(response.output[0].input, 'echo hi');
+    assert.equal(response.output[1].type, 'web_search_call');
+    assert.equal(response.output[1].action.query, 'codex');
+    assert.equal(response.output[2].type, 'function_call');
+    assert.equal(response.output[2].name, 'read_file');
+    assert.equal(response.output[2].namespace, 'mcp__desktop_commander');
   });
 
   it('maps non-stream reasoning_content to a reasoning output item', () => {
@@ -269,6 +343,82 @@ describe('handleResponses streaming', () => {
     assert.equal(events.at(-1).data.response.status, 'completed');
     assert.equal(events.at(-1).data.response.output[0].type, 'function_call');
     assert.equal(events.at(-1).data.response.output.length, 1);
+  });
+
+  it('preserves Responses-native tool metadata in streaming output items', async () => {
+    const result = await handleResponses({
+      model: 'claude-sonnet-4.6',
+      input: 'Use native tools',
+      stream: true,
+      tools: [
+        { type: 'custom', name: 'runner', description: 'Run shell' },
+        { type: 'web_search', description: 'Search the web' },
+        {
+          type: 'namespace',
+          name: 'mcp__desktop_commander',
+          tools: [
+            { type: 'function', name: 'read_file', description: 'Read file', parameters: { type: 'object' } },
+          ],
+        },
+      ],
+    }, {
+      async handleChatCompletions(body) {
+        return {
+          status: 200,
+          stream: true,
+          async handler(res) {
+            res.write(chatChunk({ id: 'chat_1', created: 123, model: body.model, choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'call_custom', type: 'function', function: { name: 'runner', arguments: '{"input":"echo hi"}' } }] }, finish_reason: null }] }));
+            res.write(chatChunk({ id: 'chat_1', created: 123, model: body.model, choices: [{ index: 0, delta: { tool_calls: [{ index: 1, id: 'call_search', type: 'function', function: { name: 'web_search', arguments: '{"query":"codex"}' } }] }, finish_reason: null }] }));
+            res.write(chatChunk({ id: 'chat_1', created: 123, model: body.model, choices: [{ index: 0, delta: { tool_calls: [{ index: 2, id: 'call_ns', type: 'function', function: { name: 'mcp__desktop_commander__read_file', arguments: '{"path":"README.md"}' } }] }, finish_reason: null }] }));
+            res.end('data: [DONE]\n\n');
+          },
+        };
+      },
+    });
+    const res = fakeRes();
+    await result.handler(res);
+    const events = parseEvents(res.body);
+    assertSequenceNumbers(events);
+    const doneItems = events.filter(e => e.event === 'response.output_item.done').map(e => e.data.item);
+    assert.equal(doneItems[0].type, 'custom_tool_call');
+    assert.equal(doneItems[0].name, 'runner');
+    assert.equal(doneItems[0].input, 'echo hi');
+    assert.equal(doneItems[1].type, 'web_search_call');
+    assert.equal(doneItems[1].action.query, 'codex');
+    assert.equal(doneItems[2].type, 'function_call');
+    assert.equal(doneItems[2].name, 'read_file');
+    assert.equal(doneItems[2].namespace, 'mcp__desktop_commander');
+  });
+
+  it('recovers Responses-native metadata when the streaming tool name arrives later', async () => {
+    const result = await handleResponses({
+      model: 'claude-sonnet-4.6',
+      input: 'Use native tools',
+      stream: true,
+      tools: [
+        { type: 'custom', name: 'runner', description: 'Run shell' },
+      ],
+    }, {
+      async handleChatCompletions(body) {
+        return {
+          status: 200,
+          stream: true,
+          async handler(res) {
+            res.write(chatChunk({ id: 'chat_1', created: 123, model: body.model, choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'call_custom', type: 'function', function: { arguments: '{"input":"echo ' } }] }, finish_reason: null }] }));
+            res.write(chatChunk({ id: 'chat_1', created: 123, model: body.model, choices: [{ index: 0, delta: { tool_calls: [{ index: 0, function: { name: 'runner', arguments: 'hi"}' } }] }, finish_reason: null }] }));
+            res.end('data: [DONE]\n\n');
+          },
+        };
+      },
+    });
+    const res = fakeRes();
+    await result.handler(res);
+    const events = parseEvents(res.body);
+    assertSequenceNumbers(events);
+    const doneItem = events.filter(e => e.event === 'response.output_item.done').map(e => e.data.item)[0];
+    assert.equal(doneItem.type, 'custom_tool_call');
+    assert.equal(doneItem.name, 'runner');
+    assert.equal(doneItem.input, 'echo hi');
   });
 
   it('emits error event and closes when the upstream stream throws', async () => {
