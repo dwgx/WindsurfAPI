@@ -282,6 +282,61 @@ describe('Anthropic messages request translation', () => {
     assert.equal(capturedContext.callerKey, 'api:abc123');
   });
 
+  it('drops Anthropic server-side tool types (advisor / web_search / code_execution) before forwarding', async () => {
+    let capturedBody = null;
+    await handleMessages({
+      model: 'claude-sonnet-4.6',
+      tools: [
+        { type: 'advisor_20260301', name: 'advisor', model: 'claude-opus-4-6' },
+        { type: 'web_search_20250305', name: 'web_search' },
+        { type: 'code_execution_20250522', name: 'code_execution' },
+        { name: 'Read', description: 'read files', input_schema: { type: 'object' } },
+      ],
+      messages: [{ role: 'user', content: 'hi' }],
+    }, {
+      async handleChatCompletions(body) {
+        capturedBody = body;
+        return {
+          status: 200,
+          body: {
+            choices: [{ index: 0, message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
+            usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+          },
+        };
+      },
+    });
+    // Only the client-side Read tool survives translation; all three
+    // server-side types must be stripped.
+    assert.equal(capturedBody.tools?.length, 1);
+    assert.equal(capturedBody.tools[0].function.name, 'Read');
+    const names = capturedBody.tools.map(t => t.function.name);
+    for (const banned of ['advisor', 'web_search', 'code_execution']) {
+      assert.equal(names.includes(banned), false, `${banned} should not be forwarded`);
+    }
+  });
+
+  it('omits tools entirely when the only declared tool is server-side', async () => {
+    let capturedBody = null;
+    await handleMessages({
+      model: 'claude-sonnet-4.6',
+      tools: [{ type: 'advisor_20260301', name: 'advisor', model: 'claude-opus-4-6' }],
+      messages: [{ role: 'user', content: 'hi' }],
+    }, {
+      async handleChatCompletions(body) {
+        capturedBody = body;
+        return {
+          status: 200,
+          body: {
+            choices: [{ index: 0, message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
+            usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+          },
+        };
+      },
+    });
+    // No tools key at all (chat.js relies on this to skip preamble injection)
+    assert.equal(capturedBody.tools, undefined);
+  });
+
   it('preserves thinking.type=adaptive (Claude Code 2.x sonnet default) when forwarding', async () => {
     let capturedBody = null;
     await handleMessages({

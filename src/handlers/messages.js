@@ -19,6 +19,20 @@ function genMsgId() {
   return 'msg_' + randomUUID().replace(/-/g, '').slice(0, 24);
 }
 
+// Anthropic Messages API tool types whose execution lives on Anthropic's
+// servers, not the client. The proxy treats these as opt-out: it cannot
+// satisfy server_tool_result delivery without implementing each one
+// against Cascade, so they're stripped from the request rather than
+// translated into normal function tools.
+//   web_search_20250305     server-side web search
+//   code_execution_20250522 server-side python sandbox
+//   advisor_20260301        Anthropic Advisor Strategy (sonnet+opus pair)
+const SERVER_SIDE_ANTHROPIC_TOOL_TYPES = new Set([
+  'web_search_20250305',
+  'code_execution_20250522',
+  'advisor_20260301',
+]);
+
 function sha256Hex(value) {
   return createHash('sha256').update(String(value || '')).digest('hex');
 }
@@ -124,14 +138,33 @@ function anthropicToOpenAI(body) {
       for (const tr of toolResults) messages.push(tr);
     }
   }
-  const tools = (body.tools || []).map(t => ({
-    type: 'function',
-    function: {
-      name: t.name,
-      description: t.description || '',
-      parameters: t.input_schema || {},
-    },
-  }));
+  // Anthropic exposes a growing set of "server-side" tool types where
+  // the service itself runs the work and the client only opts in via
+  // type. The proxy can't honor any of these (each needs its own stage-2
+  // implementation - Cascade-side opus advisor pass, web-search bridge,
+  // sandbox code exec). Drop them silently from the OpenAI-shaped tools
+  // forwarded upstream; otherwise the upstream model is free to invent
+  // a normal function tool_use for "advisor" the client will never get
+  // a server_tool_result for.
+  const droppedServerTools = [];
+  const tools = (body.tools || []).reduce((acc, t) => {
+    if (t?.type && SERVER_SIDE_ANTHROPIC_TOOL_TYPES.has(t.type)) {
+      droppedServerTools.push(t.type);
+      return acc;
+    }
+    acc.push({
+      type: 'function',
+      function: {
+        name: t.name,
+        description: t.description || '',
+        parameters: t.input_schema || {},
+      },
+    });
+    return acc;
+  }, []);
+  if (droppedServerTools.length) {
+    log.info(`messages: dropped ${droppedServerTools.length} server-side tool(s) [${[...new Set(droppedServerTools)].join(',')}] - proxy does not implement them yet`);
+  }
   // Claude Code 2.x and Anthropic SDK clients send response shape and
   // reasoning controls inside body.output_config — output_config.effort
   // mirrors OpenAI's reasoning_effort, and output_config.format carries
