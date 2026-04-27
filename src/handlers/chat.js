@@ -1124,7 +1124,26 @@ export async function handleChatCompletions(body, context = {}) {
     }
     if (!acct) {
       acct = await waitForAccountFn(tried, null, QUEUE_MAX_WAIT_MS, modelKey);
-      if (!acct) break;
+      if (!acct) {
+        // Same diagnostic-error fix as the stream path — surface real reason
+        // for the queue timeout (rate limit / no entitlement / upstream stall)
+        // so the client gets a useful message instead of falling through to
+        // a generic pool_exhausted error from the bottom of this function.
+        if (!lastErr) {
+          const tempUnavail = isAllTemporarilyUnavailable(modelKey);
+          const rateLimited = isAllRateLimited(modelKey);
+          const reason = tempUnavail.allUnavailable
+            ? `所有可用账号暂时不可用，请 ${Math.ceil(tempUnavail.retryAfterMs / 1000)} 秒后重试`
+            : rateLimited.allLimited
+            ? `所有可用账号均已达速率限制，请 ${Math.ceil(rateLimited.retryAfterMs / 1000)} 秒后重试`
+            : `${Math.ceil(QUEUE_MAX_WAIT_MS / 1000)} 秒内没有账号变为可用 — 账号可能被速率限制或对当前模型无权限`;
+          lastErr = {
+            status: (tempUnavail.allUnavailable || rateLimited.allLimited) ? 429 : 503,
+            body: { error: { message: `${displayModel} 账号队列超时: ${reason}`, type: (tempUnavail.allUnavailable || rateLimited.allLimited) ? 'rate_limit_exceeded' : 'pool_exhausted' } },
+          };
+        }
+        break;
+      }
     }
     tried.push(acct.apiKey);
 
@@ -1708,7 +1727,28 @@ function streamResponse(id, created, model, modelKey, messages, cascadeMessages,
           }
           if (!acct) {
             acct = await waitForAccountFn(tried, abortController.signal, QUEUE_MAX_WAIT_MS, modelKey);
-            if (!acct) break;
+            if (!acct) {
+              // Without an explicit lastErr here, the final retry-failed log
+              // ends up printing an empty message and the SSE error event
+              // surfaces as a 30s silent stall to the client — issue #77 from
+              // zhangzhang-bit. Diagnose what kept the queue empty so the
+              // operator sees the real cause (rate limit / no entitlement /
+              // upstream stall) instead of guessing.
+              if (!lastErr) {
+                const tempUnavail = isAllTemporarilyUnavailable(modelKey);
+                const rateLimited = isAllRateLimited(modelKey);
+                const reason = tempUnavail.allUnavailable
+                  ? `所有可用账号暂时不可用，请 ${Math.ceil(tempUnavail.retryAfterMs / 1000)} 秒后重试`
+                  : rateLimited.allLimited
+                  ? `所有可用账号均已达速率限制，请 ${Math.ceil(rateLimited.retryAfterMs / 1000)} 秒后重试`
+                  : `${Math.ceil(QUEUE_MAX_WAIT_MS / 1000)} 秒内没有账号变为可用 — 账号可能被速率限制或对当前模型无权限`;
+                lastErr = Object.assign(
+                  new Error(`${model} 账号队列超时: ${reason}`),
+                  { type: (tempUnavail.allUnavailable || rateLimited.allLimited) ? 'rate_limit_exceeded' : 'pool_exhausted' }
+                );
+              }
+              break;
+            }
           }
           tried.push(acct.apiKey);
           currentApiKey = acct.apiKey;
@@ -1876,7 +1916,7 @@ function streamResponse(id, created, model, modelKey, messages, cascadeMessages,
         }
 
         // All attempts failed
-        log.error('Stream error after retries:', lastErr?.message);
+        log.error('Stream error after retries:', lastErr?.message || String(lastErr || 'account queue timed out without an error object'));
         recordRequest(model, false, Date.now() - startTime, currentApiKey);
         try {
           const temporaryUnavailable = isAllTemporarilyUnavailable(modelKey);
