@@ -322,22 +322,55 @@ export function setAccountBlockedModels(id, blockedModels) {
 }
 
 /**
- * Resolve whether `modelKey` is callable on this account:
- *   tier entitlement ∩ (models.js catalog) − account.blockedModels
+ * Resolve whether `modelKey` is callable on this account.
+ *
+ * Two-stage decision:
+ *   1. blocklist always wins (manual operator override)
+ *   2. if GetUserStatus has filled `capabilities[key].reason='user_status'`
+ *      that's the upstream-authoritative answer (cascade_allowed_models_config)
+ *      — trust it directly, regardless of static tier table
+ *   3. otherwise fall back to the tier static allowlist (UID-only models,
+ *      pre-status accounts, unknown tier)
+ *
+ * Without step 2, free accounts that Windsurf actually entitles to
+ * GLM/SWE/Kimi via the upstream allowlist still route through the
+ * `MODEL_TIER_ACCESS.free` static table (gemini-only) and get denied
+ * at selector time even though `account.capabilities` already says yes.
  */
 export function isModelAllowedForAccount(account, modelKey) {
-  const tierModels = getTierModels(account.tier || 'unknown');
-  if (!tierModels.includes(modelKey)) return false;
   const blocked = account.blockedModels || [];
   if (blocked.includes(modelKey)) return false;
-  return true;
+  // GetUserStatus writes both arms — `user_status` for allowed and
+  // `not_entitled` for denied — into capabilities, keyed by enum.
+  // Either reason means the upstream allowlist has already spoken.
+  const cap = account.capabilities?.[modelKey];
+  if (cap?.reason === 'user_status' || cap?.reason === 'not_entitled') {
+    return cap.ok === true;
+  }
+  const tierModels = getTierModels(account.tier || 'unknown');
+  return tierModels.includes(modelKey);
 }
 
 /** List of model keys this account is currently allowed to call. */
 export function getAvailableModelsForAccount(account) {
-  const tierModels = getTierModels(account.tier || 'unknown');
   const blocked = new Set(account.blockedModels || []);
-  return tierModels.filter(m => !blocked.has(m));
+  const tierModels = getTierModels(account.tier || 'unknown');
+  if (!account.userStatusLastFetched || !account.capabilities) {
+    return tierModels.filter(m => !blocked.has(m));
+  }
+  // After GetUserStatus: per-account allowlist is authoritative for every
+  // enum-keyed catalog entry; UID-only entries (no enum) fall back to tier.
+  const allowed = [];
+  for (const [key, info] of Object.entries(MODELS)) {
+    if (blocked.has(key)) continue;
+    if (info.enumValue && info.enumValue > 0) {
+      const cap = account.capabilities[key];
+      if (cap?.reason === 'user_status' && cap.ok === true) allowed.push(key);
+    } else if (tierModels.includes(key)) {
+      allowed.push(key);
+    }
+  }
+  return allowed;
 }
 
 /**
