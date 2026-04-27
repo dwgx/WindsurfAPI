@@ -1036,6 +1036,7 @@ export async function handleChatCompletions(body, context = {}) {
     return streamResponse(chatId, created, displayModel, modelKey, messages, cascadeMessages, modelEnum, modelUid, useCascade, ckey, emulateTools, toolPreamble, reqId, wantJson, callerKey, {
       checkMessageRateLimit: checkMessageRateLimitFn,
       waitForAccount: waitForAccountFn,
+      cachePolicy,
     });
   }
 
@@ -1185,7 +1186,7 @@ export async function handleChatCompletions(body, context = {}) {
       client, chatId, created, displayModel, modelKey, messages, cascadeMessages, modelEnum, modelUid,
       useCascade, acct.apiKey, ckey,
       reuseEnabled ? { reuseEntry, lsPort: ls.port, apiKey: acct.apiKey, callerKey, cachePolicy } : null,
-      emulateTools, toolPreamble, wantJson,
+      emulateTools, toolPreamble, wantJson, cachePolicy,
     );
     if (result.status === 200) return result;
     reuseEntry = null; // don't try to reuse on the retry
@@ -1284,7 +1285,7 @@ export async function handleChatCompletions(body, context = {}) {
   return lastErr || { status: 503, body: { error: { message: 'No active accounts available', type: 'pool_exhausted' } } };
 }
 
-async function nonStreamResponse(client, id, created, model, modelKey, messages, cascadeMessages, modelEnum, modelUid, useCascade, apiKey, ckey, poolCtx, emulateTools, toolPreamble, wantJson = false) {
+async function nonStreamResponse(client, id, created, model, modelKey, messages, cascadeMessages, modelEnum, modelUid, useCascade, apiKey, ckey, poolCtx, emulateTools, toolPreamble, wantJson = false, cachePolicy = null) {
   const startTime = Date.now();
   try {
     let allText = '';
@@ -1385,7 +1386,10 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
     }
 
     // Prefer server-reported usage; fall back to chars/4 estimate only when
-    // the trajectory didn't include a ModelUsageStats field.
+    // the trajectory didn't include a ModelUsageStats field. cachePolicy is
+    // threaded through as its own parameter rather than via poolCtx so that
+    // non-reuse requests with `cache_control: { ttl: '1h' }` still attribute
+    // their tokens to ephemeral_1h_input_tokens correctly (see #82, #83).
     const usage = buildUsageBody(serverUsage, messages, allText, allThinking, cachePolicy);
     const finishReason = toolCalls.length ? 'tool_calls' : 'stop';
     return {
@@ -1457,6 +1461,12 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
 function streamResponse(id, created, model, modelKey, messages, cascadeMessages, modelEnum, modelUid, useCascade, ckey, emulateTools, toolPreamble, reqId, wantJson = false, callerKey = '', deps = {}) {
   const checkMessageRateLimitFn = deps.checkMessageRateLimit || checkMessageRateLimit;
   const waitForAccountFn = deps.waitForAccount || waitForAccount;
+  // Cache policy threads through deps because streamResponse is a top-level
+  // helper, not a closure. Without this, lines that compute TTL hints or
+  // attribute usage to ephemeral_5m_input_tokens / ephemeral_1h_input_tokens
+  // throw a ReferenceError mid-stream — the exact failure surface reported
+  // in issues #82 and #83.
+  const cachePolicy = deps.cachePolicy || null;
   return {
     status: 200,
     stream: true,
