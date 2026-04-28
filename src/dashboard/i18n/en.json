@@ -862,6 +862,7 @@
     "ERR_IDTOKEN_REQUIRED": "ID token is required",
     "ERR_PROXY_PRIVATE_IP": "Proxy cannot point to private/local address",
     "ERR_PROXY_HTTP_ERROR": "Proxy returned HTTP error",
+    "ERR_PROXY_PRIVATE_HOST": "Private/local host is not allowed",
     "ERR_CONNECTION_FAILED": "Connection failed",
     "ERR_TIMEOUT": "Timeout (10s)",
     "ERR_TLS_TUNNEL_ERROR": "TLS tunnel established but returned abnormal content",
