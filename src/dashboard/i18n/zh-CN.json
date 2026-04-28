@@ -862,6 +862,7 @@
     "ERR_IDTOKEN_REQUIRED": "缺少 idToken",
     "ERR_PROXY_PRIVATE_IP": "代理地址不能指向内网/本机",
     "ERR_PROXY_HTTP_ERROR": "代理返回 HTTP 错误",
+    "ERR_PROXY_PRIVATE_HOST": "内网/本地主机不允许",
     "ERR_CONNECTION_FAILED": "连接失败",
     "ERR_TIMEOUT": "超时（10s）",
     "ERR_TLS_TUNNEL_ERROR": "TLS 隧道建立但返回内容异常",
