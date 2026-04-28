@@ -2705,7 +2705,8 @@ const App = {
     } catch (err) {
       status.style.color = '#ef4444';
       status.textContent = I18n.t('oauth.status.loginFailed', { label, error: err.message });
-      this.toast(I18n.t('toast.loginFailed', { label, error: err.message }), 'error');
+      const translatedErr = I18n.t(err.message) !== err.message ? I18n.t(err.message) : err.message;
+      this.toast(I18n.t('toast.loginFailed', { label, error: translatedErr }), 'error');
     } finally {
       if (btn) btn.disabled = false;
     }
@@ -2784,7 +2785,7 @@ const App = {
           <div class="section-title" style="color:var(--error)">${I18n.t('loginResult.fail')}</div>
         </div>
       </div>
-      <div class="section-body"><p class="text-sm">${this.esc(r.error || I18n.t('error.unknown'))}</p>${this.getWindsurfLoginFailActions(r)}</div>`);
+      <div class="section-body"><p class="text-sm">${this.esc((r.error && I18n.t(r.error) !== r.error) ? I18n.t(r.error) : (r.error || I18n.t('error.unknown')))}</p>${this.getWindsurfLoginFailActions(r)}</div>`);
   },
 
   renderBatchWindsurfLoginResult(results, autoAdd) {
@@ -2808,7 +2809,7 @@ const App = {
                   <td><span class="badge ${r.success ? 'active' : 'error'}">${r.success ? I18n.t('batch.success') : I18n.t('batch.fail')}</span></td>
                   <td class="text-sm">${r.success
                     ? `<span class="break-all"><code>${this.esc(r.apiKey_masked || (r.apiKey ? r.apiKey.slice(0, 16) + '...' : '-'))}</code>${r.account ? ` · ${I18n.t('table.header.account')} ${this.esc(r.account.id)}` : ''}</span>`
-                    : `<span style="color:var(--error)">${this.esc(r.error || I18n.t('error.unknown'))}</span>`}</td>
+                    : `<span style="color:var(--error)">${this.esc((r.error && I18n.t(r.error) !== r.error) ? I18n.t(r.error) : (r.error || I18n.t('error.unknown')))}</span>`}</td>
                 </tr>
               `).join('')}
             </tbody>
@@ -2880,11 +2881,11 @@ const App = {
       } else {
         entry.status = 'error: ' + (r.error || 'unknown');
         this.renderSingleWindsurfLoginResult(r, autoAdd);
-        this.toast(r.error || I18n.t('toast.loginFailed'), 'error');
+        this.toast((r.error && I18n.t(r.error) !== r.error) ? I18n.t(r.error) : (r.error || I18n.t('toast.loginFailed')), 'error');
       }
     } catch (err) {
       entry.status = 'error: ' + err.message;
-      this.toast(err.message, 'error');
+      this.toast(I18n.t(err.message) !== err.message ? I18n.t(err.message) : err.message, 'error');
     }
 
     this.pushLoginHistory(entry);
@@ -2916,8 +2917,9 @@ const App = {
           <div class="section-header">
             <div><div class="section-title" style="color:var(--error)">${I18n.t('loginResult.fail')}</div></div>
           </div>
-          <div class="section-body"><p class="text-sm">${this.esc(r.error || I18n.t('error.unknown'))}</p></div>`);
-        return this.toast(r.error || I18n.t('batch.importFailed'), 'error');
+          <div class="section-body"><p class="text-sm">${this.esc((r.error && I18n.t(r.error) !== r.error) ? I18n.t(r.error) : (r.error || I18n.t('error.unknown')))}</p></div>`);
+        const translatedErr = r.error && I18n.t(r.error) !== r.error ? I18n.t(r.error) : r.error;
+        return this.toast(translatedErr || I18n.t('batch.importFailed'), 'error');
       }
 
       this.renderBatchWindsurfLoginResult(r.results, autoAdd);
@@ -2938,8 +2940,9 @@ const App = {
         <div class="section-header">
           <div><div class="section-title" style="color:var(--error)">${I18n.t('loginResult.fail')}</div></div>
         </div>
-        <div class="section-body"><p class="text-sm">${this.esc(err.message)}</p></div>`);
-      this.toast(err.message, 'error');
+        <div class="section-body"><p class="text-sm">${this.esc(I18n.t(err.message) !== err.message ? I18n.t(err.message) : err.message)}</p></div>`);
+      const translatedErr = I18n.t(err.message) !== err.message ? I18n.t(err.message) : err.message;
+      this.toast(translatedErr, 'error');
     } finally {
       btn.disabled = false;
       btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M3 5h18"/><path d="M3 12h18"/><path d="M3 19h18"/></svg> ' + I18n.t('action.batchImport');
