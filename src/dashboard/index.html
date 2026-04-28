@@ -3129,7 +3129,7 @@ const App = {
         <td style="color:${a.errorCount > 0 ? 'var(--error)' : 'inherit'}">${a.errorCount}</td>
         <td class="text-sm nowrap">${a.lastUsed ? new Date(a.lastUsed).toLocaleString() : '-'}</td>
         <td class="nowrap">
-          <code style="cursor:pointer" title="${I18n.t('action.copyTitle')}" onclick="App.copyKey('${this.escJsAttr(a.apiKey)}')">${a.keyPrefix}</code>
+          <code title="${I18n.t('action.revealKey') || 'reveal & copy'}" style="cursor:pointer" onclick="App.revealAndCopyKey('${this.escJsAttr(a.id)}')">${this.esc(a.apiKey_masked || a.keyPrefix || '')}</code>
         </td>
         <td class="nowrap">
           <div class="btn-group">
@@ -3305,7 +3305,7 @@ const App = {
             </div>
             <div class="detail-kv">
               <span class="k">${T('runtime.accountId')}</span><span class="v"><code>${a.id}</code></span>
-              <span class="k">${T('runtime.apiKey')}</span><span class="v"><code style="cursor:pointer" onclick="App.copyKey('${this.escJsAttr(a.apiKey)}')" title="${I18n.t('action.copyTitle')}">${a.keyPrefix}</code></span>
+              <span class="k">${T('runtime.apiKey')}</span><span class="v"><code>${this.esc(a.apiKey_masked || a.keyPrefix || '')}</code></span>
               ${cr.lastError ? `<span class="k">${T('runtime.lastError')}</span><span class="v" style="color:var(--error);font-size:11px">${this.esc(cr.lastError).slice(0, 80)}</span>` : ''}
             </div>
           </div>
@@ -4738,6 +4738,15 @@ const App = {
     if (d > 0) return `${d}${I18n.t('time.day')} ${h}${I18n.t('time.hour')} ${m}${I18n.t('time.minute')}`;
     if (h > 0) return `${h}${I18n.t('time.hour')} ${m}${I18n.t('time.minute')}`;
     return `${m}${I18n.t('time.minute')} ${s}${I18n.t('time.second')}`;
+  },
+  async revealAndCopyKey(accountId) {
+    try {
+      const r = await this.api('POST', `/account/${encodeURIComponent(accountId)}/reveal-key`);
+      if (r?.apiKey) this.copyKey(r.apiKey);
+      else this.toast(I18n.t('toast.copyFailed'), 'error');
+    } catch (e) {
+      this.toast(e?.message || I18n.t('toast.copyFailed'), 'error');
+    }
   },
   copyKey(key) {
     const fallback = () => {

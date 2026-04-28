@@ -8,7 +8,7 @@
  *   - Token-based registration via api.codeium.com
  */
 
-import { randomUUID } from 'crypto';
+import { randomUUID, timingSafeEqual } from 'crypto';
 import { readFileSync, writeFileSync, existsSync, renameSync, unlinkSync, readdirSync } from 'fs';
 import { config, log } from './config.js';
 import { getEffectiveProxy } from './dashboard/proxy-config.js';
@@ -24,6 +24,7 @@ const ACCOUNTS_FILE = join(config.sharedDataDir || config.dataDir, 'accounts.jso
 
 const accounts = [];
 let _roundRobinIndex = 0;
+let _bindHost = '0.0.0.0';
 
 // Per-tier requests-per-minute limits. Used for both filter-by-cap and
 // weighted selection (accounts with more headroom are preferred).
@@ -811,6 +812,13 @@ export function isAuthenticated() {
   return accounts.some(a => a.status === 'active');
 }
 
+export function maskApiKey(key = '') {
+  const s = String(key || '');
+  if (!s) return '';
+  if (s.length <= 12) return `${s.slice(0, 4)}...`;
+  return `${s.slice(0, 8)}...${s.slice(-4)}`;
+}
+
 export function getAccountList() {
   const now = Date.now();
   return accounts.map(a => {
@@ -825,7 +833,7 @@ export function getAccountList() {
       lastUsed: a.lastUsed ? new Date(a.lastUsed).toISOString() : null,
       addedAt: new Date(a.addedAt).toISOString(),
       keyPrefix: a.apiKey.slice(0, 8) + '...',
-      apiKey: a.apiKey,
+      apiKey_masked: maskApiKey(a.apiKey),
       tier: a.tier || 'unknown',
       capabilities: a.capabilities || {},
       lastProbed: a.lastProbed || 0,
@@ -844,6 +852,10 @@ export function getAccountList() {
       userStatusLastFetched: a.userStatusLastFetched || 0,
     };
   });
+}
+
+export function getAccountInternal(id) {
+  return accounts.find(a => a.id === id) || null;
 }
 
 /**
@@ -1180,16 +1192,37 @@ export function getAccountCount() {
 
 // ─── Incoming request API key validation ───────────────────
 
+export function configureBindHost(host) {
+  _bindHost = String(host ?? '');
+}
+
+export function isLocalBindHost(bindHost = _bindHost) {
+  const host = String(bindHost || '').trim().toLowerCase().replace(/^\[|\]$/g, '');
+  if (host === 'localhost' || host === '127.0.0.1' || host === '::1') return true;
+  // IPv4-mapped IPv6 loopback (::ffff:127.0.0.1 etc.) is also local.
+  if (host.startsWith('::ffff:127.') || host === '::ffff:7f00:1') return true;
+  return false;
+}
+
+export function safeEqualString(a, b) {
+  const left = Buffer.from(String(a), 'utf8');
+  const right = Buffer.from(String(b), 'utf8');
+  if (left.length !== right.length) return false;
+  return timingSafeEqual(left, right);
+}
+
 export function validateApiKey(key) {
-  if (!config.apiKey) return true;
-  return key === config.apiKey;
+  if (!config.apiKey) return isLocalBindHost(_bindHost);
+  if (!key) return false;
+  return safeEqualString(key, config.apiKey);
 }
 
 export function shouldEmitNoAuthWarning(bindHost, hasKey) {
   if (hasKey) return false;
+  if (isLocalBindHost(bindHost)) return false;
   const host = String(bindHost || '').trim().toLowerCase();
-  if (!host || host === '0.0.0.0' || host === '::') return true;
-  return !(host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '[::1]');
+  if (host === '0.0.0.0' || host === '::') return true;
+  return true;
 }
 
 export function emitNoAuthWarnings(bindHost = '0.0.0.0') {

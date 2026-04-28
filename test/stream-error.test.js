@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import http2 from 'http2';
 import { isCascadeTransportError } from '../src/client.js';
 import { chatStreamError, isUpstreamTransientError, redactRequestLogText } from '../src/handlers/chat.js';
 import { handleMessages } from '../src/handlers/messages.js';
@@ -92,5 +93,48 @@ describe('stream error protocol', () => {
     const events = parseEvents(res.body);
     assert.equal(events[0].event, 'error');
     assert.equal(events[0].data.error.type, 'upstream_transient_error');
+  });
+
+  it('routes oversized Connect frame parser errors to onError without throwing from data handlers', async () => {
+    const previousProtocol = process.env.GRPC_PROTOCOL;
+    process.env.GRPC_PROTOCOL = 'connect';
+    const grpc = await import(`../src/grpc.js?connect-error-test=${Date.now()}`);
+
+    const server = http2.createServer();
+    server.on('stream', (stream) => {
+      stream.respond({ ':status': 200, 'content-type': 'application/connect+proto' });
+      const frame = Buffer.alloc(5);
+      frame[0] = 0;
+      frame.writeUInt32BE(16 * 1024 * 1024 + 1, 1);
+      stream.end(frame);
+    });
+    await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+    const port = server.address().port;
+
+    try {
+      const err = await new Promise((resolve, reject) => {
+        const timer = setTimeout(() => reject(new Error('timed out waiting for parser error')), 1000);
+        grpc.grpcStream(port, 'csrf', '/exa.language_server_pb.LanguageServerService/RawGetChatMessage', Buffer.from('{}'), {
+          timeout: 1000,
+          onData() {
+            reject(new Error('unexpected data callback'));
+          },
+          onEnd() {
+            reject(new Error('unexpected end callback'));
+          },
+          onError(error) {
+            clearTimeout(timer);
+            resolve(error);
+          },
+        });
+      });
+
+      assert.match(err.message, /exceeds 16777216/);
+    } finally {
+      grpc.closeSessionForPort(port);
+      await new Promise(resolve => server.close(resolve));
+      if (previousProtocol == null) delete process.env.GRPC_PROTOCOL;
+      else process.env.GRPC_PROTOCOL = previousProtocol;
+    }
   });
 });

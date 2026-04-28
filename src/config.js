@@ -55,6 +55,10 @@ try {
 
 export const config = {
   port: parseInt(process.env.PORT || '3003', 10),
+  // Bind host. Defaults to all interfaces. Set HOST=127.0.0.1 (or BIND_HOST=)
+  // for localhost-only deployments — when bound non-locally, missing API_KEY /
+  // DASHBOARD_PASSWORD switches to fail-closed instead of default-allow.
+  host: process.env.HOST || process.env.BIND_HOST || '0.0.0.0',
   apiKey: process.env.API_KEY || '',
   dataDir,
   sharedDataDir,

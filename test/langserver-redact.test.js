@@ -1,6 +1,19 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { redactProxyUrl, buildLanguageServerEnv } from '../src/langserver.js';
+import http2 from 'http2';
+import { redactProxyUrl, buildLanguageServerEnv, probeLanguageServerPort } from '../src/langserver.js';
+
+async function withHttp2Server(handler, fn) {
+  const server = http2.createServer();
+  server.on('stream', handler);
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  const port = server.address().port;
+  try {
+    return await fn(port);
+  } finally {
+    await new Promise(resolve => server.close(resolve));
+  }
+}
 
 describe('redactProxyUrl', () => {
   it('redacts credentials from proxy URLs', () => {
@@ -55,3 +68,22 @@ describe('buildLanguageServerEnv', () => {
   });
 });
 
+describe('probeLanguageServerPort', () => {
+  it('accepts a port only when the response has a gRPC-like LS signature', async () => {
+    await withHttp2Server((stream) => {
+      stream.respond({ ':status': 405, 'content-type': 'application/grpc', 'grpc-status': '12' });
+      stream.end();
+    }, async (port) => {
+      assert.equal(await probeLanguageServerPort(port), true);
+    });
+  });
+
+  it('rejects unrelated HTTP/2 services on the default LS port shape', async () => {
+    await withHttp2Server((stream) => {
+      stream.respond({ ':status': 200, 'content-type': 'text/plain', server: 'not-ls' });
+      stream.end('ok');
+    }, async (port) => {
+      assert.equal(await probeLanguageServerPort(port), false);
+    });
+  });
+});

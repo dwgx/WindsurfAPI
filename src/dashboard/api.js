@@ -10,6 +10,7 @@ import {
   isAuthenticated, probeAccount, ensureLsForAccount,
   refreshCredits, refreshAllCredits,
   setAccountBlockedModels, setAccountTokens, setAccountTier,
+  getAccountInternal, isLocalBindHost, maskApiKey, safeEqualString,
 } from '../auth.js';
 import { restartLsForProxy } from '../langserver.js';
 import { getLsStatus, stopLanguageServer, startLanguageServer, isLanguageServerRunning } from '../langserver.js';
@@ -24,12 +25,6 @@ import { windsurfLogin, refreshFirebaseToken, reRegisterWithCodeium } from './wi
 import { getModelAccessConfig, setModelAccessMode, setModelAccessList, addModelToList, removeModelFromList } from './model-access.js';
 import { checkMessageRateLimit } from '../windsurf-api.js';
 import { assertPublicUrlHost } from '../image.js';
-
-function maskApiKey(key = '') {
-  const s = String(key || '');
-  if (s.length <= 12) return s ? `${s.slice(0, 4)}***` : '';
-  return `${s.slice(0, 8)}***${s.slice(-4)}`;
-}
 
 export function buildBatchProxyBinding(result, proxy) {
   const accountId = result?.account?.id || null;
@@ -65,9 +60,9 @@ function checkAuth(req) {
   // ?pwd= query passwords would only leak into URL access logs and
   // browser history without any callers needing them.
   const pw = req.headers['x-dashboard-password'] || '';
-  if (config.dashboardPassword) return pw === config.dashboardPassword;
-  if (config.apiKey) return pw === config.apiKey;
-  return true;
+  if (config.dashboardPassword) return safeEqualString(pw, config.dashboardPassword);
+  if (config.apiKey) return safeEqualString(pw, config.apiKey);
+  return isLocalBindHost();
 }
 
 async function processWindsurfLogin({ email, password, loginProxy, autoAdd }) {
@@ -101,7 +96,15 @@ async function processWindsurfLogin({ email, password, loginProxy, autoAdd }) {
 
   return {
     success: true,
-    apiKey_masked: maskApiKey(result.apiKey),
+    // When autoAdd:false, the caller is doing a one-time login to retrieve the
+    // upstream key without storing it (e.g. external tooling that wants the
+    // raw key) — they need the full apiKey. When autoAdd is true, the key is
+    // already persisted in the pool and the response only echoes a masked
+    // form (the dashboard never needs the raw key in the listing path; the
+    // explicit reveal-key endpoint covers the rare per-account export case).
+    ...(autoAdd === false
+      ? { apiKey: result.apiKey }
+      : { apiKey_masked: maskApiKey(result.apiKey) }),
     name: result.name,
     email: result.email,
     apiServerUrl: result.apiServerUrl,
@@ -122,9 +125,14 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
 
   // ─── Auth ─────────────────────────────────────────────
   if (subpath === '/auth') {
-    const needsAuth = !!(config.dashboardPassword || config.apiKey);
-    if (!needsAuth) return json(res, 200, { required: false });
-    return json(res, 200, { required: true, valid: checkAuth(req) });
+    const hasSecret = !!(config.dashboardPassword || config.apiKey);
+    if (hasSecret) return json(res, 200, { required: true, valid: checkAuth(req) });
+    // No secret configured. On localhost binds the dashboard is open; on
+    // public binds checkAuth fails closed (see Fix 1 / Fix 3) so the UI must
+    // know auth is required-but-unconfigurable so it can prompt the operator
+    // to set DASHBOARD_PASSWORD or API_KEY rather than show a useless prompt.
+    if (isLocalBindHost()) return json(res, 200, { required: false });
+    return json(res, 200, { required: true, valid: false, locked: true });
   }
 
   // ─── Overview ─────────────────────────────────────────
@@ -631,7 +639,12 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
 
       return json(res, 200, {
         success: true,
-        apiKey_masked: maskApiKey(apiKey),
+        // Same one-time-export contract as /windsurf-login: raw key returned
+        // only when autoAdd:false (caller takes the key themselves and we do
+        // not persist it). Otherwise mask for listings.
+        ...(autoAdd === false
+          ? { apiKey }
+          : { apiKey_masked: maskApiKey(apiKey) }),
         name,
         email: email || '',
         account: account ? { id: account.id, email: account.email, status: account.status } : null,
@@ -648,9 +661,10 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
     const list = getAccountList();
     const acct = list.find(a => a.id === rateLimitCheck[1]);
     if (!acct) return json(res, 404, { error: 'Account not found' });
+    const secret = getAccountInternal(acct.id);
     try {
       const proxy = getEffectiveProxy(acct.id) || null;
-      const result = await checkMessageRateLimit(acct.apiKey, proxy);
+      const result = await checkMessageRateLimit(secret.apiKey, proxy);
       return json(res, 200, { success: true, account: acct.email, ...result });
     } catch (err) {
       return json(res, 500, { error: err.message });
@@ -659,7 +673,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
 
   const revealKey = subpath.match(/^\/account\/([^/]+)\/reveal-key$/);
   if (revealKey && method === 'POST') {
-    const acct = getAccountList().find(a => a.id === revealKey[1]);
+    const acct = getAccountInternal(revealKey[1]);
     if (!acct) return json(res, 404, { error: 'Account not found' });
     return json(res, 200, { success: true, apiKey: acct.apiKey });
   }
@@ -668,8 +682,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
   // POST /accounts/:id/refresh-token — manually refresh Firebase token
   const tokenRefresh = subpath.match(/^\/accounts\/([^/]+)\/refresh-token$/);
   if (tokenRefresh && method === 'POST') {
-    const list = getAccountList();
-    const acct = list.find(a => a.id === tokenRefresh[1]);
+    const acct = getAccountInternal(tokenRefresh[1]);
     if (!acct) return json(res, 404, { error: 'Account not found' });
     if (!acct.refreshToken) return json(res, 400, { error: 'Account has no refresh token' });
     try {

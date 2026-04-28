@@ -20,6 +20,7 @@ import { dirname, join } from 'path';
 import {
   validateApiKey, isAuthenticated, getAccountList, getAccountCount,
   addAccountByEmail, addAccountByToken, addAccountByKey, removeAccount,
+  configureBindHost, emitNoAuthWarnings,
 } from './auth.js';
 import { handleChatCompletions } from './handlers/chat.js';
 import { handleMessages } from './handlers/messages.js';
@@ -66,11 +67,12 @@ function readBody(req) {
   });
 }
 
-function extractToken(req) {
+export function extractToken(req) {
   // Anthropic SDK + OAI SDK compatibility: accept either header.
-  const authHeader = req.headers['authorization'] || '';
-  if (authHeader.startsWith('Bearer ')) return authHeader.slice(7);
-  if (authHeader) return authHeader;
+  const authHeader = String(req.headers['authorization'] || '').trim();
+  if (authHeader && authHeader.includes(',')) return '';
+  const m = authHeader.match(/^Bearer\s+(.+)$/i);
+  if (m) return m[1].trim();
   const xApiKey = req.headers['x-api-key'] || '';
   return xApiKey;
 }
@@ -206,7 +208,6 @@ async function route(req, res) {
   }
 
   // ─── Auth management (admin — gated by API key above) ──
-  // Returns full apiKey strings for copy-to-clipboard. Must stay behind auth.
 
   if (path === '/auth/status') {
     return json(res, 200, { authenticated: isAuthenticated(), ...getAccountCount() });
@@ -397,6 +398,9 @@ async function route(req, res) {
 
 export function startServer() {
   const activeRequests = new Set();
+  const bindHost = config.host || '0.0.0.0';
+  configureBindHost(bindHost);
+  emitNoAuthWarnings(bindHost);
 
   const server = http.createServer(async (req, res) => {
     activeRequests.add(res);
@@ -423,7 +427,7 @@ export function startServer() {
         process.exit(1);
       }
       log.warn(`Port ${config.port} in use, retry ${retryCount}/${maxRetries} in 3s...`);
-      setTimeout(() => server.listen(config.port, '0.0.0.0'), 3000);
+      setTimeout(() => server.listen(config.port, bindHost), 3000);
     } else {
       log.error('Server error:', err);
     }
@@ -431,8 +435,8 @@ export function startServer() {
 
   server.getActiveRequests = () => activeRequests.size;
 
-  server.listen({ port: config.port, host: '0.0.0.0' }, () => {
-    log.info(`Server on http://0.0.0.0:${config.port}`);
+  server.listen({ port: config.port, host: bindHost }, () => {
+    log.info(`Server on http://${bindHost}:${config.port}`);
     log.info('  POST /v1/chat/completions');
     log.info('  POST /v1/responses');
     log.info('  GET  /v1/models');

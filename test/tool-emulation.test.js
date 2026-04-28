@@ -8,6 +8,8 @@ import {
   buildToolPreamble,
   buildToolPreambleForProto,
   buildCompactToolPreambleForProto,
+  buildSchemaCompactToolPreambleForProto,
+  buildSkinnyToolPreambleForProto,
   normalizeMessagesForCascade,
 } from '../src/handlers/tool-emulation.js';
 
@@ -291,6 +293,115 @@ describe('buildCompactToolPreambleForProto (payload budget fallback)', () => {
     assert.match(compact, /Bash: arguments MUST include the full command string/);
     assert.match(compact, /Read: use "file_path" exactly/);
     assert.ok(!compact.includes('"properties"'), 'compact form must still avoid full schemas');
+  });
+});
+
+describe('buildSchemaCompactToolPreambleForProto', () => {
+  it('inlines local refs and preserves dictionary value schemas', () => {
+    const tools = [{
+      type: 'function',
+      function: {
+        name: 'WriteMap',
+        description: 'Write a typed key-value map.',
+        parameters: {
+          type: 'object',
+          properties: {
+            payload: { $ref: '#/$defs/Payload' },
+          },
+          required: ['payload'],
+          $defs: {
+            Payload: {
+              type: 'object',
+              properties: {
+                name: { type: 'string', description: 'display name' },
+                labels: {
+                  type: 'object',
+                  additionalProperties: { type: 'string', description: 'label value' },
+                },
+                sealed: {
+                  type: 'object',
+                  additionalProperties: false,
+                },
+              },
+              required: ['name', 'labels'],
+            },
+          },
+        },
+      },
+    }];
+
+    const preamble = buildSchemaCompactToolPreambleForProto(tools, 'auto');
+    const schema = JSON.parse(preamble.match(/^Params: (.+)$/m)[1]);
+
+    assert.equal(schema.properties.payload.type, 'object');
+    assert.equal(schema.properties.payload.properties.name.type, 'string');
+    assert.equal(schema.properties.payload.properties.labels.additionalProperties.type, 'string');
+    assert.equal(schema.properties.payload.properties.sealed.additionalProperties, false);
+    assert.equal(schema.$defs, undefined);
+    assert.equal(schema.properties.payload.$ref, undefined);
+    assert.ok(!preamble.includes('display name'));
+    assert.ok(!preamble.includes('label value'));
+  });
+
+  it('replaces cyclic refs with a placeholder so output has no dangling $ref', () => {
+    const tools = [{
+      type: 'function',
+      function: {
+        name: 'Cycle',
+        parameters: {
+          type: 'object',
+          properties: { node: { $ref: '#/$defs/Node' } },
+          $defs: {
+            Node: {
+              type: 'object',
+              properties: {
+                next: { $ref: '#/$defs/Node' },
+              },
+            },
+          },
+        },
+      },
+    }];
+
+    const preamble = buildSchemaCompactToolPreambleForProto(tools, 'auto');
+    const schema = JSON.parse(preamble.match(/^Params: (.+)$/m)[1]);
+    assert.deepEqual(schema.properties.node.properties.next, { type: 'object' });
+    // Output must not carry $defs (those were stripped) nor any dangling $ref.
+    assert.equal(JSON.stringify(schema).includes('$ref'), false, 'output must not contain $ref after $defs strip');
+    assert.equal(JSON.stringify(schema).includes('$defs'), false, 'output must not retain $defs');
+  });
+
+  it('replaces a top-level self-cycle with a placeholder (no infinite recursion, no dangling ref)', () => {
+    const tools = [{
+      type: 'function',
+      function: {
+        name: 'TopCycle',
+        parameters: {
+          $ref: '#/$defs/Tree',
+          $defs: {
+            Tree: {
+              type: 'object',
+              properties: {
+                children: { type: 'array', items: { $ref: '#/$defs/Tree' } },
+              },
+            },
+          },
+        },
+      },
+    }];
+    const preamble = buildSchemaCompactToolPreambleForProto(tools, 'auto');
+    const schema = JSON.parse(preamble.match(/^Params: (.+)$/m)[1]);
+    assert.equal(schema.type, 'object');
+    assert.deepEqual(schema.properties.children.items, { type: 'object' });
+    assert.equal(JSON.stringify(schema).includes('$ref'), false);
+  });
+
+  it('skinny form remains available for the final low-budget tier', () => {
+    const skinny = buildSkinnyToolPreambleForProto([
+      { type: 'function', function: { name: 'Read', description: 'Read file.', parameters: { type: 'object', properties: { file_path: { type: 'string' } } } } },
+    ], 'auto');
+    assert.match(skinny, /Read/);
+    assert.match(skinny, /file_path/);
   });
 });
 

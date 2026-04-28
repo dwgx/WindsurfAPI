@@ -175,9 +175,16 @@ export function grpcUnary(port, csrfToken, path, body, timeout = 30000) {
       const full = Buffer.concat(chunks);
 
       if (USE_CONNECT) {
-        const parser = new StreamingFrameParser();
-        parser.push(full);
-        const parsed = parser.drain();
+        let parsed;
+        try {
+          const parser = new StreamingFrameParser();
+          parser.push(full);
+          parsed = parser.drain();
+        } catch (err) {
+          try { req.close?.(http2.constants.NGHTTP2_CANCEL); } catch {}
+          done(reject, err);
+          return;
+        }
         const dataFrames = parsed.filter(f => !f.isEndStream);
         const trailer = parsed.find(f => f.isEndStream);
         if (trailer) {
@@ -259,20 +266,29 @@ export function grpcStream(port, csrfToken, path, body, opts = {}) {
     if (settled) return;
 
     if (USE_CONNECT) {
-      connectParser.push(chunk);
-      for (const frame of connectParser.drain()) {
-        if (frame.isEndStream) {
-          try {
-            const t = JSON.parse(frame.payload.toString());
-            if (t.error) {
-              settled = true; clearTimeout(timer);
-              onError?.(new Error(t.error.message || 'connect stream error'));
-              return;
-            }
-          } catch {}
-        } else {
-          onData?.(frame.payload);
+      try {
+        connectParser.push(chunk);
+        for (const frame of connectParser.drain()) {
+          if (frame.isEndStream) {
+            try {
+              const t = JSON.parse(frame.payload.toString());
+              if (t.error) {
+                settled = true;
+                clearTimeout(timer);
+                try { req.close?.(http2.constants.NGHTTP2_CANCEL); } catch {}
+                onError?.(new Error(t.error.message || 'connect stream error'));
+                return;
+              }
+            } catch {}
+          } else {
+            onData?.(frame.payload);
+          }
         }
+      } catch (err) {
+        settled = true;
+        clearTimeout(timer);
+        try { req.close?.(http2.constants.NGHTTP2_CANCEL); } catch {}
+        onError?.(err);
       }
       return;
     }

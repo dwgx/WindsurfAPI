@@ -1,6 +1,6 @@
 // Logger must be imported first to patch log functions before other modules use them
 import './dashboard/logger.js';
-import { emitNoAuthWarnings, initAuth, isAuthenticated, saveAccountsSync } from './auth.js';
+import { initAuth, isAuthenticated, saveAccountsSync } from './auth.js';
 import { startLanguageServer, waitForReady, isLanguageServerRunning, stopLanguageServer } from './langserver.js';
 import { startServer } from './server.js';
 import { config, log } from './config.js';
@@ -53,7 +53,6 @@ async function main() {
 `;
   console.log(banner);
   console.log(`  OpenAI-compatible proxy for Windsurf — by dwgx1337\n`);
-  emitNoAuthWarnings('0.0.0.0');
 
   // Start language server binary.
   // Auto-install if missing — users repeatedly miss the manual install step

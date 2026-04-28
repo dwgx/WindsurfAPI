@@ -124,7 +124,13 @@ export class StreamingFrameParser {
       let payload = this.buffer.subarray(5, 5 + len);
       if (flags & 0x01) {
         try { payload = gunzipSync(payload); }
-        catch { this.buffer = this.buffer.subarray(5 + len); continue; }
+        catch (err) {
+          // Don't silently drop a frame whose body we couldn't decompress —
+          // upstream is sending something we don't understand and the caller
+          // needs to know so the stream can be cancelled rather than continued
+          // with missing data.
+          throw new Error(`Connect frame decompression failed: ${err.message}`);
+        }
       }
 
       frames.push({

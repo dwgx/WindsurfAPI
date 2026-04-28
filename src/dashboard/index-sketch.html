@@ -2583,7 +2583,7 @@ const App = {
         <td><span class="badge ${a.status}">${a.status}</span>${rateLimitBadge}</td>
         <td style="color:${a.errorCount > 0 ? 'var(--error)' : 'inherit'};font-family:'JetBrains Mono',monospace">${a.errorCount}</td>
         <td class="text-sm nowrap">${a.lastUsed ? new Date(a.lastUsed).toLocaleString() : '—'}</td>
-        <td class="nowrap"><code style="cursor:pointer" title="copy" onclick="App.copyKey('${this.escAttr(a.apiKey)}')">${this.esc(a.keyPrefix)}</code></td>
+        <td class="nowrap"><code title="reveal & copy" style="cursor:pointer" onclick="App.revealAndCopyKey('${this.escAttr(a.id)}')">${this.esc(a.apiKey_masked || a.keyPrefix || '')}</code></td>
         <td class="nowrap"><div class="btn-group">
           <button class="btn btn-ghost btn-xs" onclick="App.probeAccount('${this.escAttr(a.id)}')">probe</button>
           <button class="btn btn-ghost btn-xs" onclick="App.refreshCredits('${this.escAttr(a.id)}')"><svg class="ic" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg></button>
@@ -2697,7 +2697,7 @@ const App = {
             </div>
             <div class="detail-kv">
               <span class="k">id</span><span class="v"><code>${this.esc(a.id)}</code></span>
-              <span class="k">key</span><span class="v"><code style="cursor:pointer" onclick="App.copyKey('${this.escAttr(a.apiKey)}')">${this.esc(a.keyPrefix)}</code></span>
+              <span class="k">key</span><span class="v"><code>${this.esc(a.apiKey_masked || a.keyPrefix || '')}</code></span>
               ${cr.lastError ? `<span class="k">last err</span><span class="v" style="color:var(--error);font-size:11px">${this.esc(cr.lastError).slice(0,80)}</span>` : ''}
             </div>
           </div>
@@ -2707,6 +2707,15 @@ const App = {
   },
 
   copyKey(k) { navigator.clipboard?.writeText(k).then(() => this.toast('copied', 'success')); },
+  async revealAndCopyKey(accountId) {
+    try {
+      const r = await this.api('POST', `/account/${encodeURIComponent(accountId)}/reveal-key`);
+      if (r?.apiKey) this.copyKey(r.apiKey);
+      else this.toast('copy failed', 'error');
+    } catch (e) {
+      this.toast(e?.message || 'copy failed', 'error');
+    }
+  },
 
   async refreshCredits(id) { try { const r = await this.api('POST', `/accounts/${id}/refresh-credits`, {}); if (r.ok) { this.toast('credits refreshed'); this.loadAccounts(); } else this.toast(r.error || 'fail', 'error'); } catch (e) { this.toast(e.message, 'error'); } },
   async refreshAllCredits() { this.toast('refreshing all …', 'info'); try { const r = await this.api('POST', '/accounts/refresh-credits', {}); if (r.success) { this.toast(`${(r.results||[]).filter(x=>x.ok).length} refreshed`); this.loadAccounts(); } } catch (e) { this.toast(e.message, 'error'); } },

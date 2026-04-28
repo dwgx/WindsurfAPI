@@ -198,25 +198,47 @@ export function buildToolPreambleForProto(tools, toolChoice, environment) {
 }
 
 /**
- * Strip schema fields that are documentation-only. Keeps `type`, `enum`,
- * `properties`, `items`, `required`, `oneOf`, `anyOf`, `allOf`. Drops
- * `description`, `examples`, `default`, `title`, `$schema`, `additionalProperties`,
- * which are useful for full-fidelity validation but blow up the preamble
- * by 2-4x with no real impact on tool-call correctness.
+ * Strip schema fields that are documentation-only. Local `$ref`s are inlined
+ * before stripping so schema-compact preambles remain self-contained.
  */
-function stripSchemaDocs(schema) {
+function resolveLocalSchemaRef(ref, root) {
+  if (typeof ref !== 'string' || !ref.startsWith('#/')) return null;
+  const parts = ref.slice(2).split('/').map(p => p.replace(/~1/g, '/').replace(/~0/g, '~'));
+  let cur = root;
+  for (const part of parts) {
+    if (!cur || typeof cur !== 'object' || !(part in cur)) return null;
+    cur = cur[part];
+  }
+  return cur && typeof cur === 'object' ? cur : null;
+}
+
+function stripSchemaDocs(schema, root = schema, refStack = []) {
   if (!schema || typeof schema !== 'object') return schema;
-  if (Array.isArray(schema)) return schema.map(stripSchemaDocs);
-  const KEEP = new Set(['type', 'enum', 'properties', 'items', 'required', 'oneOf', 'anyOf', 'allOf', 'const', 'format']);
+  if (Array.isArray(schema)) return schema.map(s => stripSchemaDocs(s, root, refStack));
+  if (typeof schema.$ref === 'string') {
+    const ref = schema.$ref;
+    // On cycles, replace the recursive edge with a generic object placeholder.
+    // Leaving `{$ref: ...}` in the output would dangle because we strip $defs
+    // below, and the model would have nothing to resolve the pointer against.
+    if (refStack.includes(ref)) return { type: 'object' };
+    const resolved = resolveLocalSchemaRef(ref, root);
+    if (!resolved) return { type: 'object' };
+    const siblings = Object.fromEntries(Object.entries(schema).filter(([k]) => k !== '$ref'));
+    return stripSchemaDocs({ ...resolved, ...siblings }, root, [...refStack, ref]);
+  }
+  const KEEP = new Set(['type', 'enum', 'properties', 'items', 'required', 'oneOf', 'anyOf', 'allOf', 'const', 'format', 'additionalProperties']);
   const out = {};
   for (const [k, v] of Object.entries(schema)) {
     if (!KEEP.has(k)) continue;
     if (k === 'properties' && v && typeof v === 'object') {
       const props = {};
-      for (const [pk, pv] of Object.entries(v)) props[pk] = stripSchemaDocs(pv);
+      for (const [pk, pv] of Object.entries(v)) props[pk] = stripSchemaDocs(pv, root, refStack);
       out[k] = props;
     } else if ((k === 'items' || k === 'oneOf' || k === 'anyOf' || k === 'allOf') && v) {
-      out[k] = stripSchemaDocs(v);
+      out[k] = stripSchemaDocs(v, root, refStack);
+    } else if (k === 'additionalProperties') {
+      if (v === false) out[k] = false;
+      else if (v && typeof v === 'object') out[k] = stripSchemaDocs(v, root, refStack);
     } else {
       out[k] = v;
     }
