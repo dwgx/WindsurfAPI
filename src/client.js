@@ -17,14 +17,16 @@ import { getLsEntryByPort } from './langserver.js';
 import {
   buildRawGetChatMessageRequest, parseRawResponse,
   buildInitializePanelStateRequest,
+  buildHeartbeatRequest,
   buildAddTrackedWorkspaceRequest,
   buildUpdateWorkspaceTrustRequest,
+  buildUpdatePanelStateWithUserStatusRequest,
   buildStartCascadeRequest, parseStartCascadeResponse,
   buildSendCascadeMessageRequest,
   buildGetTrajectoryRequest, parseTrajectoryStatus,
   buildGetTrajectoryStepsRequest, parseTrajectorySteps,
   buildGetGeneratorMetadataRequest, parseGeneratorMetadata,
-  buildGetUserStatusRequest, parseGetUserStatusResponse,
+  buildGetUserStatusRequest, extractUserStatusBytes, parseGetUserStatusResponse,
 } from './windsurf.js';
 
 const LS_SERVICE = '/exa.language_server_pb.LanguageServerService';
@@ -352,6 +354,11 @@ export class WindsurfClient {
         await grpcUnary(this.port, this.csrfToken,
           `${LS_SERVICE}/UpdateWorkspaceTrust`, grpcFrame(trustProto), 5000);
       } catch (e) { handleWarmupError('UpdateWorkspaceTrust', e); }
+      try {
+        const heartbeatProto = buildHeartbeatRequest(this.apiKey, sessionId);
+        await grpcUnary(this.port, this.csrfToken,
+          `${LS_SERVICE}/Heartbeat`, grpcFrame(heartbeatProto), 5000);
+      } catch (e) { handleWarmupError('Heartbeat', e); }
       log.info(`Cascade workspace init complete for LS port=${this.port}`);
     })().catch(e => {
       lsEntry.workspaceInit = null;
@@ -1000,6 +1007,17 @@ export class WindsurfClient {
       this.port, this.csrfToken,
       `${LS_SERVICE}/GetUserStatus`, grpcFrame(proto), 10000,
     );
+    const userStatusBytes = extractUserStatusBytes(resp);
+    const lsEntry = getLsEntryByPort(this.port);
+    if (lsEntry && !lsEntry.sessionId) lsEntry.sessionId = randomUUID();
+    const sessionId = lsEntry?.sessionId || null;
+    const panelProto = buildUpdatePanelStateWithUserStatusRequest(this.apiKey, sessionId, userStatusBytes);
+    grpcUnary(
+      this.port, this.csrfToken,
+      `${LS_SERVICE}/UpdatePanelStateWithUserStatus`, grpcFrame(panelProto), 5000,
+    ).catch(err => {
+      log.debug(`UpdatePanelStateWithUserStatus: ${err.message}`);
+    });
     return parseGetUserStatusResponse(resp);
   }
 }

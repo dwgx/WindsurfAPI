@@ -269,6 +269,11 @@ export function buildInitializePanelStateRequest(apiKey, sessionId, trusted = tr
   ]);
 }
 
+// HeartbeatRequest { metadata = 1; previous_error_traces = 2; experiment_config = 3 deprecated }.
+export function buildHeartbeatRequest(apiKey, sessionId) {
+  return writeMessageField(1, buildMetadata(apiKey, undefined, sessionId));
+}
+
 // AddTrackedWorkspaceRequest has a single field: workspace (string, filesystem path).
 export function buildAddTrackedWorkspaceRequest(workspacePath) {
   return writeStringField(1, workspacePath);
@@ -280,6 +285,16 @@ export function buildUpdateWorkspaceTrustRequest(apiKey, _ignored, trusted = tru
     writeMessageField(1, buildMetadata(apiKey, undefined, sessionId)),
     writeBoolField(2, trusted),
   ]);
+}
+
+export function buildUpdatePanelStateWithUserStatusRequest(apiKey, sessionId, userStatusBytes) {
+  const parts = [
+    writeMessageField(1, buildMetadata(apiKey, undefined, sessionId)),
+  ];
+  if (userStatusBytes?.length) {
+    parts.push(writeMessageField(2, userStatusBytes));
+  }
+  return Buffer.concat(parts);
 }
 
 // ─── Cascade flow builders ─────────────────────────────────
@@ -838,6 +853,12 @@ export function parseTrajectorySteps(buf) {
 
 export function buildGetUserStatusRequest(apiKey) {
   return writeMessageField(1, buildMetadata(apiKey));
+}
+
+export function extractUserStatusBytes(getUserStatusResponseBuf) {
+  if (!getUserStatusResponseBuf || getUserStatusResponseBuf.length === 0) return null;
+  const top = parseFields(getUserStatusResponseBuf);
+  return getField(top, 1, 2)?.value || null;
 }
 
 // exa.codeium_common_pb.TeamsTier → free | pro
