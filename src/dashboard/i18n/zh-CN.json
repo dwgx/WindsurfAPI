@@ -625,6 +625,11 @@
     "github": "GitHub 登录",
     "copyAuthToken": "复制 Auth Token",
     "pasteToken": "去账号管理粘贴 Token",
+    "inlineTokenTitle": "或者直接粘贴 Auth Token（推荐 OAuth-only 账号用这个）",
+    "inlineTokenDesc": "点左边按钮在新 tab 打开 windsurf.com → 用 Google/GitHub 登录 → 页面会显示 Auth Token → 复制粘到右边输入框 → 点添加",
+    "openWindsurfToken": "打开 windsurf.com 拿 Token",
+    "tokenPlaceholder": "粘贴 Auth Token...",
+    "addWithToken": "用 Token 添加",
     "status": {
       "loading": "正在通过 {{provider}} 登录...",
       "success": "登录成功 {{email}} 已加入账号池",

@@ -625,6 +625,11 @@
     "github": "GitHub Login",
     "copyAuthToken": "Copy Auth Token",
     "pasteToken": "Paste Token in Account Management",
+    "inlineTokenTitle": "Or paste Auth Token directly (recommended for OAuth-only accounts)",
+    "inlineTokenDesc": "Click the left button to open windsurf.com in a new tab → sign in with Google/GitHub → page shows Auth Token → copy and paste into the input on the right → click Add",
+    "openWindsurfToken": "Open windsurf.com for Token",
+    "tokenPlaceholder": "Paste Auth Token...",
+    "addWithToken": "Add via Token",
     "status": {
       "loading": "Logging in via {{provider}}...",
       "success": "Login successful! {{email}} added to pool",

@@ -2747,16 +2747,49 @@ const App = {
 
   getWindsurfLoginFailActions(r) {
     if (!r.isAuthFail) return '';
+    const inlineId = 'inline-token-' + Math.random().toString(36).slice(2, 8);
+    const emailAttr = this.esc(r.email || '');
     return `
       <div style="margin-top:12px;padding:12px;background:var(--surface-2);border-radius:var(--radius);border-left:3px solid var(--accent)">
         <div style="font-weight:600;margin-bottom:8px">${I18n.t('oauth.tryAnotherWay')}</div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
           <button class="btn btn-sm" style="background:#4285F4;color:#fff" onclick="App.oauthLogin('google')">${I18n.t('oauth.google')}</button>
           <button class="btn btn-sm" style="background:#24292e;color:#fff" onclick="App.oauthLogin('github')">${I18n.t('oauth.github')}</button>
-          <a class="btn btn-sm btn-outline" href="https://windsurf.com/show-auth-token" target="_blank">${I18n.t('oauth.copyAuthToken')}</a>
-          <button class="btn btn-sm btn-ghost" onclick="document.querySelector('[data-panel=accounts]').click();setTimeout(()=>document.getElementById('acc-key')?.focus(),100)">${I18n.t('oauth.pasteToken')}</button>
+        </div>
+        <div style="border-top:1px dashed var(--border);padding-top:12px">
+          <div style="font-weight:600;margin-bottom:6px">${I18n.t('oauth.inlineTokenTitle')}</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">${I18n.t('oauth.inlineTokenDesc')}</div>
+          <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
+            <button class="btn btn-sm btn-outline" onclick="window.open('https://windsurf.com/show-auth-token','_blank');document.getElementById('${inlineId}').focus()">${I18n.t('oauth.openWindsurfToken')}</button>
+            <input id="${inlineId}" type="text" class="input" style="flex:1;min-width:240px" placeholder="${I18n.t('oauth.tokenPlaceholder')}">
+            <button class="btn btn-sm btn-primary" onclick="App.addAccountFromInlineToken('${inlineId}','${emailAttr}')">${I18n.t('oauth.addWithToken')}</button>
+          </div>
         </div>
       </div>`;
+  },
+
+  async addAccountFromInlineToken(inputId, label) {
+    const input = document.getElementById(inputId);
+    if (!input) return;
+    const token = input.value.trim();
+    if (!token) return this.toast(I18n.t('toast.enterKeyOrToken'), 'error');
+    const btn = input.nextElementSibling;
+    const originalDisabled = btn?.disabled;
+    if (btn) btn.disabled = true;
+    try {
+      const r = await this.api('POST', '/accounts', { token, label });
+      if (r.success) {
+        this.toast(I18n.t('account.addSuccess'), 'success');
+        input.value = '';
+        this.loadAccounts();
+      } else {
+        this.toast(r.error || I18n.t('toast.addFailed'), 'error');
+      }
+    } catch (err) {
+      this.toast(err.message, 'error');
+    } finally {
+      if (btn) btn.disabled = originalDisabled || false;
+    }
   },
 
   renderSingleWindsurfLoginResult(r, autoAdd) {
