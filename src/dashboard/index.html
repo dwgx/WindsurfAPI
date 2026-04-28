@@ -1521,8 +1521,8 @@ window._firebaseOAuth = async function(provider) {
     </div>
   </nav>
   <div class="footer">
-    <button class="btn btn-ghost btn-xs" onclick="App.toggleLang()" title="Switch language" style="margin-right:8px">
-      <span id="lang-indicator">中</span> / EN
+    <button id="lang-toggle-btn" class="btn btn-ghost btn-xs" onclick="App.toggleLang()" title="Switch language" style="margin-right:8px">
+      <span id="lang-indicator">中文</span>
     </button>
     <span>© Windsurf</span>
     <span class="ver" id="sidebar-ver" data-i18n-title="footer.version" title="版本">v1.2.0</span>
@@ -2295,8 +2295,11 @@ const I18n = {
     document.documentElement.lang = this.locale === 'zh' || this.locale === 'zh-CN' ? 'zh-CN' : 'en';
 
     // Update language indicator
+    const zhMode = this.locale === 'zh' || this.locale === 'zh-CN';
     const indicator = document.getElementById('lang-indicator');
-    if (indicator) indicator.textContent = (this.locale === 'zh' || this.locale === 'zh-CN') ? '中' : 'EN';
+    if (indicator) indicator.textContent = zhMode ? '中文' : 'English';
+    const toggleBtn = document.getElementById('lang-toggle-btn');
+    if (toggleBtn) toggleBtn.title = zhMode ? 'Switch to English' : '切换到中文';
   },
 
   async setLocale(lang) {
@@ -2336,10 +2339,24 @@ const App = {
     I18n.apply();
   },
 
-  toggleLang() {
+  async toggleLang() {
     const newLang = I18n.locale === 'zh' || I18n.locale === 'zh-CN' ? 'en' : 'zh';
-    I18n.setLocale(newLang);
+    await I18n.setLocale(newLang);
     this.lang = newLang;
+    this.refreshActivePanelI18n();
+  },
+
+  refreshActivePanelI18n() {
+    const activePanelId = document.querySelector('.panel.active')?.id?.replace(/^p-/, '');
+    if (!activePanelId) return;
+    const loaders = {
+      overview: 'loadOverview', 'windsurf-login': 'loadWindsurfLogin',
+      accounts: 'loadAccounts', models: 'loadModels', proxy: 'loadProxy',
+      logs: 'loadLogs', stats: 'loadStats', bans: 'loadBans',
+      experimental: 'loadExperimental', credits: 'loadCredits',
+    };
+    const loader = loaders[activePanelId];
+    if (loader && typeof this[loader] === 'function') this[loader]();
   },
 
   // Register a polling loader. Guarantees exactly one timer per key even if
@@ -2705,7 +2722,8 @@ const App = {
     } catch (err) {
       status.style.color = '#ef4444';
       status.textContent = I18n.t('oauth.status.loginFailed', { label, error: err.message });
-      const translatedErr = I18n.t(err.message) !== err.message ? I18n.t(err.message) : err.message;
+      const errKey = err.message ? `error.${err.message}` : null;
+      const translatedErr = (errKey && I18n.t(errKey) !== errKey) ? I18n.t(errKey) : err.message;
       this.toast(I18n.t('toast.loginFailed', { label, error: translatedErr }), 'error');
     } finally {
       if (btn) btn.disabled = false;
@@ -2779,13 +2797,15 @@ const App = {
         </div>`);
       return;
     }
+    const errKey = r.error ? `error.${r.error}` : null;
+    const errMsg = (errKey && I18n.t(errKey) !== errKey) ? I18n.t(errKey) : (r.error || I18n.t('error.unknown'));
     this.showWindsurfLoginResult(`
       <div class="section-header">
         <div>
           <div class="section-title" style="color:var(--error)">${I18n.t('loginResult.fail')}</div>
         </div>
       </div>
-      <div class="section-body"><p class="text-sm">${this.esc((r.error && I18n.t(r.error) !== r.error) ? I18n.t(r.error) : (r.error || I18n.t('error.unknown')))}</p>${this.getWindsurfLoginFailActions(r)}</div>`);
+      <div class="section-body"><p class="text-sm">${this.esc(errMsg)}</p>${this.getWindsurfLoginFailActions(r)}</div>`);
   },
 
   renderBatchWindsurfLoginResult(results, autoAdd) {
@@ -2809,7 +2829,7 @@ const App = {
                   <td><span class="badge ${r.success ? 'active' : 'error'}">${r.success ? I18n.t('batch.success') : I18n.t('batch.fail')}</span></td>
                   <td class="text-sm">${r.success
                     ? `<span class="break-all"><code>${this.esc(r.apiKey_masked || (r.apiKey ? r.apiKey.slice(0, 16) + '...' : '-'))}</code>${r.account ? ` · ${I18n.t('table.header.account')} ${this.esc(r.account.id)}` : ''}</span>`
-                    : `<span style="color:var(--error)">${this.esc((r.error && I18n.t(r.error) !== r.error) ? I18n.t(r.error) : (r.error || I18n.t('error.unknown')))}</span>`}</td>
+                    : (() => { const errKey = r.error ? `error.${r.error}` : null; return `<span style="color:var(--error)">${this.esc((errKey && I18n.t(errKey) !== errKey) ? I18n.t(errKey) : (r.error || I18n.t('error.unknown')))}</span>`; })()}</td>
                 </tr>
               `).join('')}
             </tbody>
@@ -2881,11 +2901,13 @@ const App = {
       } else {
         entry.status = 'error: ' + (r.error || 'unknown');
         this.renderSingleWindsurfLoginResult(r, autoAdd);
-        this.toast((r.error && I18n.t(r.error) !== r.error) ? I18n.t(r.error) : (r.error || I18n.t('toast.loginFailed')), 'error');
+        const errKey = r.error ? `error.${r.error}` : null;
+        this.toast((errKey && I18n.t(errKey) !== errKey) ? I18n.t(errKey) : (r.error || I18n.t('toast.loginFailed')), 'error');
       }
     } catch (err) {
       entry.status = 'error: ' + err.message;
-      this.toast(I18n.t(err.message) !== err.message ? I18n.t(err.message) : err.message, 'error');
+      const errKey = err.message ? `error.${err.message}` : null;
+      this.toast((errKey && I18n.t(errKey) !== errKey) ? I18n.t(errKey) : err.message, 'error');
     }
 
     this.pushLoginHistory(entry);
@@ -2913,12 +2935,13 @@ const App = {
     try {
       const r = await this.api('POST', '/batch-import', { text: input, autoAdd });
       if (!r.success || !Array.isArray(r.results)) {
+        const errKey = r.error ? `error.${r.error}` : null;
         this.showWindsurfLoginResult(`
           <div class="section-header">
             <div><div class="section-title" style="color:var(--error)">${I18n.t('loginResult.fail')}</div></div>
           </div>
-          <div class="section-body"><p class="text-sm">${this.esc((r.error && I18n.t(r.error) !== r.error) ? I18n.t(r.error) : (r.error || I18n.t('error.unknown')))}</p></div>`);
-        const translatedErr = r.error && I18n.t(r.error) !== r.error ? I18n.t(r.error) : r.error;
+          <div class="section-body"><p class="text-sm">${this.esc((errKey && I18n.t(errKey) !== errKey) ? I18n.t(errKey) : (r.error || I18n.t('error.unknown')))}</p></div>`);
+        const translatedErr = errKey && I18n.t(errKey) !== errKey ? I18n.t(errKey) : r.error;
         return this.toast(translatedErr || I18n.t('batch.importFailed'), 'error');
       }
 
@@ -2936,12 +2959,13 @@ const App = {
         document.getElementById('wl-batch-input').value = '';
       }
     } catch (err) {
+      const errKey = err.message ? `error.${err.message}` : null;
       this.showWindsurfLoginResult(`
         <div class="section-header">
           <div><div class="section-title" style="color:var(--error)">${I18n.t('loginResult.fail')}</div></div>
         </div>
-        <div class="section-body"><p class="text-sm">${this.esc(I18n.t(err.message) !== err.message ? I18n.t(err.message) : err.message)}</p></div>`);
-      const translatedErr = I18n.t(err.message) !== err.message ? I18n.t(err.message) : err.message;
+        <div class="section-body"><p class="text-sm">${this.esc((errKey && I18n.t(errKey) !== errKey) ? I18n.t(errKey) : err.message)}</p></div>`);
+      const translatedErr = (errKey && I18n.t(errKey) !== errKey) ? I18n.t(errKey) : err.message;
       this.toast(translatedErr, 'error');
     } finally {
       btn.disabled = false;
@@ -2959,7 +2983,7 @@ const App = {
         <td>${this.esc(h.email)}</td>
         <td>
           <span class="badge ${ok ? 'active' : 'error'}">${ok ? I18n.t('batch.success') : I18n.t('batch.fail')}</span>
-          ${!ok ? `<div class="text-xs" style="color:var(--error);margin-top:3px;max-width:240px;overflow:hidden;text-overflow:ellipsis">${this.esc((h.status||'').replace('error: ',''))}</div>` : ''}
+          ${!ok ? (() => { const errCode = (h.status||'').replace('error: ',''); const errKey = `error.${errCode}`; const errMsg = I18n.t(errKey) !== errKey ? I18n.t(errKey) : errCode; return `<div class="text-xs" style="color:var(--error);margin-top:3px;max-width:240px;overflow:hidden;text-overflow:ellipsis" title="${this.esc(errCode)}">${this.esc(errMsg)}</div>`; })() : ''}
         </td>
         <td class="text-sm">${this.esc(h.proxy || '-')}</td>
         <td><button class="btn btn-ghost btn-xs" onclick="App.removeLoginHistory(${i})">${I18n.t('action.delete')}</button></td>
