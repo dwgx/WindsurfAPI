@@ -1,6 +1,6 @@
 {
   "name": "windsurf-api",
-  "version": "2.0.15",
+  "version": "2.0.16",
   "description": "Windsurf to OpenAI + Anthropic compatible API proxy. Turns Windsurf's 107 AI models (Claude, GPT, Gemini, DeepSeek, Grok, Qwen, Kimi, GLM, SWE) into dual-protocol API endpoints. Zero npm deps.",
   "type": "module",
   "main": "src/index.js",

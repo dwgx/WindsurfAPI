@@ -21,6 +21,7 @@ import {
 import {
   normalizeMessagesForCascade, ToolCallStreamParser, parseToolCallsFromText, stripToolMarkupFromText,
   buildToolPreambleForProto, buildCompactToolPreambleForProto,
+  buildSchemaCompactToolPreambleForProto, buildSkinnyToolPreambleForProto,
 } from './tool-emulation.js';
 import { sanitizeText, sanitizeToolCall, PathSanitizeStream } from '../sanitize.js';
 import { registerSseController } from '../sse-registry.js';
@@ -644,29 +645,36 @@ function cachedUsage(messages, completionText) {
 }
 
 export function applyToolPreambleBudget(tools, toolChoice, callerEnv = '', opts = {}) {
-  const full = buildToolPreambleForProto(tools || [], toolChoice, callerEnv);
   const softBytes = opts.softBytes ?? parseInt(process.env.TOOL_PREAMBLE_SOFT_BYTES || '24000', 10);
   const hardBytes = opts.hardBytes ?? parseInt(process.env.TOOL_PREAMBLE_HARD_BYTES || '48000', 10);
+  const tiers = [
+    { tier: 'full', build: buildToolPreambleForProto },
+    { tier: 'schema-compact', build: buildSchemaCompactToolPreambleForProto },
+    { tier: 'skinny', build: buildSkinnyToolPreambleForProto },
+    { tier: 'names-only', build: buildCompactToolPreambleForProto },
+  ];
+  const full = tiers[0].build(tools || [], toolChoice, callerEnv);
   if (!full) {
-    return { ok: true, preamble: '', fullBytes: 0, finalBytes: 0, compacted: false, softBytes, hardBytes };
+    return { ok: true, preamble: '', fullBytes: 0, finalBytes: 0, compacted: false, tier: 'empty', softBytes, hardBytes };
   }
-
   const fullBytes = Buffer.byteLength(full, 'utf8');
-  let preamble = full;
-  let finalBytes = fullBytes;
-  let compacted = false;
 
-  if (fullBytes > softBytes) {
-    preamble = buildCompactToolPreambleForProto(tools || [], toolChoice, callerEnv);
-    finalBytes = Buffer.byteLength(preamble, 'utf8');
-    compacted = true;
+  // Walk the tiers from largest to smallest; pick the first one that fits
+  // under the soft cap. If none fit (extreme tool counts), fall through to
+  // names-only and let the hard-cap check decide whether to reject.
+  let chosen = { tier: 'full', preamble: full, bytes: fullBytes };
+  for (const t of tiers) {
+    const text = t.tier === 'full' ? full : t.build(tools || [], toolChoice, callerEnv);
+    const bytes = Buffer.byteLength(text, 'utf8');
+    chosen = { tier: t.tier, preamble: text, bytes };
+    if (bytes <= softBytes) break;
   }
 
-  if (finalBytes > hardBytes) {
-    return { ok: false, preamble, fullBytes, finalBytes, compacted, softBytes, hardBytes };
+  const compacted = chosen.tier !== 'full';
+  if (chosen.bytes > hardBytes) {
+    return { ok: false, preamble: chosen.preamble, fullBytes, finalBytes: chosen.bytes, compacted, tier: chosen.tier, softBytes, hardBytes };
   }
-
-  return { ok: true, preamble, fullBytes, finalBytes, compacted, softBytes, hardBytes };
+  return { ok: true, preamble: chosen.preamble, fullBytes, finalBytes: chosen.bytes, compacted, tier: chosen.tier, softBytes, hardBytes };
 }
 
 /**
@@ -925,16 +933,16 @@ export async function handleChatCompletions(body, context = {}) {
   // which broke real opencode / Claude Code setups with 30-50 MCP tools.
   if (emulateTools) {
     const budget = applyToolPreambleBudget(tools || [], tool_choice, callerEnv);
-    if (budget.fullBytes > budget.softBytes && budget.compacted) {
-      log.warn(`Probe[${reqId}]: toolPreamble ${Math.round(budget.fullBytes / 1024)}KB exceeds soft cap ${Math.round(budget.softBytes / 1024)}KB; falling back to names-only preamble (${Math.round(budget.finalBytes / 1024)}KB, ${(tools || []).length} tools)`);
+    if (budget.compacted) {
+      log.warn(`Probe[${reqId}]: toolPreamble ${Math.round(budget.fullBytes / 1024)}KB exceeds soft cap ${Math.round(budget.softBytes / 1024)}KB; using ${budget.tier} tier (${Math.round(budget.finalBytes / 1024)}KB, ${(tools || []).length} tools)`);
     }
     if (!budget.ok) {
-      log.warn(`Probe[${reqId}]: toolPreamble ${Math.round(budget.finalBytes / 1024)}KB exceeds hard cap ${Math.round(budget.hardBytes / 1024)}KB after ${budget.compacted ? 'names-only fallback' : 'full-schema build'}; rejecting (${(tools || []).length} tools)`);
+      log.warn(`Probe[${reqId}]: toolPreamble ${Math.round(budget.finalBytes / 1024)}KB exceeds hard cap ${Math.round(budget.hardBytes / 1024)}KB after ${budget.tier} tier; rejecting (${(tools || []).length} tools)`);
       return {
         status: 400,
         body: {
           error: {
-            message: `Tool definitions are too large (${Math.round(budget.finalBytes / 1024)}KB > ${Math.round(budget.hardBytes / 1024)}KB after compaction). Reduce the number of tools or shorten tool names.`,
+            message: `Tool definitions are too large (${Math.round(budget.finalBytes / 1024)}KB > ${Math.round(budget.hardBytes / 1024)}KB after ${budget.tier} compaction). Reduce the number of tools or shorten tool names.`,
             type: 'invalid_request_error',
             param: 'tools',
             code: 'tool_preamble_too_large',
