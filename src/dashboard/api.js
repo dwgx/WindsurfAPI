@@ -123,7 +123,9 @@ async function processWindsurfLogin({ email, password, loginProxy, autoAdd }) {
 /**
  * Handle all /dashboard/api/* requests.
  */
-export async function handleDashboardApi(method, subpath, body, req, res) {
+export async function handleDashboardApi(method, subpath, body, req, res, deps = {}) {
+  const ensureLsForAccountFn = deps.ensureLsForAccount || ensureLsForAccount;
+  const probeAccountFn = deps.probeAccount || probeAccount;
   if (method === 'OPTIONS') return json(res, 204, '');
 
   // Auth check (except for auth verification endpoint)
@@ -288,16 +290,14 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
 
   if (subpath === '/accounts' && method === 'POST') {
     try {
-      if (!body.api_key && !body.token) {
-        return json(res, 400, { error: 'Provide api_key or token' });
-      }
-
+      // 1. Validate proxy first (if provided) - fail early before touching account store
       let parsedProxy = null;
       if (body.proxy) {
         parsedProxy = parseProxyUrl(body.proxy);
         if (!parsedProxy) {
           return json(res, 400, { error: 'ERR_PROXY_FORMAT_INVALID' });
         }
+        // Validate proxy host (respect ALLOW_PRIVATE_PROXY_HOSTS config)
         try {
           if (config.allowPrivateProxyHosts) {
             await validateHostFormat(parsedProxy.host);
@@ -309,10 +309,17 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
         }
       }
 
-      const account = body.api_key
-        ? addAccountByKey(body.api_key, body.label)
-        : await addAccountByToken(body.token, body.label);
+      // 2. Create account only after proxy validation passes
+      let account;
+      if (body.api_key) {
+        account = addAccountByKey(body.api_key, body.label);
+      } else if (body.token) {
+        account = await addAccountByToken(body.token, body.label);
+      } else {
+        return json(res, 400, { error: 'Provide api_key or token' });
+      }
 
+      // 3. Bind proxy to the newly created account
       if (parsedProxy) {
         setAccountProxy(account.id, parsedProxy);
         ensureLsForAccount(account.id).catch(e => log.warn(`LS ensure failed: ${e.message}`));

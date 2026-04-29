@@ -2350,6 +2350,12 @@ const App = {
     I18n.apply();
   },
 
+  translateError(errorCode, fallbackKey = 'error.unknown') {
+    const errKey = errorCode ? `error.${errorCode}` : '';
+    if (errKey && I18n.t(errKey) !== errKey) return I18n.t(errKey);
+    return errorCode || I18n.t(fallbackKey);
+  },
+
   async toggleLang() {
     const newLang = I18n.locale === 'zh' || I18n.locale === 'zh-CN' ? 'en' : 'zh';
     await I18n.setLocale(newLang);
@@ -2854,10 +2860,10 @@ const App = {
         input.value = '';
         this.loadAccounts();
       } else {
-        this.toast(r.error || I18n.t('toast.addFailed'), 'error');
+        this.toast(this.translateError(r.error, 'toast.addFailed'), 'error');
       }
     } catch (err) {
-      this.toast(err.message, 'error');
+      this.toast(this.translateError(err.message, 'error.unknown'), 'error');
     } finally {
       if (btn) btn.disabled = originalDisabled || false;
     }
@@ -3433,7 +3439,7 @@ const App = {
         this.toast(I18n.t('toast.credits.refreshed'));
         this.loadAccounts();
       } else {
-        this.toast(r.error || I18n.t('toast.credits.refreshFailed'), 'error');
+        this.toast(this.translateError(r.error, 'toast.credits.refreshFailed'), 'error');
       }
     } catch (e) { this.toast(I18n.t('toast.credits.refreshFailed') + ': ' + e.message, 'error'); }
   },
@@ -3448,7 +3454,7 @@ const App = {
         this.toast(I18n.t('toast.credits.allRefreshed', { ok: okCount, fail: failCount }));
         this.loadAccounts();
       } else {
-        this.toast(r.error || I18n.t('toast.credits.refreshFailed'), 'error');
+        this.toast(this.translateError(r.error, 'toast.credits.refreshFailed'), 'error');
       }
     } catch (e) { this.toast(I18n.t('toast.credits.refreshFailed') + ': ' + e.message, 'error'); }
   },
@@ -3463,7 +3469,7 @@ const App = {
         this.toast(I18n.t('toast.probeAllComplete', { summary }));
         this.loadAccounts();
       } else {
-        this.toast(r.error || I18n.t('error.probeFailed'), 'error');
+        this.toast(this.translateError(r.error, 'error.probeFailed'), 'error');
       }
     } catch (e) { this.toast(I18n.t('error.probeFailed') + ': ' + e.message, 'error'); }
   },
@@ -3477,7 +3483,7 @@ const App = {
         this.toast(I18n.t('toast.probeComplete', { tier: tierLabel[r.tier] || r.tier }));
         this.loadAccounts();
       } else {
-        this.toast(r.error || I18n.t('error.probeFailed'), 'error');
+        this.toast(this.translateError(r.error, 'error.probeFailed'), 'error');
       }
     } catch (e) { this.toast(I18n.t('error.probeFailed') + ': ' + e.message, 'error'); }
   },
@@ -3603,7 +3609,7 @@ const App = {
           root.remove();
           self.loadAccounts();
         } else {
-          self.toast(r.error || I18n.t('error.saveFailed'), 'error');
+          self.toast(self.translateError(r.error, 'error.saveFailed'), 'error');
           okBtn.disabled = false; cancelBtn.disabled = false; okBtn.textContent = I18n.t('action.save');
         }
       } catch (e) {
@@ -3638,7 +3644,7 @@ const App = {
     const body = type === 'api_key' ? { api_key: key, label, proxy } : { token: key, label, proxy };
     const r = await this.api('POST', '/accounts', body);
     if (r.success) { this.toast(I18n.t('account.addSuccess')); document.getElementById('acc-key').value = ''; document.getElementById('acc-label').value = ''; document.getElementById('acc-proxy').value = ''; this.loadAccounts(); }
-    else this.toast(r.error || I18n.t('toast.addFailed'), 'error');
+    else this.toast(this.translateError(r.error, 'toast.addFailed'), 'error');
   },
 
   async discoverLocalWindsurf() {
