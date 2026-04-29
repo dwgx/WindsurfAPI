@@ -290,6 +290,11 @@ export async function handleDashboardApi(method, subpath, body, req, res, deps =
 
   if (subpath === '/accounts' && method === 'POST') {
     try {
+      // Validate required credentials before any proxy validation/network checks.
+      if (!body.api_key && !body.token) {
+        return json(res, 400, { error: 'Provide api_key or token' });
+      }
+
       // 1. Validate proxy first (if provided) - fail early before touching account store
       let parsedProxy = null;
       if (body.proxy) {
@@ -310,14 +315,9 @@ export async function handleDashboardApi(method, subpath, body, req, res, deps =
       }
 
       // 2. Create account only after proxy validation passes
-      let account;
-      if (body.api_key) {
-        account = addAccountByKey(body.api_key, body.label);
-      } else if (body.token) {
-        account = await addAccountByToken(body.token, body.label);
-      } else {
-        return json(res, 400, { error: 'Provide api_key or token' });
-      }
+      const account = body.api_key
+        ? addAccountByKey(body.api_key, body.label)
+        : await addAccountByToken(body.token, body.label);
 
       // 3. Bind proxy to the newly created account
       if (parsedProxy) {
