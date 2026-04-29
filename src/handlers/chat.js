@@ -1138,16 +1138,28 @@ export async function handleChatCompletions(body, context = {}) {
   // through every account trying to find one. This surfaces tier
   // entitlement and blocklist errors as a clean 403 rather than a 30s
   // queue timeout → pool_exhausted.
-  const anyEligible = getAccountList().some(a =>
+  //
+  // QQ-group 2026-04-30 follow-up: if the only ineligibility is that a
+  // freshly-added account hasn't been probed yet (userStatusLastFetched=0),
+  // the unknown tier is now optimistic (= pro catalog) so this branch
+  // shouldn't fire for that case. If we DO end up here with un-probed
+  // accounts, surface a different message hinting at probe-pending state
+  // rather than the misleading "model not entitled" — that error shaped
+  // user reports of "获取不到模型" / "添加账号后不能调用".
+  const accounts = getAccountList();
+  const anyEligible = accounts.some(a =>
     a.status === 'active' && (a.availableModels || []).includes(routingModelKey)
   );
   if (!anyEligible) {
+    const hasUnprobedActive = accounts.some(a => a.status === 'active' && !a.userStatusLastFetched);
     return {
       status: 403,
       body: {
         error: {
-          message: `模型 ${displayModel} 在当前账号池中不可用（未订阅或已被封禁）`,
-          type: 'model_not_entitled',
+          message: hasUnprobedActive
+            ? `模型 ${displayModel} 暂不可用：账号刚添加还未完成 tier 检测，请稍候 10-30 秒后重试，或在 dashboard 手动点 Probe`
+            : `模型 ${displayModel} 在当前账号池中不可用（未订阅或已被封禁）`,
+          type: hasUnprobedActive ? 'probe_pending' : 'model_not_entitled',
         },
       },
     };

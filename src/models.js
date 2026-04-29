@@ -350,7 +350,16 @@ export function registerDiscoveredFreeModel(key) {
 export const MODEL_TIER_ACCESS = {
   get pro() { return Object.keys(MODELS); },
   get free() { return [...FREE_TIER_BASE, ..._discoveredFreeModels]; },
-  get unknown() { return [...FREE_TIER_BASE, ..._discoveredFreeModels]; },
+  // Optimistic: a freshly-added account whose probe hasn't completed yet
+  // gets the FULL pro catalog, not just gemini-2.5-flash. Otherwise the
+  // chat.js anyEligible check (line ~1141) immediately 403s any non-free
+  // model with "模型 X 在当前账号池中不可用", and users see "添加账号后
+  // 不能调用任何模型" until probe finishes ~10-30s later. Trade-off: a
+  // free user may try opus before probe completes; the request will fail
+  // upstream with a real entitlement error from the LS, which is a more
+  // accurate failure than the misleading "model not in account pool" we
+  // were emitting. Reported in QQ group, 2026-04-30.
+  get unknown() { return Object.keys(MODELS); },
   expired: [],
 };
 
