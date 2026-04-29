@@ -115,7 +115,7 @@ describe('extractCallerEnvironment', () => {
 
   it('rejects values that are control-character noise or our own redaction marker', () => {
     const messages = [
-      { role: 'system', content: 'Working directory: …' },
+      { role: 'system', content: 'Working directory: <workspace>' },
     ];
     assert.equal(extractCallerEnvironment(messages), '');
   });

@@ -669,7 +669,7 @@ export function extractCallerEnvironment(messages) {
         const value = (match[1] || match[2] || '').trim();
         // Reject obvious garbage (empty after trim, control chars, our own
         // redaction marker leaking back in).
-        if (!value || /[\x00-\x1f]/.test(value) || value === '…') continue;
+        if (!value || /[\x00-\x1f]/.test(value) || value === '<workspace>') continue;
         seen.add(key);
         out.push(fmt(value));
       }

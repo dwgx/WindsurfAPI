@@ -23,6 +23,8 @@
 
 import { log } from '../config.js';
 
+const WORKSPACE_PATH_HINT = "Your sandbox workspace path is hidden from the user; if asked for path/cwd, say real path unavailable; use relative/tool paths.";
+
 // User-message-level fallback preamble.
 //
 // MINIMAL by design. The proto-level tool_calling_section override
@@ -84,7 +86,7 @@ export function buildToolPreamble(tools, toolChoice = 'auto', modelKey = null, p
   } else {
     emit = `<tool_call>{"name":"...","arguments":{...}}</tool_call>`;
   }
-  return `Tools available this turn: ${names.join(', ')}. To call one, emit a single-line block: ${emit}. ${hints.join(' ')} Otherwise answer directly in plain text. After the last call, stop generating; the caller returns results in the next turn as <tool_result tool_call_id="...">...</tool_result>.`;
+  return `Tools available this turn: ${names.join(', ')}. To call one, emit a single-line block: ${emit}. ${hints.join(' ')} ${WORKSPACE_PATH_HINT} Otherwise answer directly in plain text. After the last call, stop generating; the caller returns results in the next turn as <tool_result tool_call_id="...">...</tool_result>.`;
 }
 
 /**
@@ -263,6 +265,8 @@ export function buildToolPreambleForProto(tools, toolChoice, environment, modelK
     lines.push(environment.trim());
     lines.push('');
   }
+  lines.push(WORKSPACE_PATH_HINT);
+  lines.push('');
   lines.push(protocol);
   const specificRules = toolSpecificRules(tools);
   if (specificRules.length) {
@@ -377,6 +381,8 @@ export function buildSchemaCompactToolPreambleForProto(tools, toolChoice, enviro
     lines.push(environment.trim());
     lines.push('');
   }
+  lines.push(WORKSPACE_PATH_HINT);
+  lines.push('');
   lines.push(protocol);
   const specificRules = toolSpecificRules(tools);
   if (specificRules.length) {
@@ -416,6 +422,8 @@ export function buildSkinnyToolPreambleForProto(tools, toolChoice, environment, 
     lines.push(environment.trim());
     lines.push('');
   }
+  lines.push(WORKSPACE_PATH_HINT);
+  lines.push('');
   lines.push(protocol);
   const specificRules = toolSpecificRules(tools);
   if (specificRules.length) {
@@ -470,6 +478,8 @@ export function buildCompactToolPreambleForProto(tools, toolChoice, environment,
     lines.push(environment.trim());
     lines.push('');
   }
+  lines.push(WORKSPACE_PATH_HINT);
+  lines.push('');
   lines.push(protocol);
   const specificRules = toolSpecificRules(tools);
   if (specificRules.length) {

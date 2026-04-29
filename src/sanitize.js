@@ -33,8 +33,8 @@ const _repoRoot = (() => {
   } catch { return process.cwd(); }
 })();
 
-// Placeholder is a single Unicode ellipsis (U+2026) — chosen because every
-// previous marker has been re-used by the model in some destructive way:
+// Placeholder history: every marker has to avoid becoming either a fake path
+// the model reuses in tool calls or a fake answer the model repeats to users.
 //   ./tail                    → LLM Reads ./src/main.py → ENOENT → loops
 //   [internal]                → LLM runs `ls [internal]` → ENOENT → loops
 //   <redacted-path>           → LLM passes to Read/Bash → ENOENT (Linux) /
@@ -47,18 +47,16 @@ const _repoRoot = (() => {
 //                               plausible directory name and the
 //                               failure mode is `cd: too many arguments`
 //                               which still wastes 2-3 turns
-// The ellipsis is the strongest fit for all four constraints at once:
-//   1. Single character, no shell metacharacter so no shell parses it
-//      specially (zsh `cd …` → ENOENT, clean recoverable error).
-//   2. Universally read by humans and LLMs as "content omitted" — there
-//      is essentially zero training data of `cd …` or `Read("…")` as a
-//      legitimate operation, so the model does not fall into the
-//      reuse-as-path loop the other markers triggered.
-//   3. UTF-8-safe (3 bytes) and survives cleanly through SSE, JSON,
-//      gRPC and shell quoting in every codepath we tested.
-//   4. Stays terse so it does not bloat sanitized prose.
+//   …                         → avoids shell loops, but Sonnet 4.6 can echo
+//                               it in prose as "your path is …", causing a
+//                               user-visible answer loop when asked for the
+//                               project path.
+// Current marker is structural and explicit: it tells the user/model the
+// workspace path is intentionally hidden, without looking like a real absolute
+// path or a literal ellipsis answer. The proto/tool preamble also tells the
+// model not to answer project-path questions by echoing this marker.
 // Verified with the drift probe (scripts/_agent_drift_probe.py).
-const REDACTED_PATH = '…';
+const REDACTED_PATH = '<workspace>';
 
 // Path body char class: anything that's not whitespace or syntax-terminator.
 // Used in patterns and in cut-point detection — must match.
