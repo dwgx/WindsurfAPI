@@ -20,7 +20,7 @@ describe('SSRF private address detection', () => {
 
   it('rejects hostnames after DNS resolution to private IPs', async () => {
     const lookup = (host, opts, cb) => cb(null, [{ address: '127.0.0.1', family: 4 }]);
-    await assert.rejects(() => resolvePublicAddresses('evil.example', lookup), /ERR_PRIVATE_IP/);
+    await assert.rejects(() => resolvePublicAddresses('evil.example', lookup), /ERR_PROXY_PRIVATE_IP/);
   });
 
   it('rejects oversized generic data URLs', () => {
@@ -28,4 +28,3 @@ describe('SSRF private address detection', () => {
     assert.throws(() => parseGenericDataUrl(tooLarge), /Data URL exceeds/);
   });
 });
-

@@ -88,9 +88,9 @@ export function isPrivateIp(address) {
 
 export async function resolvePublicAddresses(hostname, lookupFn = dnsLookup) {
   const host = String(hostname || '').replace(/^\[|\]$/g, '');
-  if (!host || host.toLowerCase() === 'localhost') throw new Error('ERR_PRIVATE_HOST');
+  if (!host || host.toLowerCase() === 'localhost') throw new Error('ERR_PROXY_PRIVATE_HOST');
   if (net.isIP(host)) {
-    if (isPrivateIp(host)) throw new Error('ERR_PRIVATE_IP');
+    if (isPrivateIp(host)) throw new Error('ERR_PROXY_PRIVATE_IP');
     return [{ address: host, family: net.isIP(host) }];
   }
   const result = await new Promise((resolve, reject) => {
@@ -98,7 +98,7 @@ export async function resolvePublicAddresses(hostname, lookupFn = dnsLookup) {
   });
   const addrs = Array.isArray(result) ? result : [result];
   for (const a of addrs) {
-    if (isPrivateIp(a.address)) throw new Error('ERR_PRIVATE_IP');
+    if (isPrivateIp(a.address)) throw new Error('ERR_PROXY_PRIVATE_IP');
   }
   return addrs;
 }
