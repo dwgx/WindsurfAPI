@@ -1764,6 +1764,13 @@ window._firebaseOAuth = async function(provider) {
             <input id="acc-label" class="input" data-i18n-placeholder="field.label.placeholder" placeholder="可选">
           </div>
         </div>
+        <div class="field-row" style="margin-top:12px">
+          <div class="field" style="flex:1">
+            <label class="field-label" data-i18n="field.proxy.label">代理</label>
+            <input id="acc-proxy" class="input" data-i18n-placeholder="field.proxy.placeholder" placeholder="http://proxy:8080 或 socks5://user:pass@host:port（可选）">
+          </div>
+        </div>
+        <div class="field-hint" style="margin-top:4px" data-i18n="field.proxy.hint">留空则使用全局代理设置</div>
         <div class="field-row-actions">
           <button class="btn btn-primary" onclick="App.addAccount()" data-i18n="action.add">添加账号</button>
         </div>
@@ -3624,10 +3631,11 @@ const App = {
     const type = document.getElementById('acc-type').value;
     const key = document.getElementById('acc-key').value.trim();
     const label = document.getElementById('acc-label').value.trim();
+    const proxy = document.getElementById('acc-proxy').value.trim();
     if (!key) return this.toast(I18n.t('toast.enterKeyOrToken'), 'error');
-    const body = type === 'api_key' ? { api_key: key, label } : { token: key, label };
+    const body = type === 'api_key' ? { api_key: key, label, proxy } : { token: key, label, proxy };
     const r = await this.api('POST', '/accounts', body);
-    if (r.success) { this.toast(I18n.t('account.addSuccess')); document.getElementById('acc-key').value = ''; document.getElementById('acc-label').value = ''; this.loadAccounts(); }
+    if (r.success) { this.toast(I18n.t('account.addSuccess')); document.getElementById('acc-key').value = ''; document.getElementById('acc-label').value = ''; document.getElementById('acc-proxy').value = ''; this.loadAccounts(); }
     else this.toast(r.error || I18n.t('toast.addFailed'), 'error');
   },
 

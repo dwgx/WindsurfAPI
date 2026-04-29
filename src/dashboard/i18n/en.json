@@ -356,6 +356,11 @@
       "label": "Label",
       "placeholder": "Optional"
     },
+    "proxy": {
+      "label": "Proxy",
+      "placeholder": "http://proxy:8080 or socks5://user:pass@host:port (optional)",
+      "hint": "Leave empty to use global proxy settings"
+    },
     "batchInput": {
       "label": "Batch Import",
       "hint": "One account per line. Format: [proxy] email password. Proxy is optional, supports http/socks5. Proxy will be automatically bound to corresponding account."
@@ -872,6 +877,7 @@
     "ERR_FORMAT_INVALID": "Invalid format. Expected: [proxy] email password",
     "ERR_IDTOKEN_REQUIRED": "ID token is required",
     "ERR_PROXY_PRIVATE_IP": "Proxy cannot point to private/local address",
+    "ERR_PROXY_FORMAT_INVALID": "Invalid proxy format. Expected: protocol://[user:pass@]host:port",
     "ERR_PROXY_HTTP_ERROR": "Proxy returned HTTP error",
     "ERR_PROXY_PRIVATE_HOST": "Private/local host is not allowed",
     "ERR_CONNECTION_FAILED": "Connection failed",

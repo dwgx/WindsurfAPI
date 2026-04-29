@@ -339,6 +339,11 @@
       "label": "标签",
       "placeholder": "可选"
     },
+    "proxy": {
+      "label": "代理",
+      "placeholder": "http://proxy:8080 或 socks5://user:pass@host:port（可选）",
+      "hint": "留空则使用全局代理设置"
+    },
     "batchInput": {
       "label": "批量导入",
       "hint": "每行一个账号。格式：[代理] 邮箱 密码。代理可选，支持 http/socks5。会自动绑定代理到对应账号。"
@@ -872,6 +877,7 @@
     "ERR_FORMAT_INVALID": "格式错误 需要 [proxy] email password",
     "ERR_IDTOKEN_REQUIRED": "缺少 idToken",
     "ERR_PROXY_PRIVATE_IP": "代理地址不能指向内网/本机",
+    "ERR_PROXY_FORMAT_INVALID": "代理格式错误，应为：protocol://[user:pass@]host:port",
     "ERR_PROXY_HTTP_ERROR": "代理返回 HTTP 错误",
     "ERR_PROXY_PRIVATE_HOST": "内网/本地主机不允许",
     "ERR_CONNECTION_FAILED": "连接失败",

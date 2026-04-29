@@ -295,6 +295,23 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
       } else {
         return json(res, 400, { error: 'Provide api_key or token' });
       }
+
+      // Handle optional proxy configuration
+      if (body.proxy) {
+        const parsed = parseProxyUrl(body.proxy);
+        if (!parsed) {
+          return json(res, 400, { error: 'ERR_PROXY_FORMAT_INVALID' });
+        }
+        // Validate proxy host (respect ALLOW_PRIVATE_PROXY_HOSTS config)
+        if (config.allowPrivateProxyHosts) {
+          await validateHostFormat(parsed.host);
+        } else {
+          await assertPublicUrlHost(parsed.host);
+        }
+        setAccountProxy(account.id, parsed);
+        ensureLsForAccount(account.id).catch(e => log.warn(`LS ensure failed: ${e.message}`));
+      }
+
       // Fire-and-forget probe so the UI gets tier info shortly after add
       probeAccount(account.id).catch(e => log.warn(`Auto-probe failed: ${e.message}`));
       return json(res, 200, {
