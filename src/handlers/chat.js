@@ -1690,7 +1690,9 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
     stream: true,
     headers: {
       'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
+      // no-store (not no-cache) so middlebox aggregators like sub2api (#97)
+      // don't priority-cache SSE chunks and replay them for fresh requests.
+      'Cache-Control': 'no-store',
       'Connection': 'keep-alive',
       'X-Accel-Buffering': 'no',
     },

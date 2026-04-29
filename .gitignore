@@ -25,6 +25,19 @@ windsurf-grpc/
 
 # internal dev notes — not for distribution
 CLAUDE.md
+AGENTS.md
+GEMINI.md
+COPILOT.md
+.cursorrules
+.windsurfrules
+.aider*
+.continue/
+.codex/
+.devin/
 audit/
+tmp/
+runtime-config.json
+stats.json
+package-lock.json
 *.png
 .docker-data/

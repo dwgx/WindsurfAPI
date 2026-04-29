@@ -85,9 +85,16 @@ jobs:
       - name: Check for release notes
         id: notes
         run: |
-          NOTES_FILE="RELEASE_NOTES_${{ steps.version.outputs.VERSION }}.md"
-          if [[ -f "$NOTES_FILE" ]]; then
-            echo "file=$NOTES_FILE" >> "$GITHUB_OUTPUT"
+          # New layout (docs/releases/) preferred; fall back to repo root
+          # so historical tags still find their notes if anyone re-cuts an
+          # old release.
+          NEW_PATH="docs/releases/RELEASE_NOTES_${{ steps.version.outputs.VERSION }}.md"
+          OLD_PATH="RELEASE_NOTES_${{ steps.version.outputs.VERSION }}.md"
+          if [[ -f "$NEW_PATH" ]]; then
+            echo "file=$NEW_PATH" >> "$GITHUB_OUTPUT"
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          elif [[ -f "$OLD_PATH" ]]; then
+            echo "file=$OLD_PATH" >> "$GITHUB_OUTPUT"
             echo "found=true" >> "$GITHUB_OUTPUT"
           else
             echo "found=false" >> "$GITHUB_OUTPUT"

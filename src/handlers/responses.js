@@ -868,7 +868,7 @@ export async function handleResponses(body, deps = {}) {
     stream: true,
     headers: {
       'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
+      'Cache-Control': 'no-store',
       'Connection': 'keep-alive',
       'X-Accel-Buffering': 'no',
     },

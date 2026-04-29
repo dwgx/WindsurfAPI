@@ -84,6 +84,11 @@ function json(res, status, body) {
     'Access-Control-Allow-Origin': '*',
     'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    // Per-request dynamic responses must not be cached by intermediaries.
+    // Some upstream aggregators (e.g. sub2api, #97) priority-cache responses
+    // when they don't see an explicit Cache-Control directive and serve
+    // stale content for fresh requests.
+    'Cache-Control': 'no-store',
   });
   res.end(data);
 }
