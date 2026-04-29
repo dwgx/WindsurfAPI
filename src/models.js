@@ -249,6 +249,7 @@ const ANTHROPIC_DATED = {
   'claude-opus-4-7-latest':     'claude-opus-4-7-medium',
   'claude-opus-4.7':            'claude-opus-4-7-medium',
   'claude-opus-4.7-thinking':   'claude-opus-4-7-medium-thinking',
+  'claude-opus-4-7-thinking':   'claude-opus-4-7-medium-thinking',
   'claude-opus-4.7-low':        'claude-opus-4-7-low',
   'claude-opus-4.7-medium':     'claude-opus-4-7-medium',
   'claude-opus-4.7-high':       'claude-opus-4-7-high',
@@ -280,8 +281,10 @@ const CURSOR_ALIASES = {
   // opus
   'opus-4.6':              'claude-opus-4.6',
   'opus-4.6-thinking':     'claude-opus-4.6-thinking',
+  'opus-4.7-thinking':     'claude-opus-4-7-medium-thinking',
   'opus-4-7':              'claude-opus-4-7-medium',
   'opus-4.7':              'claude-opus-4-7-medium',
+  'o4.7':                  'claude-opus-4-7-medium',
   // sonnet
   'sonnet-4.6':            'claude-sonnet-4.6',
   'sonnet-4.6-thinking':   'claude-sonnet-4.6-thinking',
