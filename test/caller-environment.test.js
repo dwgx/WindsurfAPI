@@ -257,6 +257,96 @@ describe('extractCallerEnvironment', () => {
       assert.equal(extractCallerEnvironment(messages), '');
     });
   });
+
+  // ───── #106 / #107 (zhangzhang-bit): adjective-prefixed cwd + bullet fallback ─────
+  //
+  // Two real-world failure modes from a Claude Code 2.x system prompt:
+  //
+  //   (A) The canonical key is preceded by an adjective:
+  //         "- Primary working directory: D:\Project\foo"
+  //       The old regex only matched bare "Working directory" so this
+  //       lifted as nothing.
+  //
+  //   (B) The system prompt mentions "current working directory" in
+  //       prose first (no path adjacent), and the actual cwd appears
+  //       later as a standalone bullet line. Old regex stopped at the
+  //       first textual hit and returned empty.
+
+  describe('Claude Code 2.x adjective + bullet cwd (#106 / #107)', () => {
+    it('lifts cwd from "Primary working directory: ..." (Claude Code 2.x phrasing)', () => {
+      const messages = [
+        { role: 'system', content: '# Environment\nYou have been invoked in the following environment:\n - Primary working directory: D:\\Project\\WindsurfAPI\n - Is a git repository: true\n - Platform: win32\n' },
+        { role: 'user', content: 'hi' },
+      ];
+      const out = extractCallerEnvironment(messages);
+      assert.match(out, /- Working directory: D:\\Project\\WindsurfAPI/,
+        'adjective-prefixed "Primary working directory" must lift');
+      assert.match(out, /- Is the directory a git repo: true/,
+        'Claude Code 2.x "Is a git repository" must also lift');
+      assert.match(out, /- Platform: win32/);
+    });
+
+    it('lifts cwd via prose-then-bullet pattern (#107 zhangzhang-bit symptom)', () => {
+      // 26 KB system prompt that says "...current working directory."
+      // mid-prose with NO adjacent path, then has the actual cwd in a
+      // bullet much later. Old regex would match the prose form first,
+      // capture nothing, and return empty.
+      const filler = 'lorem ipsum dolor sit amet '.repeat(200); // ~5 KB filler
+      const sys = [
+        'You are an interactive agent that helps users with software engineering tasks and the current working directory.',
+        '',
+        filler,
+        '',
+        '# Environment',
+        ' - Primary working directory: D:\\Project\\foo',
+        ' - Platform: win32',
+      ].join('\n');
+      const messages = [
+        { role: 'system', content: sys },
+        { role: 'user', content: 'analyze this' },
+      ];
+      assert.match(extractCallerEnvironment(messages), /- Working directory: D:\\Project\\foo/,
+        'must skip the keyword-only prose mention and find the bulleted cwd later');
+    });
+
+    it('falls back to a standalone bullet path when no key/value pair exists', () => {
+      // Custom agent emitting just a bullet list of paths with no
+      // explicit "Working directory:" key. Last-resort scanForBulletCwdInSystem
+      // should pick the first absolute-looking path.
+      const messages = [
+        { role: 'system', content: 'Environment facts:\n - D:\\Project\\foo\n - some other note' },
+        { role: 'user', content: 'hi' },
+      ];
+      assert.match(extractCallerEnvironment(messages), /- Working directory: D:\\Project\\foo/);
+    });
+
+    it('bullet-fallback ignores file-extension paths and our redaction marker', () => {
+      // A bullet pointing at a single file is not a cwd hint.
+      const messages = [
+        { role: 'system', content: 'Files of interest:\n - D:\\Project\\foo\\readme.md\n - <workspace>' },
+        { role: 'user', content: 'hi' },
+      ];
+      assert.equal(extractCallerEnvironment(messages), '',
+        'file-target bullets and the <workspace> redaction marker must not lift as cwd');
+    });
+
+    it('bullet-fallback only scans system messages (chat-mention paths do not count)', () => {
+      const messages = [
+        { role: 'system', content: 'no env here' },
+        { role: 'user', content: 'I was browsing /home/dev/random earlier — unrelated' },
+      ];
+      assert.equal(extractCallerEnvironment(messages), '',
+        'a path mentioned in a user chat message must not be promoted to cwd via the system-bullet fallback');
+    });
+
+    it('matches the canonical "Working directory" form as before (back-compat)', () => {
+      const messages = [
+        { role: 'system', content: '<env>\nWorking directory: /Users/jane/proj\n</env>' },
+        { role: 'user', content: 'hi' },
+      ];
+      assert.match(extractCallerEnvironment(messages), /- Working directory: \/Users\/jane\/proj/);
+    });
+  });
 });
 
 describe('buildToolPreambleForProto with environment override', () => {

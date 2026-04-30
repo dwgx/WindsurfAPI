@@ -667,17 +667,29 @@ export function extractCallerEnvironment(messages) {
   // paths — "the working directory you choose" or similar abstract prose
   // never has a `/` or `~` in the captured slot and is rejected.
   const PATH_TAIL = `(?:[\\/~]|[A-Za-z]:\\\\)[^\\s\`'"<>\\n.,;)]+`;
+  // Adjective slot for "Working directory" — Claude Code 2.x uses
+  // "Primary working directory: D:\..." instead of the canonical
+  // "Working directory: ...". Other clients use "Current" / "Initial" /
+  // "Default" / "Active" / "Project" similarly. Optional, matched
+  // case-insensitively. (#106 / #107 follow-up: the user's 26 KB Claude
+  // Code system prompt mentions "current working directory" mid-prose
+  // first, then later has the actual `- Primary working directory: D:\...`
+  // bullet — old regex only allowed the canonical key so the bullet
+  // never matched and env never lifted.)
+  const ADJ = `(?:Primary|Current|Initial|Default|Active|Project|My)\\s+`;
   const PATTERNS = [
     ['cwd', new RegExp(
-      // Form (a): line-anchored key/value
-      `(?:^|\\n)\\s*(?:[-*]\\s+)?(?:Working directory|cwd|<cwd>)\\s*[:=]\\s*\`?(${PATH_TAIL})\`?` +
-      // Form (b): prose "current working directory is /path"
+      // Form (a): line-anchored key/value, optional adjective prefix
+      `(?:^|\\n)\\s*(?:[-*]\\s+)?(?:${ADJ})?(?:Working\\s+directory|cwd|<cwd>)\\s*[:=]\\s*\`?(${PATH_TAIL})\`?` +
+      // Form (b): prose "current working directory is /path" (adjacent path)
       `|(?:current\\s+working\\s+directory(?:\\s+is)?)\\s*[:=]?\\s*\`?(${PATH_TAIL})\`?`,
-      'i'
+      'gi'
     ), (v) => `- Working directory: ${v}`],
-    ['git', /(?:^|\n)\s*(?:[-*]\s+)?Is directory a git repo\s*[:=]\s*([^\n<]+)/i, (v) => `- Is the directory a git repo: ${v}`],
+    // Git repo: accept "Is directory a git repo" (Claude Code <2.x) AND
+    // "Is a git repository" / "Is git repo" (Claude Code 2.x).
+    ['git', /(?:^|\n)\s*(?:[-*]\s+)?Is(?:\s+(?:directory\s+)?(?:a\s+)?)git\s+repo(?:sitory)?\s*[:=]\s*([^\n<]+)/i, (v) => `- Is the directory a git repo: ${v}`],
     ['platform', /(?:^|\n)\s*(?:[-*]\s+)?Platform\s*[:=]\s*([^\n<]+)/i, (v) => `- Platform: ${v}`],
-    ['os', /(?:^|\n)\s*(?:[-*]\s+)?OS Version\s*[:=]\s*([^\n<]+)/i, (v) => `- OS version: ${v}`],
+    ['os', /(?:^|\n)\s*(?:[-*]\s+)?OS\s+[Vv]ersion\s*[:=]\s*([^\n<]+)/i, (v) => `- OS version: ${v}`],
   ];
 
   for (const m of messages) {
@@ -690,13 +702,24 @@ export function extractCallerEnvironment(messages) {
 
     for (const [key, re, fmt] of PATTERNS) {
       if (seen.has(key)) continue;
-      const match = content.match(re);
-      if (match) {
-        // The cwd pattern has two alternative capture groups (one per
-        // accepted form); the others have one. Pick the first non-empty.
+      // For the cwd pattern (global flag), iterate matches and pick the
+      // first one that actually has a non-empty captured path. The earlier
+      // matches in a long system prompt may be prose mentions like
+      // "...and the current working directory." with no adjacent path
+      // because the path lives in a later bullet — we must not stop at
+      // the first textual hit.
+      if (re.global) {
+        for (const match of content.matchAll(re)) {
+          const value = (match[1] || match[2] || '').trim();
+          if (!value || /[\x00-\x1f]/.test(value) || value === '<workspace>') continue;
+          seen.add(key);
+          out.push(fmt(value));
+          break;
+        }
+      } else {
+        const match = content.match(re);
+        if (!match) continue;
         const value = (match[1] || match[2] || '').trim();
-        // Reject obvious garbage (empty after trim, control chars, our own
-        // redaction marker leaking back in).
         if (!value || /[\x00-\x1f]/.test(value) || value === '<workspace>') continue;
         seen.add(key);
         out.push(fmt(value));
@@ -728,9 +751,50 @@ export function extractCallerEnvironment(messages) {
     // a JSON apology about Linux not being able to read Windows paths.
     const cwd = scanUserMessageForBareCwd(messages);
     if (cwd) return `- Working directory: ${cwd}`;
+
+    // #107 (zhangzhang-bit) fallback — the system prompt was 26 KB and
+    // referenced "current working directory" mid-prose with no adjacent
+    // path. The actual path was buried somewhere else as a bullet. The
+    // canonical regex now allows adjective prefixes ("Primary working
+    // directory") which covers the common Claude Code 2.x case, but
+    // some custom clients put the cwd on its own bullet with no key at
+    // all (just `- D:\Project\foo`). Scan all system messages for a
+    // standalone bullet/list line whose value is a single absolute path.
+    const bulletCwd = scanForBulletCwdInSystem(messages);
+    if (bulletCwd) return `- Working directory: ${bulletCwd}`;
     return '';
   }
   return out.join('\n');
+}
+
+// Last-resort cwd scan: walk every system message and look for a line
+// like `  - D:\Project\foo` or `* /home/dev/proj` whose only content is
+// a single absolute-looking path. This catches the case where a custom
+// agent prompt enumerates environment facts in a bulleted list but
+// uses no explicit "Working directory:" key. Restricted to system role
+// to avoid grabbing a path the user mentioned in passing later in chat.
+function scanForBulletCwdInSystem(messages) {
+  if (!Array.isArray(messages)) return '';
+  const FILE_EXT = /\.(?:js|mjs|cjs|ts|tsx|jsx|json|jsonc|md|mdx|py|pyc|go|rs|java|kt|swift|cpp|cc|cxx|c|h|hpp|html?|css|scss|sass|less|yaml|yml|toml|ini|cfg|conf|sh|bash|zsh|fish|ps1|bat|cmd|exe|dll|so|dylib|zip|tar|gz|bz2|xz|7z|rar|png|jpe?g|gif|webp|svg|ico|mp[34]|wav|flac|ogg|webm|mov|avi|mkv|pdf|docx?|xlsx?|pptx?|csv|tsv|sql|db|sqlite|log|lock|map|min\.js|min\.css)$/i;
+  const BULLET = /^[\s]*[-*•]\s+`?((?:[A-Za-z]:[\\/]|\/[A-Za-z]|~[\\/])[^\s`'"<>\n]+)`?\s*$/m;
+  for (const m of messages) {
+    if (m?.role !== 'system') continue;
+    let content;
+    if (typeof m.content === 'string') content = m.content;
+    else if (Array.isArray(m.content)) content = m.content.filter(p => p?.type === 'text').map(p => p.text || '').join('\n');
+    else continue;
+    if (!content) continue;
+    // matchAll requires the regex to be global; build a fresh global copy.
+    const re = new RegExp(BULLET.source, 'gm');
+    for (const match of content.matchAll(re)) {
+      const cand = match[1];
+      if (!cand || cand.length < 5) continue;
+      if (FILE_EXT.test(cand)) continue;
+      if (cand === '<workspace>') continue;
+      return cand;
+    }
+  }
+  return '';
 }
 
 // Bare-path fallback for extractCallerEnvironment. Looks at the FIRST
