@@ -756,6 +756,21 @@ export function extractCallerEnvironment(messages) {
 function scanUserMessageForBareCwd(messages) {
   if (!Array.isArray(messages)) return '';
   const FILE_EXT = /\.(?:js|mjs|cjs|ts|tsx|jsx|json|jsonc|md|mdx|py|pyc|go|rs|java|kt|swift|cpp|cc|cxx|c|h|hpp|html?|css|scss|sass|less|yaml|yml|toml|ini|cfg|conf|sh|bash|zsh|fish|ps1|bat|cmd|exe|dll|so|dylib|zip|tar|gz|bz2|xz|7z|rar|png|jpe?g|gif|webp|svg|ico|mp[34]|wav|flac|ogg|webm|mov|avi|mkv|pdf|docx?|xlsx?|pptx?|csv|tsv|sql|db|sqlite|log|lock|map|min\.js|min\.css)$/i;
+  // Reject content that is `<text> followed by <path>`. We anchor at ^ so the
+  // path must be the first non-trivial token after some leading punctuation /
+  // whitespace. After stripping wrappers like <system-reminder> the user's
+  // real prompt usually starts cleanly with the path.
+  const PATH_AT_HEAD = /^[\s,;:.，。、；：　"'`(\[]*((?:[A-Za-z]:[\\/]|\/[A-Za-z]|~[\\/])[A-Za-z0-9._\\/-]+)/;
+
+  const tryMatch = (text) => {
+    const match = text.match(PATH_AT_HEAD);
+    if (!match) return '';
+    const cand = match[1];
+    if (cand.length < 5) return '';
+    if (FILE_EXT.test(cand)) return '';
+    return cand;
+  };
+
   for (const m of messages) {
     if (m?.role !== 'user') continue;
     let content;
@@ -763,19 +778,23 @@ function scanUserMessageForBareCwd(messages) {
     else if (Array.isArray(m.content)) content = m.content.filter(p => p?.type === 'text').map(p => p.text || '').join('\n');
     else continue;
     if (!content) continue;
-    const head = content.slice(0, 300);
-    // Path MUST be the first non-trivial token in the message — anything
-    // else is too easy to misattribute (a path buried mid-prose is more
-    // likely a tool target than a cwd hint). Allow leading whitespace,
-    // ASCII/CJK punctuation, or opening quotes/brackets before the path.
-    const match = head.match(/^[\s,;:.，。、；：　"'`(\[]*((?:[A-Za-z]:[\\/]|\/[A-Za-z]|~[\\/])[A-Za-z0-9._\\/-]+)/);
-    if (!match) continue;
-    const cand = match[1];
-    if (cand.length < 4) continue;
-    if (FILE_EXT.test(cand)) continue;
-    // Reject lone roots like "/a" or "C:\" — too short to be a meaningful cwd.
-    if (cand.length < 5) continue;
-    return cand;
+
+    // Pass 1: head of the raw message. Cheapest path; covers vanilla CLIs
+    // that don't wrap user input in any preamble.
+    const direct = tryMatch(content.slice(0, 300));
+    if (direct) return direct;
+
+    // Pass 2 (#100 follow-up, yunduobaba): Claude Code's hooks inject one or
+    // more `<system-reminder>...</system-reminder>` blocks at the very top of
+    // every user message — frequently 1–5 KB before the user's actual text.
+    // That pushes the bare path past the 300-char head and pass 1 misses,
+    // even though the path is still the first thing the user typed. Strip
+    // those wrappers and try again with a slightly bigger window (the prose
+    // that follows tends to be longer than the raw input).
+    if (!/<system-reminder\b/i.test(content)) continue;
+    const stripped = content.replace(/<system-reminder\b[\s\S]*?<\/system-reminder>\s*/gi, '');
+    const wrapped = tryMatch(stripped.slice(0, 500));
+    if (wrapped) return wrapped;
   }
   return '';
 }

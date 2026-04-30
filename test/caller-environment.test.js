@@ -206,6 +206,56 @@ describe('extractCallerEnvironment', () => {
       ];
       assert.match(extractCallerEnvironment(messages), /D:\\Project\\WindsurfAPI/);
     });
+
+    // ───── #100 follow-up #2 (yunduobaba): Claude Code <system-reminder> wrappers ─────
+    //
+    // Claude Code's hooks inject one or more <system-reminder>...</system-reminder>
+    // blocks at the very top of every user turn — frequently 1–5 KB
+    // (skills list, available tools, MCP server hints, todo state). That
+    // pushes the path the user actually typed past the 300-char head and
+    // the original pass-1 scan misses it. Real reproduction from the
+    // user's debug log: lastUser=len=14095 with the path at the very
+    // start of the *user's* prose but buried under reminder wrappers.
+
+    it('lifts a path from after a 1KB <system-reminder> block (the #100 follow-up bug)', () => {
+      const reminder = '<system-reminder>' + 'x'.repeat(1000) + '</system-reminder>\n\n';
+      const messages = [
+        { role: 'user', content: reminder + 'C:\\Users\\renfei\\Downloads\\WindsurfAPI-master 分析下这个项目' },
+      ];
+      const out = extractCallerEnvironment(messages);
+      assert.match(out, /C:\\Users\\renfei\\Downloads\\WindsurfAPI-master/,
+        'path past 300 chars but at start of post-reminder content must lift');
+    });
+
+    it('lifts a path from after multiple stacked <system-reminder> blocks', () => {
+      const r1 = '<system-reminder>' + 'a'.repeat(800) + '</system-reminder>';
+      const r2 = '<system-reminder>' + 'b'.repeat(800) + '</system-reminder>';
+      const r3 = '<system-reminder>' + 'c'.repeat(800) + '</system-reminder>';
+      const messages = [
+        { role: 'user', content: `${r1}\n${r2}\n${r3}\n\n/home/dev/myproj 帮我看下` },
+      ];
+      assert.match(extractCallerEnvironment(messages), /\/home\/dev\/myproj/);
+    });
+
+    it('does NOT match a path buried in prose after stripping reminders', () => {
+      // Pass 2 must remain anchored — only paths at the start of the
+      // unwrapped content count. A reminder followed by prose followed
+      // by a path is still a mid-prose mention, not a cwd hint.
+      const reminder = '<system-reminder>' + 'x'.repeat(500) + '</system-reminder>\n\n';
+      const messages = [
+        { role: 'user', content: reminder + 'I was wondering about /home/user/proj because something something' },
+      ];
+      assert.equal(extractCallerEnvironment(messages), '');
+    });
+
+    it('skips pass 2 entirely when no <system-reminder> wrapper is present', () => {
+      // Cheap-out: if there's no reminder wrapper there's nothing to strip,
+      // and the original pass-1 result already covers the case.
+      const messages = [
+        { role: 'user', content: 'just a question with no path and no reminder' },
+      ];
+      assert.equal(extractCallerEnvironment(messages), '');
+    });
   });
 });
 
