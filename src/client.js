@@ -353,7 +353,17 @@ export class WindsurfClient {
         const trustProto = buildUpdateWorkspaceTrustRequest(this.apiKey, workspaceUri, true, sessionId);
         await grpcUnary(this.port, this.csrfToken,
           `${LS_SERVICE}/UpdateWorkspaceTrust`, grpcFrame(trustProto), 5000);
-      } catch (e) { handleWarmupError('UpdateWorkspaceTrust', e); }
+      } catch (e) {
+        // UpdateWorkspaceTrust failure is the silent killer behind #107's
+        // "untrusted workspace" symptom — if this stage no-ops, the next
+        // SendUserCascadeMessage will reject with `untrusted workspace`
+        // and the user has no clue why. Log at error level (the other
+        // stages stay at warn) so it surfaces in dashboards, then continue
+        // — the per-Send retry path now also recognizes "untrusted
+        // workspace" and force-rewarms, so we still recover.
+        if (isCascadeTransportError(e)) { handleWarmupError('UpdateWorkspaceTrust', e); }
+        else { log.error(`UpdateWorkspaceTrust failed silently on port=${this.port} — SendUserCascadeMessage will likely return 'untrusted workspace' until the next force re-warm: ${e.message}`); }
+      }
       try {
         const heartbeatProto = buildHeartbeatRequest(this.apiKey, sessionId);
         await grpcUnary(this.port, this.csrfToken,
@@ -403,6 +413,13 @@ export class WindsurfClient {
     // panel-missing — discard the reuse entry and fresh-start with full
     // history replay.
     const isExpiredCascade = (e) => /not_found.*(cascade|trajectory)|(?:cascade|trajectory).*not[ _-]?found|expired.*cascade|unknown.*cascade/i.test(e?.message || '');
+    // #107 follow-up (zhangzhang-bit): SendUserCascadeMessage occasionally
+    // returns "untrusted workspace" on a freshly-spun LS — UpdateWorkspaceTrust
+    // either silently failed during warmup (handleWarmupError swallows
+    // non-transport errors) or the trust state was reset between warmup
+    // and the first message. Same recovery: force re-warm (which retries
+    // UpdateWorkspaceTrust) and reopen the cascade.
+    const isUntrustedWorkspace = (e) => /untrusted workspace|workspace.*not.*trusted/i.test(e?.message || '');
 
     try {
       // Step 1: Start cascade — with retry on panel-state-not-found
@@ -583,10 +600,15 @@ export class WindsurfClient {
           break;
         } catch (e) {
           const expired = isExpiredCascade(e);
-          if (!isPanelMissing(e) && !expired) throw e;
+          const untrusted = isUntrustedWorkspace(e);
+          if (!isPanelMissing(e) && !expired && !untrusted) throw e;
           panelRetry++;
           if (panelRetry > MAX_PANEL_RETRIES) {
-            const detail = cascadeExpiredOnce ? 'cascade expired and could not be re-established' : `Panel state lost ${panelRetry - 1} times after re-warm`;
+            const detail = cascadeExpiredOnce
+              ? 'cascade expired and could not be re-established'
+              : untrusted
+                ? `untrusted workspace persisted across ${panelRetry - 1} re-warm attempts (LS UpdateWorkspaceTrust may be failing silently)`
+                : `Panel state lost ${panelRetry - 1} times after re-warm`;
             const err = new Error(`${detail} — likely an LS-level issue with very large payloads (${text.length} chars). Try reducing system prompt size or tool count.`);
             // Tell the handler the entry we held is dead so it doesn't
             // restore it to the pool on the way out (HIGH-2).
@@ -596,6 +618,8 @@ export class WindsurfClient {
           if (expired) {
             cascadeExpiredOnce = true;
             log.warn(`Cascade expired/not-found on Send (retry ${panelRetry}/${MAX_PANEL_RETRIES}), discarding reuse entry, replaying full history on port=${this.port}: ${e.message}`);
+          } else if (untrusted) {
+            log.warn(`Untrusted workspace on Send (retry ${panelRetry}/${MAX_PANEL_RETRIES}), forcing UpdateWorkspaceTrust re-warm on port=${this.port}: ${e.message}`);
           } else {
             log.warn(`Panel state missing on Send (retry ${panelRetry}/${MAX_PANEL_RETRIES}), payload=${text.length} chars, re-warming port=${this.port}`);
           }
