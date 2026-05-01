@@ -40,9 +40,26 @@ export function extractBodyCallerSubKey(body) {
 // Two physical clients sharing one apiKey will land on different IP/UA
 // hashes and stay isolated; same client across turns lands on the same
 // hash and lets the cascade pool reuse the upstream session.
+//
+// v2.0.55 (audit H2): X-Forwarded-For is attacker-controllable and was
+// being trusted by default. An attacker with the shared API key could
+// spoof XFF + UA to land in another user's caller bucket and inherit
+// their cascade-pool state. We now read socket.remoteAddress by default
+// and only honour XFF when the operator opts in via
+// TRUST_PROXY_X_FORWARDED_FOR=1. Operators behind a trusted reverse
+// proxy (nginx LB, Cloudflare, etc.) should set the env var; everyone
+// else gets a non-spoofable fingerprint by default.
+const TRUST_PROXY_XFF = process.env.TRUST_PROXY_X_FORWARDED_FOR === '1';
+
+function clientIp(req) {
+  const remote = req?.socket?.remoteAddress || req?.connection?.remoteAddress || '';
+  if (!TRUST_PROXY_XFF) return remote;
+  const fwd = String(req?.headers?.['x-forwarded-for'] || '').split(',')[0].trim();
+  return fwd || remote;
+}
+
 function ipUaFingerprint(req) {
-  const forwarded = String(req?.headers?.['x-forwarded-for'] || '').split(',')[0].trim();
-  const ip = forwarded || req?.socket?.remoteAddress || req?.connection?.remoteAddress || '';
+  const ip = clientIp(req);
   const ua = req?.headers?.['user-agent'] || '';
   if (!ip && !ua) return '';
   return sha256Hex(`${ip}\0${ua}`).slice(0, 16);
@@ -61,8 +78,7 @@ export function callerKeyFromRequest(req, apiKey = '', body = null) {
     const base = `session:${sha256Hex(sessionId).slice(0, 32)}`;
     return bodySubKey ? `${base}:user:${bodySubKey}` : base;
   }
-  const forwarded = String(req?.headers?.['x-forwarded-for'] || '').split(',')[0].trim();
-  const ip = forwarded || req?.socket?.remoteAddress || req?.connection?.remoteAddress || '';
+  const ip = clientIp(req);
   const ua = req?.headers?.['user-agent'] || '';
   const base = `client:${sha256Hex(`${ip}\0${ua}`).slice(0, 32)}`;
   return bodySubKey ? `${base}:user:${bodySubKey}` : base;

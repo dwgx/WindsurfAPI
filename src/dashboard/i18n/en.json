@@ -248,6 +248,10 @@
       "title": "System Prompts",
       "desc": "Tool injection, conversation mode and other built-in prompt templates. Changes take effect immediately; click \"Reset\" to restore defaults."
     },
+    "credentials": {
+      "title": "Credentials",
+      "desc": "Rotate API_KEY and the dashboard password at runtime. Saved into runtime-config.json and applied immediately — no container restart or .env reload needed. Next request must use the new value; the current session will be asked to re-login."
+    },
     "skin": {
       "title": "Interface Style",
       "desc": "Dashboard appearance. Modern is the default; sketch is an experimental simplified layout. The page refreshes after switching."
@@ -586,6 +590,23 @@
     "missingPlaceholder": "Missing {model} placeholder",
     "missingPlaceholderDesc": "After saving, the provider's model name won't be replaced in the prompt. Continue?",
     "restored": "restored"
+  },
+
+  "credentials": {
+    "apiKey": "API_KEY",
+    "dashboardPassword": "Dashboard Password",
+    "apiKeyPlaceholder": "New API_KEY (≥ 8 chars; leave blank to clear runtime override)",
+    "dashboardPwPlaceholder": "New dashboard password (≥ 8 chars; leave blank to clear runtime override)",
+    "show": "Show / Hide",
+    "save": "Save",
+    "saved": "Saved",
+    "set": "set",
+    "unset": "unset",
+    "apiKeyHint": "After saving, every chat client must use the new KEY; the old KEY stops working immediately.",
+    "dashboardPwHint": "Stored as a scrypt hash; the current session will be signed out and you'll need to log in again with the new password.",
+    "bruteForceHint": "Brute-force guard: same IP gets locked for 30 minutes after 5 failed dashboard logins (since v2.0.56).",
+    "confirmSave": "After saving, the old value stops working immediately. Continue?",
+    "confirmClear": "Clear the runtime override and fall back to the .env value?"
   },
 
   "confirm": {

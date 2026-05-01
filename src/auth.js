@@ -8,7 +8,7 @@
  *   - Token-based registration via api.codeium.com
  */
 
-import { randomUUID, timingSafeEqual } from 'crypto';
+import { createHash, randomUUID, timingSafeEqual } from 'crypto';
 import { readFileSync, writeFileSync, existsSync, renameSync, unlinkSync, readdirSync } from 'fs';
 import { config, log } from './config.js';
 import { getEffectiveProxy } from './dashboard/proxy-config.js';
@@ -743,6 +743,13 @@ export function reportSuccess(apiKey) {
     account.status = 'active';
   }
   account.internalErrorStreak = 0;
+  // v2.0.56: any successful chat clears the ban-signal streak — Windsurf's
+  // "Authentication failed" can fire transiently during deploys, so we
+  // only mark banned when the streak isn't broken by a real success.
+  if (account._banSignalCount) {
+    account._banSignalCount = 0;
+    account._banSignalAt = 0;
+  }
 }
 
 /**
@@ -759,6 +766,80 @@ export function reportInternalError(apiKey) {
     account.rateLimitedUntil = Date.now() + 5 * 60 * 1000;
     log.warn(`Account ${account.id} (${account.email}) quarantined 5min after ${account.internalErrorStreak} consecutive upstream internal errors`);
   }
+}
+
+// v2.0.56 (windsurf-assistant-pub inspiration): suspect-ban detection.
+// Match upstream error text against the patterns Windsurf actually
+// returns when an account is suspended / disabled / blocked at the
+// account level (NOT model-level rate limits, which are handled by
+// markRateLimited above). When a ban signal lands twice on the same
+// account within 30 min we promote it to permanent disable so the pool
+// doesn't keep handing out a known-dead key.
+// Patterns ride a bounded `[^.\n]{0,40}` gap so "Your account has been
+// suspended" matches without enabling .* / .+ ReDoS surfaces. Order is
+// most-specific-first.
+const BAN_PATTERNS = [
+  // "account_suspended" / "account-disabled" / "user_banned" — common API
+  // error codes returned as snake/kebab strings. Match the full token.
+  /\b(?:account|user|email|api[_-]?key)[_-](?:suspend(?:ed)?|disabled|banned|revoked|terminated|deactivated|locked|closed)\b/i,
+  // "Your account has been suspended" / "Account banned by upstream" /
+  // "User suspended due to abuse" — a noun + bounded gap + verb form.
+  /\baccount\b[^.\n]{0,40}\b(?:suspend(?:ed)?|disabled|banned|terminated|deactivated|locked|closed)\b/i,
+  /\b(?:user|email)\b[^.\n]{0,40}\b(?:suspend(?:ed)?|disabled|banned|terminated)\b/i,
+  /\bsubscription\b[^.\n]{0,40}\b(?:cancel(?:led|ed)?|terminated|expired|invalid)\b/i,
+  /\bauthentication\b[^.\n]{0,40}\b(?:failed|invalid|denied|revoked)\b/i,
+  /\binvalid\s+api[_\s-]?key\b/i,
+  /\bapi[_\s-]?key\b[^.\n]{0,40}\b(?:revoked|disabled|expired|invalid)\b/i,
+  /\bunauthorized\b[^.\n]{0,40}\b(?:account|key|credential|exist)\b/i,
+  // CN forms — windsurf zh error pages occasionally surface these
+  /账号(?:已)?(?:停用|封禁|禁用|冻结|注销|关闭)/,
+  /(?:用户|邮箱)(?:已)?(?:停用|封禁|禁用)/,
+  /订阅(?:已)?(?:取消|过期|失效)/,
+];
+
+export function looksLikeBanSignal(message) {
+  if (typeof message !== 'string' || !message) return false;
+  return BAN_PATTERNS.some(p => p.test(message));
+}
+
+/**
+ * Report a ban-shaped upstream error. Two hits within `windowMs` (default
+ * 30 min) flip the account to status='banned' and clear in-flight reuse
+ * so it stops getting selected. Single hits are logged but not acted on
+ * — Windsurf occasionally returns "Authentication failed" transiently
+ * during deploys.
+ */
+export function reportBanSignal(apiKey, message, { windowMs = 30 * 60 * 1000 } = {}) {
+  const account = accounts.find(a => a.apiKey === apiKey);
+  if (!account) return false;
+  const now = Date.now();
+  const last = account._banSignalAt || 0;
+  account._banSignalAt = now;
+  account._banSignalCount = (now - last < windowMs) ? (account._banSignalCount || 0) + 1 : 1;
+  account._banSignalLastMessage = String(message || '').slice(0, 240);
+  log.warn(`Account ${account.id} (${account.email}) emitted ban-shaped error #${account._banSignalCount}: "${account._banSignalLastMessage}"`);
+  if (account._banSignalCount >= 2) {
+    account.status = 'banned';
+    account.bannedAt = now;
+    account.bannedReason = account._banSignalLastMessage;
+    saveAccounts();
+    log.error(`Account ${account.id} (${account.email}) marked BANNED after ${account._banSignalCount} ban-shaped errors`);
+    // Drop any cascade-pool entries owned by this key.
+    import('./conversation-pool.js').then(m => m.invalidateFor({ apiKey })).catch(() => {});
+    return true;
+  }
+  return false;
+}
+
+/**
+ * Reset the ban-signal streak (e.g. after a successful chat). Also clears
+ * status='banned' iff the operator explicitly resets the account.
+ */
+export function clearBanSignals(apiKey) {
+  const account = accounts.find(a => a.apiKey === apiKey);
+  if (!account) return;
+  account._banSignalAt = 0;
+  account._banSignalCount = 0;
 }
 
 // ─── Status ────────────────────────────────────────────────
@@ -1248,17 +1329,129 @@ export function isLocalBindHost(bindHost = _bindHost) {
 }
 
 export function safeEqualString(a, b) {
-  const left = Buffer.from(String(a), 'utf8');
-  const right = Buffer.from(String(b), 'utf8');
-  if (left.length !== right.length) return false;
-  return timingSafeEqual(left, right);
+  // Hash-then-compare so the early-return on different lengths can't be
+  // measured by a wall-clock attacker. SHA-256 of any input is 32 bytes,
+  // so timingSafeEqual always sees equal-length buffers and runs in
+  // constant time. The trailing `.length` check restores correctness for
+  // the rare case where two distinct inputs collide on the digest (which
+  // would still need a full preimage attack to construct).
+  const sa = String(a);
+  const sb = String(b);
+  const left = createHash('sha256').update(sa, 'utf8').digest();
+  const right = createHash('sha256').update(sb, 'utf8').digest();
+  return timingSafeEqual(left, right) && sa.length === sb.length;
+}
+
+// v2.0.56: hook lets runtime-config (or future credential sources) supply
+// a live API key. validateApiKey() falls through to config.apiKey when the
+// hook is unset, which is the case during cold boot before runtime-config
+// finishes loading. Set via setApiKeyResolver() from the credential module
+// once it has parsed runtime-config.json.
+let _apiKeyResolver = null;
+export function setApiKeyResolver(fn) {
+  _apiKeyResolver = typeof fn === 'function' ? fn : null;
 }
 
 export function validateApiKey(key) {
-  if (!config.apiKey) return isLocalBindHost(_bindHost);
+  let effectiveKey = config.apiKey;
+  if (_apiKeyResolver) {
+    try {
+      const v = _apiKeyResolver();
+      if (typeof v === 'string') effectiveKey = v;
+    } catch { /* keep env fallback */ }
+  }
+  if (!effectiveKey) return isLocalBindHost(_bindHost);
   if (!key) return false;
-  return safeEqualString(key, config.apiKey);
+  return safeEqualString(key, effectiveKey);
 }
+
+// ─── Brute-force lockout (v2.0.56, CLIProxyAPI-style) ─────────────────
+// Track failed dashboard auth attempts per client IP. After
+// `LOCKOUT_THRESHOLD` failures lock the IP for `LOCKOUT_DURATION_MS`.
+// Idle entries get pruned every `LOCKOUT_CLEANUP_MS`.
+//
+// We export the helpers so the dashboard middleware can drive them and
+// tests can probe behaviour. Numbers mirror CLIProxyAPI's defaults
+// (5 failures / 30 min ban / 2h idle TTL / 1h cleanup interval).
+
+const LOCKOUT_THRESHOLD = 5;
+const LOCKOUT_DURATION_MS = 30 * 60 * 1000;
+const LOCKOUT_IDLE_TTL_MS = 2 * 60 * 60 * 1000;
+const LOCKOUT_CLEANUP_MS = 60 * 60 * 1000;
+const _lockoutAttempts = new Map();
+
+function _now() { return Date.now(); }
+
+export function _resetLockoutForTests() { _lockoutAttempts.clear(); }
+
+export function getLockoutState(ip) {
+  if (!ip) return { count: 0, blockedUntil: 0 };
+  const e = _lockoutAttempts.get(ip);
+  if (!e) return { count: 0, blockedUntil: 0 };
+  return { count: e.count, blockedUntil: e.blockedUntil };
+}
+
+/**
+ * Returns `{ blocked: bool, retryAfterMs: number, count: number }`. Call
+ * BEFORE checking the password — if blocked, reject with 429 / 403 and
+ * skip the comparison entirely so the lockout stays effective even when
+ * the comparison itself is fast.
+ */
+export function checkLockout(ip) {
+  if (!ip) return { blocked: false, retryAfterMs: 0, count: 0 };
+  const e = _lockoutAttempts.get(ip);
+  if (!e) return { blocked: false, retryAfterMs: 0, count: 0 };
+  const now = _now();
+  if (e.blockedUntil > now) {
+    return { blocked: true, retryAfterMs: e.blockedUntil - now, count: e.count };
+  }
+  // Ban expired — reset to give the caller a fresh window. Don't delete
+  // the record; failedAuthAttempt() may add to it again immediately.
+  if (e.blockedUntil > 0 && e.blockedUntil <= now) {
+    e.count = 0;
+    e.blockedUntil = 0;
+  }
+  return { blocked: false, retryAfterMs: 0, count: e.count };
+}
+
+export function failedAuthAttempt(ip) {
+  if (!ip) return { blocked: false, retryAfterMs: 0, count: 0 };
+  const now = _now();
+  let e = _lockoutAttempts.get(ip);
+  if (!e) {
+    e = { count: 0, blockedUntil: 0, lastActivity: now };
+    _lockoutAttempts.set(ip, e);
+  }
+  e.count += 1;
+  e.lastActivity = now;
+  if (e.count >= LOCKOUT_THRESHOLD) {
+    e.blockedUntil = now + LOCKOUT_DURATION_MS;
+    e.count = 0; // reset counter so the next post-ban failure starts fresh
+  }
+  return {
+    blocked: e.blockedUntil > now,
+    retryAfterMs: e.blockedUntil > now ? e.blockedUntil - now : 0,
+    count: e.count,
+  };
+}
+
+export function successfulAuthAttempt(ip) {
+  if (!ip) return;
+  _lockoutAttempts.delete(ip);
+}
+
+function _purgeLockouts() {
+  const now = _now();
+  for (const [ip, e] of _lockoutAttempts) {
+    // Keep active bans regardless of idle time.
+    if (e.blockedUntil > now) continue;
+    if (now - (e.lastActivity || 0) > LOCKOUT_IDLE_TTL_MS) {
+      _lockoutAttempts.delete(ip);
+    }
+  }
+}
+
+setInterval(_purgeLockouts, LOCKOUT_CLEANUP_MS).unref?.();
 
 export function shouldEmitNoAuthWarning(bindHost, hasKey) {
   if (hasKey) return false;
@@ -1270,7 +1463,13 @@ export function shouldEmitNoAuthWarning(bindHost, hasKey) {
 
 export function emitNoAuthWarnings(bindHost = '0.0.0.0') {
   const apiOpen = shouldEmitNoAuthWarning(bindHost, !!config.apiKey);
-  const dashboardOpen = shouldEmitNoAuthWarning(bindHost, !!(config.dashboardPassword || config.apiKey));
+  // v2.0.55 (audit H1): the dashboard write surface no longer trusts
+  // config.apiKey as a fallback admin password on non-local binds, so
+  // the warning fires whenever DASHBOARD_PASSWORD is missing in public
+  // mode — even if API_KEY is set. Without the password the dashboard
+  // fails closed (better than the old privilege-escalation), but the
+  // operator still needs the warning so they explicitly configure one.
+  const dashboardOpen = shouldEmitNoAuthWarning(bindHost, !!config.dashboardPassword);
   if (!apiOpen && !dashboardOpen) return;
   const lines = [
     '+------------------------------------------------------------------+',
@@ -1279,9 +1478,11 @@ export function emitNoAuthWarnings(bindHost = '0.0.0.0') {
     '|                                                                  |',
     '| This server is listening beyond localhost. Set API_KEY before     |',
     '| exposing REST APIs, and set DASHBOARD_PASSWORD for dashboard      |',
-    '| write operations.                                                |',
+    '| write operations (v2.0.55: API_KEY no longer doubles as the       |',
+    '| dashboard admin password on public binds — set both).             |',
     '| 服务正在非本机地址监听。公网/内网暴露前请配置 API_KEY，并为        |',
-    '| Dashboard 写接口配置 DASHBOARD_PASSWORD。                         |',
+    '| Dashboard 写接口配置 DASHBOARD_PASSWORD（v2.0.55 起公网 bind 上    |',
+    '| API_KEY 不再回落作为 Dashboard 密码 — 两个都必须显式配置）。      |',
     '+------------------------------------------------------------------+',
   ];
   for (const line of lines) log.warn(line);

@@ -1950,6 +1950,44 @@ window._firebaseOAuth = async function(provider) {
     <div class="section" style="margin-top:24px">
       <div class="section-head">
         <div>
+          <div class="section-title"><span class="num">~</span><span data-zh="凭证管理" data-en="Credentials">凭证管理</span></div>
+          <div class="section-desc" data-zh="运行时改 API_KEY 和 Dashboard 密码，写入 runtime-config.json 立即生效，不重启容器。改完之后下一次请求要用新值。" data-en="Rotate API_KEY and dashboard password from this panel; persisted to runtime-config.json. New value takes effect on the next request.">运行时改 API_KEY 和 Dashboard 密码，写入 runtime-config.json 立即生效，不重启容器。改完之后下一次请求要用新值。</div>
+        </div>
+      </div>
+      <div class="frame" style="display:grid;gap:14px">
+        <div style="display:grid;gap:8px">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <strong>API_KEY</strong>
+            <span class="text-mute" id="credentials-apikey-source"></span>
+            <span style="font-family:monospace" id="credentials-apikey-masked"></span>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <input type="password" class="input" id="credentials-apikey-input" placeholder="新 API_KEY（≥ 8 字符；留空清除运行时覆盖）" style="flex:1;min-width:240px">
+            <button class="btn btn-ghost btn-sm" onclick="App.toggleApiKeyVisibility()" data-zh="显隐" data-en="show/hide">显隐</button>
+            <button class="btn btn-sm" onclick="App.saveCredential('apiKey')" data-zh="保存" data-en="save">保存</button>
+          </div>
+          <div class="text-sm text-mute" data-zh="改完之后所有 chat 客户端要换成新 KEY；旧 KEY 立即失效。" data-en="All chat clients must use the new KEY after save; the old KEY stops working immediately.">改完之后所有 chat 客户端要换成新 KEY；旧 KEY 立即失效。</div>
+        </div>
+        <div style="display:grid;gap:8px">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <strong data-zh="Dashboard 密码" data-en="Dashboard password">Dashboard 密码</strong>
+            <span class="text-mute" id="credentials-dashboardpw-source"></span>
+            <span id="credentials-dashboardpw-status"></span>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <input type="password" class="input" id="credentials-dashboardpw-input" placeholder="新 Dashboard 密码（≥ 8 字符；留空清除运行时覆盖）" style="flex:1;min-width:240px">
+            <button class="btn btn-ghost btn-sm" onclick="App.toggleDashboardPwVisibility()" data-zh="显隐" data-en="show/hide">显隐</button>
+            <button class="btn btn-sm" onclick="App.saveCredential('dashboardPassword')" data-zh="保存" data-en="save">保存</button>
+          </div>
+          <div class="text-sm text-mute" data-zh="scrypt 派生哈希存盘；改完会自动登出，需用新密码重登。" data-en="scrypt-derived; you'll be signed out and need to re-login with the new password.">scrypt 派生哈希存盘；改完会自动登出，需用新密码重登。</div>
+        </div>
+        <div class="text-sm text-mute" data-zh="同一 IP 连续 5 次 dashboard 登录失败会被锁 30 分钟（v2.0.56 起）。" data-en="Same IP gets locked for 30 minutes after 5 failed dashboard logins (since v2.0.56).">同一 IP 连续 5 次 dashboard 登录失败会被锁 30 分钟（v2.0.56 起）。</div>
+      </div>
+    </div>
+
+    <div class="section" style="margin-top:24px">
+      <div class="section-head">
+        <div>
           <div class="section-title"><span class="num">~</span><span data-zh="界面风格" data-en="Console skin">界面风格</span></div>
           <div class="section-desc" data-zh="切回默认现代风皮肤。选择后立即写 cookie 并刷新。" data-en="Switch back to the default modern skin. Selecting writes a cookie and reloads.">切回默认现代风皮肤。选择后立即写 cookie 并刷新。</div>
         </div>
@@ -3249,6 +3287,8 @@ const App = {
      for clearing. The original sketch wired PATCH and POST /clear-pool which
      returned 404, so toggles silently reverted on next load. */
   async loadExperimental() {
+    // v2.0.56: refresh credentials snapshot when the panel opens.
+    this.loadCredentials();
     const r = await this.api('GET', '/experimental');
     const flag = r.flags?.cascadeConversationReuse ?? r.cascadeConversationReuse;
     const cb = document.getElementById('exp-cascade-reuse');
@@ -3271,6 +3311,52 @@ const App = {
     // the production UI. Render is best-effort: if /system-prompts is gone
     // (older backend) just hide the section silently.
     await this.loadSystemPrompts();
+  },
+
+  /* ── credentials (v2.0.56) — runtime-rotatable API_KEY + dashboard pw */
+  async loadCredentials() {
+    try {
+      const d = await this.api('GET', '/settings/credentials');
+      const ks = document.getElementById('credentials-apikey-source');
+      const km = document.getElementById('credentials-apikey-masked');
+      const ds = document.getElementById('credentials-dashboardpw-source');
+      const dst = document.getElementById('credentials-dashboardpw-status');
+      if (ks) ks.textContent = '[' + (d.apiKeySource || 'unset') + ']';
+      if (km) km.textContent = d.apiKey_masked || '(unset)';
+      if (ds) ds.textContent = '[' + (d.dashboardPasswordSource || 'unset') + ']';
+      if (dst) dst.textContent = d.dashboardPasswordSet ? '已设置' : '未设置';
+    } catch (e) { /* panel not mounted yet */ }
+  },
+  toggleApiKeyVisibility() {
+    const el = document.getElementById('credentials-apikey-input');
+    if (el) el.type = el.type === 'password' ? 'text' : 'password';
+  },
+  toggleDashboardPwVisibility() {
+    const el = document.getElementById('credentials-dashboardpw-input');
+    if (el) el.type = el.type === 'password' ? 'text' : 'password';
+  },
+  async saveCredential(field) {
+    const inputId = field === 'apiKey' ? 'credentials-apikey-input' : 'credentials-dashboardpw-input';
+    const el = document.getElementById(inputId);
+    if (!el) return;
+    const value = el.value;
+    const cleared = value === '';
+    const label = field === 'apiKey' ? 'API_KEY' : 'Dashboard 密码';
+    const okConfirm = confirm(`${label}: ${cleared ? '清除运行时覆盖，回退 .env 值？' : '改完旧值立即失效，要继续吗？'}`);
+    if (!okConfirm) return;
+    try {
+      const r = await this.api('PUT', '/settings/credentials', { [field]: value });
+      el.value = '';
+      this.toast(r.success ? 'saved' : '保存失败');
+      if (field === 'dashboardPassword' && !cleared) {
+        sessionStorage.removeItem('dashboard_password');
+        setTimeout(() => location.reload(), 800);
+        return;
+      }
+      this.loadCredentials();
+    } catch (e) {
+      this.toast('保存失败: ' + (e.message || ''));
+    }
   },
   async toggleExperimental(key, val) {
     await this.api('PUT', '/experimental', { [key]: val });
