@@ -5,7 +5,7 @@
 
 import { createHash, randomUUID } from 'crypto';
 import { WindsurfClient, contentToString, isCascadeTransportError } from '../client.js';
-import { getApiKey, acquireAccountByKey, releaseAccount, getAccountAvailability, reportError, reportSuccess, markRateLimited, reportInternalError, updateCapability, getAccountList, isAllRateLimited, isAllTemporarilyUnavailable, refundReservation } from '../auth.js';
+import { getApiKey, acquireAccountByKey, releaseAccount, getAccountAvailability, reportError, reportSuccess, markRateLimited, reportInternalError, updateCapability, getAccountList, isAllRateLimited, isAllTemporarilyUnavailable, refundReservation, looksLikeBanSignal, reportBanSignal, clearBanSignals } from '../auth.js';
 import { resolveModel, getModelInfo } from '../models.js';
 import { getLsFor, ensureLs } from '../langserver.js';
 import { config, log } from '../config.js';
@@ -90,6 +90,48 @@ export function isUpstreamTransientError(err, isInternal = false) {
 
 function shortHash(text) {
   return createHash('sha256').update(String(text || '')).digest('hex').slice(0, 16);
+}
+
+// v2.0.55 (audit M2): salvage parser will accept any
+// `{"name":"X","arguments":{...}}` JSON it finds in model output. If a user
+// message contains a prompt-injection payload (and a non-Claude model
+// faithfully echoes it), the parser would emit a tool_call for a name the
+// caller never declared — e.g. `Bash` when the request only offered
+// `get_weather`. Filter every emitted call against the request-declared
+// tools[] before handing it to the client.
+//
+// Empty tools[] (caller never offered any) → caller is requesting tool
+// emulation but didn't declare a list; treat it as "no tools allowed" so
+// rogue parser output never reaches the client. Callers using
+// `tool_choice:'none'` already get filtered upstream.
+export function filterToolCallsByAllowlist(toolCalls, tools) {
+  if (!Array.isArray(toolCalls) || !toolCalls.length) return toolCalls || [];
+  const allowed = new Set();
+  if (Array.isArray(tools)) {
+    for (const t of tools) {
+      const name = t?.function?.name || t?.name;
+      if (typeof name === 'string' && name) allowed.add(name);
+    }
+  }
+  if (!allowed.size) {
+    // No declared tools but the parser emitted tool_calls — drop them all.
+    // Surface once in logs so operators can spot prompt-injection attempts.
+    const seenNames = [...new Set(toolCalls.map(tc => tc?.name).filter(Boolean))];
+    if (seenNames.length) {
+      log.warn(`ToolGuard: dropping ${toolCalls.length} tool_call(s) — request had no tools[] declared (names="${seenNames.join(',')}")`);
+    }
+    return [];
+  }
+  const filtered = [];
+  const dropped = [];
+  for (const tc of toolCalls) {
+    if (tc?.name && allowed.has(tc.name)) filtered.push(tc);
+    else if (tc?.name) dropped.push(tc.name);
+  }
+  if (dropped.length) {
+    log.warn(`ToolGuard: dropping ${dropped.length} tool_call(s) not in declared tools[] (names="${[...new Set(dropped)].join(',')}", allowed="${[...allowed].join(',')}")`);
+  }
+  return filtered;
 }
 
 export function redactRequestLogText(text) {
@@ -1339,6 +1381,7 @@ export async function handleChatCompletions(body, context = {}) {
       cachePolicy,
       wantThinking,
       fpOpts: buildReuseOpts({ tools, toolChoice: tool_choice, toolPreamble, preambleTier, emulateTools, route: body.__route || 'chat' }),
+      tools,
     });
   }
 
@@ -1518,7 +1561,7 @@ export async function handleChatCompletions(body, context = {}) {
       useCascade, acct.apiKey, ckey,
       reuseEnabled ? { reuseEntry, lsPort: ls.port, apiKey: acct.apiKey, callerKey, cachePolicy, fpOpts } : null,
       modelInfo?.provider || null,
-      emulateTools, toolPreamble, wantJson, cachePolicy, wantThinking,
+      emulateTools, toolPreamble, wantJson, cachePolicy, wantThinking, tools,
     );
     if (result.status === 200) return result;
     reuseEntry = null; // don't try to reuse on the retry
@@ -1628,7 +1671,7 @@ export async function handleChatCompletions(body, context = {}) {
   return lastErr || { status: 503, body: { error: { message: 'No active accounts available', type: 'pool_exhausted' } } };
 }
 
-async function nonStreamResponse(client, id, created, model, modelKey, messages, cascadeMessages, modelEnum, modelUid, useCascade, apiKey, ckey, poolCtx, provider, emulateTools, toolPreamble, wantJson = false, cachePolicy = null, wantThinking = false) {
+async function nonStreamResponse(client, id, created, model, modelKey, messages, cascadeMessages, modelEnum, modelUid, useCascade, apiKey, ckey, poolCtx, provider, emulateTools, toolPreamble, wantJson = false, cachePolicy = null, wantThinking = false, tools = []) {
   const startTime = Date.now();
   try {
     let allText = '';
@@ -1663,7 +1706,11 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
           provider,
         });
         allText = parsed.text;
-        toolCalls = parsed.toolCalls;
+        // v2.0.55 audit M2: drop tool_calls whose name isn't in the
+        // request-declared tools[] (salvage parser otherwise lets
+        // prompt-injection payloads emit calls for tools the caller
+        // never offered, e.g. `Bash` when only `get_weather` is declared).
+        toolCalls = filterToolCallsByAllowlist(parsed.toolCalls, tools);
         // Diagnostic: emulation was active and the model returned text but no
         // recognized tool call. Surface tool-shaped substrings so we can see
         // whether the model emitted an unsupported format (markdown-fenced
@@ -1802,6 +1849,13 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
     if (isRateLimit) { markRateLimited(apiKey, rateLimitCooldownMs(err.message), modelKey); err.isRateLimit = true; err.isModelError = true; err.kind ||= 'model_error'; }
     if (isInternal) { reportInternalError(apiKey); err.isModelError = true; err.kind ||= 'transient_stall'; }
     if (isTransport) { err.isModelError = true; err.kind ||= 'transient_stall'; }
+    // v2.0.56: ban-shaped error → reportBanSignal handles the 2-strike
+    // promotion to status='banned'. Skip when also a rate-limit so we
+    // don't conflate "out of quota" with "account dead".
+    if (!isRateLimit && looksLikeBanSignal(err.message)) {
+      reportBanSignal(apiKey, err.message);
+      err.isModelError = true; err.kind ||= 'auth_error';
+    }
     if (err.isModelError && err.kind !== 'transient_stall' && !isRateLimit && !isInternal) {
       updateCapability(apiKey, modelKey, false, 'model_error');
     }
@@ -1859,6 +1913,12 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
   // in issues #82 and #83.
   const cachePolicy = deps.cachePolicy || null;
   const fpOpts = deps.fpOpts || { route: 'chat' };
+  // v2.0.55 audit M2: stream parser also needs the request-declared
+  // tools[] to filter out tool_calls whose name isn't on the allowlist.
+  // Same threat model as nonStreamResponse — prompt-injection content
+  // can drive a non-Claude model to emit `<tool_call>{"name":"Bash"}…`
+  // even when the caller only declared `get_weather`.
+  const declaredTools = Array.isArray(deps.tools) ? deps.tools : [];
   return {
     status: 200,
     stream: true,
@@ -2047,7 +2107,12 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
                   continue;
                 }
                 if (emulateTools) {
-                  const tc = sanitizeToolCall(repairToolCallArguments(item.toolCall, messages));
+                  // v2.0.55 audit M2: filter against declaredTools allowlist
+                  // before emitting. Empty list → block everything (caller
+                  // didn't declare any tools).
+                  const filtered = filterToolCallsByAllowlist([item.toolCall], declaredTools);
+                  if (!filtered.length) continue;
+                  const tc = sanitizeToolCall(repairToolCallArguments(filtered[0], messages));
                   const idx = collectedToolCalls.length;
                   collectedToolCalls.push(tc);
                   emitToolCallDelta(tc, idx);
@@ -2060,8 +2125,10 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
               // silently discarded. Sanitize server-internal paths out of
               // the emulated call's input too (issue #38) — otherwise Claude
               // Code tries to Read the sandbox path and fails.
-              for (const rawTc of parsed.toolCalls) {
-                if (!emulateTools) continue;
+              const filteredCalls = emulateTools
+                ? filterToolCallsByAllowlist(parsed.toolCalls, declaredTools)
+                : [];
+              for (const rawTc of filteredCalls) {
                 const tc = sanitizeToolCall(repairToolCallArguments(rawTc, messages));
                 const idx = collectedToolCalls.length;
                 collectedToolCalls.push(tc);
@@ -2209,7 +2276,12 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
             if (toolParser) {
               const tail = toolParser.flush();
               if (tail.text) emitContent(pathStreamText.feed(tail.text));
-              for (const rawTc of tail.toolCalls) {
+              // M2 allowlist on the tail flush as well — stream end can
+              // still emit tail tool_calls and they need the same filter.
+              const filteredTail = emulateTools
+                ? filterToolCallsByAllowlist(tail.toolCalls, declaredTools)
+                : [];
+              for (const rawTc of filteredTail) {
                 const tc = sanitizeToolCall(repairToolCallArguments(rawTc, messages));
                 const idx = collectedToolCalls.length;
                 collectedToolCalls.push(tc);
@@ -2334,6 +2406,12 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
             if (isRateLimit) { markRateLimited(currentApiKey, rateLimitCooldownMs(err.message), modelKey); err.isRateLimit = true; err.isModelError = true; err.kind ||= 'model_error'; }
             if (isInternal) { reportInternalError(currentApiKey); err.isModelError = true; err.kind ||= 'transient_stall'; }
             if (isTransport) { err.isModelError = true; err.kind ||= 'transient_stall'; }
+            // v2.0.56 stream-path ban detection — same 2-strike logic as
+            // non-stream. See nonStreamResponse for rationale.
+            if (!isRateLimit && looksLikeBanSignal(err.message)) {
+              reportBanSignal(currentApiKey, err.message);
+              err.isModelError = true; err.kind ||= 'auth_error';
+            }
             if (err.isModelError && err.kind !== 'transient_stall' && !isRateLimit && !isInternal) {
               updateCapability(currentApiKey, modelKey, false, 'model_error');
             }

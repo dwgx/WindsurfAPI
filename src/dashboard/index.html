@@ -2182,6 +2182,43 @@ window._firebaseOAuth = async function(provider) {
     <div class="section" style="margin-top:24px">
       <div class="section-header">
         <div>
+          <div class="section-title" data-i18n="section.credentials.title">凭证管理</div>
+          <div class="section-desc" data-i18n="section.credentials.desc">运行时改 API_KEY 和 Dashboard 密码，写入 runtime-config.json 立即生效，不用重启容器或重读 .env。改完之后下一次请求需要用新值；当前会话会要求重新登录。</div>
+        </div>
+      </div>
+      <div class="section-body" style="display:grid;gap:14px">
+        <div style="padding:12px;background:var(--surface-2);border-radius:var(--radius);display:grid;gap:8px">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <strong data-i18n="credentials.apiKey">API_KEY</strong>
+            <span class="text-sm text-muted" id="credentials-apikey-source"></span>
+            <span class="text-sm" style="font-family:monospace" id="credentials-apikey-masked"></span>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <input type="password" class="input" id="credentials-apikey-input" data-i18n-placeholder="credentials.apiKeyPlaceholder" placeholder="新 API_KEY（≥ 8 字符；留空清除运行时覆盖）" style="flex:1;min-width:240px">
+            <button class="btn btn-outline btn-sm" onclick="App.toggleApiKeyVisibility()" data-i18n="credentials.show">显示/隐藏</button>
+            <button class="btn btn-primary btn-sm" onclick="App.saveCredential('apiKey')" data-i18n="credentials.save">保存</button>
+          </div>
+          <div class="text-sm text-muted" data-i18n="credentials.apiKeyHint">改完后所有 chat 客户端要换成新 KEY；旧 KEY 立即失效。</div>
+        </div>
+        <div style="padding:12px;background:var(--surface-2);border-radius:var(--radius);display:grid;gap:8px">
+          <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+            <strong data-i18n="credentials.dashboardPassword">Dashboard 密码</strong>
+            <span class="text-sm text-muted" id="credentials-dashboardpw-source"></span>
+            <span class="text-sm" id="credentials-dashboardpw-status"></span>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <input type="password" class="input" id="credentials-dashboardpw-input" data-i18n-placeholder="credentials.dashboardPwPlaceholder" placeholder="新 Dashboard 密码（≥ 8 字符；留空清除运行时覆盖）" style="flex:1;min-width:240px">
+            <button class="btn btn-outline btn-sm" onclick="App.toggleDashboardPwVisibility()" data-i18n="credentials.show">显示/隐藏</button>
+            <button class="btn btn-primary btn-sm" onclick="App.saveCredential('dashboardPassword')" data-i18n="credentials.save">保存</button>
+          </div>
+          <div class="text-sm text-muted" data-i18n="credentials.dashboardPwHint">用 scrypt 派生哈希存盘；改完之后会自动登出当前会话，需要用新密码重登。</div>
+        </div>
+        <div class="text-sm text-muted" data-i18n="credentials.bruteForceHint">为防暴破：同一 IP 连续 5 次 dashboard 登录失败会被锁 30 分钟（2.0.56 起）。</div>
+      </div>
+    </div>
+    <div class="section" style="margin-top:24px">
+      <div class="section-header">
+        <div>
           <div class="section-title" data-i18n="section.skin.title">界面风格</div>
           <div class="section-desc" data-i18n="section.skin.desc">控制台外观。默认现代风；手绘草稿风是实验性 UI，部分功能简化或采用不同布局。切换后页面会刷新。</div>
         </div>
@@ -4937,6 +4974,10 @@ const App = {
   },
 
   async loadExperimental() {
+    // v2.0.56: refresh the credentials snapshot whenever the user opens
+    // the experimental/settings panel so the masked key + source labels
+    // stay in sync with what runtime-config.json actually holds.
+    this.loadCredentials();
     const d = await this.api('GET', '/experimental');
     const cb = document.getElementById('exp-cascade-reuse');
     if (cb) cb.checked = !!d.flags?.cascadeConversationReuse;
@@ -5056,6 +5097,75 @@ const App = {
     const r = await this.api('DELETE', '/experimental/conversation-pool');
     this.toast(`${I18n.t('toast.cleared')} ${r.cleared || 0}`, 'success');
     this.loadExperimental();
+  },
+
+  // ─── Credentials (v2.0.56) ──────────────────────────────────
+  async loadCredentials() {
+    try {
+      const d = await this.api('GET', '/settings/credentials');
+      document.getElementById('credentials-apikey-source').textContent = '[' + (d.apiKeySource || 'unset') + ']';
+      document.getElementById('credentials-apikey-masked').textContent = d.apiKey_masked || '(unset)';
+      document.getElementById('credentials-dashboardpw-source').textContent = '[' + (d.dashboardPasswordSource || 'unset') + ']';
+      document.getElementById('credentials-dashboardpw-status').textContent =
+        d.dashboardPasswordSet ? (I18n.t('credentials.set') || 'set') : (I18n.t('credentials.unset') || 'unset');
+    } catch (e) {
+      this.toast('Failed to load credentials: ' + (e.message || ''), 'error');
+    }
+  },
+
+  toggleApiKeyVisibility() {
+    const el = document.getElementById('credentials-apikey-input');
+    el.type = el.type === 'password' ? 'text' : 'password';
+  },
+
+  toggleDashboardPwVisibility() {
+    const el = document.getElementById('credentials-dashboardpw-input');
+    el.type = el.type === 'password' ? 'text' : 'password';
+  },
+
+  async saveCredential(field) {
+    const inputId = field === 'apiKey' ? 'credentials-apikey-input' : 'credentials-dashboardpw-input';
+    const el = document.getElementById(inputId);
+    const value = el.value;
+    const labelMap = {
+      apiKey: I18n.t('credentials.apiKey') || 'API_KEY',
+      dashboardPassword: I18n.t('credentials.dashboardPassword') || 'Dashboard password',
+    };
+    const cleared = value === '';
+    const okConfirm = await this.confirm(
+      labelMap[field],
+      cleared
+        ? (I18n.t('credentials.confirmClear') || 'Clear runtime override and fall back to .env value?')
+        : (I18n.t('credentials.confirmSave') || 'After saving, the old value stops working immediately. Continue?'),
+      { okText: I18n.t('credentials.save') || 'Save' }
+    );
+    if (!okConfirm) return;
+    try {
+      const r = await this.api('PUT', '/settings/credentials', { [field]: value });
+      el.value = '';
+      this.toast(r.success ? (I18n.t('credentials.saved') || 'Saved') : 'Saved', 'success');
+      // After rotating dashboard password, the current session is no longer
+      // authenticated. Force a re-login flow so the user gets the right
+      // prompt rather than a misleading "session expired" later.
+      if (field === 'dashboardPassword' && !cleared) {
+        sessionStorage.removeItem('dashboard_password');
+        setTimeout(() => location.reload(), 800);
+        return;
+      }
+      // Same for API_KEY when the runtime fallback is also the dashboard
+      // password on localhost binds — safest is reload + reprompt.
+      if (field === 'apiKey') {
+        // Only force reload when the dashboard auth might have been the
+        // API_KEY fallback (localhost+no DASHBOARD_PASSWORD). The server
+        // /settings/credentials response doesn't tell us, so refresh the
+        // panel state and let the next API call surface 401 if needed.
+        this.loadCredentials();
+      } else {
+        this.loadCredentials();
+      }
+    } catch (e) {
+      this.toast('Save failed: ' + (e.message || ''), 'error');
+    }
   },
 
   // ─── Console skin (default ↔ experimental sketch UI) ────────

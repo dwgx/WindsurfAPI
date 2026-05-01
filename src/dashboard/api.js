@@ -13,12 +13,17 @@ import {
   refreshCredits, refreshAllCredits,
   setAccountBlockedModels, setAccountTokens, setAccountTier,
   getAccountInternal, isLocalBindHost, maskApiKey, safeEqualString,
+  checkLockout, failedAuthAttempt, successfulAuthAttempt,
 } from '../auth.js';
 import { restartLsForProxy } from '../langserver.js';
 import { getLsStatus, stopLanguageServer, startLanguageServer, isLanguageServerRunning } from '../langserver.js';
 import { getStats, resetStats, recordRequest } from './stats.js';
 import { cacheStats, cacheClear } from '../cache.js';
-import { getExperimental, setExperimental, getSystemPrompts, setSystemPrompts, resetSystemPrompt } from '../runtime-config.js';
+import {
+  getExperimental, setExperimental, getSystemPrompts, setSystemPrompts, resetSystemPrompt,
+  getCredentials, setRuntimeApiKey, setRuntimeDashboardPassword,
+  verifyPassword, getEffectiveApiKey, getEffectiveDashboardPasswordStored,
+} from '../runtime-config.js';
 import { poolStats as convPoolStats, poolClear as convPoolClear } from '../conversation-pool.js';
 import { getLogs, subscribeToLogs, unsubscribeFromLogs } from './logger.js';
 import { getProxyConfig, getProxyConfigMasked, setGlobalProxy, setAccountProxy, removeProxy, getEffectiveProxy } from './proxy-config.js';
@@ -65,15 +70,44 @@ function json(res, status, body) {
   res.end(data);
 }
 
+// v2.0.56: client IP extraction. Mirrors caller-key.js TRUST_PROXY_XFF
+// — we only honour X-Forwarded-For when the operator opts in. Default is
+// `socket.remoteAddress` so a rogue dashboard caller can't dodge the
+// brute-force lockout by spoofing XFF and ending up on a fresh bucket.
+function dashboardClientIp(req) {
+  const remote = req?.socket?.remoteAddress || req?.connection?.remoteAddress || '';
+  if (process.env.TRUST_PROXY_X_FORWARDED_FOR !== '1') return remote;
+  const fwd = String(req?.headers?.['x-forwarded-for'] || '').split(',')[0].trim();
+  return fwd || remote;
+}
+
 function checkAuth(req) {
   // Header-only auth. logs/stream switched from EventSource to fetch +
   // ReadableStream months ago, so the EventSource exception is gone and
   // ?pwd= query passwords would only leak into URL access logs and
   // browser history without any callers needing them.
+  //
+  // v2.0.55 (audit H1): on non-local binds we no longer fall back to
+  // `config.apiKey` as the dashboard password. That fallback turned
+  // every chat-API caller into a service operator (list accounts,
+  // reveal-key, change proxy, trigger LS / docker self-update). Public
+  // bind WITHOUT DASHBOARD_PASSWORD now fails closed; operators must
+  // set DASHBOARD_PASSWORD explicitly. Localhost-only deployments keep
+  // the convenience fallback so single-user `docker-compose up` doesn't
+  // suddenly require an extra env.
+  //
+  // v2.0.56: dashboardPassword now comes from runtime-config (settable
+  // from the dashboard) before falling back to env. apiKey fallback
+  // (localhost only) also honours the runtime override.
   const pw = req.headers['x-dashboard-password'] || '';
-  if (config.dashboardPassword) return safeEqualString(pw, config.dashboardPassword);
-  if (config.apiKey) return safeEqualString(pw, config.apiKey);
-  return isLocalBindHost();
+  const storedDashboardPw = getEffectiveDashboardPasswordStored();
+  if (storedDashboardPw) return verifyPassword(pw, storedDashboardPw);
+  if (isLocalBindHost()) {
+    const effectiveApiKey = getEffectiveApiKey();
+    if (effectiveApiKey) return safeEqualString(pw, effectiveApiKey);
+    return true;
+  }
+  return false;
 }
 
 async function processWindsurfLogin({ email, password, loginProxy, autoAdd }) {
@@ -129,15 +163,42 @@ async function processWindsurfLogin({ email, password, loginProxy, autoAdd }) {
 export async function handleDashboardApi(method, subpath, body, req, res) {
   if (method === 'OPTIONS') return json(res, 204, '');
 
+  // v2.0.56: brute-force lockout — apply BEFORE the auth check so the
+  // password comparison itself can't be used as an oracle once the IP is
+  // banned. /auth route is exempt (unauthenticated probe used by the UI
+  // to learn whether auth is required) but still feeds the lockout when
+  // it serves as a credential-verification endpoint.
+  const clientIp = dashboardClientIp(req);
+  const lock = checkLockout(clientIp);
+  if (lock.blocked) {
+    res.setHeader?.('Retry-After', String(Math.ceil(lock.retryAfterMs / 1000)));
+    return json(res, 429, {
+      error: `Too many failed attempts. IP banned for ${Math.ceil(lock.retryAfterMs / 1000)}s.`,
+      retryAfterMs: lock.retryAfterMs,
+    });
+  }
+
   // Auth check (except for auth verification endpoint)
   if (subpath !== '/auth' && !checkAuth(req)) {
+    failedAuthAttempt(clientIp);
     return json(res, 401, { error: 'Unauthorized. Set X-Dashboard-Password header.' });
   }
+  if (subpath !== '/auth') successfulAuthAttempt(clientIp);
 
   // ─── Auth ─────────────────────────────────────────────
   if (subpath === '/auth') {
-    const hasSecret = !!(config.dashboardPassword || config.apiKey);
-    if (hasSecret) return json(res, 200, { required: true, valid: checkAuth(req) });
+    const storedPw = getEffectiveDashboardPasswordStored();
+    const effectiveApiKey = getEffectiveApiKey();
+    const hasSecret = !!(storedPw || effectiveApiKey);
+    if (hasSecret) {
+      const ok = checkAuth(req);
+      // /auth is the credential-probe endpoint dashboards call before
+      // showing the rest of the UI — count failures here so a brute-force
+      // script doesn't get unlimited attempts via /auth alone.
+      if (ok) successfulAuthAttempt(clientIp);
+      else if (req.headers['x-dashboard-password']) failedAuthAttempt(clientIp);
+      return json(res, 200, { required: true, valid: ok });
+    }
     // No secret configured. On localhost binds the dashboard is open; on
     // public binds checkAuth fails closed (see Fix 1 / Fix 3) so the UI must
     // know auth is required-but-unconfigurable so it can prompt the operator
@@ -545,11 +606,97 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
   // would otherwise end up in dashboard network logs, HAR files, proxy
   // access logs, etc. The UI posts the sentinel back to preserve the
   // stored password when editing other fields (see mergePassword).
+  // ─── Credentials (v2.0.56 — runtime-rotatable API_KEY + DASHBOARD_PASSWORD) ─────
+  // GET /settings/credentials — masked snapshot. The plaintext API key is
+  // never returned (use revealApiKey if/when added), but we expose
+  // - source: 'runtime' | 'env' | 'unset'
+  // - masked: 'sk-12...3456' for the API key
+  // - dashboardPasswordSet: bool
+  // - dashboardPasswordSource: 'runtime' | 'env' | 'unset'
+  if (subpath === '/settings/credentials' && method === 'GET') {
+    const creds = getCredentials();
+    const effectiveApiKey = getEffectiveApiKey();
+    const apiKeySource = creds.apiKey ? 'runtime' : (config.apiKey ? 'env' : 'unset');
+    const dashboardPasswordSource = creds.dashboardPasswordHash
+      ? 'runtime'
+      : (config.dashboardPassword ? 'env' : 'unset');
+    return json(res, 200, {
+      apiKey_masked: maskApiKey(effectiveApiKey),
+      apiKeySource,
+      dashboardPasswordSet: !!getEffectiveDashboardPasswordStored(),
+      dashboardPasswordSource,
+    });
+  }
+
+  // PUT /settings/credentials — rotate one or both credentials. Body:
+  //   { apiKey?: string, dashboardPassword?: string }
+  // Empty string clears the runtime override (env value takes over).
+  // Requires the caller to re-authenticate with the NEW dashboard
+  // password on the next request — no session cookies, so the UI just
+  // re-prompts. We don't accept the old-password proof here because the
+  // caller already passed dashboard auth at the top of this function.
+  if (subpath === '/settings/credentials' && method === 'PUT') {
+    if (!body || typeof body !== 'object') {
+      return json(res, 400, { error: 'Body must be a JSON object' });
+    }
+    const out = {};
+    let touched = false;
+    if (Object.prototype.hasOwnProperty.call(body, 'apiKey')) {
+      const v = body.apiKey;
+      if (v != null && typeof v !== 'string') {
+        return json(res, 400, { error: 'apiKey must be a string' });
+      }
+      const trimmed = String(v ?? '').trim();
+      // Loose sanity: reject keys with whitespace / control chars. An
+      // empty string is the explicit "clear runtime override" signal.
+      if (trimmed && /[\s\x00-\x1f]/.test(trimmed)) {
+        return json(res, 400, { error: 'apiKey must not contain whitespace or control characters' });
+      }
+      if (trimmed && trimmed.length < 8) {
+        return json(res, 400, { error: 'apiKey must be at least 8 characters' });
+      }
+      setRuntimeApiKey(trimmed);
+      out.apiKeyUpdated = true;
+      out.apiKey_masked = maskApiKey(trimmed || getEffectiveApiKey());
+      touched = true;
+    }
+    if (Object.prototype.hasOwnProperty.call(body, 'dashboardPassword')) {
+      const v = body.dashboardPassword;
+      if (v != null && typeof v !== 'string') {
+        return json(res, 400, { error: 'dashboardPassword must be a string' });
+      }
+      const pw = String(v ?? '');
+      if (pw && pw.length < 8) {
+        return json(res, 400, { error: 'dashboardPassword must be at least 8 characters' });
+      }
+      setRuntimeDashboardPassword(pw);
+      out.dashboardPasswordUpdated = true;
+      touched = true;
+    }
+    if (!touched) {
+      return json(res, 400, { error: 'Provide apiKey, dashboardPassword, or both' });
+    }
+    log.info(`Settings: credentials rotated from ${dashboardClientIp(req) || 'unknown'} (apiKey=${!!out.apiKeyUpdated}, dashboardPassword=${!!out.dashboardPasswordUpdated})`);
+    return json(res, 200, { success: true, ...out });
+  }
+
   if (subpath === '/proxy' && method === 'GET') {
     return json(res, 200, getProxyConfigMasked());
   }
 
   if (subpath === '/proxy/global' && method === 'PUT') {
+    // v2.0.55 (audit H3): wire this PUT through the same private-host
+    // gate the add-account path uses, otherwise a dashboard-authenticated
+    // caller can pin the global proxy at 127.0.0.1 / 169.254.169.254 /
+    // any internal socket, then upstream egress flows through it. Skip
+    // when the operator explicitly allows private hosts or when the
+    // body has no host (clearing the global proxy via empty PUT).
+    if (body && typeof body === 'object' && body.host && !config.allowPrivateProxyHosts) {
+      try { await assertPublicUrlHost(body.host); }
+      catch (e) {
+        return json(res, 400, { error: e?.message || 'ERR_PROXY_PRIVATE_HOST' });
+      }
+    }
     setGlobalProxy(body);
     return json(res, 200, { success: true, config: getProxyConfigMasked() });
   }
@@ -561,6 +708,15 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
 
   const proxyAccount = subpath.match(/^\/proxy\/accounts\/([^/]+)$/);
   if (proxyAccount && method === 'PUT') {
+    // Same H3 gate as /proxy/global PUT — per-account proxies were the
+    // other half of the bypass. Empty body / no host = clearing the
+    // proxy, leave it unvalidated.
+    if (body && typeof body === 'object' && body.host && !config.allowPrivateProxyHosts) {
+      try { await assertPublicUrlHost(body.host); }
+      catch (e) {
+        return json(res, 400, { error: e?.message || 'ERR_PROXY_PRIVATE_HOST' });
+      }
+    }
     setAccountProxy(proxyAccount[1], body);
     // Spawn (or adopt) the LS instance for this proxy so chat routes immediately
     ensureLsForAccount(proxyAccount[1]).catch(e => log.warn(`LS ensure failed: ${e.message}`));

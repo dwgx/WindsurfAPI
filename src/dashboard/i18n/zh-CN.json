@@ -248,6 +248,10 @@
       "title": "系统提示词",
       "desc": "工具注入、对话模式等内置提示词模板。修改后立即生效，点「重置」恢复默认。"
     },
+    "credentials": {
+      "title": "凭证管理",
+      "desc": "运行时改 API_KEY 和 Dashboard 密码，写入 runtime-config.json 立即生效，不用重启容器或重读 .env。改完之后下一次请求需要用新值；当前会话会要求重新登录。"
+    },
     "skin": {
       "title": "界面风格",
       "desc": "控制台外观。默认现代风；手绘草稿风是实验性简化布局。切换后页面会刷新。"
@@ -586,6 +590,23 @@
     "missingPlaceholder": "缺少 {model} 占位符",
     "missingPlaceholderDesc": "保存后该厂商的模型名将无法被替换进提示词。确定继续？",
     "restored": "已恢复"
+  },
+
+  "credentials": {
+    "apiKey": "API_KEY",
+    "dashboardPassword": "Dashboard 密码",
+    "apiKeyPlaceholder": "新 API_KEY（≥ 8 字符；留空清除运行时覆盖）",
+    "dashboardPwPlaceholder": "新 Dashboard 密码（≥ 8 字符；留空清除运行时覆盖）",
+    "show": "显示/隐藏",
+    "save": "保存",
+    "saved": "已保存",
+    "set": "已设置",
+    "unset": "未设置",
+    "apiKeyHint": "改完后所有 chat 客户端要换成新 KEY；旧 KEY 立即失效。",
+    "dashboardPwHint": "用 scrypt 派生哈希存盘；改完之后会自动登出当前会话，需要用新密码重登。",
+    "bruteForceHint": "为防暴破：同一 IP 连续 5 次 dashboard 登录失败会被锁 30 分钟（v2.0.56 起）。",
+    "confirmSave": "改完之后旧值立即失效，要继续吗？",
+    "confirmClear": "清除运行时覆盖，回退 .env 值？"
   },
 
   "confirm": {
