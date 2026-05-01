@@ -8,7 +8,7 @@
 
 import https from 'https';
 import { randomUUID } from 'crypto';
-import { existsSync, mkdirSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'fs';
 import { execSync } from 'child_process';
 import { log } from './config.js';
 import { extractImages } from './image.js';
@@ -191,25 +191,42 @@ export function shouldColdStall({ elapsed, coldStallMs, sawActive, sawText, tota
 // gap. The scaffold is created once per account and persists.
 const _seededWorkspaces = new Set();
 
+// Detects an old (pre-#108) scaffold that named the placeholder
+// "my-project" or carried a Hello-world src/index.js. On upgrade we
+// rewrite those files in place so the next cascade init re-snapshots
+// the labeled-as-stub version into <workspace_layout>.
+function isLegacyScaffold(workspacePath) {
+  try {
+    const pkgPath = `${workspacePath}/package.json`;
+    if (!existsSync(pkgPath)) return false;
+    const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
+    return pkg?.name !== 'proxy-workspace-stub';
+  } catch {
+    return false;
+  }
+}
+
 function ensureWorkspaceDir(workspacePath) {
   if (_seededWorkspaces.has(workspacePath)) return;
   try {
-    if (!existsSync(workspacePath)) {
+    const exists = existsSync(workspacePath);
+    if (exists && isLegacyScaffold(workspacePath)) {
+      // Rewrite stub files but leave any other content alone — operator
+      // may have manually placed files in this dir for some reason.
+      try {
+        rmSync(`${workspacePath}/src`, { recursive: true, force: true });
+      } catch {}
+      writeStubFiles(workspacePath);
+      log.info(`Workspace scaffold migrated to #108 stub-labeled form: ${workspacePath}`);
+      _seededWorkspaces.add(workspacePath);
+      return;
+    }
+    if (!exists) {
       mkdirSync(workspacePath, { recursive: true });
-      // Seed a minimal project so the LS has something to index
-      writeFileSync(`${workspacePath}/package.json`, JSON.stringify({
-        name: 'my-project', version: '0.1.0', private: true,
-        description: 'A development project',
-        scripts: { start: 'node src/index.js', test: 'node --test' },
-        license: 'MIT',
-      }, null, 2) + '\n');
-      writeFileSync(`${workspacePath}/README.md`, '# My Project\n\nA development project.\n\n## Getting Started\n\n```bash\nnpm start\n```\n');
-      writeFileSync(`${workspacePath}/.gitignore`, 'node_modules/\n.env\ndist/\n*.log\n');
-      mkdirSync(`${workspacePath}/src`, { recursive: true });
-      writeFileSync(`${workspacePath}/src/index.js`, '// Entry point\nconsole.log("Hello, world!");\n');
+      writeStubFiles(workspacePath);
       // Init git repo so LS picks up real git state
       try {
-        execSync('git init -q && git add -A && git commit -q -m "init" --allow-empty', {
+        execSync('git init -q && git add -A && git commit -q -m "proxy stub" --allow-empty', {
           cwd: workspacePath, stdio: 'ignore', timeout: 5000,
         });
       } catch {}
@@ -219,6 +236,27 @@ function ensureWorkspaceDir(workspacePath) {
   } catch (e) {
     log.debug(`ensureWorkspaceDir: ${e.message}`);
   }
+}
+
+// #108: prior scaffold seeded a `package.json` named "my-project" plus a
+// `src/index.js` and `README.md` "Getting Started" page. Cascade upstream
+// snapshots the workspace into the system prompt as `<workspace_layout>`;
+// the model then treats those stub files as the user's real project and
+// "analyzes" them when asked "analyze the project", reporting an empty
+// Node template the user has never seen. Keep the scaffold real enough
+// that the LS still indexes a workspace (closes the fingerprint gap)
+// but make every file unmistakably labeled as a proxy placeholder so
+// the model can't confuse it for the user's project.
+function writeStubFiles(workspacePath) {
+  writeFileSync(`${workspacePath}/package.json`, JSON.stringify({
+    name: 'proxy-workspace-stub',
+    version: '0.0.0',
+    private: true,
+    description: 'Empty placeholder created by the WindsurfAPI proxy. NOT the user project — the user\'s real workspace lives on the calling client and is described via the calling agent\'s Environment facts.',
+    license: 'UNLICENSED',
+  }, null, 2) + '\n');
+  writeFileSync(`${workspacePath}/README.md`, '# Proxy workspace placeholder\n\nThis directory exists only so the Windsurf language server has a workspace to register. It is NOT the user\'s project.\n\nThe user\'s real workspace lives on the calling client (their local IDE / CLI) and its path is communicated through the calling agent\'s Environment facts. To inspect actual files, use Read / Glob / Bash with paths from the Working directory in the Environment facts block.\n');
+  writeFileSync(`${workspacePath}/.gitignore`, '# proxy workspace placeholder — see README.md\n');
 }
 
 // ─── WindsurfClient ────────────────────────────────────────

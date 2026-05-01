@@ -30,6 +30,17 @@ import { log } from '../config.js';
 // forbid passing the literal token to shell tools.
 const WORKSPACE_PATH_HINT = 'Workspace path hidden; "<workspace>" is a redaction marker, NOT a path — never pass it to shell tools (shell reads "<" as redirection). Use "." for cwd or relative paths. If asked for cwd, say unavailable.';
 
+// #108 (nalayahfowlkest-ship-it / zhangzhang-bit): the upstream planner
+// injects its own <workspace_information> / <workspace_layout> block
+// describing a placeholder directory the proxy created on the server
+// filesystem. Models read that block as the user's real project and
+// "analyze" the stub instead of asking the local tools to read the
+// user's real workspace. Pin precedence in neutral wording — the
+// project's tool-preamble rule (feedback_tool_preamble_rules.md) bans
+// jailbreak-flavored phrases like "ignore" / "for this request only"
+// because Opus' injection guard trips on them.
+const WORKSPACE_STUB_OVERRIDE = 'Any `<workspace_information>` or `<workspace_layout>` block elsewhere in this conversation describes a placeholder directory created by the proxy infrastructure, not the user\'s project. Treat the path above as the authoritative working directory and use Read / Glob / Bash to discover real project contents.';
+
 // User-message-level fallback preamble.
 //
 // MINIMAL by design. The proto-level tool_calling_section override
@@ -282,6 +293,8 @@ export function buildToolPreambleForProto(tools, toolChoice, environment, modelK
     lines.push('');
     lines.push(environment.trim());
     lines.push('');
+    lines.push(WORKSPACE_STUB_OVERRIDE);
+    lines.push('');
   }
   lines.push(WORKSPACE_PATH_HINT);
   lines.push('');
@@ -398,6 +411,8 @@ export function buildSchemaCompactToolPreambleForProto(tools, toolChoice, enviro
     lines.push('');
     lines.push(environment.trim());
     lines.push('');
+    lines.push(WORKSPACE_STUB_OVERRIDE);
+    lines.push('');
   }
   lines.push(WORKSPACE_PATH_HINT);
   lines.push('');
@@ -438,6 +453,8 @@ export function buildSkinnyToolPreambleForProto(tools, toolChoice, environment, 
   if (environment && typeof environment === 'string' && environment.trim()) {
     lines.push('## Environment facts');
     lines.push(environment.trim());
+    lines.push('');
+    lines.push(WORKSPACE_STUB_OVERRIDE);
     lines.push('');
   }
   lines.push(WORKSPACE_PATH_HINT);
@@ -494,6 +511,8 @@ export function buildCompactToolPreambleForProto(tools, toolChoice, environment,
     lines.push('The facts below are provided by the calling agent and describe the active execution context. Tool calls operate on these paths.');
     lines.push('');
     lines.push(environment.trim());
+    lines.push('');
+    lines.push(WORKSPACE_STUB_OVERRIDE);
     lines.push('');
   }
   lines.push(WORKSPACE_PATH_HINT);
