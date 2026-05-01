@@ -81,3 +81,58 @@ describe('LS binary update endpoint (#7/#10/#49/#87)', () => {
     assert.match(LS_JS, /export function getProxyByKey\(key\)/);
   });
 });
+
+// User report (2026-05-01): "LS update has no effect" — the toast
+// always said "restarted N instances" without telling the user whether
+// the binary itself actually changed. Pool was often cold (proxy hadn't
+// served a request yet) so N=0, and same-version re-download was
+// indistinguishable from a real update.
+describe('LS update result is descriptive enough to debug "no effect" reports', () => {
+  test('captures sha256 BEFORE and AFTER the install-ls.sh run', () => {
+    const m = API_JS.match(/subpath === '\/langserver\/update'[\s\S]+?\n  \}/);
+    assert.ok(m);
+    const route = m[0];
+    // Both snapshots must come from the same hashing path (sha256 of
+    // the binary file at config.lsBinaryPath). Pin both exist.
+    assert.match(route, /beforeSha\s*=\s*null/,
+      'must declare beforeSha BEFORE running the install script');
+    assert.match(route, /afterSha\s*=\s*null/,
+      'must declare afterSha AFTER running the install script');
+    assert.match(route, /binaryChanged\s*=\s*!!\(beforeSha && afterSha && beforeSha !== afterSha\)/,
+      'must compute binaryChanged so the dashboard can distinguish "no change" from "updated"');
+  });
+
+  test('response includes beforeSha / afterSha / binaryChanged / poolEmpty', () => {
+    const m = API_JS.match(/subpath === '\/langserver\/update'[\s\S]+?\n  \}/);
+    assert.ok(m);
+    const route = m[0];
+    assert.match(route, /beforeSha:\s*beforeSha/,
+      'response payload must surface beforeSha');
+    assert.match(route, /afterSha:\s*afterSha/,
+      'response payload must surface afterSha');
+    assert.match(route, /binaryChanged,/,
+      'response payload must surface the binaryChanged flag');
+    assert.match(route, /poolEmpty:\s*restarted === 0 && restartErrors\.length === 0/,
+      'poolEmpty distinguishes "cold pool" from "all restarts failed"');
+  });
+
+  test('dashboard toast picks the right message for each outcome', () => {
+    const HTML = readFileSync(join(__dirname, '..', 'src/dashboard/index.html'), 'utf8');
+    const m = HTML.match(/async updateLsBinary\(\)[\s\S]+?\n  \},/);
+    assert.ok(m, 'updateLsBinary not found in dashboard');
+    const fn = m[0];
+    // Three distinct toast keys cover the three meaningfully-different
+    // outcomes. A future refactor that drops any of these would silently
+    // regress the "no effect" UX bug.
+    assert.match(fn, /lsBinaryAlreadyCurrent/,
+      'must show a distinct toast when the binary did not change (no upstream release)');
+    assert.match(fn, /lsBinaryUpdatedColdPool/,
+      'must show a distinct toast when the binary changed but no live LS was running');
+    assert.match(fn, /lsBinaryUpdated/,
+      'must keep the regular toast for binary-changed + live-restart-succeeded');
+    assert.match(fn, /r\.binaryChanged/,
+      'toast selection must key on the binaryChanged flag');
+    assert.match(fn, /r\.poolEmpty/,
+      'toast selection must key on the poolEmpty flag');
+  });
+});

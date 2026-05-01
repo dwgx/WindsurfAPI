@@ -2854,11 +2854,27 @@ const App = {
     try {
       const r = await this.api('POST', '/langserver/update', {});
       if (r.ok) {
+        // Three meaningfully-different outcomes; collapsing them into one
+        // "restarted N instances" toast was the source of "LS update has
+        // no effect" reports — restarted=0 alone can't tell a user
+        // whether nothing happened, the binary was already current, or
+        // the live pool was just cold.
         const errs = (r.restartErrors || []).length;
-        const msg = errs
-          ? I18n.t('toast.lsBinaryUpdatedWithErrors', { count: r.restarted, errors: errs })
-          : I18n.t('toast.lsBinaryUpdated', { count: r.restarted });
-        this.toast(msg, 'success');
+        let msgKey, vars;
+        if (!r.binaryChanged && r.beforeSha) {
+          msgKey = 'toast.lsBinaryAlreadyCurrent';
+          vars = { sha: r.beforeSha };
+        } else if (errs) {
+          msgKey = 'toast.lsBinaryUpdatedWithErrors';
+          vars = { count: r.restarted, errors: errs, before: r.beforeSha || '?', after: r.afterSha || '?' };
+        } else if (r.poolEmpty) {
+          msgKey = 'toast.lsBinaryUpdatedColdPool';
+          vars = { before: r.beforeSha || '?', after: r.afterSha || '?' };
+        } else {
+          msgKey = 'toast.lsBinaryUpdated';
+          vars = { count: r.restarted, before: r.beforeSha || '?', after: r.afterSha || '?' };
+        }
+        this.toast(I18n.t(msgKey, vars), 'success');
         if (this.loadLsBinary) await this.loadLsBinary();
       } else {
         this.toast(I18n.t('toast.lsBinaryUpdateFailed', { error: r.error || r.stderr || 'unknown' }), 'error');

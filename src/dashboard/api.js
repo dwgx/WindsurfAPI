@@ -672,6 +672,26 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
       ...process.env,
       LS_INSTALL_PATH: config.lsBinaryPath,
     };
+    // Snapshot sha256 BEFORE the install. install-ls.sh will atomic-
+    // rename the binary into place even if the download is byte-
+    // identical to what's already there (no upstream change), so
+    // without comparing before/after the dashboard can't tell whether
+    // "Update LS" actually replaced anything — leading to user reports
+    // like "LS update has no effect". Returning both lets the toast
+    // distinguish "binary changed" from "binary already up to date".
+    let beforeSha = null;
+    try {
+      const { createReadStream } = await import('node:fs');
+      const { createHash } = await import('node:crypto');
+      beforeSha = await new Promise((resolve, reject) => {
+        const h = createHash('sha256');
+        createReadStream(config.lsBinaryPath)
+          .on('data', c => h.update(c))
+          .on('end', () => resolve(h.digest('hex')))
+          .on('error', () => resolve(null));
+      });
+    } catch { /* missing or unreadable — that's fine, treat as null */ }
+
     const child = spawn('bash', [scriptPath, ...args], { env });
     let stdout = '';
     let stderr = '';
@@ -689,6 +709,19 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
         stderr: stderr.slice(-4000),
       });
     }
+    let afterSha = null;
+    try {
+      const { createReadStream } = await import('node:fs');
+      const { createHash } = await import('node:crypto');
+      afterSha = await new Promise((resolve) => {
+        const h = createHash('sha256');
+        createReadStream(config.lsBinaryPath)
+          .on('data', c => h.update(c))
+          .on('end', () => resolve(h.digest('hex')))
+          .on('error', () => resolve(null));
+      });
+    } catch { /* keep null */ }
+    const binaryChanged = !!(beforeSha && afterSha && beforeSha !== afterSha);
     // Restart every LS pool entry. The pool is keyed by proxy; iterating
     // through the live list catches per-account proxies as well as the
     // default no-proxy LS. Errors during restart get surfaced so the user
@@ -716,6 +749,16 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
       stdout: stdout.slice(-4000),
       restarted,
       restartErrors,
+      // 16-char prefix matches what /langserver/binary returns so the
+      // dashboard can string-compare against its current shown stat.
+      beforeSha: beforeSha ? beforeSha.slice(0, 16) : null,
+      afterSha: afterSha ? afterSha.slice(0, 16) : null,
+      binaryChanged,
+      // poolEmpty distinguishes "no live LS to restart" (cold proxy,
+      // restart will happen on next request) from "all LS restart
+      // attempts failed" (real problem). Without this the toast counts
+      // both as "restarted 0".
+      poolEmpty: restarted === 0 && restartErrors.length === 0,
     });
   }
 
