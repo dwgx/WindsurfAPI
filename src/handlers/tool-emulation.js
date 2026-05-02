@@ -127,7 +127,14 @@ export function buildToolPreamble(tools, toolChoice = 'auto', modelKey = null, p
  */
 function getToolProtocolHeader(dialect) {
   const headers = {
-    glm47: `You have access to the following functions. To invoke, emit:
+    // v2.0.71 (#120 KLFDan0534): GLM-4.7 / GLM-5.1 / Kimi-K2 probe
+    // showed they emit plain text "I'll run the shell command" or empty
+    // output instead of the <tool_call> markup. Strengthen all three
+    // dialects with the same anti-refusal + anti-fabrication ruleset
+    // gpt_native got in v2.0.70.
+    glm47: `You have access to the following functions. They are REAL callable tools — the caller will execute them and return results.
+
+To invoke, emit this EXACT format:
 
 <tool_call>FUNCTION_NAME
 <arg_key>parameter_name</arg_key>
@@ -138,8 +145,11 @@ Rules:
 1. Use one <arg_key>/<arg_value> pair per parameter.
 2. Multiple <tool_call> blocks are allowed in parallel.
 3. After all tool calls, STOP generating.
+4. NEVER write narration like "I'll run the command" or "Let me check that" — emit the <tool_call> block directly with no preamble.
+5. NEVER FABRICATE OUTPUT. Do not invent timestamps, file contents, command outputs, or search results — those come from the tool, not from you. If unsure how to call, emit your best <tool_call> attempt with empty/placeholder args; the caller will surface validation errors.
+6. The functions listed below ARE available — do not say "I cannot" or "I don't have access". Call the function instead.
 `,
-    kimi_k2: `You have access to the following functions. Use the native kimi_k2 tool-call format used by vLLM parser:
+    kimi_k2: `You have access to the following functions. They are REAL callable tools — the caller will execute them and return results. Use the native kimi_k2 tool-call format used by the vLLM parser:
 
 <|tool_calls_section_begin|>
 <|tool_call_begin|>FUNCTION_NAME:INDEX<|tool_call_argument_begin|>{"arg":"value",...}<|tool_call_end|>
@@ -150,8 +160,13 @@ Rules:
 1. Emit only native section tokens, do not emit JSON/XML tool-call tags.
 2. You MAY emit multiple function calls inside the section.
 3. After emitting the last tool call, STOP generating.
+4. NEVER emit narration before or after the section tokens — pure section markup only.
+5. NEVER FABRICATE OUTPUT. Do not invent file contents, command outputs, timestamps, or search results — those come from the tool execution, not from you.
+6. The functions listed below ARE available — do not say "I cannot" or "I have no tools". Use the section format above.
 `,
-    openai_json_xml: `You have access to the following functions. To invoke a function, emit a block in this EXACT format:
+    openai_json_xml: `You have access to the following functions. They are REAL callable tools — the caller will execute them and return results.
+
+To invoke a function, emit a block in this EXACT format:
 
 <tool_call>{"name":"<function_name>","arguments":{...}}</tool_call>
 
@@ -160,7 +175,8 @@ Rules:
 2. "arguments" must be a JSON object matching the function's parameter schema.
 3. You MAY emit MULTIPLE <tool_call> blocks if the request requires calling several functions in parallel. Emit ALL needed calls consecutively, then STOP generating.
 4. After emitting the last <tool_call> block, STOP. Do not write any explanation after it. The caller executes the functions and returns results wrapped in <tool_result tool_call_id="...">...</tool_result> tags in the next user turn.
-5. NEVER say "I don't have access to tools" or "I cannot perform that action" — the functions listed below ARE your available tools.`,
+5. NEVER say "I don't have access to tools" or "I cannot perform that action" — the functions listed below ARE your available tools.
+6. NEVER FABRICATE OUTPUT. Do not invent timestamps, file contents, command outputs, or search results — those come from the tool execution, not from you. If you cannot determine the right arguments, emit your best <tool_call> attempt; the caller will surface validation errors.`,
     // v2.0.62 (#115) — GPT family doesn't reliably emit <tool_call> XML
     // markup. Their training expects native function-calling JSON. We
     // give them a bare-JSON protocol that matches their natural output

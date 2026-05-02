@@ -162,6 +162,62 @@ export function chatStreamError(message, type = 'upstream_error', code = null) {
 }
 
 /**
+ * v2.0.71 (#115 server-side fabricate detection): when a tool-emulation
+ * request comes back with `markers=none` AND the model output looks like
+ * a fabricated tool-call result (epoch timestamp / file path stub /
+ * "PROBE_xxx_" pattern), surface a structured error to the caller
+ * instead of forwarding the hallucinated text. The model didn't call
+ * the function — handing the fake "result" back as if it were real
+ * silently corrupts agent loops (codex thinks the shell ran, schedules
+ * the next step on a phantom output).
+ *
+ * The heuristic is intentionally conservative: only triggers when ALL
+ * conditions hold:
+ *   1. A tool_call was clearly expected (caller asked for it via the
+ *      user prompt, or shell-style verbs are present)
+ *   2. Model output is short (≤ 240 chars) and contains no narrative
+ *   3. Output matches a known fabrication pattern (epoch ts, bare hash,
+ *      timestamp-suffixed token, or "I'd run X and get Y" guess)
+ *
+ * Returns a non-null { reason, hint } when the response looks fabricated.
+ */
+export function detectFabricatedToolResult(text, { lastUserText = '' } = {}) {
+  if (typeof text !== 'string') return null;
+  const trimmed = text.trim();
+  if (!trimmed || trimmed.length > 240) return null;
+  // Pure epoch / timestamp-only output (e.g. "1777751588" or
+  // "PROBE_V0270_1777751588" from real probes seen in the wild).
+  // Also catches `2026-05-02T19:53:08Z` style ISO ts the model writes
+  // when it thinks it just ran `date`.
+  const fabricatedPatterns = [
+    /^\d{10,13}$/,                         // bare epoch
+    /[A-Z][A-Z0-9_]{3,}_\d{10,}$/,         // PROBE_X_<epoch>
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/,// ISO timestamp
+    /^[a-f0-9]{32,64}$/i,                  // bare hex hash
+    /^total \d+\s/im,                      // ls -la fake output
+    /^drwx[r-][w-][x-]/m,                  // ls -la directory line
+  ];
+  let matched = null;
+  for (const re of fabricatedPatterns) {
+    if (re.test(trimmed)) { matched = re.source; break; }
+  }
+  if (!matched) return null;
+  // Require the user prompt to have clearly asked for an action — random
+  // chat ("hi", "thanks") that happens to make the model output a number
+  // shouldn't trip this. Look for shell-style verbs in the most recent
+  // user turn.
+  const askedForAction = /\b(?:run|exec|execute|cat|ls|echo|grep|find|read|search|list|invoke|call)\b/i.test(lastUserText)
+    || /\bshell|bash|command|tool|function/i.test(lastUserText);
+  if (!askedForAction) return null;
+  return {
+    reason: 'fabricated_tool_result',
+    hint: 'The model returned text that pattern-matches a fabricated tool output (the model did NOT actually call the tool). This typically happens when GPT family runs through cascade emulation — Claude family handles tool calls more reliably. Try `--model claude-sonnet-4.6` or `claude-haiku-4.5`.',
+    matchedPattern: matched,
+    sample: trimmed.slice(0, 120),
+  };
+}
+
+/**
  * Extract a clean JSON payload from a model response. Handles three common
  * shapes a non-constrained-decoding model produces when asked for JSON:
  *
@@ -1539,6 +1595,23 @@ export async function handleChatCompletions(body, context = {}) {
   );
   if (!anyEligible) {
     const hasUnprobedActive = accounts.some(a => a.status === 'active' && !a.userStatusLastFetched);
+    // v2.0.71 (#117 follow-up): list models the pool actually CAN serve so
+    // the caller's dashboard / test harness can fall back instead of just
+    // showing "model_not_entitled" with no hint. Build the union of
+    // availableModels across active accounts (top 8 by frequency).
+    const counter = new Map();
+    for (const a of accounts) {
+      if (a.status !== 'active') continue;
+      for (const m of (a.availableModels || [])) {
+        counter.set(m, (counter.get(m) || 0) + 1);
+      }
+    }
+    const availableInPool = [...counter.entries()].sort(([, a], [, b]) => b - a).slice(0, 8).map(([m]) => m);
+    const remediation = hasUnprobedActive
+      ? '账号刚添加，等 10-30 秒 tier 检测完成后重试，或 dashboard 手动 Probe。'
+      : availableInPool.length
+        ? `账号池里能用的模型：${availableInPool.join(', ')}。换其中一个，或加一个有 ${displayModel} 订阅权限的账号。`
+        : '账号池里没有任何可用模型 — 检查账号是否被封禁或全部限流。';
     return {
       status: 403,
       body: {
@@ -1547,6 +1620,8 @@ export async function handleChatCompletions(body, context = {}) {
             ? `模型 ${displayModel} 暂不可用：账号刚添加还未完成 tier 检测，请稍候 10-30 秒后重试，或在 dashboard 手动点 Probe`
             : `模型 ${displayModel} 在当前账号池中不可用（未订阅或已被封禁）`,
           type: hasUnprobedActive ? 'probe_pending' : 'model_not_entitled',
+          remediation,
+          available_in_pool: availableInPool,
         },
       },
     };
@@ -1622,6 +1697,20 @@ export async function handleChatCompletions(body, context = {}) {
   const fpBefore = reuseEnabled ? fingerprintBefore(messages, routingModelKey, callerKey, fpOpts) : null;
   let reuseEntry = reuseEnabled ? poolCheckout(fpBefore, callerKey) : null;
   let checkedOutReuseEntry = reuseEntry;
+  // v2.0.71 (#116 zhangzhang-bit follow-up): structured reuse log so
+  // operators can see whether multi-turn cascades are actually reusing
+  // server-side context, vs. hitting a fingerprint miss every turn
+  // and replaying the entire history. Critical for diagnosing
+  // "model keeps re-analysing the same data" loops.
+  if (reuseEnabled) {
+    log.info(`Chat[${reqId}]: reuse fp=${fpBefore?.slice(0, 12) || 'none'} ${reuseEntry ? `HIT cascade=${reuseEntry.cascadeId.slice(0, 8)}` : 'MISS'} turns=${(messages || []).length} model=${routingModelKey}`);
+  } else if (sharedApiKeyNoScope) {
+    log.info(`Chat[${reqId}]: reuse DISABLED (shared API key, no per-user scope)`);
+  } else if (!shouldUseCascadeReuse({ useCascade, emulateTools, modelKey: routingModelKey })) {
+    log.info(`Chat[${reqId}]: reuse DISABLED (model ineligible)`);
+  } else {
+    log.info(`Chat[${reqId}]: reuse DISABLED (experimental.cascadeConversationReuse=off)`);
+  }
   // v2.0.25 HIGH-2: a SendUserCascadeMessage that hit "cascade not found"
   // marks the entry dead — any restore path further down must drop it
   // instead of putting a known-dead cascadeId back in the pool.
@@ -1976,6 +2065,29 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
           if (/\{\s*"name"\s*:\s*"[a-zA-Z0-9_-]+"\s*,\s*"arguments"/.test(allText)) markers.push('bare_json');
           if (/^\s*(?:I'?ll|I will|Let me|I'?m going to)\s+(?:call|use|invoke|run)/im.test(allText)) markers.push('natural_lang');
           log.info(`Chat[non-stream]: emulateTools=true but parser found 0 tool_calls (model=${modelKey} provider=${provider}); markers=${markers.join(',') || 'none'}; head="${rawTextHead}"`);
+          // v2.0.71 (#115) — fabricate detection. When markers=none AND
+          // output pattern-matches a hallucinated tool result, warn at
+          // log level and (optionally) reject so the agent loop doesn't
+          // treat the fake output as a real tool result.
+          if (markers.length === 0) {
+            const lastUser = latestRealUserText(messages) || '';
+            const fab = detectFabricatedToolResult(allText, { lastUserText: lastUser });
+            if (fab) {
+              log.warn(`Chat[non-stream]: fabricate detected — model=${modelKey} pattern=${fab.matchedPattern} sample="${fab.sample}"`);
+              if (process.env.WINDSURFAPI_FABRICATE_REJECT === '1') {
+                return {
+                  status: 502,
+                  body: {
+                    error: {
+                      message: `Tool-call fabrication detected: ${fab.hint}`,
+                      type: 'fabricated_tool_result',
+                      sample: fab.sample,
+                    },
+                  },
+                };
+              }
+            }
+          }
         }
       } else {
         allText = stripToolMarkupFromText(allText);
@@ -2624,6 +2736,14 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
                 if (/\{\s*"name"\s*:\s*"[a-zA-Z0-9_-]+"\s*,\s*"arguments"/.test(accText)) markers.push('bare_json');
                 if (/^\s*(?:I'?ll|I will|Let me|I'?m going to)\s+(?:call|use|invoke|run)/im.test(accText)) markers.push('natural_lang');
                 log.info(`Chat[stream]: emulateTools=true but parser found 0 tool_calls (model=${modelKey} provider=${provider}); markers=${markers.join(',') || 'none'}; head="${head}"`);
+                // v2.0.71 (#115) — fabricate detection on stream tail.
+                if (markers.length === 0) {
+                  const lastUser = latestRealUserText(messages) || '';
+                  const fab = detectFabricatedToolResult(accText, { lastUserText: lastUser });
+                  if (fab) {
+                    log.warn(`Chat[stream]: fabricate detected — model=${modelKey} pattern=${fab.matchedPattern} sample="${fab.sample}"`);
+                  }
+                }
               }
             }
             emitContent(pathStreamText.flush());

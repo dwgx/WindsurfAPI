@@ -34,6 +34,24 @@ let _nextPort = DEFAULT_PORT + 1;
 let _binaryPath = DEFAULT_BINARY;
 let _apiServerUrl = DEFAULT_API_URL;
 
+// v2.0.71 (#119 follow-up): heuristic to recognise sticky-IP proxy
+// usernames. Common providers embed a session/IP token inside the
+// username so the same host:port serves many distinct egress IPs:
+//   ipwo:        username_sid_xxxxxxx
+//   lunaproxy:   user-zone-residential-session-xxx
+//   smartproxy:  spxxxxx-session-xxx-stickyXX
+//   bright data: brd-customer-xxx-zone-xxx-session-xxx
+//   oxylabs:     customer-xxxxx-cc-xxx-sessid-xxx
+// Match any of these and segregate LS automatically. Falls back to
+// host:port when the username doesn't fit the pattern (avoids
+// LS-per-account memory blow up for static-IP proxies that intentionally
+// share an egress).
+const STICKY_USER_RE = /(?:[_-](?:sid|session|sessid|sticky|sess)|[+]ws_)/i;
+function isStickyUsername(u) {
+  if (typeof u !== 'string' || u.length < 4) return false;
+  return STICKY_USER_RE.test(u);
+}
+
 function proxyKey(proxy) {
   if (!proxy || !proxy.host) return 'default';
   // Sanitize to [A-Za-z0-9_] — the key flows into a filesystem path
@@ -42,17 +60,27 @@ function proxyKey(proxy) {
   const safeHost = proxy.host.replace(/[^a-zA-Z0-9]/g, '_');
   const safePort = String(proxy.port || 8080).replace(/[^0-9]/g, '');
   let key = `px_${safeHost}_${safePort}`;
-  // v2.0.68 (#119 CharwinYAO): sticky-IP proxy services (ipwo, lunaproxy,
-  // smartproxy, etc.) embed a per-IP session id inside the username
-  // (`username_sid_xxx:password@us.ipwo.net:port`). Default behaviour
-  // pools all those sticky sessions onto a single LS instance because
-  // host:port is identical, so 5+ accounts behind different sticky IPs
-  // share one LS sessionId / one Windsurf machine fingerprint and trip
-  // upstream's 30-min rate limit even though each egress IP is different.
-  // Opting in via WINDSURFAPI_LS_PER_PROXY_USER=1 segregates by username
-  // so each sticky session gets its own LS process + sessionId at the
-  // cost of higher memory footprint (one LS per concurrent sticky user).
-  if (process.env.WINDSURFAPI_LS_PER_PROXY_USER === '1' && proxy.username) {
+  // v2.0.68/v2.0.71 (#119 CharwinYAO): sticky-IP proxy services (ipwo,
+  // lunaproxy, smartproxy, oxylabs, bright data) embed a per-IP session
+  // id inside the username. Default behaviour pools all sticky sessions
+  // onto one LS instance (host:port identical) so multiple accounts
+  // share one LS sessionId / Windsurf fingerprint, tripping upstream's
+  // 30-min rate limit even though egress IPs differ.
+  //
+  // Auto-on (v2.0.71): username matches a known sticky session pattern
+  // (`_sid_`, `-session-`, `-sticky`, `-sessid-`, `+ws_`) → segregate.
+  // Static-IP proxies don't carry these markers so memory stays bounded.
+  // Operator can force-on (`WINDSURFAPI_LS_PER_PROXY_USER=1`) to
+  // segregate every distinct username, or force-off (`=0`) to disable.
+  let segregateByUser = false;
+  if (process.env.WINDSURFAPI_LS_PER_PROXY_USER === '0') {
+    segregateByUser = false;
+  } else if (process.env.WINDSURFAPI_LS_PER_PROXY_USER === '1') {
+    segregateByUser = !!proxy.username;
+  } else if (proxy.username && isStickyUsername(proxy.username)) {
+    segregateByUser = true;
+  }
+  if (segregateByUser) {
     // Cap user portion at 32 chars to keep filesystem paths sane on
     // Windows where MAX_PATH still bites; sticky session ids are
     // typically <16 chars anyway.

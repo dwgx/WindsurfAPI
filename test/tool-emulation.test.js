@@ -404,7 +404,10 @@ describe('buildCompactToolPreambleForProto (payload budget fallback)', () => {
     const full = buildToolPreambleForProto(bigTools, 'auto');
     const compact = buildCompactToolPreambleForProto(bigTools, 'auto');
     assert.ok(full.length > 20000, `expected full to be heavy, got ${full.length}B`);
-    assert.ok(compact.length < 2000, `compact must be tiny, got ${compact.length}B`);
+    // v2.0.71 (#120): protocol headers grew ~75B with anti-fabrication
+    // ruleset; threshold bumped from 2000 → 2500. Still 10x+ smaller
+    // than full and well under panel-state ceiling.
+    assert.ok(compact.length < 2500, `compact must be tiny, got ${compact.length}B`);
     assert.ok(compact.length < full.length / 5, 'compact must be at least 5x smaller');
   });
 

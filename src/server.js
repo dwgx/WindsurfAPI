@@ -95,7 +95,7 @@ function json(res, status, body) {
 
 async function route(req, res) {
   const { method } = req;
-  const path = req.url.split('?')[0];
+  let path = req.url.split('?')[0];
 
   if (method === 'OPTIONS') {
     res.writeHead(204, {
@@ -343,6 +343,13 @@ async function route(req, res) {
       json(res, result.status, result.body);
     }
     return;
+  }
+
+  // v2.0.71 (#121 keh4l): some clients send `/v1/response` (singular)
+  // by mistake — this exact alias avoids a confusing 404 and routes to
+  // the canonical handler. The plural `/v1/responses` is the spec form.
+  if (path === '/v1/response' && method === 'POST') {
+    path = '/v1/responses';
   }
 
   if (path === '/v1/responses' && method === 'POST') {
