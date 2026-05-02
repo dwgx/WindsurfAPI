@@ -430,7 +430,15 @@ export class WindsurfClient {
    * @param {object} opts - { onChunk, onEnd, onError }
    */
   async cascadeChat(messages, modelEnum, modelUid, opts = {}) {
-    let { onChunk, onEnd, onError, signal, reuseEntry, toolPreamble, displayModel } = opts;
+    let {
+      onChunk, onEnd, onError, signal, reuseEntry, toolPreamble, displayModel,
+      // v2.0.65 native tool bridge handles. When nativeMode=true the
+      // upstream cascade_config switches the planner to DEFAULT mode + a
+      // restricted CascadeToolConfig.tool_allowlist; additionalSteps[9]
+      // carries fake "completed" trajectory steps for the caller's prior
+      // tool turns so the planner reasons from post-tool state.
+      nativeMode, nativeAllowlist, additionalSteps,
+    } = opts;
     const aborted = () => signal?.aborted;
     const inputChars = messages.reduce((n, m) => n + contentToString(m?.content).length, 0);
 
@@ -604,7 +612,12 @@ export class WindsurfClient {
       // (fresh sessionId + panel init) + fresh StartCascade, with a
       // small backoff to let the LS settle.
       const sendMessage = async () => {
-        const sendProto = buildSendCascadeMessageRequest(this.apiKey, cascadeId, text, modelEnum, modelUid, sessionId, { toolPreamble, images });
+        const sendProto = buildSendCascadeMessageRequest(this.apiKey, cascadeId, text, modelEnum, modelUid, sessionId, {
+          toolPreamble, images,
+          nativeMode: !!nativeMode,
+          nativeAllowlist: nativeAllowlist || null,
+          additionalSteps: additionalSteps || null,
+        });
         await grpcUnary(
           this.port, this.csrfToken, `${LS_SERVICE}/SendUserCascadeMessage`, grpcFrame(sendProto)
         );

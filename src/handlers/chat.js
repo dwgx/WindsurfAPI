@@ -23,6 +23,10 @@ import {
   buildToolPreambleForProto, buildCompactToolPreambleForProto,
   buildSchemaCompactToolPreambleForProto, buildSkinnyToolPreambleForProto,
 } from './tool-emulation.js';
+import {
+  shouldUseNativeBridge, canMapAllTools, buildReverseLookup,
+  buildAdditionalStepsFromHistory, TOOL_MAP,
+} from '../cascade-native-bridge.js';
 import { sanitizeText, sanitizeToolCall, PathSanitizeStream } from '../sanitize.js';
 import { registerSseController } from '../sse-registry.js';
 
@@ -1207,6 +1211,33 @@ export async function handleChatCompletions(body, context = {}) {
   const hasTools = Array.isArray(tools) && tools.length > 0;
   const hasToolHistory = Array.isArray(messages) && messages.some(m => m?.role === 'tool' || (m?.role === 'assistant' && Array.isArray(m.tool_calls) && m.tool_calls.length));
   const emulateTools = useCascade && (hasTools || hasToolHistory);
+
+  // v2.0.65 (#115) — native tool bridge gate. When every caller-declared
+  // tool maps onto a Cascade-native IDE step kind AND the activation
+  // condition fires (env override OR auto-on for GPT family / Codex CLI),
+  // we switch the planner from NO_TOOL+emulation to DEFAULT planner mode +
+  // CascadeToolConfig.tool_allowlist + additional_steps[9] history
+  // injection. The emulation tool preamble is NOT shipped in this mode —
+  // the planner sees its own native tool inventory and the history
+  // already contains "completed" trajectory steps for prior tool turns.
+  // See src/cascade-native-bridge.js for full rationale.
+  const nativeBridgeOn = useCascade && hasTools && shouldUseNativeBridge(tools, {
+    modelKey: routingModelKey,
+    provider: modelInfo?.provider || null,
+    route: body.__route || 'chat',
+  });
+  const nativeAdditionalSteps = nativeBridgeOn
+    ? buildAdditionalStepsFromHistory(messages || [])
+    : [];
+  const nativeAllowlist = nativeBridgeOn
+    ? Array.from(new Set((tools || [])
+        .map(t => TOOL_MAP[t?.function?.name]?.kind)
+        .filter(Boolean)))
+    : [];
+  const nativeCallerTools = nativeBridgeOn ? tools : [];
+  if (nativeBridgeOn) {
+    log.info(`Chat[${reqId}]: native bridge ON — model=${routingModelKey} tools=${(tools || []).map(t => t?.function?.name).join(',')} allowlist=${nativeAllowlist.join(',')} additional_steps=${nativeAdditionalSteps.length}`);
+  }
   // Build proto-level preamble (goes into tool_calling_section override).
   // Also inject into the last user message as fallback — some models in
   // NO_TOOL mode ignore the SectionOverride entirely and refuse to call
@@ -1281,14 +1312,39 @@ export async function handleChatCompletions(body, context = {}) {
   if (disableUserToolFallback) {
     log.info(`Chat[${reqId}]: disabled user-message tool fallback for Opus 4.x multimodal turn`);
   }
-  let cascadeMessages = emulateTools
-    ? normalizeMessagesForCascade(messages, tools, {
+  // Native bridge mutates the message list differently from emulation:
+  // tool_result turns become additional_steps[9] entries on the proto, not
+  // synthetic <tool_result> user turns in the conversation text. We strip
+  // those tool messages and assistant tool_calls entries from the cascade
+  // message list so the planner only sees real human / assistant text plus
+  // its trajectory inheritance — duplicate context would confuse it.
+  let cascadeMessages;
+  if (nativeBridgeOn) {
+    cascadeMessages = (messages || []).filter(m => {
+      if (m?.role === 'tool') return false;
+      if (m?.role === 'assistant' && Array.isArray(m.tool_calls) && m.tool_calls.length && !m.content) return false;
+      return true;
+    });
+  } else if (emulateTools) {
+    cascadeMessages = normalizeMessagesForCascade(messages, tools, {
       injectUserPreamble: !disableUserToolFallback,
       modelKey: routingModelKey,
       provider: modelInfo?.provider || null,
       route: body.__route || 'chat',
-    })
-    : [...messages];
+    });
+  } else {
+    cascadeMessages = [...messages];
+  }
+  // Bundle the v2.0.65 native bridge handles into one opts object so we
+  // can thread it through nonStreamResponse / streamResponse / cascadeChat
+  // without growing every signature by 3+ params.
+  const nativeOpts = nativeBridgeOn ? {
+    enabled: true,
+    allowlist: nativeAllowlist,
+    additionalSteps: nativeAdditionalSteps,
+    callerLookup: buildReverseLookup(nativeCallerTools),
+    callerTools: nativeCallerTools,
+  } : null;
 
   // Note: previous versions injected (a) a CJK language-following hint into
   // the last user message and (b) a per-provider identity system prompt
@@ -1419,6 +1475,7 @@ export async function handleChatCompletions(body, context = {}) {
       fpOpts: buildReuseOpts({ tools, toolChoice: tool_choice, toolPreamble, preambleTier, emulateTools, route: body.__route || 'chat' }),
       tools,
       route: body.__route || 'chat',
+      nativeOpts,
     });
   }
 
@@ -1599,6 +1656,7 @@ export async function handleChatCompletions(body, context = {}) {
       reuseEnabled ? { reuseEntry, lsPort: ls.port, apiKey: acct.apiKey, callerKey, cachePolicy, fpOpts } : null,
       modelInfo?.provider || null,
       emulateTools, toolPreamble, wantJson, cachePolicy, wantThinking, tools, body.__route || 'chat',
+      nativeOpts,
     );
     if (result.status === 200) return result;
     reuseEntry = null; // don't try to reuse on the retry
@@ -1712,8 +1770,9 @@ export async function handleChatCompletions(body, context = {}) {
   return lastErr || { status: 503, body: { error: { message: 'No active accounts available', type: 'pool_exhausted' } } };
 }
 
-async function nonStreamResponse(client, id, created, model, modelKey, messages, cascadeMessages, modelEnum, modelUid, useCascade, apiKey, ckey, poolCtx, provider, emulateTools, toolPreamble, wantJson = false, cachePolicy = null, wantThinking = false, tools = [], route = 'chat') {
+async function nonStreamResponse(client, id, created, model, modelKey, messages, cascadeMessages, modelEnum, modelUid, useCascade, apiKey, ckey, poolCtx, provider, emulateTools, toolPreamble, wantJson = false, cachePolicy = null, wantThinking = false, tools = [], route = 'chat', nativeOpts = null) {
   const startTime = Date.now();
+  const nativeBridgeOn = !!nativeOpts?.enabled;
   try {
     let allText = '';
     let allThinking = '';
@@ -1725,7 +1784,14 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
     let serverUsage = null;
 
     if (useCascade) {
-      const chunks = await client.cascadeChat(cascadeMessages, modelEnum, modelUid, { reuseEntry: poolCtx?.reuseEntry || null, toolPreamble, displayModel: model });
+      const chunks = await client.cascadeChat(cascadeMessages, modelEnum, modelUid, {
+        reuseEntry: poolCtx?.reuseEntry || null,
+        toolPreamble: nativeBridgeOn ? '' : toolPreamble,
+        displayModel: model,
+        nativeMode: nativeBridgeOn,
+        nativeAllowlist: nativeOpts?.allowlist || null,
+        additionalSteps: nativeOpts?.additionalSteps || null,
+      });
       for (const c of chunks) {
         if (c.text) allText += c.text;
         if (c.thinking) allThinking += c.thinking;
@@ -1737,7 +1803,41 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
         generatorOffset: chunks.generatorOffset,
       };
       serverUsage = chunks.usage || null;
-      if (emulateTools) {
+      if (nativeBridgeOn) {
+        // v2.0.65: planner-native trajectory steps come back via
+        // chunks.toolCalls with `cascade_native: true`. Translate each
+        // back into the caller's OpenAI tool name + the schema the caller
+        // declared. Steps without a caller mapping are dropped — they
+        // can't be safely surfaced (caller wouldn't know how to execute).
+        const lookup = nativeOpts?.callerLookup || new Map();
+        const nativeCalls = [];
+        for (const raw of (chunks.toolCalls || [])) {
+          if (!raw?.cascade_native) continue;
+          const candidates = lookup.get(raw.name) || [];
+          const callerName = candidates[0];
+          if (!callerName) continue;
+          const reverseFn = TOOL_MAP[callerName]?.reverse;
+          let cascadeArgs;
+          try { cascadeArgs = JSON.parse(raw.argumentsJson || '{}'); } catch { cascadeArgs = {}; }
+          let openaiArgs;
+          try { openaiArgs = reverseFn ? reverseFn(cascadeArgs) : cascadeArgs; }
+          catch { openaiArgs = cascadeArgs; }
+          nativeCalls.push({
+            id: raw.id || `call_${nativeCalls.length}_${Date.now().toString(36)}`,
+            name: callerName,
+            argumentsJson: JSON.stringify(openaiArgs ?? {}),
+          });
+        }
+        toolCalls = filterToolCallsByAllowlist(nativeCalls, tools);
+        // Strip any tool-call markup that may have leaked into text — the
+        // planner sometimes narrates "I'm going to look at X" alongside
+        // emitting the cascade step, and the caller doesn't want that
+        // noise.
+        allText = stripToolMarkupFromText(allText);
+        if (toolCalls.length === 0 && (chunks.toolCalls || []).length > 0) {
+          log.info(`Chat[non-stream]: nativeBridge=true received ${chunks.toolCalls.length} cascade tool calls but none mapped to caller tools (kinds=${chunks.toolCalls.map(tc => tc.name).join(',')})`);
+        }
+      } else if (emulateTools) {
         // Capture pre-parse text once for diagnostic logging — useful when
         // non-Claude models emit a tool call in a format the parser missed.
         // Sample only the first 240 chars to keep logs sane.
@@ -1774,11 +1874,12 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
         allText = stripToolMarkupFromText(allText);
       }
       // Built-in Cascade tool calls (chunks.toolCalls — edit_file, view_file,
-      // list_directory, run_command, etc.) are intentionally DROPPED. Their
-      // argumentsJson and result fields reference server-internal paths like
-      // /tmp/windsurf-workspace/config.yaml and must never be exposed to an
-      // API caller. Emulated tool calls (above) are safe because they
-      // reference the caller's own tool schema.
+      // list_directory, run_command, etc.) are intentionally DROPPED in
+      // emulation/legacy paths. Their argumentsJson and result fields may
+      // reference server-internal paths like /tmp/windsurf-workspace/config.yaml
+      // and must never be exposed to an API caller. The native bridge path
+      // above is the ONLY surface that surfaces these — and it sanitises
+      // each tool call's args via reverse mapping before emitting.
     } else {
       const chunks = await client.rawGetChatMessage(messages, modelEnum, modelUid);
       for (const c of chunks) {
@@ -1985,6 +2086,14 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
   // can drive a non-Claude model to emit `<tool_call>{"name":"Bash"}…`
   // even when the caller only declared `get_weather`.
   const declaredTools = Array.isArray(deps.tools) ? deps.tools : [];
+  // v2.0.65 (#115) — native tool bridge handles. Stream path consumes the
+  // same shape as nonStreamResponse: `{enabled, allowlist, additionalSteps,
+  // callerLookup, callerTools}`. When enabled, stream emits cascade-native
+  // trajectory steps directly as OpenAI tool_call deltas (the planner is in
+  // DEFAULT mode and proposes view_file / run_command / grep_search_v2 / find
+  // / list_dir as first-class steps, not as <tool_call> markup in text).
+  const nativeOpts = deps.nativeOpts || null;
+  const nativeBridgeOn = !!nativeOpts?.enabled;
   return {
     status: 200,
     stream: true,
@@ -2329,7 +2438,12 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
           try {
             if (useCascade) {
               cascadeResult = await client.cascadeChat(cascadeMessages, modelEnum, modelUid, {
-                onChunk, signal: abortController.signal, reuseEntry, toolPreamble, displayModel: model,
+                onChunk, signal: abortController.signal, reuseEntry,
+                toolPreamble: nativeBridgeOn ? '' : toolPreamble,
+                displayModel: model,
+                nativeMode: nativeBridgeOn,
+                nativeAllowlist: nativeOpts?.allowlist || null,
+                additionalSteps: nativeOpts?.additionalSteps || null,
               });
             } else {
               await client.rawGetChatMessage(messages, modelEnum, modelUid, { onChunk });
@@ -2371,6 +2485,48 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
             }
             emitContent(pathStreamText.flush());
             emitThinking(pathStreamThinking.flush());
+
+            // v2.0.65 native bridge: cascade trajectory steps come back on
+            // cascadeResult.toolCalls with cascade_native:true. Translate
+            // each into the caller's OpenAI tool name + reverse-mapped
+            // args, allowlist-filter, then emit as tool_call deltas. We do
+            // this at the tail (after pathStreamText flush) rather than
+            // mid-stream because cascadeChat doesn't expose per-step
+            // callbacks for native steps yet — clients see one batched
+            // tool_calls turn instead of fully-streamed deltas. That's a
+            // known gap; trades streaming-grain for shipping a working
+            // bridge first.
+            if (nativeBridgeOn && cascadeResult?.toolCalls?.length) {
+              const lookup = nativeOpts?.callerLookup || new Map();
+              const nativeRaw = [];
+              for (const raw of cascadeResult.toolCalls) {
+                if (!raw?.cascade_native) continue;
+                const candidates = lookup.get(raw.name) || [];
+                const callerName = candidates[0];
+                if (!callerName) continue;
+                const reverseFn = TOOL_MAP[callerName]?.reverse;
+                let cascadeArgs;
+                try { cascadeArgs = JSON.parse(raw.argumentsJson || '{}'); } catch { cascadeArgs = {}; }
+                let openaiArgs;
+                try { openaiArgs = reverseFn ? reverseFn(cascadeArgs) : cascadeArgs; }
+                catch { openaiArgs = cascadeArgs; }
+                nativeRaw.push({
+                  id: raw.id || `call_${nativeRaw.length}_${Date.now().toString(36)}`,
+                  name: callerName,
+                  argumentsJson: JSON.stringify(openaiArgs ?? {}),
+                });
+              }
+              const filteredNative = filterToolCallsByAllowlist(nativeRaw, declaredTools);
+              for (const rawTc of filteredNative) {
+                const tc = sanitizeToolCall(repairToolCallArguments(rawTc, messages));
+                const idx = collectedToolCalls.length;
+                collectedToolCalls.push(tc);
+                emitToolCallDelta(tc, idx);
+              }
+              if (filteredNative.length === 0 && cascadeResult.toolCalls.some(tc => tc.cascade_native)) {
+                log.info(`Chat[stream]: nativeBridge=true received cascade tool calls but none mapped to caller tools (kinds=${cascadeResult.toolCalls.filter(tc => tc.cascade_native).map(tc => tc.name).join(',')})`);
+              }
+            }
             // Pool check-in on success (cascade only)
             if (reuseEnabled && cascadeResult?.cascadeId && (accText || collectedToolCalls.length)) {
               const turnComplete = appendAssistantTurn(messages, accText, collectedToolCalls);
