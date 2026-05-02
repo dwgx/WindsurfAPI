@@ -99,10 +99,21 @@ export function buildToolPreamble(tools, toolChoice = 'auto', modelKey = null, p
     emit = `<tool_call>NAME<arg_key>k</arg_key><arg_value>v</arg_value></tool_call>`;
   } else if (dialect === 'kimi_k2') {
     emit = `<|tool_calls_section_begin|><|tool_call_begin|>NAME:0<|tool_call_argument_begin|>{"k":"v"}<|tool_call_end|><|tool_calls_section_end|>`;
+  } else if (dialect === 'gpt_native') {
+    emit = `{"function_call":{"name":"NAME","arguments":{"k":"v"}}}`;
   } else {
     emit = `<tool_call>{"name":"...","arguments":{...}}</tool_call>`;
   }
-  return `Tools available this turn: ${names.join(', ')}. To call one, emit a single-line block: ${emit}. ${hints.join(' ')} ${WORKSPACE_PATH_HINT} Otherwise answer directly in plain text. After the last call, stop generating; the caller returns results in the next turn as <tool_result tool_call_id="...">...</tool_result>.`;
+  // v2.0.63 (#115) — gpt_native uses a stronger anti-refusal sentence in
+  // the user-message fallback because Cascade's GPT gateway sometimes
+  // strips / dampens system-level injection. The fallback runs unless
+  // injectUserPreamble:false (Opus 4.x multimodal). DO NOT use jailbreak
+  // vocabulary (banned by feedback_tool_preamble_rules) — keep it
+  // matter-of-fact and short.
+  const antiRefusal = dialect === 'gpt_native'
+    ? `The functions ARE available; if you need to read a file or run a command, call the function — never reply "please paste the file" or "I do not have access".`
+    : '';
+  return `Tools available this turn: ${names.join(', ')}. To call one, emit a single-line block: ${emit}.${antiRefusal ? ' ' + antiRefusal : ''} ${hints.join(' ')} ${WORKSPACE_PATH_HINT} Otherwise answer directly in plain text. After the last call, stop generating; the caller returns results in the next turn as <tool_result tool_call_id="...">...</tool_result>.`;
 }
 
 /**
@@ -691,7 +702,7 @@ export function normalizeMessagesForCascade(messages, tools, options = {}) {
   // confused prose with zero tool_calls and hit max_wait. Skipping the
   // preamble on tool_result turns lets Opus stay in tool-using mode for
   // the full conversation, matching native-Anthropic-API behaviour.
-  const preamble = buildToolPreamble(tools, 'auto', modelKey, provider);
+  const preamble = buildToolPreamble(tools, 'auto', modelKey, provider, route);
   if (preamble && injectUserPreamble) {
     for (let i = out.length - 1; i >= 0; i--) {
       if (out[i].role !== 'user') continue;
