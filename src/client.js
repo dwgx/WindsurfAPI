@@ -825,6 +825,14 @@ export class WindsurfClient {
           // polls only emits once. A tool call with an existing `result`
           // means the LS already executed it (built-in Cascade tool); we
           // pass it through to the client for visibility.
+          //
+          // v2.0.70: cascade_native tool calls now also stream via
+          // onChunk so the OpenAI client sees them as tool_call deltas
+          // mid-stream rather than batched at completion. We pass an
+          // explicit `toolCall` chunk shape (not `text`) — chat.js
+          // recognises it and emits the right `tool_calls: [...]`
+          // delta. Emit even when only seenToolCallIds fires so
+          // clients can show "running shell_command..." live.
           if (step.toolCalls && step.toolCalls.length) {
             for (const tc of step.toolCalls) {
               const key = tc.id || `${tc.name}:${tc.argumentsJson}`;
@@ -832,6 +840,14 @@ export class WindsurfClient {
               seenToolCallIds.add(key);
               toolCalls.push(tc);
               lastGrowthAt = Date.now();
+              // Only stream cascade_native to the client (the legacy
+              // ChatToolCall variants are dropped in chat.js anyway —
+              // see "Built-in Cascade tool calls ... DROPPED" comment).
+              if (tc.cascade_native) {
+                const chunk = { text: '', thinking: '', isError: false, nativeToolCall: tc };
+                chunks.push(chunk);
+                onChunk?.(chunk);
+              }
             }
           }
 

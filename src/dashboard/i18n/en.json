@@ -80,6 +80,7 @@
     "confirm": "Confirm",
     "delete": "Delete",
     "refresh": "Refresh",
+    "runNow": "Run now",
     "probe": "Probe",
     "probeTitle": "Probe capabilities",
     "enable": "Enable",
@@ -251,6 +252,12 @@
     "credentials": {
       "title": "Credentials",
       "desc": "Rotate API_KEY and the dashboard password at runtime. Saved into runtime-config.json and applied immediately — no container restart or .env reload needed. Next request must use the new value; the current session will be asked to re-login."
+    },
+    "quietWindow": {
+      "title": "Auto-update on quiet window",
+      "desc": "Watches per-minute request rate; if it stays at or below the threshold for the full window, auto-runs `docker compose pull && up -d`. 10-min cold-start grace; 24h cooldown after success; failure doesn't trigger cooldown. Requires /var/run/docker.sock mounted into the container (default docker-compose already does).",
+      "enable": "Enable quiet-window auto-update",
+      "hint": "Off by default. Current status: "
     },
     "droughtRestrict": {
       "title": "Block premium models during drought",
@@ -833,6 +840,21 @@
     "success": "Success",
     "fail": "Fail",
     "formatError": "Line {{line}} format error"
+  },
+
+  "quietWindow": {
+    "status": {
+      "disabled": "disabled",
+      "coldStart": "cold-start grace",
+      "cooldown": "cooldown",
+      "busy": "busy",
+      "eligible": "quiet · eligible"
+    },
+    "never": "never",
+    "lastUpdate": "last update",
+    "loadFailed": "load failed",
+    "triggered": "triggered",
+    "triggerFailed": "trigger failed"
   },
 
   "toast": {

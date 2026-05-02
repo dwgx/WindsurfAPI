@@ -59,54 +59,51 @@ describe('canMapAllTools', () => {
 describe('shouldUseNativeBridge — auto-on heuristic', () => {
   const tools = [fnTool('Read'), fnTool('Bash')];
 
-  it('GPT family on /v1/responses route → on', () => {
+  it('GPT family on /v1/responses route → OFF (v2.0.70 reverts auto-on for GPT — cascade native grammar makes GPT fabricate)', () => {
+    // v2.0.66 had GPT auto-on, v2.0.70 reverts after end-to-end probe
+    // showed markers=none and PROBE fabricated. GPT family now goes
+    // through emulation + gpt_native dialect.
     assert.equal(
       shouldUseNativeBridge(tools, { modelKey: 'gpt-5.5-medium', provider: 'openai', route: 'responses' }),
-      true,
+      false,
     );
     assert.equal(
       shouldUseNativeBridge(tools, { modelKey: 'o4-mini', provider: 'openai', route: 'responses' }),
-      true,
+      false,
     );
   });
 
-  it('GPT family on /v1/chat/completions → off (no regression for non-Codex)', () => {
+  it('GPT family on /v1/chat/completions → off (default emulation path)', () => {
     assert.equal(
       shouldUseNativeBridge(tools, { modelKey: 'gpt-5.5-medium', provider: 'openai', route: 'chat' }),
       false,
     );
   });
 
-  it('Anthropic/Gemini on responses route → off (emulation already works)', () => {
+  it('Anthropic Claude → ON on any route (cascade-native function-calling matches their training)', () => {
     assert.equal(
-      shouldUseNativeBridge(tools, { modelKey: 'claude-sonnet-4-6', provider: 'anthropic', route: 'responses' }),
-      false,
+      shouldUseNativeBridge(tools, { modelKey: 'claude-sonnet-4.6', provider: 'anthropic', route: 'responses' }),
+      true,
     );
+    assert.equal(
+      shouldUseNativeBridge(tools, { modelKey: 'claude-sonnet-4.6', provider: 'anthropic', route: 'chat' }),
+      true,
+    );
+  });
+
+  it('Gemini → off (no auto-on — emulation works fine for it)', () => {
     assert.equal(
       shouldUseNativeBridge(tools, { modelKey: 'gemini-2.5-flash', provider: 'google', route: 'responses' }),
       false,
     );
   });
 
-  it('partial-mapped tools → ON (v2.0.66 partition mode replaces all-or-nothing gate)', () => {
-    // v2.0.66 (#115): any mapped tool turns the bridge on; unmapped tools
-    // (e.g. get_weather, codex's update_plan / apply_patch) still go
-    // through the existing emulation toolPreamble path in parallel.
-    // codex CLI 0.128 is the live reproducer — declares 11 tools, only
-    // shell_command maps; v2.0.65 saw `tools=15 emulateTools=true
-    // markers=none` because canMapAllTools was strict all-or-nothing.
+  it('partial-mapped tools on Claude → ON (v2.0.66 partition mode preserved for Claude)', () => {
     assert.equal(
       shouldUseNativeBridge([fnTool('Read'), fnTool('get_weather')], {
-        modelKey: 'gpt-5.5-medium', provider: 'openai', route: 'responses',
+        modelKey: 'claude-sonnet-4.6', provider: 'anthropic', route: 'responses',
       }),
       true,
-    );
-    assert.equal(
-      shouldUseNativeBridge([fnTool('shell_command'), fnTool('apply_patch'), fnTool('update_plan')], {
-        modelKey: 'gpt-5.5-medium', provider: 'openai', route: 'responses',
-      }),
-      true,
-      'codex CLI 0.128 default toolset (shell_command mapped, apply_patch / update_plan unmapped) must turn the bridge ON',
     );
   });
 
@@ -450,10 +447,10 @@ describe('CASCADE_STEP type constants — sanity', () => {
 // ─── v2.0.66 (#115) — partition mode + codex CLI mapping ──────────────
 
 describe('partitionTools — v2.0.66 mixed-mapping splitter', () => {
-  it('splits mapped vs unmapped on a real codex CLI 0.128 toolset', () => {
+  it('splits mapped vs unmapped on a real codex CLI 0.128 toolset (v2.0.70: web_search now mapped to search_web)', () => {
     // Captured live from `dump-codex-tools.mjs`: codex CLI 0.128 declares
-    // these 11 tools by default. Only shell_command has a clean cascade
-    // mapping; the rest stay on the emulation path.
+    // these 11 tools by default. v2.0.70 added `web_search` mapping
+    // (search_web step), so 2 tools are now mapped instead of 1.
     const codexTools = [
       'shell_command', 'update_plan', 'request_user_input',
       'apply_patch', 'web_search', 'view_image',
@@ -461,8 +458,9 @@ describe('partitionTools — v2.0.66 mixed-mapping splitter', () => {
     ].map(fnTool);
     const part = partitionTools(codexTools);
     assert.equal(part.hasAny, true);
-    assert.deepEqual(part.mapped.map(t => t.function.name), ['shell_command']);
-    assert.equal(part.unmapped.length, 10);
+    const mappedNames = part.mapped.map(t => t.function.name).sort();
+    assert.deepEqual(mappedNames, ['shell_command', 'web_search']);
+    assert.equal(part.unmapped.length, 9);
     assert.ok(part.unmapped.find(t => t.function.name === 'apply_patch'));
     assert.ok(part.unmapped.find(t => t.function.name === 'update_plan'));
   });

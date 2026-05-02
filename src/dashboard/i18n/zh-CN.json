@@ -80,6 +80,7 @@
     "reset": "重置",
     "clearPool": "清空对话池",
     "refresh": "刷新",
+    "runNow": "立即测试",
     "probe": "探测",
     "probeTitle": "探测能力",
     "enable": "启用",
@@ -257,6 +258,12 @@
       "desc": "所有账号本周配额都低于 5% 时，对 premium 模型（claude-opus / claude-sonnet 等）请求直接返 503，避免上游 rate-limit 烧最后一点配额。免费层模型（gemini-2.5-flash 等）保持可用。关闭后即使在 drought mode 也照常下发，accept 上游可能立即 429。",
       "enable": "启用 drought-mode premium 屏蔽",
       "hint": "默认开启。drought 状态由账号池自动判定（GET /dashboard/api/drought 看实时值）。"
+    },
+    "quietWindow": {
+      "title": "空档自动更新",
+      "desc": "每分钟看一次最近 5 分钟内的请求量，连续在阈值以下就自动 docker compose pull + recreate。冷启动 10 分钟内不动；成功后 24 小时冷却；失败不冷却。需要 /var/run/docker.sock 挂进容器（默认 docker-compose 已挂）。",
+      "enable": "启用空档自动更新",
+      "hint": "默认关闭。当前状态："
     },
     "skin": {
       "title": "界面风格",
@@ -833,6 +840,21 @@
     "success": "成功",
     "fail": "失败",
     "formatError": "第 {{line}} 行格式错误"
+  },
+
+  "quietWindow": {
+    "status": {
+      "disabled": "已关闭",
+      "coldStart": "冷启动 grace 中",
+      "cooldown": "冷却中",
+      "busy": "繁忙（请求多）",
+      "eligible": "空档·可触发"
+    },
+    "never": "从未",
+    "lastUpdate": "上次更新",
+    "loadFailed": "加载失败",
+    "triggered": "已触发",
+    "triggerFailed": "触发失败"
   },
 
   "toast": {

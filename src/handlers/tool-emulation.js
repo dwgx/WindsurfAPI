@@ -168,7 +168,16 @@ Rules:
     // particular tends to say "please paste the file" instead of calling
     // the function. Codex CLI (Responses API) caller path opts into this
     // dialect via pickToolDialect(_, _, route='responses') below.
-    gpt_native: `You have access to the following functions. They are real, callable tools — the caller will execute them and return results in the next turn.
+    // v2.0.70 (#115 anti-fabrication): the previous version (v2.0.62)
+    // told GPT not to refuse, but a real shell_command probe still
+    // produced `head="PROBE_NO_EMUL_1777749121"` — model didn't refuse
+    // outright, it FABRICATED a plausible epoch timestamp instead of
+    // calling the function. The new ruleset adds an explicit anti-
+    // fabrication rule (rule 4) that singles out timestamp/path/
+    // command-output guessing and forbids it. Rule 5 forces the model
+    // to call the function for ANY shell-style request, removing the
+    // "if the answer is short I'll just guess it" escape hatch.
+    gpt_native: `You have access to the following functions. They are REAL callable tools — the caller (a separate process on the user's actual machine) will execute them and return results in the next turn.
 
 To call a function, output ONE valid JSON object on a single line — starting with "{" and ending with "}". NO markdown code fence. NO prose before or after. NO leading commentary.
 
@@ -179,10 +188,12 @@ Rules:
 1. Output ONLY the JSON object. NO \`\`\`json fence. NO "Here you go:" prefix. NO trailing explanation.
 2. "arguments" must be a JSON object whose keys match the function's parameter schema.
 3. The functions ARE available. DO NOT respond with "I cannot read files", "I don't have direct access", "please paste the file", or any similar refusal — those phrases are forbidden. Call the function instead.
-4. After emitting one function_call JSON object, STOP generating immediately. The caller will run the function and feed the result back as a "tool" message.
-5. To call MULTIPLE functions in parallel, emit MULTIPLE JSON objects, one per line. Each line stands on its own.
-6. If — and only if — the user is plainly chatting (e.g. "hello", "thanks") and no function is relevant, respond with plain text. Never mix plain text with JSON in the same response.
-7. The function-call result will arrive as a normal user/tool turn; you can call additional functions on subsequent turns until the task is done.`,
+4. **NEVER FABRICATE OUTPUT.** Do NOT guess the result of a function call. Do NOT invent timestamps, file contents, command outputs, search results, or any other data that a function would have produced. If the user asks for the output of \`echo $(date +%s)\`, \`ls\`, \`cat README.md\`, or anything similar, you have NO way to know the answer — you MUST call the function. Hallucinated outputs are worse than refusing; the only correct response is the function_call JSON.
+5. If the user's request describes ANY action a function could perform — running a shell command, reading a file, searching the web, applying a patch — call that function. Do not "answer from memory" for these requests; memory cannot produce live data.
+6. After emitting one function_call JSON object, STOP generating immediately. The caller will run the function and feed the result back as a "tool" message.
+7. To call MULTIPLE functions in parallel, emit MULTIPLE JSON objects, one per line. Each line stands on its own.
+8. If — and only if — the user is plainly chatting (e.g. "hello", "thanks", "explain X concept") and no function is relevant, respond with plain text. Never mix plain text with JSON in the same response.
+9. The function-call result will arrive as a normal user/tool turn; you can call additional functions on subsequent turns until the task is done.`,
   };
   return headers[dialect] || headers.openai_json_xml;
 }

@@ -2238,6 +2238,29 @@ window._firebaseOAuth = async function(provider) {
         </div>
       </div>
     </div>
+    <!-- v2.0.70 (#112 follow-up): quiet-window auto-update toggle. -->
+    <div class="section" style="margin-top:24px">
+      <div class="section-header">
+        <div class="section-title" data-i18n="section.quietWindow.title">空档自动更新</div>
+      </div>
+      <div class="section-body">
+        <div class="section-desc" style="margin-bottom:12px" data-i18n="section.quietWindow.desc">每分钟看一次最近 5 分钟内的请求量，连续在阈值以下就自动 docker compose pull + recreate。冷启动 10 分钟内不动；成功后 24 小时冷却；失败不冷却。需要 /var/run/docker.sock 挂进容器（默认 docker-compose 已挂）。</div>
+        <div style="display:flex;align-items:center;gap:16px;padding:12px;background:var(--surface-2);border-radius:var(--radius)">
+          <label class="switch">
+            <input type="checkbox" id="exp-quiet-window" onchange="App.toggleExperimental('autoUpdateQuietWindow', this.checked)">
+            <span class="switch-slider"></span>
+          </label>
+          <div>
+            <div style="font-weight:500" data-i18n="section.quietWindow.enable">启用空档自动更新</div>
+            <div class="text-sm text-muted" data-i18n="section.quietWindow.hint">默认关闭。当前状态：<span id="quiet-window-status">加载中…</span></div>
+          </div>
+          <div style="margin-left:auto;display:flex;gap:8px">
+            <button class="btn btn-ghost btn-sm" onclick="App.loadQuietWindowStatus()" data-i18n="action.refresh">刷新</button>
+            <button class="btn btn-outline btn-sm" onclick="App.runQuietWindowNow()" data-i18n="action.runNow">立即测试</button>
+          </div>
+        </div>
+      </div>
+    </div>
     <div class="section" style="margin-top:24px">
       <div class="section-header">
         <div>
@@ -5284,6 +5307,10 @@ docker compose up -d --force-recreate</pre>
     // v2.0.58 — drought-mode premium gate toggle.
     const cbDrought = document.getElementById('exp-drought-restrict');
     if (cbDrought) cbDrought.checked = !!d.flags?.droughtRestrictPremium;
+    // v2.0.70 (#112 follow-up) — quiet-window auto-update toggle.
+    const cbQw = document.getElementById('exp-quiet-window');
+    if (cbQw) cbQw.checked = !!d.flags?.autoUpdateQuietWindow;
+    this.loadQuietWindowStatus();
     // Reflect current skin cookie in the dropdown so reload state is visible.
     const skinSel = document.getElementById('skin-select');
     if (skinSel) {
@@ -5391,6 +5418,43 @@ docker compose up -d --force-recreate</pre>
     } catch (e) {
       this.toast(I18n.t('toast.toggleFailed', { error: e.message }), 'error');
       this.loadExperimental();
+    }
+  },
+
+  // v2.0.70 (#112 follow-up) — quiet-window status panel + manual run.
+  async loadQuietWindowStatus() {
+    const el = document.getElementById('quiet-window-status');
+    if (!el) return;
+    try {
+      const r = await this.api('GET', '/auto-update/quiet-window');
+      const reason = r.decision?.reason || 'unknown';
+      const labelKey = ({
+        disabled: 'quietWindow.status.disabled',
+        'cold-start': 'quietWindow.status.coldStart',
+        cooldown: 'quietWindow.status.cooldown',
+        busy: 'quietWindow.status.busy',
+        eligible: 'quietWindow.status.eligible',
+      })[reason];
+      const label = labelKey ? I18n.t(labelKey) : reason;
+      const ring = r.ringSize || 0;
+      const last = r.lastUpdateAt
+        ? new Date(r.lastUpdateAt).toLocaleString()
+        : I18n.t('quietWindow.never');
+      el.textContent = `${label} - ring=${ring} - ${I18n.t('quietWindow.lastUpdate')} ${last}`;
+    } catch (e) {
+      el.textContent = `${I18n.t('quietWindow.loadFailed')}: ${e.message}`;
+    }
+  },
+
+  async runQuietWindowNow() {
+    try {
+      const r = await this.api('POST', '/auto-update/quiet-window/run', {});
+      const reason = r.result?.reason || 'unknown';
+      const triggered = r.result?.result?.ok ? ` - ${I18n.t('quietWindow.triggered')}` : '';
+      this.toast(`tick reason=${reason}${triggered}`, 'info');
+      this.loadQuietWindowStatus();
+    } catch (e) {
+      this.toast(`${I18n.t('quietWindow.triggerFailed')}: ${e.message}`, 'error');
     }
   },
 

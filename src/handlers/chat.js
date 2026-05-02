@@ -2377,6 +2377,39 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
         }
         hadSuccess = true;
 
+        // v2.0.70 — cascade native trajectory tool_call streamed live.
+        // Translate the raw cascade kind name (run_command / view_file)
+        // back into the caller's OpenAI tool name via callerLookup, then
+        // emit as a tool_call delta. Old behaviour batched these at
+        // turn end (release notes for v2.0.65 documented the gap).
+        if (nativeBridgeOn && chunk.nativeToolCall) {
+          const raw = chunk.nativeToolCall;
+          const lookup = nativeOpts?.callerLookup || new Map();
+          const candidates = lookup.get(raw.name) || [];
+          const callerName = candidates[0];
+          if (callerName) {
+            const reverseFn = TOOL_MAP[callerName]?.reverse;
+            let cascadeArgs;
+            try { cascadeArgs = JSON.parse(raw.argumentsJson || '{}'); } catch { cascadeArgs = {}; }
+            let openaiArgs;
+            try { openaiArgs = reverseFn ? reverseFn(cascadeArgs) : cascadeArgs; }
+            catch { openaiArgs = cascadeArgs; }
+            const candidate = {
+              id: raw.id || `call_${collectedToolCalls.length}_${Date.now().toString(36)}`,
+              name: callerName,
+              argumentsJson: JSON.stringify(openaiArgs ?? {}),
+            };
+            const filtered = filterToolCallsByAllowlist([candidate], declaredTools);
+            if (filtered.length) {
+              const tc = sanitizeToolCall(repairToolCallArguments(filtered[0], messages));
+              const idx = collectedToolCalls.length;
+              collectedToolCalls.push(tc);
+              emitToolCallDelta(tc, idx);
+            }
+          }
+          return;
+        }
+
         if (chunk.text) {
           // Pipeline for text deltas:
           //   raw chunk  →  ToolCallStreamParser (strip <tool_call> blocks)
@@ -2606,7 +2639,13 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
             // tool_calls turn instead of fully-streamed deltas. That's a
             // known gap; trades streaming-grain for shipping a working
             // bridge first.
-            if (nativeBridgeOn && cascadeResult?.toolCalls?.length) {
+            // v2.0.70 — onChunk now emits cascade native tool_calls
+            // mid-stream (see "Cascade native trajectory tool_call
+            // streamed live" branch above). The batch path here only
+            // catches the tail case where collectedToolCalls is still
+            // empty after stream end (e.g. final-sweep step came late);
+            // dedupe by id so we never emit a tool_call twice.
+            if (nativeBridgeOn && cascadeResult?.toolCalls?.length && collectedToolCalls.length === 0) {
               const lookup = nativeOpts?.callerLookup || new Map();
               const nativeRaw = [];
               for (const raw of cascadeResult.toolCalls) {

@@ -443,11 +443,29 @@ function buildCascadeConfig(modelEnum, modelUid, { toolPreamble, forceDefault, n
     // (field 12, OVERRIDE). Always rendered, even in NO_TOOL planner mode.
     const sp = getSystemPrompts();
     const reinforcement = '\n\n' + sp.toolReinforcement;
+    const fullSection = toolPreamble + reinforcement;
     const additionalSection = Buffer.concat([
       writeVarintField(1, 1),             // SECTION_OVERRIDE_MODE_OVERRIDE
-      writeStringField(2, toolPreamble + reinforcement),
+      writeStringField(2, fullSection),
     ]);
     convParts.push(writeMessageField(12, additionalSection));
+    // v2.0.70 — diagnostic dump for #115 root-cause work. When
+    // WINDSURFAPI_DUMP_SYSTEM_PROMPT=1, write the EXACT additional_
+    // instructions_section payload to a per-LS-port file under /tmp so
+    // we can inspect what GPT actually sees when partition mode +
+    // emulation toolPreamble are in play. Only first 4KB to keep the
+    // file tail-able.
+    if (process.env.WINDSURFAPI_DUMP_SYSTEM_PROMPT === '1') {
+      try {
+        // Lazy-import fs to avoid pulling it into hot paths when off.
+        // eslint-disable-next-line no-undef
+        import('fs').then(fs => {
+          const ts = new Date().toISOString().replace(/[:.]/g, '-');
+          const path = `/tmp/windsurf-sp-dump-${ts}.txt`;
+          fs.writeFileSync(path, fullSection.slice(0, 4096) + '\n--- end ---\n');
+        }).catch(() => {});
+      } catch {}
+    }
 
     // field 13 (communication_section): minimal override.
     // DO NOT include any identity manipulation instructions here — Cascade's

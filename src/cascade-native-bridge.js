@@ -60,6 +60,8 @@ export const CASCADE_STEP = {
   read_url_content:{ typeEnum: 40,  oneofField: 40  },
   grep_search:     { typeEnum: 13,  oneofField: 13  },
   grep_search_v2:  { typeEnum: 105, oneofField: 105 },
+  // v2.0.70 — search_web (CortexStepSearchWeb proto field 42).
+  search_web:      { typeEnum: 42,  oneofField: 42  },
 };
 
 // CortexStepStatus — used for the step.status field (CortexTrajectoryStep
@@ -215,6 +217,97 @@ function reverseListDirArgs(cascade) {
 // ── identity (when caller already speaks cascade vocabulary) ───
 function identityArgs(x) { return { ...x }; }
 
+// ── Edit / MultiEdit ↔ propose_code (v2.0.70) ──────────────────
+// Claude Code's Edit tool: { file_path, old_string, new_string,
+//   replace_all? }. MultiEdit: { file_path, edits: [{old_string,
+//   new_string}, ...] }. Both map onto cascade's ActionSpecCommand
+// (field 1 of ActionSpec, which is field 1 of CortexStepProposeCode).
+//
+// ActionSpecCommand.replacement_chunks is a repeated ReplacementChunk
+// { target_content=1, replacement_content=2, allow_multiple=3 }.
+//
+// We forward to a lightweight intermediate dict (cascade-side keys)
+// so build_propose_code_body can pull them and serialise to proto.
+// MultiEdit collapses into one ActionSpecCommand with multiple chunks.
+function forwardClaudeEditArgs(args) {
+  const file_path = args.file_path || args.path || '';
+  const chunks = [];
+  if (Array.isArray(args.edits)) {
+    for (const e of args.edits) {
+      chunks.push({
+        target: typeof e?.old_string === 'string' ? e.old_string : '',
+        replacement: typeof e?.new_string === 'string' ? e.new_string : '',
+        allow_multiple: !!e?.replace_all,
+      });
+    }
+  } else {
+    chunks.push({
+      target: typeof args.old_string === 'string' ? args.old_string : '',
+      replacement: typeof args.new_string === 'string' ? args.new_string : '',
+      allow_multiple: !!args.replace_all,
+    });
+  }
+  return { target_file_uri: buildFileUri(file_path), replacement_chunks: chunks, instruction: '' };
+}
+function reverseClaudeEditArgs(cascade) {
+  if (cascade && typeof cascade.__raw_edit === 'string') return safeJsonParse(cascade.__raw_edit);
+  const file_path = stripFileUri(cascade.target_file_uri || '');
+  const chunks = Array.isArray(cascade.replacement_chunks) ? cascade.replacement_chunks : [];
+  if (chunks.length <= 1) {
+    const c = chunks[0] || {};
+    return {
+      file_path,
+      old_string: c.target || '',
+      new_string: c.replacement || '',
+      ...(c.allow_multiple ? { replace_all: true } : {}),
+    };
+  }
+  return {
+    file_path,
+    edits: chunks.map(c => ({
+      old_string: c.target || '',
+      new_string: c.replacement || '',
+      ...(c.allow_multiple ? { replace_all: true } : {}),
+    })),
+  };
+}
+
+// ── web_search ↔ search_web (v2.0.70) ─────────────────────────
+// CortexStepSearchWeb { query=1, domain=3, web_documents=2, ... }
+// Caller's `web_search` declares { query, domains? }. domains[] ≥ 1
+// → we pick the first (cascade only takes a single `domain` string).
+function forwardWebSearchArgs(args) {
+  return {
+    query: args.query || args.q || '',
+    domain: Array.isArray(args.domains) && args.domains.length ? args.domains[0] : (args.domain || ''),
+  };
+}
+function reverseWebSearchArgs(cascade) {
+  return {
+    query: cascade.query || '',
+    ...(cascade.domain ? { domains: [cascade.domain] } : {}),
+  };
+}
+
+// ── apply_patch ↔ write_to_file (single-file fan-out, v2.0.70) ──
+// codex CLI's `apply_patch` ships a multi-file patch in a custom
+// grammar. Full fan-out (parsing the patch and emitting one
+// write_to_file per file) is outside the scope of a single-step
+// translator — the cascade trajectory expects the proxy to fan out
+// at message-build time. For now reverse maps `__raw_apply_patch` so
+// the caller's tool_call round-trips, and forward refuses (returns
+// null) so partition mode falls back to emulation for this tool. The
+// caller still gets a working apply_patch via emulation toolPreamble.
+function forwardApplyPatchArgs(args) {
+  // Sentinel that build_step_body recognises and skips (returns null
+  // buffer, partition treats as unmapped).
+  return { __apply_patch_unmappable: true, raw: typeof args === 'string' ? args : (args.input || JSON.stringify(args || {})) };
+}
+function reverseApplyPatchArgs(cascade) {
+  if (cascade && typeof cascade.raw === 'string') return { input: cascade.raw };
+  return cascade || {};
+}
+
 // ─── OpenAI tool name → cascade kind table ──────────────────────────
 //
 // Keys are the EXACT tool name the caller declares in tools[].function.name.
@@ -223,13 +316,18 @@ function identityArgs(x) { return { ...x }; }
 
 export const TOOL_MAP = {
   // Claude Code
-  Read:       { kind: 'view_file',      forward: forwardReadArgs,     reverse: reverseReadArgs },
-  Bash:       { kind: 'run_command',    forward: forwardBashArgs,     reverse: reverseBashArgs },
-  Glob:       { kind: 'find',           forward: forwardGlobArgs,     reverse: reverseGlobArgs },
-  Grep:       { kind: 'grep_search_v2', forward: forwardGrepArgs,     reverse: reverseGrepArgs },
-  Write:      { kind: 'write_to_file',  forward: forwardWriteArgs,    reverse: reverseWriteArgs },
-  Edit:       { kind: 'propose_code',   forward: forwardEditArgs,     reverse: reverseEditArgs },
-  MultiEdit:  { kind: 'propose_code',   forward: forwardEditArgs,     reverse: reverseEditArgs },
+  Read:       { kind: 'view_file',      forward: forwardReadArgs,         reverse: reverseReadArgs },
+  Bash:       { kind: 'run_command',    forward: forwardBashArgs,         reverse: reverseBashArgs },
+  Glob:       { kind: 'find',           forward: forwardGlobArgs,         reverse: reverseGlobArgs },
+  Grep:       { kind: 'grep_search_v2', forward: forwardGrepArgs,         reverse: reverseGrepArgs },
+  Write:      { kind: 'write_to_file',  forward: forwardWriteArgs,        reverse: reverseWriteArgs },
+  // v2.0.70: Edit/MultiEdit really map to cascade propose_code with
+  // ReplacementChunks now. Old pass-through (forwardEditArgs) kept as
+  // fallback for the rare case the cascade body builder rejects the
+  // chunk shape (claude code emits a tool_call with no old_string).
+  Edit:       { kind: 'propose_code',   forward: forwardClaudeEditArgs,   reverse: reverseClaudeEditArgs },
+  MultiEdit:  { kind: 'propose_code',   forward: forwardClaudeEditArgs,   reverse: reverseClaudeEditArgs },
+  WebSearch:  { kind: 'search_web',     forward: forwardWebSearchArgs,    reverse: reverseWebSearchArgs },
 
   // Codex CLI (already speaks cascade-ish vocabulary)
   view_file:       { kind: 'view_file',      forward: identityArgs, reverse: identityArgs },
@@ -258,6 +356,10 @@ export const TOOL_MAP = {
   // is multi-file patches, write_to_file is single-target; web_search ≠
   // read_url_content), so they'd produce garbage cascade steps.
   shell_command:   { kind: 'run_command',    forward: forwardCodexShellArgs, reverse: reverseCodexShellArgs },
+  // v2.0.70 — codex `web_search` maps to cascade search_web. codex
+  // declares it as type:'web_search' but responses.js flattens to
+  // function/web_search before it reaches this map.
+  web_search:      { kind: 'search_web',     forward: forwardWebSearchArgs,  reverse: reverseWebSearchArgs },
 };
 
 // Edit / MultiEdit translate to propose_code. ActionSpec / ActionResult are
@@ -457,6 +559,63 @@ function buildWriteToFileBody(args) {
   return Buffer.concat(parts);
 }
 
+// v2.0.70 — propose_code (CortexStepProposeCode = field 32 oneof).
+// Body schema:
+//   ActionSpec action_spec       = 1   message
+//   ActionResult action_result   = 2   message
+//   string code_instruction      = 3
+//   string markdown_language     = 4
+//
+// ActionSpec.command = 1 → ActionSpecCommand:
+//   string instruction              = 1
+//   repeated ReplacementChunk chunks = 9
+//   bool is_edit                     = 2
+//   oneof target → file = 4 (PathScopeItem) using absolute_uri = 5
+//
+// ReplacementChunk:
+//   string target_content      = 1
+//   string replacement_content = 2
+//   bool allow_multiple        = 3
+function buildProposeCodeBody(args) {
+  const parts = [];
+  // action_spec.command(1).{...}
+  const cmdParts = [];
+  if (args.instruction) cmdParts.push(writeStringField(1, args.instruction));
+  cmdParts.push(writeBoolField(2, true)); // is_edit
+  if (Array.isArray(args.replacement_chunks)) {
+    for (const c of args.replacement_chunks) {
+      const chunkParts = [];
+      if (typeof c.target === 'string') chunkParts.push(writeStringField(1, c.target));
+      if (typeof c.replacement === 'string') chunkParts.push(writeStringField(2, c.replacement));
+      if (c.allow_multiple) chunkParts.push(writeBoolField(3, true));
+      cmdParts.push(writeMessageField(9, Buffer.concat(chunkParts)));
+    }
+  }
+  if (args.target_file_uri) {
+    // PathScopeItem { absolute_uri = 5 }
+    const psi = writeStringField(5, args.target_file_uri);
+    cmdParts.push(writeMessageField(4, psi)); // ActionSpecCommand.target.file = 4
+  }
+  const command = Buffer.concat(cmdParts);
+  // ActionSpec.command oneof at field 1
+  const actionSpec = writeMessageField(1, command);
+  parts.push(writeMessageField(1, actionSpec)); // CortexStepProposeCode.action_spec = 1
+  if (args.instruction) parts.push(writeStringField(3, args.instruction));
+  return Buffer.concat(parts);
+}
+
+// v2.0.70 — search_web (CortexStepSearchWeb = field 42 oneof).
+//   query  = 1 string
+//   domain = 3 string
+//   summary = 5 string  (server-filled; we mirror it on observation injection)
+function buildSearchWebBody(args) {
+  const parts = [];
+  if (args.query) parts.push(writeStringField(1, args.query));
+  if (args.domain) parts.push(writeStringField(3, args.domain));
+  if (typeof args.summary === 'string') parts.push(writeStringField(5, args.summary));
+  return Buffer.concat(parts);
+}
+
 const STEP_BODY_BUILDER = {
   view_file:       buildViewFileBody,
   run_command:     buildRunCommandBody,
@@ -465,10 +624,9 @@ const STEP_BODY_BUILDER = {
   find:            buildFindBody,
   list_directory:  buildListDirectoryBody,
   write_to_file:   buildWriteToFileBody,
-  // propose_code is intentionally NOT registered — Edit currently goes
-  // through emulation fallback even when bridge is on. Adding propose_code
-  // requires shipping ActionSpec / ActionResult / DiffBlock encoders, which
-  // is its own scope.
+  // v2.0.70 — propose_code + search_web encoders shipped.
+  propose_code:    buildProposeCodeBody,
+  search_web:      buildSearchWebBody,
 };
 
 /**
@@ -584,6 +742,47 @@ function decodeWriteToFileStep(buf) {
   };
 }
 
+// v2.0.70 — decode propose_code: pull file_uri + replacement_chunks
+// out of nested ActionSpec.command for round-trip back to Edit args.
+function decodeProposeCodeStep(buf) {
+  const f = parseFields(buf);
+  const actionSpec = getField(f, 1, 2);
+  const out = { target_file_uri: '', replacement_chunks: [], instruction: '' };
+  if (!actionSpec) return out;
+  const asFields = parseFields(actionSpec.value);
+  const command = getField(asFields, 1, 2);
+  if (!command) return out;
+  const cmdFields = parseFields(command.value);
+  const instr = getField(cmdFields, 1, 2);
+  if (instr) out.instruction = instr.value.toString('utf8');
+  const fileTarget = getField(cmdFields, 4, 2);
+  if (fileTarget) {
+    const psi = parseFields(fileTarget.value);
+    const uri = getField(psi, 5, 2)?.value?.toString('utf8')
+             || getField(psi, 1, 2)?.value?.toString('utf8') || '';
+    out.target_file_uri = uri;
+  }
+  for (const chunkField of getAllFields(cmdFields, 9)) {
+    if (chunkField.wireType !== 2) continue;
+    const cp = parseFields(chunkField.value);
+    out.replacement_chunks.push({
+      target: getField(cp, 1, 2)?.value?.toString('utf8') || '',
+      replacement: getField(cp, 2, 2)?.value?.toString('utf8') || '',
+      allow_multiple: !!getField(cp, 3, 0)?.value,
+    });
+  }
+  return out;
+}
+
+function decodeSearchWebStep(buf) {
+  const f = parseFields(buf);
+  return {
+    query: getField(f, 1, 2)?.value?.toString('utf8') || '',
+    domain: getField(f, 3, 2)?.value?.toString('utf8') || '',
+    summary: getField(f, 5, 2)?.value?.toString('utf8') || '',
+  };
+}
+
 const STEP_BODY_DECODER = {
   view_file:       decodeViewFileStep,
   run_command:     decodeRunCommandStep,
@@ -592,6 +791,10 @@ const STEP_BODY_DECODER = {
   find:            decodeFindStep,
   list_directory:  decodeListDirectoryStep,
   write_to_file:   decodeWriteToFileStep,
+  // v2.0.70 — propose_code / search_web decoders for trajectory→tool_call
+  // reverse mapping.
+  propose_code:    decodeProposeCodeStep,
+  search_web:      decodeSearchWebStep,
 };
 
 /**
@@ -692,6 +895,11 @@ export function buildAdditionalStepsFromHistory(messages) {
       let cascadeArgs;
       try { cascadeArgs = entry.forward(args); } catch { continue; }
       const observation = toolResultById.get(tc.id);
+      // v2.0.70 — apply_patch returns a sentinel from forward()
+      // because we can't lossless-encode multi-file patches into a
+      // single cascade step. Skip and let partition fallback to
+      // emulation toolPreamble.
+      if (cascadeArgs?.__apply_patch_unmappable) continue;
       if (typeof observation === 'string') {
         // Overlay the result onto the cascade step's "this is what came
         // back" field. Per-kind because the result field varies:
@@ -701,6 +909,9 @@ export function buildAdditionalStepsFromHistory(messages) {
         //   find            → raw_output (11)
         //   list_directory  → children (2, repeated)
         //   write_to_file   → file_created (4) ← bool, ignore content
+        //   search_web      → summary (5)
+        //   propose_code    → no native result field (proxy passes back
+        //                    through emulation toolPreamble result text)
         if (entry.kind === 'view_file') cascadeArgs.content = observation;
         else if (entry.kind === 'run_command') {
           cascadeArgs.full_output = observation;
@@ -715,6 +926,8 @@ export function buildAdditionalStepsFromHistory(messages) {
             .split(/\r?\n/)
             .map(s => s.trim())
             .filter(Boolean);
+        } else if (entry.kind === 'search_web') {
+          cascadeArgs.summary = observation;
         }
       }
       const buf = buildAdditionalStep(entry.kind, cascadeArgs);
@@ -737,6 +950,19 @@ export function buildAdditionalStepsFromHistory(messages) {
  * production. With partition mode, mapped tools route through
  * trajectory-step injection while unmapped tools keep the emulation
  * toolPreamble path; both coexist in the same request.
+ *
+ * v2.0.70 (#115 root-cause fix): GPT family is REMOVED from auto-on. Real
+ * end-to-end probe on v2.0.69 with a single shell_command tool + GPT-5.5
+ * showed `markers=none / 0 tool_calls` and the model fabricated a fake
+ * timestamp output — cascade DEFAULT planner_mode describes
+ * `run_command` using cascade's internal trajectory grammar, which
+ * GPT's training has never seen, so GPT knows the tool exists but
+ * doesn't know how to emit a call → hallucinates instead. The auto-on
+ * heuristic is now `provider === 'anthropic'` (Claude 4.x natively
+ * speaks cascade-style tool_use and benefits from native trajectory
+ * injection); GPT/Codex routes back to the existing NO_TOOL emulation
+ * path with the gpt_native bare-JSON dialect, which is the protocol
+ * GPT actually understands.
  */
 export function shouldUseNativeBridge(tools, { modelKey = '', provider = '', route = '' } = {}) {
   if (process.env.WINDSURFAPI_NATIVE_TOOL_BRIDGE_OFF === '1') return false;
@@ -744,12 +970,12 @@ export function shouldUseNativeBridge(tools, { modelKey = '', provider = '', rou
   const part = partitionTools(tools);
   if (!part.hasAny) return false;
   if (explicitOn) return true;
-  // Auto-on: GPT family on Codex CLI / Responses route. That's the only
-  // path where v2.0.64 emulation reliably fails (markers=none). Keep
-  // Claude / Gemini on emulation — they already work and switching would
-  // be a regression vector.
-  const isGpt = String(provider).toLowerCase() === 'openai'
-    || /^(?:gpt-|o3|o4)/i.test(String(modelKey).toLowerCase());
-  if (isGpt && route === 'responses') return true;
+  // v2.0.70 — Anthropic Claude family auto-on (cascade-native function-
+  // calling matches their training); GPT family auto-OFF (use emulation
+  // + gpt_native dialect instead, end-to-end probe showed cascade-style
+  // grammar makes GPT fabricate).
+  const isClaude = String(provider).toLowerCase() === 'anthropic'
+    || /^claude-/i.test(String(modelKey).toLowerCase());
+  if (isClaude) return true;
   return false;
 }
