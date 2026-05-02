@@ -41,7 +41,25 @@ function proxyKey(proxy) {
   // special character that could slip past execSync's naive quoting.
   const safeHost = proxy.host.replace(/[^a-zA-Z0-9]/g, '_');
   const safePort = String(proxy.port || 8080).replace(/[^0-9]/g, '');
-  return `px_${safeHost}_${safePort}`;
+  let key = `px_${safeHost}_${safePort}`;
+  // v2.0.68 (#119 CharwinYAO): sticky-IP proxy services (ipwo, lunaproxy,
+  // smartproxy, etc.) embed a per-IP session id inside the username
+  // (`username_sid_xxx:password@us.ipwo.net:port`). Default behaviour
+  // pools all those sticky sessions onto a single LS instance because
+  // host:port is identical, so 5+ accounts behind different sticky IPs
+  // share one LS sessionId / one Windsurf machine fingerprint and trip
+  // upstream's 30-min rate limit even though each egress IP is different.
+  // Opting in via WINDSURFAPI_LS_PER_PROXY_USER=1 segregates by username
+  // so each sticky session gets its own LS process + sessionId at the
+  // cost of higher memory footprint (one LS per concurrent sticky user).
+  if (process.env.WINDSURFAPI_LS_PER_PROXY_USER === '1' && proxy.username) {
+    // Cap user portion at 32 chars to keep filesystem paths sane on
+    // Windows where MAX_PATH still bites; sticky session ids are
+    // typically <16 chars anyway.
+    const safeUser = String(proxy.username).replace(/[^a-zA-Z0-9]/g, '_').slice(0, 32);
+    if (safeUser) key += `_u${safeUser}`;
+  }
+  return key;
 }
 
 function dataDirForKey(key) {

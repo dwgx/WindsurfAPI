@@ -305,8 +305,25 @@ const ANTHROPIC_DATED = {
   'claude-opus-4-1-20250805':   'claude-4.1-opus',
   'claude-sonnet-4-5':          'claude-4.5-sonnet',
   'claude-sonnet-4-5-20250929': 'claude-4.5-sonnet',
+  'claude-sonnet-4-5-latest':   'claude-4.5-sonnet',
   'claude-opus-4-5':            'claude-4.5-opus',
   'claude-opus-4-5-20251101':   'claude-4.5-opus',
+  'claude-opus-4-5-latest':     'claude-4.5-opus',
+  // Claude Haiku 4.5 — Anthropic official id `claude-haiku-4-5-20251001`
+  // (#117 xiaoxin-zk: dashboard test sent the dated form, hit
+  // "Unsupported model" 400 because no alias existed). Cover the dated
+  // name + bare + latest the same way sonnet/opus already are.
+  'claude-haiku-4-5':           'claude-4.5-haiku',
+  'claude-haiku-4-5-20251001':  'claude-4.5-haiku',
+  'claude-haiku-4-5-latest':    'claude-4.5-haiku',
+  // Legacy Haiku dated names — Anthropic SDK clients sometimes still
+  // ship these. Map to the closest live model (4.5-haiku) so the request
+  // doesn't 400; the `deprecated` flag isn't set on 4.5-haiku so it
+  // routes normally.
+  'claude-3-5-haiku-20241022':  'claude-4.5-haiku',
+  'claude-3-5-haiku-latest':    'claude-4.5-haiku',
+  'claude-haiku-3-5':           'claude-4.5-haiku',
+  'claude-haiku-3-5-latest':    'claude-4.5-haiku',
 
   // Anthropic Opus 4.7 — Windsurf changelog 2026-04-16. Cloud now exposes 4 reasoning
   // tiers (low/medium/high/xhigh) plus matching -thinking variants. Bare `claude-opus-4-7`

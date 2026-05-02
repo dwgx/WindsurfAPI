@@ -341,8 +341,18 @@ function buildAnthropicUsage(usage) {
         ephemeral_1h_input_tokens: usage.cache_creation.ephemeral_1h_input_tokens || 0,
       }
     : { ephemeral_5m_input_tokens: cacheCreationFlat, ephemeral_1h_input_tokens: 0 };
+  // v2.0.68 (#118): Anthropic semantics for input_tokens DIFFER from OpenAI.
+  // OpenAI: prompt_tokens = freshInput + cacheRead (cached_tokens is a subset).
+  // Anthropic: input_tokens = freshInput ONLY; cache_read_input_tokens and
+  //            cache_creation_input_tokens are siblings (mutually exclusive).
+  // The OpenAI prompt_tokens we receive here already follows the OpenAI
+  // convention (chat.js buildUsageBody puts freshInput+cacheRead in
+  // prompt_tokens). To get Anthropic's freshInput we subtract the cached
+  // subset. Negative values clamp to 0 (defensive against upstream skew).
+  const promptTotal = usage.prompt_tokens ?? usage.input_tokens ?? 0;
+  const freshInput = Math.max(0, promptTotal - cacheRead);
   return {
-    input_tokens: usage.prompt_tokens || usage.input_tokens || 0,
+    input_tokens: freshInput,
     output_tokens: usage.completion_tokens || usage.output_tokens || 0,
     cache_creation_input_tokens: cacheCreationFlat,
     cache_read_input_tokens: cacheRead,

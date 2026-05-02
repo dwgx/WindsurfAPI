@@ -985,13 +985,23 @@ export function applyToolPreambleBudget(tools, toolChoice, callerEnv = '', opts 
  *
  * The Cascade backend reports usage as {inputTokens, outputTokens,
  * cacheReadTokens, cacheWriteTokens}. We map them onto the OpenAI shape:
- *   prompt_tokens     = inputTokens + cacheReadTokens + cacheWriteTokens
- *                       (total input tokens the model processed, whether fresh,
- *                       cache-read, or cache-written — matches the OpenAI
- *                       convention where prompt_tokens is the grand total)
+ *   prompt_tokens     = inputTokens + cacheReadTokens
+ *                       (input the model saw this turn = fresh-input + cache-hit;
+ *                       cacheReadTokens is a SUBSET of prompt_tokens per OpenAI's
+ *                       cached_tokens spec, not an addition)
  *   completion_tokens = outputTokens
  *   prompt_tokens_details.cached_tokens       = cacheReadTokens
  *   cache_creation_input_tokens (Anthropic ext) = cacheWriteTokens
+ *
+ * v2.0.68 (#118 wnfilm): cacheWriteTokens is generation-side cache-write
+ * cost, NOT input the model processed — it used to land in prompt_tokens
+ * which made downstream billing relays (one-api / new-api / sub2api) bill
+ * cache-write as if it were normal prompt tokens, blowing through trial
+ * quotas in hours. cacheWriteTokens now ships only as the dedicated
+ * `cache_creation_input_tokens` field (Anthropic extension already
+ * supported by every modern relay). Total tokens still include it via
+ * grand-total summation so cost reports stay accurate, but per-bucket
+ * accounting matches OpenAI / Anthropic semantics.
  */
 // Anthropic prompt-caching ttl='1h' markers should keep the cascade
 // pool entry alive past its 30-minute default. 90 minutes = 1h cache
@@ -1003,13 +1013,25 @@ function ttlHintFromCachePolicy(cachePolicy) {
   return 90 * 60 * 1000;
 }
 
-function buildUsageBody(serverUsage, messages, completionText, thinkingText = '', cachePolicy = null) {
+export function buildUsageBody(serverUsage, messages, completionText, thinkingText = '', cachePolicy = null) {
   if (serverUsage && (serverUsage.inputTokens || serverUsage.outputTokens)) {
     const inputTokens = serverUsage.inputTokens || 0;
     const outputTokens = serverUsage.outputTokens || 0;
     const cacheRead = serverUsage.cacheReadTokens || 0;
     const cacheWrite = serverUsage.cacheWriteTokens || 0;
-    const promptTotal = inputTokens + cacheRead + cacheWrite;
+    // OpenAI semantics: prompt_tokens = total input the model saw this turn,
+    // cached_tokens is a SUBSET of prompt_tokens that came from cache. So
+    // prompt_tokens = freshInput + cacheRead. cacheWrite is generation-side
+    // (the model wrote new content into cache for later reuse) and ships
+    // separately on cache_creation_input_tokens, not bundled into
+    // prompt_tokens. v2.0.68 (#118) — earlier code added cacheWrite to
+    // prompt_tokens which blew up downstream billing relays.
+    const promptTokens = inputTokens + cacheRead;
+    // Grand total includes cache-write so per-account cost accounting
+    // (auth.js usage tally, dashboard charts) still reflects the full
+    // cascade-side cost — only the per-bucket fields follow strict
+    // OpenAI/Anthropic semantics.
+    const totalTokens = promptTokens + outputTokens + cacheWrite;
     // Anthropic prompt-caching split: when the client tagged any block
     // with ttl='1h' the creation tokens go to ephemeral_1h, otherwise to
     // ephemeral_5m. Cascade doesn't separate the pools so we can't
@@ -1021,16 +1043,26 @@ function buildUsageBody(serverUsage, messages, completionText, thinkingText = ''
       ephemeral_1h_input_tokens: cachePolicy?.has1h ? cacheWrite : 0,
     };
     return {
-      prompt_tokens: promptTotal,
+      prompt_tokens: promptTokens,
       completion_tokens: outputTokens,
-      total_tokens: promptTotal + outputTokens,
-      input_tokens: promptTotal,
+      total_tokens: totalTokens,
+      // OpenAI's `input_tokens` legacy field == prompt_tokens; same shape.
+      input_tokens: promptTokens,
       output_tokens: outputTokens,
       prompt_tokens_details: { cached_tokens: cacheRead },
       completion_tokens_details: { reasoning_tokens: 0 },
       cache_creation_input_tokens: cacheWrite,
       cache_read_input_tokens: cacheRead,
       cache_creation: cacheCreationSplit,
+      // Verbose breakdown for dashboards / billing relays that want the
+      // raw cascade numbers without recombining. Non-standard fields are
+      // ignored by spec-strict consumers.
+      cascade_breakdown: {
+        fresh_input_tokens: inputTokens,
+        cache_read_tokens: cacheRead,
+        cache_write_tokens: cacheWrite,
+        output_tokens: outputTokens,
+      },
     };
   }
   const prompt = estimateTokens(messages);
