@@ -24,7 +24,7 @@ import {
   buildSchemaCompactToolPreambleForProto, buildSkinnyToolPreambleForProto,
 } from './tool-emulation.js';
 import {
-  shouldUseNativeBridge, canMapAllTools, buildReverseLookup,
+  shouldUseNativeBridge, canMapAllTools, partitionTools, buildReverseLookup,
   buildAdditionalStepsFromHistory, TOOL_MAP,
 } from '../cascade-native-bridge.js';
 import { sanitizeText, sanitizeToolCall, PathSanitizeStream } from '../sanitize.js';
@@ -1060,16 +1060,55 @@ async function waitForAccount(tried, signal, maxWaitMs = QUEUE_MAX_WAIT_MS, mode
   return acct;
 }
 
+// v2.0.66 (#115): codex CLI 0.128 sends `model="gpt-5.5"` together with a
+// separate `reasoning: {effort:"xhigh"}` (or top-level `reasoning_effort`)
+// field. Windsurf's catalog exposes per-effort variants as distinct model
+// ids — `gpt-5.5-xhigh`, `gpt-5.5-high`, `gpt-5.5-medium`, etc — and the
+// bare `gpt-5.5` alias resolves to `gpt-5.5-medium`. Without merging the
+// two fields, the user's `xhigh` knob is silently dropped (zhqsuo's #115
+// followup: log shows `model=gpt-5.5-medium reasoning=xhigh`).
+//
+// Merge logic: if reqModel has no effort suffix already AND
+// `${reqModel}-${effort}` resolves to a known model in the catalog, swap.
+// Anything else (unknown model, no effort, effort already in name)
+// returns reqModel unchanged.
+export function mergeReasoningEffortIntoModel(reqModel, body) {
+  if (!reqModel || typeof reqModel !== 'string') return reqModel;
+  const effort = String(
+    body?.reasoning_effort
+    || body?.reasoning?.effort
+    || ''
+  ).toLowerCase().trim();
+  if (!effort) return reqModel;
+  const VALID = new Set(['minimal', 'none', 'low', 'medium', 'high', 'xhigh']);
+  if (!VALID.has(effort)) return reqModel;
+  // Already has an effort suffix — don't double-stamp.
+  for (const e of VALID) {
+    if (reqModel.toLowerCase().endsWith('-' + e)) return reqModel;
+  }
+  // Try the merged form. resolveModel returns the model key if it exists,
+  // unchanged input otherwise; getModelInfo returns null for unknown models.
+  // Both checks together guard against accidentally inventing a model that
+  // doesn't exist in the catalog.
+  const merged = `${reqModel}-${effort === 'minimal' ? 'none' : effort}`;
+  const resolved = resolveModel(merged);
+  if (resolved && getModelInfo(resolved)) return merged;
+  return reqModel;
+}
+
 export async function handleChatCompletions(body, context = {}) {
   const reqId = Math.random().toString(36).slice(2, 8);
   const {
-    model: reqModel,
     stream = false,
     max_tokens,
     tools,
     tool_choice,
     response_format,
   } = body;
+  // v2.0.66: merge reasoning_effort into the model id BEFORE alias
+  // resolution so `gpt-5.5 + reasoning.effort=xhigh` resolves to
+  // `gpt-5.5-xhigh`, not the medium-tier default.
+  const reqModel = mergeReasoningEffortIntoModel(body.model, body);
   let messages = body.messages;
   const callerKey = context.callerKey || body.__callerKey || '';
   const cachePolicy = body.__cachePolicy || null;
@@ -1212,15 +1251,23 @@ export async function handleChatCompletions(body, context = {}) {
   const hasToolHistory = Array.isArray(messages) && messages.some(m => m?.role === 'tool' || (m?.role === 'assistant' && Array.isArray(m.tool_calls) && m.tool_calls.length));
   const emulateTools = useCascade && (hasTools || hasToolHistory);
 
-  // v2.0.65 (#115) — native tool bridge gate. When every caller-declared
-  // tool maps onto a Cascade-native IDE step kind AND the activation
-  // condition fires (env override OR auto-on for GPT family / Codex CLI),
-  // we switch the planner from NO_TOOL+emulation to DEFAULT planner mode +
-  // CascadeToolConfig.tool_allowlist + additional_steps[9] history
-  // injection. The emulation tool preamble is NOT shipped in this mode —
-  // the planner sees its own native tool inventory and the history
-  // already contains "completed" trajectory steps for prior tool turns.
-  // See src/cascade-native-bridge.js for full rationale.
+  // v2.0.66 (#115) — partition-mode native tool bridge.
+  //
+  // Splits caller's tools[] into:
+  //   mapped:    have a TOOL_MAP entry → cascade native trajectory steps
+  //              (DEFAULT planner_mode + tool_allowlist + additional_steps[9])
+  //   unmapped:  no mapping → existing NO_TOOL emulation toolPreamble
+  //              (additional_instructions_section)
+  //
+  // Both subsets coexist in the same request — when codex CLI 0.128 sends
+  // 11 tools and only `shell_command` maps, the planner runs DEFAULT mode
+  // with shell_command enabled while update_plan / apply_patch / etc stay
+  // on the emulation path. See src/cascade-native-bridge.js for the
+  // partition / canMap / shouldUseNativeBridge gate.
+  //
+  // v2.0.65 used canMapAllTools (all-or-nothing) which never fired for
+  // codex CLI in production — the gate is now partitionTools().hasAny.
+  const toolPartition = hasTools ? partitionTools(tools) : { mapped: [], unmapped: tools || [], hasAny: false };
   const nativeBridgeOn = useCascade && hasTools && shouldUseNativeBridge(tools, {
     modelKey: routingModelKey,
     provider: modelInfo?.provider || null,
@@ -1230,13 +1277,18 @@ export async function handleChatCompletions(body, context = {}) {
     ? buildAdditionalStepsFromHistory(messages || [])
     : [];
   const nativeAllowlist = nativeBridgeOn
-    ? Array.from(new Set((tools || [])
+    ? Array.from(new Set(toolPartition.mapped
         .map(t => TOOL_MAP[t?.function?.name]?.kind)
         .filter(Boolean)))
     : [];
-  const nativeCallerTools = nativeBridgeOn ? tools : [];
+  // Tools we ship to the emulation toolPreamble: the unmapped subset when
+  // bridge is on, or the full tools[] when bridge is off (legacy behaviour).
+  const emulationTools = nativeBridgeOn ? toolPartition.unmapped : (tools || []);
+  const nativeCallerTools = nativeBridgeOn ? toolPartition.mapped : [];
   if (nativeBridgeOn) {
-    log.info(`Chat[${reqId}]: native bridge ON — model=${routingModelKey} tools=${(tools || []).map(t => t?.function?.name).join(',')} allowlist=${nativeAllowlist.join(',')} additional_steps=${nativeAdditionalSteps.length}`);
+    const mappedNames = toolPartition.mapped.map(t => t?.function?.name).join(',') || '(none)';
+    const unmappedNames = toolPartition.unmapped.map(t => t?.function?.name).join(',') || '(none)';
+    log.info(`Chat[${reqId}]: native bridge ON — model=${routingModelKey} mapped=[${mappedNames}] unmapped=[${unmappedNames}] allowlist=${nativeAllowlist.join(',')} additional_steps=${nativeAdditionalSteps.length}`);
   }
   // Build proto-level preamble (goes into tool_calling_section override).
   // Also inject into the last user message as fallback — some models in
@@ -1258,7 +1310,12 @@ export async function handleChatCompletions(body, context = {}) {
   // hard cap; v2.0.9 rejected on the full-schema size before compacting,
   // which broke real opencode / Claude Code setups with 30-50 MCP tools.
   if (emulateTools) {
-    const budget = applyToolPreambleBudget(tools || [], tool_choice, callerEnv, {
+    // v2.0.66: when partition-mode native bridge is on, emulation only
+    // describes the *unmapped* tools. Mapped tools are delivered via
+    // cascade native trajectory steps and would only confuse the planner
+    // if they also appeared in the toolPreamble emulation block.
+    const budgetTools = emulationTools.length ? emulationTools : (tools || []);
+    const budget = applyToolPreambleBudget(budgetTools, tool_choice, callerEnv, {
       modelKey: routingModelKey,
       provider: modelInfo?.provider || null,
       // v2.0.62 (#115) — pass route so GPT-family + Codex/Responses
@@ -1267,10 +1324,10 @@ export async function handleChatCompletions(body, context = {}) {
     });
     preambleTier = budget.tier;
     if (budget.compacted) {
-      log.warn(`Probe[${reqId}]: toolPreamble ${Math.round(budget.fullBytes / 1024)}KB exceeds soft cap ${Math.round(budget.softBytes / 1024)}KB; using ${budget.tier} tier (${Math.round(budget.finalBytes / 1024)}KB, ${(tools || []).length} tools)`);
+      log.warn(`Probe[${reqId}]: toolPreamble ${Math.round(budget.fullBytes / 1024)}KB exceeds soft cap ${Math.round(budget.softBytes / 1024)}KB; using ${budget.tier} tier (${Math.round(budget.finalBytes / 1024)}KB, ${budgetTools.length} tools)`);
     }
     if (!budget.ok) {
-      log.warn(`Probe[${reqId}]: toolPreamble ${Math.round(budget.finalBytes / 1024)}KB exceeds hard cap ${Math.round(budget.hardBytes / 1024)}KB after ${budget.tier} tier; rejecting (${(tools || []).length} tools)`);
+      log.warn(`Probe[${reqId}]: toolPreamble ${Math.round(budget.finalBytes / 1024)}KB exceeds hard cap ${Math.round(budget.hardBytes / 1024)}KB after ${budget.tier} tier; rejecting (${budgetTools.length} tools)`);
       return {
         status: 400,
         body: {

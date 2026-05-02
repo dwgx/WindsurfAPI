@@ -344,8 +344,13 @@ export function buildSendCascadeMessageRequest(apiKey, cascadeId, text, modelEnu
   //     IDE tools and v2.0.65 wants the planner's IDE agent loop alive
   //     (see src/cascade-native-bridge.js for rationale).
   const forceDefault = !!nativeMode || (!!images?.length && !toolPreamble);
+  // v2.0.66 partition mode: when nativeMode is on AND a non-empty
+  // toolPreamble was provided, the caller has unmapped tools that need
+  // emulation alongside the mapped-tool native bridge. Pass toolPreamble
+  // through so additional_instructions_section still carries those tool
+  // definitions even though planner_mode is DEFAULT.
   const cascadeConfig = buildCascadeConfig(modelEnum, modelUid, {
-    toolPreamble: nativeMode ? '' : toolPreamble,
+    toolPreamble: toolPreamble || '',
     forceDefault,
     nativeMode: !!nativeMode,
     nativeAllowlist: nativeAllowlist || null,

@@ -19,7 +19,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   TOOL_MAP, CASCADE_STEP,
-  canMapAllTools, shouldUseNativeBridge,
+  canMapAllTools, partitionTools, shouldUseNativeBridge,
   buildAdditionalStep, buildAdditionalStepsFromHistory, buildReverseLookup,
 } from '../src/cascade-native-bridge.js';
 import {
@@ -88,9 +88,31 @@ describe('shouldUseNativeBridge — auto-on heuristic', () => {
     );
   });
 
-  it('any model with unmapped tools → off (canMapAllTools gates first)', () => {
+  it('partial-mapped tools → ON (v2.0.66 partition mode replaces all-or-nothing gate)', () => {
+    // v2.0.66 (#115): any mapped tool turns the bridge on; unmapped tools
+    // (e.g. get_weather, codex's update_plan / apply_patch) still go
+    // through the existing emulation toolPreamble path in parallel.
+    // codex CLI 0.128 is the live reproducer — declares 11 tools, only
+    // shell_command maps; v2.0.65 saw `tools=15 emulateTools=true
+    // markers=none` because canMapAllTools was strict all-or-nothing.
     assert.equal(
       shouldUseNativeBridge([fnTool('Read'), fnTool('get_weather')], {
+        modelKey: 'gpt-5.5-medium', provider: 'openai', route: 'responses',
+      }),
+      true,
+    );
+    assert.equal(
+      shouldUseNativeBridge([fnTool('shell_command'), fnTool('apply_patch'), fnTool('update_plan')], {
+        modelKey: 'gpt-5.5-medium', provider: 'openai', route: 'responses',
+      }),
+      true,
+      'codex CLI 0.128 default toolset (shell_command mapped, apply_patch / update_plan unmapped) must turn the bridge ON',
+    );
+  });
+
+  it('zero mapped tools → off (no point booting native path)', () => {
+    assert.equal(
+      shouldUseNativeBridge([fnTool('get_weather'), fnTool('update_plan')], {
         modelKey: 'gpt-5.5-medium', provider: 'openai', route: 'responses',
       }),
       false,
@@ -422,5 +444,148 @@ describe('CASCADE_STEP type constants — sanity', () => {
     assert.equal(CASCADE_STEP.find.typeEnum, 34);
     assert.equal(CASCADE_STEP.list_directory.typeEnum, 15);
     assert.equal(CASCADE_STEP.write_to_file.typeEnum, 23);
+  });
+});
+
+// ─── v2.0.66 (#115) — partition mode + codex CLI mapping ──────────────
+
+describe('partitionTools — v2.0.66 mixed-mapping splitter', () => {
+  it('splits mapped vs unmapped on a real codex CLI 0.128 toolset', () => {
+    // Captured live from `dump-codex-tools.mjs`: codex CLI 0.128 declares
+    // these 11 tools by default. Only shell_command has a clean cascade
+    // mapping; the rest stay on the emulation path.
+    const codexTools = [
+      'shell_command', 'update_plan', 'request_user_input',
+      'apply_patch', 'web_search', 'view_image',
+      'spawn_agent', 'send_input', 'resume_agent', 'wait_agent', 'close_agent',
+    ].map(fnTool);
+    const part = partitionTools(codexTools);
+    assert.equal(part.hasAny, true);
+    assert.deepEqual(part.mapped.map(t => t.function.name), ['shell_command']);
+    assert.equal(part.unmapped.length, 10);
+    assert.ok(part.unmapped.find(t => t.function.name === 'apply_patch'));
+    assert.ok(part.unmapped.find(t => t.function.name === 'update_plan'));
+  });
+
+  it('returns hasAny=false when no tool maps', () => {
+    const part = partitionTools([fnTool('get_weather'), fnTool('rng')]);
+    assert.equal(part.hasAny, false);
+    assert.equal(part.mapped.length, 0);
+    assert.equal(part.unmapped.length, 2);
+  });
+
+  it('Claude Code-style (all mapped) → unmapped is empty', () => {
+    const part = partitionTools([fnTool('Read'), fnTool('Bash'), fnTool('Glob')]);
+    assert.equal(part.hasAny, true);
+    assert.equal(part.unmapped.length, 0);
+  });
+
+  it('skips non-function entries gracefully', () => {
+    const part = partitionTools([
+      fnTool('Read'),
+      { type: 'web_search' },
+      { type: 'function' },                 // missing function.name
+      { type: 'function', function: { name: '' } },
+    ]);
+    assert.equal(part.mapped.length, 1);
+    assert.equal(part.unmapped.length, 0);
+  });
+});
+
+describe('TOOL_MAP — codex CLI 0.128 shell_command mapping (v2.0.66)', () => {
+  it('shell_command ↔ run_command preserves command + workdir', () => {
+    const fwd = TOOL_MAP.shell_command.forward({
+      command: 'pytest -x',
+      workdir: 'D:/Project/foo',
+      timeout_ms: 30000,
+    });
+    assert.equal(fwd.command_line, 'pytest -x');
+    assert.equal(fwd.cwd, 'D:/Project/foo');
+    assert.equal(fwd.blocking, true);
+    const back = TOOL_MAP.shell_command.reverse(fwd);
+    assert.equal(back.command, 'pytest -x');
+    assert.equal(back.workdir, 'D:/Project/foo');
+  });
+
+  it('shell_command reverse maps cascade combined_output → codex shell schema', () => {
+    // Simulates the trajectory step → tool_call reverse direction the
+    // proxy uses when surfacing a cascade-side run_command back to the
+    // codex CLI client.
+    const back = TOOL_MAP.shell_command.reverse({
+      command_line: 'echo hi',
+      cwd: '/tmp',
+      stdout: 'hi\n',
+    });
+    assert.equal(back.command, 'echo hi');
+    assert.equal(back.workdir, '/tmp');
+  });
+});
+
+describe('canMapAllTools (legacy strict gate, kept for compat)', () => {
+  it('still returns false when ANY tool is unmapped', () => {
+    assert.equal(canMapAllTools([fnTool('Read'), fnTool('get_weather')]), false);
+    assert.equal(canMapAllTools([fnTool('Read'), fnTool('Bash'), fnTool('Glob')]), true);
+  });
+});
+
+describe('mergeReasoningEffortIntoModel — v2.0.66 reasoning_effort fold-in', () => {
+  it('codex CLI shape (reasoning.effort) folds into bare gpt-5.5', async () => {
+    const { mergeReasoningEffortIntoModel } = await import('../src/handlers/chat.js');
+    assert.equal(
+      mergeReasoningEffortIntoModel('gpt-5.5', { reasoning: { effort: 'xhigh' } }),
+      'gpt-5.5-xhigh',
+    );
+    assert.equal(
+      mergeReasoningEffortIntoModel('gpt-5.5', { reasoning: { effort: 'high' } }),
+      'gpt-5.5-high',
+    );
+  });
+
+  it('OpenAI-style (top-level reasoning_effort) also works', async () => {
+    const { mergeReasoningEffortIntoModel } = await import('../src/handlers/chat.js');
+    assert.equal(
+      mergeReasoningEffortIntoModel('gpt-5.5', { reasoning_effort: 'low' }),
+      'gpt-5.5-low',
+    );
+  });
+
+  it('does NOT double-stamp when model already has effort suffix', async () => {
+    const { mergeReasoningEffortIntoModel } = await import('../src/handlers/chat.js');
+    assert.equal(
+      mergeReasoningEffortIntoModel('gpt-5.5-xhigh', { reasoning: { effort: 'medium' } }),
+      'gpt-5.5-xhigh',
+    );
+  });
+
+  it('returns input unchanged when effort missing', async () => {
+    const { mergeReasoningEffortIntoModel } = await import('../src/handlers/chat.js');
+    assert.equal(mergeReasoningEffortIntoModel('gpt-5.5', {}), 'gpt-5.5');
+    assert.equal(mergeReasoningEffortIntoModel('gpt-5.5', { reasoning: {} }), 'gpt-5.5');
+    assert.equal(mergeReasoningEffortIntoModel('gpt-5.5', { reasoning: { effort: '' } }), 'gpt-5.5');
+  });
+
+  it('returns input unchanged for unknown effort strings (catalog has no -bogus variant)', async () => {
+    const { mergeReasoningEffortIntoModel } = await import('../src/handlers/chat.js');
+    assert.equal(mergeReasoningEffortIntoModel('gpt-5.5', { reasoning_effort: 'bogus' }), 'gpt-5.5');
+  });
+
+  it('returns input unchanged when merged model is not in catalog', async () => {
+    const { mergeReasoningEffortIntoModel } = await import('../src/handlers/chat.js');
+    // claude models don't have effort suffixes — the merged form
+    // `claude-sonnet-4.6-xhigh` doesn't exist in models.js, so the helper
+    // refuses to swap.
+    assert.equal(
+      mergeReasoningEffortIntoModel('claude-sonnet-4.6', { reasoning: { effort: 'xhigh' } }),
+      'claude-sonnet-4.6',
+    );
+  });
+
+  it('handles `minimal` by mapping to `none` (windsurf catalog naming)', async () => {
+    const { mergeReasoningEffortIntoModel } = await import('../src/handlers/chat.js');
+    // gpt-5.5-none is in the catalog (the lowest tier alias)
+    assert.equal(
+      mergeReasoningEffortIntoModel('gpt-5.5', { reasoning_effort: 'minimal' }),
+      'gpt-5.5-none',
+    );
   });
 });

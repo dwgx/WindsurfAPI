@@ -244,6 +244,20 @@ export const TOOL_MAP = {
   // Common synonyms surfaced by other clients
   read_file:       { kind: 'view_file',      forward: forwardReadArgs,  reverse: reverseReadArgs },
   shell:           { kind: 'run_command',    forward: forwardBashArgs,  reverse: reverseBashArgs },
+
+  // ── Codex CLI 0.128 toolset (#115 v2.0.66) ───────────────────────
+  // Captured from a real codex exec request body via
+  // scripts/probes/dump-codex-tools.mjs. codex CLI declares 11 tools by
+  // default; only `shell_command` has a clean cascade-native equivalent.
+  // The rest (apply_patch / update_plan / request_user_input / web_search /
+  // view_image / spawn_agent / send_input / resume_agent / wait_agent /
+  // close_agent) intentionally stay OFF this map — partition mode routes
+  // unmapped tools through the existing toolPreamble emulation path.
+  // Adding apply_patch / web_search here was tried in v2.0.66 dev but
+  // their forward translators have no lossless cascade target (apply_patch
+  // is multi-file patches, write_to_file is single-target; web_search ≠
+  // read_url_content), so they'd produce garbage cascade steps.
+  shell_command:   { kind: 'run_command',    forward: forwardCodexShellArgs, reverse: reverseCodexShellArgs },
 };
 
 // Edit / MultiEdit translate to propose_code. ActionSpec / ActionResult are
@@ -276,16 +290,35 @@ function reverseRunCommandPassThrough(cascade) {
   };
 }
 
+// ── Codex CLI 0.128 codex-specific arg shapes ───────────────────────
+// codex CLI's `shell_command` declares: {command:"<cmd>", workdir?:"...",
+// timeout_ms?:int}. cascade run_command takes command_line + cwd. The
+// reverse direction restores codex's expected shape so when the proxy
+// surfaces a cascade-side run_command step back to codex CLI, codex
+// picks it up as a normal shell_command tool_call.
+function forwardCodexShellArgs(args) {
+  return {
+    command_line: args.command || args.command_line || '',
+    cwd: args.workdir || args.cwd || '',
+    blocking: true,
+  };
+}
+function reverseCodexShellArgs(cascade) {
+  return {
+    command: cascade.command_line || cascade.proposed_command_line || '',
+    ...(cascade.cwd ? { workdir: cascade.cwd } : {}),
+  };
+}
+
+
 // ─── Caller-tools introspection ─────────────────────────────────────
 
 /**
  * canMapAllTools(tools) — returns true when EVERY caller-declared tool is
- * present in TOOL_MAP. Mixed-coverage requests fall back to emulation
- * because partial native coverage confuses the planner ("you have view_file
- * but get_weather is also available" is not a valid Cascade tool inventory).
- *
- * The check is purely structural — name lookup, no schema compat checks.
- * Schema mismatch surfaces at translate time as a best-effort coercion.
+ * present in TOOL_MAP. Kept for backwards compatibility / strict-mode
+ * callers; v2.0.66 prefers partitionTools() because real-world clients
+ * (codex CLI 0.128 declares 11 tools, only 1 maps cleanly) almost never
+ * pass the all-mapped bar.
  */
 export function canMapAllTools(tools) {
   if (!Array.isArray(tools) || tools.length === 0) return false;
@@ -295,6 +328,33 @@ export function canMapAllTools(tools) {
     if (!name || !TOOL_MAP[name]) return false;
   }
   return true;
+}
+
+/**
+ * partitionTools(tools) — split the caller's tools[] into:
+ *   - mapped:   tools with a TOOL_MAP entry (route through cascade native
+ *               trajectory steps)
+ *   - unmapped: tools without a mapping (route through the existing
+ *               emulation toolPreamble path)
+ *
+ * Both subsets coexist in the same request: mapped tools enable native
+ * planner_mode=DEFAULT + tool_allowlist while unmapped tool definitions
+ * are still injected into additional_instructions_section so the planner
+ * can fall through to text-protocol emit when it needs them.
+ *
+ * Returns { mapped: Tool[], unmapped: Tool[], hasAny: bool }.
+ */
+export function partitionTools(tools) {
+  const mapped = [];
+  const unmapped = [];
+  if (Array.isArray(tools)) {
+    for (const t of tools) {
+      if (t?.type !== 'function' || !t.function?.name) continue;
+      if (TOOL_MAP[t.function.name]) mapped.push(t);
+      else unmapped.push(t);
+    }
+  }
+  return { mapped, unmapped, hasAny: mapped.length > 0 };
 }
 
 /**
@@ -668,14 +728,21 @@ export function buildAdditionalStepsFromHistory(messages) {
 
 /**
  * Return true when the native bridge should be used for this request.
- * Currently env-flagged; once field-tested we'll flip the default and
- * gate it on per-model heuristics instead (e.g., GPT family always-on,
- * Anthropic/Gemini default-off because they already work via NO_TOOL+emul).
+ *
+ * v2.0.66 (#115 partition mode): the gate switched from "every tool must
+ * be mapped" (canMapAllTools) to "at least one tool is mapped"
+ * (partitionTools.hasAny). Real-world clients — codex CLI 0.128 declares
+ * 11 tools, only 1 (shell_command) maps cleanly — never pass the all-or-
+ * nothing bar, which is why v2.0.65 deployed but never fired in
+ * production. With partition mode, mapped tools route through
+ * trajectory-step injection while unmapped tools keep the emulation
+ * toolPreamble path; both coexist in the same request.
  */
 export function shouldUseNativeBridge(tools, { modelKey = '', provider = '', route = '' } = {}) {
   if (process.env.WINDSURFAPI_NATIVE_TOOL_BRIDGE_OFF === '1') return false;
   const explicitOn = process.env.WINDSURFAPI_NATIVE_TOOL_BRIDGE === '1';
-  if (!canMapAllTools(tools)) return false;
+  const part = partitionTools(tools);
+  if (!part.hasAny) return false;
   if (explicitOn) return true;
   // Auto-on: GPT family on Codex CLI / Responses route. That's the only
   // path where v2.0.64 emulation reliably fails (markers=none). Keep
