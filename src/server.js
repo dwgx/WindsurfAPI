@@ -20,7 +20,7 @@ import { dirname, join } from 'path';
 import {
   validateApiKey, isAuthenticated, getAccountList, getAccountCount,
   addAccountByEmail, addAccountByToken, addAccountByKey, removeAccount,
-  configureBindHost, emitNoAuthWarnings,
+  configureBindHost, emitNoAuthWarnings, getDroughtSummary,
 } from './auth.js';
 import { handleChatCompletions } from './handlers/chat.js';
 import { handleMessages } from './handlers/messages.js';
@@ -127,6 +127,10 @@ async function route(req, res) {
         body.conversationPool = poolStats();
         body.cache = cacheStats();
         body.lsPool = getLsStatus();
+        // v2.0.57 Fix 5 — drought summary so monitoring can page on
+        // "all accounts < 5% weekly" without screen-scraping per-account
+        // credit dumps.
+        body.drought = getDroughtSummary();
       } catch {}
     }
     return json(res, 200, body);

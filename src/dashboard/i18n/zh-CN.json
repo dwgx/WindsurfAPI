@@ -592,6 +592,11 @@
     "restored": "已恢复"
   },
 
+  "drought": {
+    "title": "配额预警：",
+    "body": "所有账号本周配额都低于阈值，建议补账号或等待重置"
+  },
+
   "credentials": {
     "apiKey": "API_KEY",
     "dashboardPassword": "Dashboard 密码",

@@ -56,6 +56,66 @@ function rpmLimitFor(account) {
   return TIER_RPM[account.tier || 'unknown'] ?? 20;
 }
 
+// v2.0.57 Fix 4 — quota headroom score. Reads the min of daily% and
+// weekly% from the account's last refreshed credits snapshot. When both
+// are unknown (probe never landed), assume 100 so unprobed accounts
+// don't get demoted to last-pick. Returns 0..100.
+export function quotaScore(account) {
+  const c = account?.credits;
+  if (!c || typeof c !== 'object') return 100;
+  const d = typeof c.dailyPercent === 'number' ? c.dailyPercent : 100;
+  const w = typeof c.weeklyPercent === 'number' ? c.weeklyPercent : 100;
+  return Math.max(0, Math.min(100, Math.min(d, w)));
+}
+
+// v2.0.57 Fix 5 — drought mode. True iff every active account has
+// weeklyPercent < threshold. Operators see this on the dashboard so
+// they can buy more accounts / wait for reset rather than chasing
+// individual rate-limit errors.
+const DROUGHT_THRESHOLD = 5;
+
+export function isDroughtMode() {
+  const eligible = accounts.filter(a => a.status === 'active');
+  if (!eligible.length) return false;
+  let knownCount = 0;
+  let droughtCount = 0;
+  for (const a of eligible) {
+    const c = a?.credits;
+    const w = c && typeof c.weeklyPercent === 'number' ? c.weeklyPercent : null;
+    if (w == null) continue;
+    knownCount++;
+    if (w < DROUGHT_THRESHOLD) droughtCount++;
+  }
+  if (!knownCount) return false; // no quota data yet — assume not drought
+  return droughtCount === knownCount;
+}
+
+export function getDroughtSummary() {
+  const eligible = accounts.filter(a => a.status === 'active');
+  let lowestWeekly = null;
+  let lowestDaily = null;
+  let knownAccounts = 0;
+  for (const a of eligible) {
+    const c = a?.credits;
+    if (!c) continue;
+    knownAccounts++;
+    if (typeof c.weeklyPercent === 'number') {
+      lowestWeekly = lowestWeekly == null ? c.weeklyPercent : Math.min(lowestWeekly, c.weeklyPercent);
+    }
+    if (typeof c.dailyPercent === 'number') {
+      lowestDaily = lowestDaily == null ? c.dailyPercent : Math.min(lowestDaily, c.dailyPercent);
+    }
+  }
+  return {
+    drought: isDroughtMode(),
+    threshold: DROUGHT_THRESHOLD,
+    activeAccounts: eligible.length,
+    knownAccounts,
+    lowestWeeklyPercent: lowestWeekly,
+    lowestDailyPercent: lowestDaily,
+  };
+}
+
 function pruneRpmHistory(account, now) {
   if (!account._rpmHistory) account._rpmHistory = [];
   const cutoff = now - RPM_WINDOW_MS;
@@ -530,11 +590,22 @@ export function getApiKey(excludeKeys = [], modelKey = null) {
   // Pick the account with the fewest in-flight requests first (so a burst
   // of concurrent calls spreads across accounts instead of piling onto a
   // single one that still has RPM headroom — see issue #37). Then prefer
-  // accounts with the highest remaining-ratio, finally least-recently-used.
+  // accounts with the highest quota headroom (v2.0.57 Fix 4 — predictive
+  // pre-warming reads min(daily%, weekly%) so a Trial about to roll over
+  // doesn't keep getting picked over a healthier account). Then RPM
+  // remaining-ratio. Finally least-recently-used.
   candidates.sort((x, y) => {
     const ix = x.account._inflight || 0;
     const iy = y.account._inflight || 0;
     if (ix !== iy) return ix - iy;
+    const qx = quotaScore(x.account);
+    const qy = quotaScore(y.account);
+    // Bucket the score so we don't churn across small noise (e.g. 41 vs
+    // 42). 5%-wide buckets keep the LRU rotation intact when both are
+    // healthy and only kick in when one account is materially lower.
+    const bx = Math.floor(qx / 5);
+    const by = Math.floor(qy / 5);
+    if (bx !== by) return by - bx;
     const rx = (x.limit - x.used) / x.limit;
     const ry = (y.limit - y.used) / y.limit;
     if (ry !== rx) return ry - rx;
@@ -546,12 +617,34 @@ export function getApiKey(excludeKeys = [], modelKey = null) {
   account._rpmHistory.push(reservationTimestamp);
   account.lastUsed = now;
   account._inflight = (account._inflight || 0) + 1;
+  // v2.0.57 Fix 4 — predictive pre-warming. When the chosen account is
+  // running out of quota, fire-and-forget warm up the next-best
+  // candidate so its LS / cascade pool is ready when the chosen one
+  // hits zero on the next call. Throttled per-account to once per 30s
+  // so a long burst of low-quota requests doesn't slam ensureLsForAccount.
+  if (candidates.length >= 2 && quotaScore(account) < DROUGHT_THRESHOLD * 2) {
+    schedulePrewarm(candidates[1].account);
+  }
   return {
     id: account.id, email: account.email, apiKey: account.apiKey,
     apiServerUrl: account.apiServerUrl || '',
     proxy: getEffectiveProxy(account.id) || null,
     reservationTimestamp,
   };
+}
+
+const PREWARM_COOLDOWN_MS = 30_000;
+function schedulePrewarm(nextAccount) {
+  if (!nextAccount) return;
+  const now = Date.now();
+  if (nextAccount._prewarmAt && now - nextAccount._prewarmAt < PREWARM_COOLDOWN_MS) return;
+  nextAccount._prewarmAt = now;
+  // ensureLsForAccount already triggers a cascade warmup; we only need to
+  // kick it off without awaiting.
+  Promise.resolve().then(() => ensureLsForAccount(nextAccount.id)).catch(e => {
+    log.debug(`Prewarm ${nextAccount.id} failed: ${e?.message || e}`);
+  });
+  log.info(`Prewarm: chosen account is low on quota (score ${quotaScore(accounts.find(a => a.id === nextAccount.id) || nextAccount).toFixed(0)}); warming up next candidate ${nextAccount.id}`);
 }
 
 /**

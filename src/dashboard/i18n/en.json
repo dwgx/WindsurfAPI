@@ -592,6 +592,11 @@
     "restored": "restored"
   },
 
+  "drought": {
+    "title": "Quota drought:",
+    "body": "Every active account is below the weekly quota threshold — add accounts or wait for reset"
+  },
+
   "credentials": {
     "apiKey": "API_KEY",
     "dashboardPassword": "Dashboard Password",

@@ -1740,6 +1740,13 @@ window._firebaseOAuth = async function(provider) {
         </button>
       </div>
     </div>
+    <!-- v2.0.57 Fix 5 — drought mode banner: shown only when every active
+         account has weekly% < 5. Hidden by default; loadDrought() flips it. -->
+    <div id="drought-banner" class="banner banner-warn" style="display:none;margin:0 0 16px;padding:14px 18px;border-radius:var(--radius);background:#fff7e6;border:1px solid #ffd591;color:#874d00">
+      <strong data-i18n="drought.title">配额预警：</strong>
+      <span id="drought-message" data-i18n="drought.body">所有账号本周配额都低于阈值，建议补账号或等待重置</span>
+      <span id="drought-detail" class="text-sm text-muted" style="margin-left:8px"></span>
+    </div>
 
     <div class="section">
       <div class="section-header">
@@ -3274,6 +3281,9 @@ const App = {
 
   // ─── Accounts ────────────────────────────────
   async loadAccounts() {
+    // v2.0.57 Fix 5 — refresh drought banner alongside accounts so a low
+    // pool state shows up the moment the user opens the panel.
+    this.loadDrought();
     const [d, ov] = await Promise.all([
       this.api('GET', '/accounts'),
       this.api('GET', '/overview').catch(() => null),
@@ -5097,6 +5107,32 @@ const App = {
     const r = await this.api('DELETE', '/experimental/conversation-pool');
     this.toast(`${I18n.t('toast.cleared')} ${r.cleared || 0}`, 'success');
     this.loadExperimental();
+  },
+
+  // ─── Drought banner (v2.0.57 Fix 5) ─────────────────────────
+  async loadDrought() {
+    const banner = document.getElementById('drought-banner');
+    const msg = document.getElementById('drought-message');
+    const detail = document.getElementById('drought-detail');
+    if (!banner || !msg || !detail) return;
+    try {
+      const d = await this.api('GET', '/drought');
+      if (!d?.drought) {
+        banner.style.display = 'none';
+        return;
+      }
+      banner.style.display = '';
+      const lw = d.lowestWeeklyPercent;
+      const ld = d.lowestDailyPercent;
+      const summary = (lw == null ? '' : `min weekly=${lw.toFixed(0)}%`)
+        + (ld == null ? '' : ` · min daily=${ld.toFixed(0)}%`)
+        + ` · ${d.knownAccounts}/${d.activeAccounts} accounts known`;
+      msg.textContent = I18n.t('drought.body') || msg.textContent;
+      detail.textContent = summary;
+    } catch (e) {
+      // no /drought endpoint on older backends — silently hide.
+      banner.style.display = 'none';
+    }
   },
 
   // ─── Credentials (v2.0.56) ──────────────────────────────────

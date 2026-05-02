@@ -14,6 +14,7 @@ import {
   setAccountBlockedModels, setAccountTokens, setAccountTier,
   getAccountInternal, isLocalBindHost, maskApiKey, safeEqualString,
   checkLockout, failedAuthAttempt, successfulAuthAttempt,
+  getDroughtSummary,
 } from '../auth.js';
 import { restartLsForProxy } from '../langserver.js';
 import { getLsStatus, stopLanguageServer, startLanguageServer, isLanguageServerRunning } from '../langserver.js';
@@ -606,6 +607,11 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
   // would otherwise end up in dashboard network logs, HAR files, proxy
   // access logs, etc. The UI posts the sentinel back to preserve the
   // stored password when editing other fields (see mergePassword).
+  // ─── Drought summary (v2.0.57 Fix 5) ──────────────────
+  if (subpath === '/drought' && method === 'GET') {
+    return json(res, 200, getDroughtSummary());
+  }
+
   // ─── Credentials (v2.0.56 — runtime-rotatable API_KEY + DASHBOARD_PASSWORD) ─────
   // GET /settings/credentials — masked snapshot. The plaintext API key is
   // never returned (use revealApiKey if/when added), but we expose

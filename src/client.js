@@ -1064,45 +1064,16 @@ export class WindsurfClient {
     }
   }
 
-  // ─── Register user (JSON REST, unchanged) ────────────────
+  // ─── Register user (Connect-RPC primary, legacy REST fallback) ─────
 
   async registerUser(firebaseToken) {
-    return new Promise((resolve, reject) => {
-      const postData = JSON.stringify({ firebase_id_token: firebaseToken });
-      const req = https.request({
-        hostname: 'api.codeium.com',
-        port: 443,
-        path: '/register_user/',
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Content-Length': Buffer.byteLength(postData),
-        },
-      }, (res) => {
-        let raw = '';
-        res.on('data', d => raw += d);
-        res.on('end', () => {
-          try {
-            const json = JSON.parse(raw);
-            if (res.statusCode >= 400) {
-              reject(new Error(`RegisterUser failed (${res.statusCode}): ${raw}`));
-              return;
-            }
-            if (!json.api_key) {
-              reject(new Error(`RegisterUser response missing api_key: ${raw}`));
-              return;
-            }
-            resolve({ apiKey: json.api_key, name: json.name, apiServerUrl: json.api_server_url });
-          } catch {
-            reject(new Error(`RegisterUser parse error: ${raw}`));
-          }
-        });
-        res.on('error', reject);
-      });
-      req.on('error', reject);
-      req.write(postData);
-      req.end();
-    });
+    // v2.0.57: Windsurf migrated RegisterUser to register.windsurf.com via
+    // Connect-RPC. We try the new path first and fall back to the legacy
+    // api.codeium.com/register_user/ endpoint if the new host is unhealthy.
+    // Centralised in windsurf-api.js so client.js / get-token.js /
+    // dashboard/windsurf-login.js all share the same dual-path logic.
+    const { registerWithFirebaseToken } = await import('./windsurf-api.js');
+    return registerWithFirebaseToken(firebaseToken);
   }
 
   // ── GetUserStatus ────────────────────────────────────────

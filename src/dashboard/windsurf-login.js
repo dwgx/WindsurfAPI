@@ -25,6 +25,54 @@ const WINDSURF_CHECK_LOGIN_METHOD_URL = 'https://windsurf.com/_backend/exa.seat_
 const WINDSURF_SEAT_SERVICE_BASE = 'https://server.self-serve.windsurf.com/exa.seat_management_pb.SeatManagementService';
 const WINDSURF_POST_AUTH_URL = `${WINDSURF_SEAT_SERVICE_BASE}/WindsurfPostAuth`;
 const WINDSURF_ONE_TIME_TOKEN_URL = `${WINDSURF_SEAT_SERVICE_BASE}/GetOneTimeAuthToken`;
+// v2.0.57 (Fix 2): Windsurf migrated PostAuth into the website _backend
+// path. Wam-bundle and the official 2.0.67 IDE talk to the new host;
+// keep the old self-serve endpoint as fallback so a regional outage on
+// either side doesn't break login. Same for GetOneTimeAuthToken which
+// shares the SeatManagementService surface.
+const WINDSURF_BACKEND_SEAT_BASE = 'https://windsurf.com/_backend/exa.seat_management_pb.SeatManagementService';
+const WINDSURF_POST_AUTH_URL_NEW = `${WINDSURF_BACKEND_SEAT_BASE}/WindsurfPostAuth`;
+const WINDSURF_ONE_TIME_TOKEN_URL_NEW = `${WINDSURF_BACKEND_SEAT_BASE}/GetOneTimeAuthToken`;
+
+async function postAuthDualPath(body, fingerprint, proxy) {
+  // Try the new windsurf.com/_backend host first; on 5xx / network error
+  // retry against the legacy server.self-serve.windsurf.com host. Both
+  // accept the same Connect-RPC body shape.
+  const headers = buildJsonHeaders(fingerprint, body, { 'Connect-Protocol-Version': '1' });
+  let lastErr;
+  for (const [url, label] of [[WINDSURF_POST_AUTH_URL_NEW, 'new'], [WINDSURF_POST_AUTH_URL, 'legacy']]) {
+    try {
+      const res = await httpsRequest(url, { method: 'POST', headers }, body, proxy);
+      // 4xx is an actual auth failure (bad token, etc) — don't fall through.
+      if (res.status >= 400 && res.status < 500) return { res, label };
+      if (res.status >= 200 && res.status < 300 && res.data?.sessionToken) {
+        return { res, label };
+      }
+      lastErr = new Error(`PostAuth ${label} HTTP ${res.status}: ${JSON.stringify(res.data).slice(0, 120)}`);
+    } catch (e) {
+      lastErr = new Error(`PostAuth ${label}: ${e.message}`);
+    }
+  }
+  throw lastErr || new Error('PostAuth: both endpoints failed');
+}
+
+async function oneTimeTokenDualPath(body, fingerprint, proxy) {
+  const headers = buildJsonHeaders(fingerprint, body, { 'Connect-Protocol-Version': '1' });
+  let lastErr;
+  for (const [url, label] of [[WINDSURF_ONE_TIME_TOKEN_URL_NEW, 'new'], [WINDSURF_ONE_TIME_TOKEN_URL, 'legacy']]) {
+    try {
+      const res = await httpsRequest(url, { method: 'POST', headers }, body, proxy);
+      if (res.status >= 400 && res.status < 500) return { res, label };
+      if (res.status >= 200 && res.status < 300 && res.data?.authToken) {
+        return { res, label };
+      }
+      lastErr = new Error(`OneTimeToken ${label} HTTP ${res.status}: ${JSON.stringify(res.data).slice(0, 120)}`);
+    } catch (e) {
+      lastErr = new Error(`OneTimeToken ${label}: ${e.message}`);
+    }
+  }
+  throw lastErr || new Error('OneTimeToken: both endpoints failed');
+}
 
 // ─── Fingerprint randomization ────────────────────────────
 
@@ -303,15 +351,32 @@ async function fetchCheckUserLoginMethod(email, fingerprint, proxy) {
 }
 
 async function registerWithCodeium(token, fingerprint, proxy) {
-  const regBody = JSON.stringify({ firebase_id_token: token });
-  const regHeaders = buildJsonHeaders(fingerprint, regBody);
-  const regRes = await httpsRequest(CODEIUM_REGISTER_URL, { method: 'POST', headers: regHeaders }, regBody, proxy);
-
-  if (regRes.status >= 400 || !regRes.data.api_key) {
-    throw new Error(`ERR_CODEIUM_REGISTER_FAILED:${JSON.stringify(regRes.data).slice(0, 200)}`);
+  // v2.0.57 (Fix 1): try register.windsurf.com first, fall back to
+  // api.codeium.com. Both go through our fingerprint+proxy-aware
+  // httpsRequest so the egress IP / UA stays consistent with the rest of
+  // this login flow.
+  const { registerWithFirebaseToken } = await import('../windsurf-api.js');
+  const requestFn = async (url, opts, body) => {
+    // buildJsonHeaders adds fingerprint headers; preserve any explicit
+    // Connect-Protocol-Version / Accept the helper provided.
+    const merged = buildJsonHeaders(fingerprint, body, {
+      'Connect-Protocol-Version': '1',
+      'Accept': 'application/json',
+    });
+    const r = await httpsRequest(url, { method: opts.method || 'POST', headers: merged }, body, proxy);
+    return { status: r.status, data: r.data, raw: typeof r.data === 'string' ? r.data : JSON.stringify(r.data || {}) };
+  };
+  try {
+    const r = await registerWithFirebaseToken(token, { requestFn, proxy });
+    // Preserve the snake_case shape downstream callers consume.
+    return {
+      api_key: r.apiKey,
+      name: r.name,
+      api_server_url: r.apiServerUrl,
+    };
+  } catch (e) {
+    throw new Error(`ERR_CODEIUM_REGISTER_FAILED:${e.message}`);
   }
-
-  return regRes.data;
 }
 
 async function windsurfLoginViaAuth1(email, password, fingerprint, proxy) {
@@ -341,23 +406,24 @@ async function windsurfLoginViaAuth1(email, password, fingerprint, proxy) {
   log.info(`Auth1 login OK: ${email}`);
 
   const bridgeBody = JSON.stringify({ auth1Token, orgId: '' });
-  const bridgeHeaders = buildJsonHeaders(fingerprint, bridgeBody, { 'Connect-Protocol-Version': '1' });
-  const bridgeRes = await httpsRequest(WINDSURF_POST_AUTH_URL, { method: 'POST', headers: bridgeHeaders }, bridgeBody, proxy);
+  // v2.0.57 (Fix 2): dual-path PostAuth — new host first, legacy fallback.
+  const { res: bridgeRes, label: bridgeLabel } = await postAuthDualPath(bridgeBody, fingerprint, proxy);
 
   if (bridgeRes.status >= 400 || !bridgeRes.data?.sessionToken) {
     throw new Error(`ERR_POSTAUTH_FAILED:${JSON.stringify(bridgeRes.data).slice(0, 200)}`);
   }
 
   const sessionToken = bridgeRes.data.sessionToken;
-  log.info(`Windsurf PostAuth OK: ${email} account=${bridgeRes.data.accountId || 'unknown'}`);
+  log.info(`Windsurf PostAuth OK (${bridgeLabel}): ${email} account=${bridgeRes.data.accountId || 'unknown'}`);
 
   const ottBody = JSON.stringify({ authToken: sessionToken });
-  const ottHeaders = buildJsonHeaders(fingerprint, ottBody, { 'Connect-Protocol-Version': '1' });
-  const ottRes = await httpsRequest(WINDSURF_ONE_TIME_TOKEN_URL, { method: 'POST', headers: ottHeaders }, ottBody, proxy);
+  // v2.0.57 (Fix 2): dual-path GetOneTimeAuthToken — same migration as PostAuth.
+  const { res: ottRes, label: ottLabel } = await oneTimeTokenDualPath(ottBody, fingerprint, proxy);
 
   if (ottRes.status >= 400 || !ottRes.data?.authToken) {
     throw new Error(`ERR_TOKEN_FETCH_FAILED:${JSON.stringify(ottRes.data).slice(0, 200)}`);
   }
+  if (ottLabel === 'legacy') log.info(`OneTimeToken used legacy host: ${email}`);
 
   const reg = await registerWithCodeium(ottRes.data.authToken, fingerprint, proxy);
   log.info(`Codeium register via Auth1 OK: ${email} → key=${reg.api_key.slice(0, 20)}...`);
@@ -414,7 +480,73 @@ async function windsurfLoginViaFirebase(email, password, fingerprint, proxy) {
  * @param {object} [proxy] - { host, port, username, password }
  * @returns {{ apiKey, name, email, idToken }}
  */
+// v2.0.57 Fix 6 — per-email brute-force lockout. Inspiration:
+// windsurf-assistant-pub `_bumpFailure` (3 strikes / 15 min ban). Without
+// this, a dashboard-authenticated operator hammering bad credentials
+// against /auth/login burns through Firebase/Windsurf upstream rate
+// limits per account and risks getting the *real* email flagged. Lock
+// the email locally so we never forward more than 3 fresh attempts in
+// any 15-minute window.
+const EMAIL_LOCK_THRESHOLD = 3;
+const EMAIL_LOCK_DURATION_MS = 15 * 60 * 1000;
+const EMAIL_LOCK_IDLE_TTL_MS = 2 * 60 * 60 * 1000;
+const _emailFailures = new Map();
+
+export function _resetEmailLockoutForTests() { _emailFailures.clear(); }
+
+export function checkEmailLocked(email) {
+  if (!email || typeof email !== 'string') return null;
+  const k = email.toLowerCase();
+  const e = _emailFailures.get(k);
+  if (!e) return null;
+  const now = Date.now();
+  if (e.lockedUntil > now) return e.lockedUntil - now;
+  if (e.lockedUntil > 0 && e.lockedUntil <= now) {
+    e.count = 0;
+    e.lockedUntil = 0;
+  }
+  return null;
+}
+
+function recordEmailFailure(email, reason) {
+  if (!email) return;
+  const k = email.toLowerCase();
+  const now = Date.now();
+  let e = _emailFailures.get(k);
+  if (!e) { e = { count: 0, lockedUntil: 0, lastActivity: now }; _emailFailures.set(k, e); }
+  e.count += 1;
+  e.lastActivity = now;
+  e.lastReason = reason ? String(reason).slice(0, 80) : '';
+  if (e.count >= EMAIL_LOCK_THRESHOLD) {
+    e.lockedUntil = now + EMAIL_LOCK_DURATION_MS;
+    e.count = 0;
+    log.warn(`Email lockout: ${k} banned for ${EMAIL_LOCK_DURATION_MS / 60000}min after ${EMAIL_LOCK_THRESHOLD} failed Windsurf logins (last="${e.lastReason}")`);
+  }
+}
+
+function recordEmailSuccess(email) {
+  if (!email) return;
+  _emailFailures.delete(email.toLowerCase());
+}
+
+setInterval(() => {
+  const now = Date.now();
+  for (const [k, e] of _emailFailures) {
+    if (e.lockedUntil > now) continue;
+    if (now - (e.lastActivity || 0) > EMAIL_LOCK_IDLE_TTL_MS) _emailFailures.delete(k);
+  }
+}, 60 * 60 * 1000).unref?.();
+
 export async function windsurfLogin(email, password, proxy = null) {
+  const lockMs = checkEmailLocked(email);
+  if (lockMs != null) {
+    const minutes = Math.ceil(lockMs / 60000);
+    const err = new Error(`Email ${email} 因连续 ${EMAIL_LOCK_THRESHOLD} 次登录失败被本地锁定，请 ${minutes} 分钟后再试。`);
+    err.code = 'ERR_EMAIL_LOCKED';
+    err.retryAfterMs = lockMs;
+    err.isAuthFail = false;
+    throw err;
+  }
   const fingerprint = generateFingerprint();
   log.info(`Windsurf login: ${email} fp=${fingerprint['User-Agent'].slice(0, 40)}... proxy=${proxy?.host || 'none'}`);
 
@@ -438,20 +570,45 @@ export async function windsurfLogin(email, password, proxy = null) {
 
   if (conn.method === 'auth1') {
     if (!conn.hasPassword) {
-      throw createFriendlyAuthError('Auth1', 'No password set. Please log in with Google or GitHub.');
+      const err = createFriendlyAuthError('Auth1', 'No password set. Please log in with Google or GitHub.');
+      recordEmailFailure(email, 'no_password');
+      throw err;
     }
-    return await windsurfLoginViaAuth1(email, password, fingerprint, proxy);
+    try {
+      const result = await windsurfLoginViaAuth1(email, password, fingerprint, proxy);
+      recordEmailSuccess(email);
+      return result;
+    } catch (e) {
+      // Auth-shaped failures count toward the lockout. Network / 5xx
+      // upstream errors don't (those aren't the operator's fault).
+      if (e?.isAuthFail || /ERR_LOGIN_FAILED|ERR_AUTH1|EMAIL|PASSWORD/i.test(e?.message || '')) {
+        recordEmailFailure(email, e?.message);
+      }
+      throw e;
+    }
   }
 
   try {
-    return await windsurfLoginViaFirebase(email, password, fingerprint, proxy);
+    const result = await windsurfLoginViaFirebase(email, password, fingerprint, proxy);
+    recordEmailSuccess(email);
+    return result;
   } catch (firebaseErr) {
-    if (!firebaseErr?.isAuthFail) throw firebaseErr;
+    if (!firebaseErr?.isAuthFail) {
+      // Network / Firebase 5xx — don't count, just bubble up.
+      throw firebaseErr;
+    }
 
     try {
-      return await windsurfLoginViaAuth1(email, password, fingerprint, proxy);
+      const result = await windsurfLoginViaAuth1(email, password, fingerprint, proxy);
+      recordEmailSuccess(email);
+      return result;
     } catch (auth1Err) {
-      if (auth1Err?.isAuthFail) throw firebaseErr;
+      if (auth1Err?.isAuthFail) {
+        // Both paths confirmed the credential is wrong — count as one
+        // failure (not two) so 3 distinct attempts truly = ban.
+        recordEmailFailure(email, firebaseErr?.message || auth1Err?.message);
+        throw firebaseErr;
+      }
       throw auth1Err;
     }
   }

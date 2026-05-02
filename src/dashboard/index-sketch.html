@@ -1741,6 +1741,14 @@ window._firebaseOAuth = async function(provider) {
 
     <div id="ls-pool-card"></div>
 
+    <!-- v2.0.57 Fix 5 — drought mode banner. Hidden until loadDrought()
+         flips it. Hand-drawn warning frame to fit the sketch theme. -->
+    <div id="drought-banner" style="display:none;margin:10px 0 16px;padding:14px 18px;border:1.5px dashed #d97706;background:#fff7e6;border-radius:8px;color:#874d00">
+      <strong data-zh="配额预警 ·" data-en="Quota drought ·">配额预警 ·</strong>
+      <span id="drought-message" data-zh="所有账号本周配额都低于阈值，建议补账号或等待重置" data-en="every account's weekly quota is under the threshold; add accounts or wait for reset">所有账号本周配额都低于阈值，建议补账号或等待重置</span>
+      <span id="drought-detail" class="text-mute" style="margin-left:8px;font-size:12px"></span>
+    </div>
+
     <div class="section">
       <div class="section-head">
         <div><div class="section-title"><span class="num">+</span><span data-zh="添加账号" data-en="Add an account">添加账号</span></div>
@@ -2667,7 +2675,29 @@ const App = {
     return this._modelsCatalog;
   },
 
+  async loadDrought() {
+    const banner = document.getElementById('drought-banner');
+    const detail = document.getElementById('drought-detail');
+    if (!banner) return;
+    try {
+      const d = await this.api('GET', '/drought');
+      if (!d?.drought) { banner.style.display = 'none'; return; }
+      banner.style.display = '';
+      if (detail) {
+        const lw = d.lowestWeeklyPercent;
+        const ld = d.lowestDailyPercent;
+        const parts = [];
+        if (lw != null) parts.push(`min weekly=${lw.toFixed(0)}%`);
+        if (ld != null) parts.push(`min daily=${ld.toFixed(0)}%`);
+        parts.push(`${d.knownAccounts}/${d.activeAccounts} accounts known`);
+        detail.textContent = parts.join(' · ');
+      }
+    } catch { banner.style.display = 'none'; }
+  },
+
   async loadAccounts() {
+    // v2.0.57 Fix 5: refresh drought banner alongside accounts.
+    this.loadDrought();
     const [d, ov] = await Promise.all([
       this.api('GET', '/accounts'),
       this.api('GET', '/overview').catch(() => null),
