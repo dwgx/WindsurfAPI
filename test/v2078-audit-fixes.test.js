@@ -169,7 +169,7 @@ describe('H-3 normalizeSystemPromptForHash — capture-group fix', () => {
   });
 });
 
-describe('H-4 NLU Layer 3 skipped when structural markers fire without natural_lang', () => {
+describe('H-4 NLU Layer 3 skipped when xml_tag marker fires without natural_lang', () => {
   const fnTool = (name) => ({
     type: 'function',
     function: {
@@ -179,40 +179,48 @@ describe('H-4 NLU Layer 3 skipped when structural markers fire without natural_l
   });
   const SHELL = fnTool('shell_exec');
 
-  it('xml_tag marker → Layer 3 narrative skipped', () => {
-    // Model emitted a malformed XML tag PLUS narrative around it.
-    // Old behavior: NLU promotes the narrative as a real call.
-    // New behavior: structural marker present → skip Layer 3 →
-    // explicit/backtick layers still fire but narrative is ignored.
+  it('xml_tag marker → Layer 3 narrative skipped (Claude-style protocol)', () => {
+    // Claude's tool_use uses <tool_call>...</tool_call> syntax. If the
+    // parser saw the marker but couldn't lift a call, the surrounding
+    // narrative is descriptive prose, not args.
     const text = `<tool_call>{"name":"shell_exec","arguments":{"command":"echo HELLO"}</tool_call>\nI was going to run a shell command first.`;
     const r = extractIntentFromNarrative(text, [SHELL], {
       lastUserText: 'run something',
-      markers: ['xml_tag'], // structural marker, no natural_lang
+      markers: ['xml_tag'],
     });
-    // Layer 3 was the only path that would have caught
-    // "to run a shell command" — Layer 1 doesn't apply (no
-    // shell_exec(...) syntax), Layer 2 doesn't apply (no backticked
-    // name). With Layer 3 skipped, recovery returns 0.
     assert.equal(r.length, 0);
   });
 
-  it('bare_json marker → Layer 3 narrative skipped (the v2.0.77 regression case)', () => {
-    const text = `{"name":"shell_exec","arguments":{"command":"echo X"}}\nI'm going to run a shell command.`;
+  it('bare_json marker → Layer 3 STILL runs (v2.0.79 narrowing — GLM/Kimi case)', () => {
+    // GLM-4.7 / Kimi often emit JSON-shaped fragments in thinking
+    // text (so bare_json marker fires) AND a real narrate elsewhere
+    // ("I'll call shell_exec with command 'X'"). Layer 3 catches
+    // that narrate — pre-v2.0.79 H-4 was over-blocking it.
+    const text = `Sample: {"name":"shell_exec","arguments":{"command":"X"}}. I'll call shell_exec with command 'echo HELLO'.`;
     const r = extractIntentFromNarrative(text, [SHELL], {
       lastUserText: 'echo something',
       markers: ['bare_json'],
     });
-    assert.equal(r.length, 0);
-  });
-
-  it('natural_lang marker present → Layer 3 still runs (legitimate narrative-only emit)', () => {
-    const text = `I'll call shell_exec with command 'echo HELLO'`;
-    const r = extractIntentFromNarrative(text, [SHELL], {
-      lastUserText: 'echo something',
-      markers: ['natural_lang'],
-    });
     assert.equal(r.length, 1);
     assert.deepEqual(JSON.parse(r[0].argumentsJson), { command: 'echo HELLO' });
+  });
+
+  it('fenced_json marker → Layer 3 still runs', () => {
+    const text = "```json\n{...}\n```\nI'll call shell_exec with command 'echo HELLO'.";
+    const r = extractIntentFromNarrative(text, [SHELL], {
+      lastUserText: 'echo something',
+      markers: ['fenced_json'],
+    });
+    assert.equal(r.length, 1);
+  });
+
+  it('natural_lang marker present + xml_tag → Layer 3 STILL runs', () => {
+    const text = `<tool_call>partial</tool_call> I'll call shell_exec with command 'echo HELLO'`;
+    const r = extractIntentFromNarrative(text, [SHELL], {
+      lastUserText: 'echo something',
+      markers: ['xml_tag', 'natural_lang'],
+    });
+    assert.equal(r.length, 1);
   });
 
   it('no markers (default) → Layer 3 runs as before', () => {

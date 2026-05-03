@@ -275,18 +275,19 @@ export function extractIntentFromNarrative(text, tools, opts = {}) {
   if (!Array.isArray(tools) || !tools.length) return [];
   const lastUserText = opts.lastUserText || '';
   const minConfidence = typeof opts.minConfidence === 'number' ? opts.minConfidence : 0.65;
-  // v2.0.78 (audit H-4): when the parser saw a structured marker
-  // (xml_tag / fenced_json / openai_native / bare_json) but couldn't
-  // promote a call, the model meant to use the protocol — Layer 3
-  // narrative inference is dangerous here because it captures
-  // descriptive prose AROUND the malformed protocol token, not the
-  // intended args. Caller passes `opts.markers` (array of marker
-  // names from the chat handler's marker detector); when ANY of
-  // those markers fire AND `natural_lang` is NOT among them, skip
-  // Layer 3 so we only act on the explicit / backtick layers.
+  // v2.0.78 (audit H-4): structural markers MAY indicate a malformed
+  // protocol attempt — Layer 3 narrative around it tends to be
+  // descriptive prose, not args. v2.0.79 narrowed the gate after
+  // GLM-4.7 e2e probe regressed: GLM emits `markers=bare_json`
+  // (because thinking text contains JSON-shaped fragments) AND a
+  // legitimate narrate; Layer 3 is exactly what catches the narrate.
+  // Now we only skip Layer 3 for `xml_tag` (Claude's tool_use shape)
+  // — that's where parser-failure → Layer 3 most often produces
+  // false positives. fenced_json / bare_json / openai_native still
+  // allow Layer 3 because models emitting those shapes (GLM, Kimi,
+  // some GPT) also reliably narrate the call in surrounding prose.
   const markers = Array.isArray(opts.markers) ? opts.markers : [];
-  const STRUCTURAL_MARKERS = new Set(['xml_tag', 'fenced_json', 'openai_native', 'bare_json']);
-  const skipLayer3 = markers.some((m) => STRUCTURAL_MARKERS.has(m)) && !markers.includes('natural_lang');
+  const skipLayer3 = markers.includes('xml_tag') && !markers.includes('natural_lang');
 
   const { names, primaryParam } = indexTools(tools);
   if (!names.size) return [];
