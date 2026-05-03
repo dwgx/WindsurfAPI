@@ -6,7 +6,7 @@
 import { createHash, randomUUID } from 'crypto';
 import { WindsurfClient, contentToString, isCascadeTransportError } from '../client.js';
 import { getApiKey, acquireAccountByKey, releaseAccount, getAccountAvailability, reportError, reportSuccess, markRateLimited, reportInternalError, updateCapability, getAccountList, isAllRateLimited, isAllTemporarilyUnavailable, refundReservation, looksLikeBanSignal, reportBanSignal, clearBanSignals, isModelBlockedByDrought, getDroughtSummary } from '../auth.js';
-import { resolveModel, getModelInfo } from '../models.js';
+import { resolveModel, getModelInfo, pickRateLimitFallback } from '../models.js';
 import { getLsFor, ensureLs } from '../langserver.js';
 import { config, log } from '../config.js';
 import { recordRequest, recordTokenUsage } from '../dashboard/stats.js';
@@ -1787,6 +1787,17 @@ export async function handleChatCompletions(body, context = {}) {
             status: (tempUnavail.allUnavailable || rateLimited.allLimited) ? 429 : 503,
             body: { error: { message: `${displayModel} 账号队列超时: ${reason}`, type: (tempUnavail.allUnavailable || rateLimited.allLimited) ? 'rate_limit_exceeded' : 'pool_exhausted' } },
           };
+          // v2.0.84 (#118 0a00) — pool-wide rate limit on a high-effort
+          // variant (`-max` / `-xhigh`)? Suggest the same-base lower-
+          // effort sibling so the caller can switch off the weekly-
+          // quota-tight tier.
+          if (rateLimited.allLimited || tempUnavail.allUnavailable) {
+            const fb = pickRateLimitFallback(routingModelKey || displayModel);
+            if (fb) {
+              lastErr.body.error.fallback_model = fb;
+              lastErr.body.error.remediation = `池里所有账号在 ${displayModel} 上都已限流。这个 effort 变体上游限频严（每账号几十分钟滑窗），建议改用 ${fb}（同基础模型，effort 等级更低，daily quota 更宽松）。`;
+            }
+          }
         }
         break;
       }
@@ -2755,6 +2766,16 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
                   new Error(`${model} 账号队列超时: ${reason}`),
                   { type: (tempUnavail.allUnavailable || rateLimited.allLimited) ? 'rate_limit_exceeded' : 'pool_exhausted' }
                 );
+                // v2.0.84 (#118) — same fallback hint logic as the
+                // non-stream path. Attach after lastErr is set so
+                // the lastErr-presence regression test still passes.
+                if (rateLimited.allLimited || tempUnavail.allUnavailable) {
+                  const fb = pickRateLimitFallback(modelKey || model);
+                  if (fb) {
+                    lastErr.fallback_model = fb;
+                    lastErr.remediation = `池里所有账号在 ${model} 上都已限流。这个 effort 变体上游限频严，建议改用 ${fb}（同基础模型，effort 等级更低）。`;
+                  }
+                }
               }
               break;
             }

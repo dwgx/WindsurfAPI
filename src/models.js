@@ -406,6 +406,56 @@ export function getModelInfo(id) {
   return MODELS[id] || null;
 }
 
+// v2.0.84 (#118 0a00) — when an entire account pool is rate-limited
+// on a high-effort variant (`-max` / `-xhigh` / `-thinking-1m`), find
+// a same-base lower-effort variant the user could fall back to. Used
+// for two purposes:
+//   1. Error remediation: include the suggested model in the 429
+//      response so the client can switch transparently.
+//   2. Optional auto-fallback (env opt-in): proxy retries the same
+//      request against the lower variant before reporting failure.
+//
+// Returns null when no lower variant exists in the catalog. Effort
+// ladder is suffix-only — we don't infer ladders, we read them off
+// the literal model-key suffix.
+//
+// Suffix order: less expensive first → more expensive last.
+const EFFORT_LADDER = [
+  // Anthropic effort tiers
+  'low', 'medium', 'high', 'xhigh', 'max',
+  // GPT codex max sub-tiers (claude has -low, -medium, -high; gpt
+  // codex has -low / -medium / -high stacked under -max-)
+];
+const CONTEXT_LADDER = ['1m']; // 1m context variants are weekly-quota'd
+
+export function pickRateLimitFallback(modelKey) {
+  if (!modelKey || typeof modelKey !== 'string') return null;
+  // Try effort suffix first (e.g. -max → -xhigh → -high → -medium → -low)
+  for (let i = EFFORT_LADDER.length - 1; i >= 1; i--) {
+    const suffix = `-${EFFORT_LADDER[i]}`;
+    if (modelKey.endsWith(suffix)) {
+      const base = modelKey.slice(0, -suffix.length);
+      // Walk DOWN the ladder until we find a key actually in the catalog.
+      for (let j = i - 1; j >= 0; j--) {
+        const candidate = `${base}-${EFFORT_LADDER[j]}`;
+        if (MODELS[candidate]) return candidate;
+      }
+    }
+  }
+  // 1m context variants → drop -1m
+  for (const suffix of CONTEXT_LADDER) {
+    const dashed = `-${suffix}`;
+    if (modelKey.endsWith(dashed)) {
+      const candidate = modelKey.slice(0, -dashed.length);
+      if (MODELS[candidate]) return candidate;
+    }
+  }
+  // -thinking variants don't have a simple ladder; the natural fallback
+  // is the non-thinking sibling, but that changes user-visible behaviour
+  // (no reasoning content). Skip auto-fallback for those.
+  return null;
+}
+
 // Reverse map: Model enum number → list of catalog keys (enum may match
 // multiple variants if we ever dupe, but typically 1:1).
 const _enumToKeys = (() => {
