@@ -145,9 +145,10 @@ Rules:
 1. Use one <arg_key>/<arg_value> pair per parameter.
 2. Multiple <tool_call> blocks are allowed in parallel.
 3. After all tool calls, STOP generating.
-4. NEVER write narration like "I'll run the command" or "Let me check that" — emit the <tool_call> block directly with no preamble.
+4. NEVER write narration like "I'll run the command" / "Let me check that" / "让我用 X 工具" / "我会调用 X" / "用户想..." — emit the <tool_call> block directly with no preamble. 中文也一样不要 narrate，直接 emit <tool_call> 块。
 5. NEVER FABRICATE OUTPUT. Do not invent timestamps, file contents, command outputs, or search results — those come from the tool, not from you. If unsure how to call, emit your best <tool_call> attempt with empty/placeholder args; the caller will surface validation errors.
-6. The functions listed below ARE available — do not say "I cannot" or "I don't have access". Call the function instead.
+6. The functions listed below ARE available — do not say "I cannot" or "I don't have access". Call the function instead. 即使用户用中文提问，也不要回答 "让我用..." 这种描述句——直接 emit <tool_call>。
+7. ALWAYS supply a concrete <arg_value>. Do NOT emit placeholder values like "command" / "the file" / "用命令" / 占位符 — pick the literal value the user asked for or your best guess. Emitting a real value is required even when arguments would be the same as the parameter name.
 `,
     kimi_k2: `You have access to the following functions. They are REAL callable tools — the caller will execute them and return results. Use the native kimi_k2 tool-call format used by the vLLM parser:
 
@@ -160,9 +161,10 @@ Rules:
 1. Emit only native section tokens, do not emit JSON/XML tool-call tags.
 2. You MAY emit multiple function calls inside the section.
 3. After emitting the last tool call, STOP generating.
-4. NEVER emit narration before or after the section tokens — pure section markup only.
+4. NEVER emit narration before or after the section tokens — pure section markup only. 中文用户也一样：不要写"让我用..." / "我会调用..."，直接 emit section 标记。
 5. NEVER FABRICATE OUTPUT. Do not invent file contents, command outputs, timestamps, or search results — those come from the tool execution, not from you.
-6. The functions listed below ARE available — do not say "I cannot" or "I have no tools". Use the section format above.
+6. The functions listed below ARE available — do not say "I cannot" / "I have no tools" / "我没有访问权限". Use the section format above.
+7. ALWAYS provide concrete argument values, never placeholders like "command" / "the file" / "用命令". Pick a real value or your best guess.
 `,
     openai_json_xml: `You have access to the following functions. They are REAL callable tools — the caller will execute them and return results.
 
@@ -175,8 +177,10 @@ Rules:
 2. "arguments" must be a JSON object matching the function's parameter schema.
 3. You MAY emit MULTIPLE <tool_call> blocks if the request requires calling several functions in parallel. Emit ALL needed calls consecutively, then STOP generating.
 4. After emitting the last <tool_call> block, STOP. Do not write any explanation after it. The caller executes the functions and returns results wrapped in <tool_result tool_call_id="...">...</tool_result> tags in the next user turn.
-5. NEVER say "I don't have access to tools" or "I cannot perform that action" — the functions listed below ARE your available tools.
-6. NEVER FABRICATE OUTPUT. Do not invent timestamps, file contents, command outputs, or search results — those come from the tool execution, not from you. If you cannot determine the right arguments, emit your best <tool_call> attempt; the caller will surface validation errors.`,
+5. NEVER say "I don't have access to tools" / "I cannot perform that action" / "我没有工具" / "我无法执行" — the functions listed below ARE your available tools.
+6. NEVER FABRICATE OUTPUT. Do not invent timestamps, file contents, command outputs, or search results — those come from the tool execution, not from you. If you cannot determine the right arguments, emit your best <tool_call> attempt; the caller will surface validation errors.
+7. NEVER write narration like "I'll run X" / "Let me check Y" / "让我用 X 工具" / "我会调用 Y" — emit the <tool_call> block directly with no preamble. 即使用户用中文提问也一样：不要 narrate，直接 emit <tool_call>。
+8. ALWAYS provide a concrete argument value. Reject placeholder strings like "command" / "the file" / "your input" / "用命令" / "执行一个命令" — pick the literal value the user asked for, or your best guess. The agent loop cannot work with placeholder args.`,
     // v2.0.62 (#115) — GPT family doesn't reliably emit <tool_call> XML
     // markup. Their training expects native function-calling JSON. We
     // give them a bare-JSON protocol that matches their natural output

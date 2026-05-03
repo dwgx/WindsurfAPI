@@ -103,18 +103,27 @@ const PLACEHOLDER_KEYWORDS = new Set([
   'command', 'argument', 'arguments', 'param', 'parameter',
   'parameters', 'input', 'value', 'file_path', 'filepath', 'path',
   'query', 'string', 'text', 'name', 'arg', 'output',
+  // v2.0.81 (#125 — GLM-5.1 Chinese narrate): models echo Chinese
+  // param-name keywords as the value too. "调用 shell_exec 命令 '命令'"
+  // would otherwise produce a real tool_call with command='命令'.
+  '命令', '参数', '文件', '路径', '输入', '值', '字符串', '文本', '名称', '查询', '输出',
 ]);
 const ARTICLE_PREFIX_RE = /^(?:a|an|the|this|that|these|those|your|my|our|some|any|each|every)\s+/i;
+// Chinese article-led / vague phrase prefixes — "某个命令" / "一个命令"
+// / "某种参数" — same idea as ARTICLE_PREFIX_RE but for CJK.
+const CN_VAGUE_PREFIX_RE = /^(?:某个?|一个|这个|那个|某种|什么|任何|每个|所有的?)/;
 
 function looksLikePlaceholderValue(value) {
   if (typeof value !== 'string' || !value.trim()) return true;
   const v = value.trim();
-  // Strip trailing punctuation (`.`, `,`, `;`, `:`) before comparison.
-  const stripped = v.replace(/[.,;:!?]+$/, '');
+  // Strip trailing punctuation (`.`, `,`, `;`, `:`, `。`, `，`) before comparison.
+  const stripped = v.replace(/[.,;:!?。，；：！？]+$/, '');
   if (PLACEHOLDER_KEYWORDS.has(stripped.toLowerCase())) return true;
   // Article-led phrase ("a shell command", "the file") — model
   // narrating about the call rather than supplying the call value.
   if (ARTICLE_PREFIX_RE.test(stripped)) return true;
+  // Chinese vague prefix — "某个命令", "一个文件", "这个参数"
+  if (CN_VAGUE_PREFIX_RE.test(stripped)) return true;
   return false;
 }
 
@@ -200,31 +209,49 @@ function extractLayer2(text, names, primaryParam) {
  */
 function extractLayer3(text, names, primaryParam) {
   const out = [];
-  // Verbs models actually use to announce a tool call.
-  const verbs = '(?:call|invoke|run|use|execute|exec|trigger|fire)';
+  // v2.0.81 (#125 DuZunTianXia): GLM-5.1 narrate in Chinese — log
+  // showed "让我用 Bash 来列出..." / "用户想查看..." / "我会调用 X
+  // 工具" — none of which the English-only verb regex picked up.
+  // Add Chinese verbs alongside English so the name pattern matches
+  // either language (or mixed). The primary tool-name match still
+  // requires the literal tool name (e.g. `Bash`, `shell_exec`) since
+  // those are emitted in the original alphabet by every model.
+  const verbs = '(?:call|invoke|run|use|execute|exec|trigger|fire'
+    + '|调用|使用|运行|执行|触发|启动|让我用|让我使用|我会用|我将用|通过|借助|采用)';
   const articles = '(?:the\\s+)?';
-  const suffix = '(?:\\s+(?:function|tool|method|command))?';
+  // Suffix matches ONLY tool/function meta-words (not arg labels like
+  // "command" / "命令") so the latter stay in the tail and feed the
+  // argPatterns. Pre-v2.0.81 it included "command" / "命令" which
+  // greedily consumed the very keyword that argPattern 2/4 needs.
+  const suffix = '(?:\\s+(?:function|tool|method|函数|工具|方法))?';
   for (const fn of names) {
     // Pattern: "<verb> [the] [function|tool] <fn> [function|tool]"
+    // \b doesn't match between Chinese and Latin, so we drop the
+    // leading word boundary and rely on the verb list itself.
     const namePat = new RegExp(
-      `\\b${verbs}\\s+${articles}(?:function|tool|method)?\\s*\\\`?${escapeRe(fn)}\\\`?${suffix}`,
+      `${verbs}\\s*${articles}(?:function|tool|method|函数|工具|方法)?\\s*\\\`?${escapeRe(fn)}\\\`?${suffix}`,
       'gi',
     );
     let m;
     while ((m = namePat.exec(text)) !== null) {
-      // Hunt for value within next 200 chars: "with [the] [param] '<value>'"
-      // OR "with [the] [param] `<value>`" OR "to <verb> <value>"
+      // Hunt for value within next 300 chars
       const tail = text.slice(m.index + m[0].length, m.index + m[0].length + 300);
       // ordered by specificity:
       const argPatterns = [
         // with the command 'echo X' / with command "echo X" / with command `echo X`
         /\bwith\s+(?:the\s+)?(?:command|argument|param(?:eter)?|input|file[_-]?path|path|query)\s+["'`]([^"'`\n]{1,500})["'`]/i,
+        // bare keyword + value (no "with"): command 'echo X' / argument "X"
+        /(?:^|\s)(?:command|argument|param(?:eter)?|input|file[_-]?path|path|query)\s+["'`]([^"'`\n]{1,500})["'`]/i,
+        // 中文：用命令 'X' / 传入 'X' / 参数 'X' / 命令 'X' / 路径 'X'
+        /(?:用|使用|传入|输入|参数(?:为)?|命令(?:为)?|路径(?:为)?|文件(?:为)?|查询(?:为)?)\s*["'`「『]([^"'`\n「」『』]{1,500})["'`」』]/,
         // with 'echo X' (no param keyword)
         /\bwith\s+["'`]([^"'`\n]{1,500})["'`]/i,
         // to read /etc/hosts (positional after action verb)
         /\bto\s+(?:read|run|execute|view|search|find|cat|ls)\s+([\S][^\n]{0,200})/i,
         // : 'echo X' / = 'echo X'
         /[:=]\s*["'`]([^"'`\n]{1,500})["'`]/,
+        // last resort: very first quoted string in the tail
+        /^[\s,，。.]*["'`「『]([^"'`\n「」『』]{1,500})["'`」』]/,
       ];
       let value = null;
       for (const pat of argPatterns) {
@@ -258,8 +285,14 @@ function extractLayer3(text, names, primaryParam) {
  */
 function userPromptLooksActionable(lastUserText) {
   if (!lastUserText) return false;
-  return /\b(?:run|exec|execute|cat|ls|echo|grep|find|read|search|list|invoke|call|fetch|get|fix|edit|write|patch)\b/i.test(lastUserText)
-    || /\b(?:shell|bash|terminal|command|tool|function|file|path)\b/i.test(lastUserText);
+  // v2.0.81 (#125): widen to Chinese verbs/nouns so GLM-5.1 / Kimi
+  // running with a Chinese system prompt + Chinese user turn still
+  // routes through Layer 3.
+  if (/\b(?:run|exec|execute|cat|ls|echo|grep|find|read|search|list|invoke|call|fetch|get|fix|edit|write|patch)\b/i.test(lastUserText)) return true;
+  if (/\b(?:shell|bash|terminal|command|tool|function|file|path)\b/i.test(lastUserText)) return true;
+  if (/(?:运行|执行|读取|查看|列出|查找|搜索|获取|修改|编辑|写入|修复|分析|调用|使用|拉取|下载|找到|看一下|看看|检查)/.test(lastUserText)) return true;
+  if (/(?:文件|目录|路径|命令|工具|函数|参数|项目|代码|配置)/.test(lastUserText)) return true;
+  return false;
 }
 
 /**
