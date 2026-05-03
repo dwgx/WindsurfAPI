@@ -3518,12 +3518,18 @@ docker compose up -d --force-recreate</pre>
           const noData = pct == null;
           const v = noData ? 0 : Math.max(0, Math.min(100, pct));
           const c = noData ? 'var(--text-dim)' : barColor(v);
-          return `<div style="display:flex;align-items:center;gap:3px;margin-top:2px" title="${detail || (noData ? 'N/A' : '')}">
+          // v2.0.75 (#123 wnfilm): when upstream did not return the
+          // bucket (dailyPercent=null but weeklyPercent has a value)
+          // the bar previously read "--%" with a faint trough — easy
+          // to mistake for a refresh failure. Print "N/A" with a
+          // dashed bar so it's visually distinct from a 0% / failure
+          // state, and mirror the explanation into the tooltip.
+          return `<div style="display:flex;align-items:center;gap:3px;margin-top:2px" title="${detail}">
             <span class="text-xs" style="width:14px;flex-shrink:0;color:var(--text-dim);font-size:10px;font-weight:600">${label}</span>
-            <div style="flex:1;height:4px;background:var(--surface-3);border-radius:2px;overflow:hidden;min-width:40px">
+            <div style="flex:1;height:4px;background:var(--surface-3);border-radius:2px;overflow:hidden;min-width:40px${noData ? ';outline:1px dashed var(--text-dim);outline-offset:-1px' : ''}">
               <div style="height:100%;width:${noData ? 0 : v}%;background:${c};border-radius:2px;transition:width .4s ease"></div>
             </div>
-            <span class="text-xs" style="width:28px;text-align:right;color:${c};font-size:10px">${noData ? '--' : v.toFixed(0)+'%'}</span>
+            <span class="text-xs" style="width:28px;text-align:right;color:${c};font-size:10px;font-style:${noData ? 'italic' : 'normal'}">${noData ? 'N/A' : v.toFixed(0)+'%'}</span>
           </div>`;
         };
         const fmtReset = (unix) => unix ? new Date(unix * 1000).toLocaleString() : I18n.t('creditsBar.noResetTime');

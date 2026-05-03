@@ -80,14 +80,14 @@ describe('shouldUseNativeBridge — auto-on heuristic', () => {
     );
   });
 
-  it('Anthropic Claude → ON on any route (cascade-native function-calling matches their training)', () => {
+  it('Anthropic Claude → OFF by default (v2.0.75 #124 regression fix — bridge runs tools in REMOTE cascade sandbox, but client tools expect LOCAL execution; hang forever)', () => {
     assert.equal(
       shouldUseNativeBridge(tools, { modelKey: 'claude-sonnet-4.6', provider: 'anthropic', route: 'responses' }),
-      true,
+      false,
     );
     assert.equal(
       shouldUseNativeBridge(tools, { modelKey: 'claude-sonnet-4.6', provider: 'anthropic', route: 'chat' }),
-      true,
+      false,
     );
   });
 
@@ -98,12 +98,12 @@ describe('shouldUseNativeBridge — auto-on heuristic', () => {
     );
   });
 
-  it('partial-mapped tools on Claude → ON (v2.0.66 partition mode preserved for Claude)', () => {
+  it('partial-mapped tools on Claude → OFF (post-v2.0.75 — same #124 logic, no client wants remote execution by default)', () => {
     assert.equal(
       shouldUseNativeBridge([fnTool('Read'), fnTool('get_weather')], {
         modelKey: 'claude-sonnet-4.6', provider: 'anthropic', route: 'responses',
       }),
-      true,
+      false,
     );
   });
 
@@ -116,12 +116,17 @@ describe('shouldUseNativeBridge — auto-on heuristic', () => {
     );
   });
 
-  it('explicit env override forces on for any mapped tool set', () => {
+  it('explicit env override forces on for any mapped tool set (deployer opting into remote execution)', () => {
     const orig = process.env.WINDSURFAPI_NATIVE_TOOL_BRIDGE;
     process.env.WINDSURFAPI_NATIVE_TOOL_BRIDGE = '1';
     try {
       assert.equal(
         shouldUseNativeBridge(tools, { modelKey: 'claude-sonnet-4-6', provider: 'anthropic', route: 'chat' }),
+        true,
+      );
+      // GPT too, when explicitly enabled.
+      assert.equal(
+        shouldUseNativeBridge(tools, { modelKey: 'gpt-5.5-medium', provider: 'openai', route: 'responses' }),
         true,
       );
     } finally {

@@ -2755,10 +2755,15 @@ const App = {
         const planName = cr.planName || '-';
         const fetchedAgo = cr.fetchedAt ? Math.round((Date.now() - cr.fetchedAt) / 60000) + 'm' : '-';
         const renderBar = (lbl, pct) => {
-          if (pct == null) return `<div class="detail-bar" style="margin:0;grid-template-columns:18px 1fr 32px"><span class="b-label">${lbl}</span><div class="bar" style="height:5px;border-width:1px"><div class="bar-fill"></div></div><span class="b-pct text-dim">—</span></div>`;
+          // v2.0.75 (#123): "N/A" reads more clearly than an em-dash
+          // when upstream just doesn't return that bucket (Trial Daily
+          // is null but Weekly has a value — easy to mistake for a
+          // refresh failure). italic + dashed border separates it
+          // visually from a 0% / failure state.
+          if (pct == null) return `<div class="detail-bar" style="margin:0;grid-template-columns:18px 1fr 36px" title="upstream returned no data for this bucket"><span class="b-label">${lbl}</span><div class="bar" style="height:5px;border-width:1px;border-style:dashed"><div class="bar-fill"></div></div><span class="b-pct text-dim italic">N/A</span></div>`;
           const v = Math.max(0, Math.min(100, pct));
           const k = v <= 10 ? 'error' : v <= 30 ? 'warn' : 'good';
-          return `<div class="detail-bar" style="margin:0;grid-template-columns:18px 1fr 32px"><span class="b-label">${lbl}</span><div class="bar" style="height:5px;border-width:1px"><div class="bar-fill ${k}" style="width:${v}%"></div></div><span class="b-pct">${v.toFixed(0)}%</span></div>`;
+          return `<div class="detail-bar" style="margin:0;grid-template-columns:18px 1fr 36px"><span class="b-label">${lbl}</span><div class="bar" style="height:5px;border-width:1px"><div class="bar-fill ${k}" style="width:${v}%"></div></div><span class="b-pct">${v.toFixed(0)}%</span></div>`;
         };
         creditCell = `<div style="min-width:130px"><div class="text-xs" style="margin-bottom:3px"><b>${this.esc(planName.slice(0,12))}</b> <span class="text-mute">${fetchedAgo}</span></div>${renderBar('D', cr.dailyPercent)}${renderBar('W', cr.weeklyPercent)}</div>`;
       }

@@ -951,31 +951,42 @@ export function buildAdditionalStepsFromHistory(messages) {
  * trajectory-step injection while unmapped tools keep the emulation
  * toolPreamble path; both coexist in the same request.
  *
- * v2.0.70 (#115 root-cause fix): GPT family is REMOVED from auto-on. Real
+ * v2.0.70 (#115 root-cause fix): GPT family REMOVED from auto-on. Real
  * end-to-end probe on v2.0.69 with a single shell_command tool + GPT-5.5
  * showed `markers=none / 0 tool_calls` and the model fabricated a fake
  * timestamp output — cascade DEFAULT planner_mode describes
  * `run_command` using cascade's internal trajectory grammar, which
- * GPT's training has never seen, so GPT knows the tool exists but
- * doesn't know how to emit a call → hallucinates instead. The auto-on
- * heuristic is now `provider === 'anthropic'` (Claude 4.x natively
- * speaks cascade-style tool_use and benefits from native trajectory
- * injection); GPT/Codex routes back to the existing NO_TOOL emulation
- * path with the gpt_native bare-JSON dialect, which is the protocol
- * GPT actually understands.
+ * GPT's training has never seen.
+ *
+ * v2.0.75 (#124 zhqsuo critical regression). v2.0.70 ALSO turned the
+ * auto-on the OTHER way for Anthropic Claude — premise was "Claude
+ * speaks cascade-style tool_use natively so it'll execute well in the
+ * planner-mode path." Real-world behaviour was the opposite: when
+ * Claude Code (or any client whose tools[] models LOCAL filesystem ops
+ * — Read / Edit / Bash) hits this path, the cascade planner runs the
+ * tool inside Windsurf's REMOTE workspace sandbox
+ * (`/home/user/projects/workspace-devinxse`), not the user's machine.
+ * The user's files don't exist there, so `run_command` / `view_file`
+ * hang at lastStatus=2 (ACTIVE) until warm stall fires — every Claude
+ * tool call permanently stuck for 6+ minutes before erroring.
+ *
+ * The native bridge is only correct for clients whose tool inventory
+ * models REMOTE work (e.g. a self-contained agent that wants the
+ * proxy's sandbox to be the execution environment). Claude Code, Cline,
+ * Codex CLI, opencode all expect LOCAL execution. We can't tell from
+ * tools[] alone which intent the caller has, and the safe default
+ * therefore has to be OFF — opt in via env when the deployer knows the
+ * caller wants remote execution.
+ *
+ * Both env knobs still work:
+ *   WINDSURFAPI_NATIVE_TOOL_BRIDGE=1     → force on for all callers
+ *   WINDSURFAPI_NATIVE_TOOL_BRIDGE_OFF=1 → force off (default, but
+ *                                          stays available for clarity)
  */
 export function shouldUseNativeBridge(tools, { modelKey = '', provider = '', route = '' } = {}) {
   if (process.env.WINDSURFAPI_NATIVE_TOOL_BRIDGE_OFF === '1') return false;
   const explicitOn = process.env.WINDSURFAPI_NATIVE_TOOL_BRIDGE === '1';
   const part = partitionTools(tools);
   if (!part.hasAny) return false;
-  if (explicitOn) return true;
-  // v2.0.70 — Anthropic Claude family auto-on (cascade-native function-
-  // calling matches their training); GPT family auto-OFF (use emulation
-  // + gpt_native dialect instead, end-to-end probe showed cascade-style
-  // grammar makes GPT fabricate).
-  const isClaude = String(provider).toLowerCase() === 'anthropic'
-    || /^claude-/i.test(String(modelKey).toLowerCase());
-  if (isClaude) return true;
-  return false;
+  return explicitOn;
 }

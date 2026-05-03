@@ -35,17 +35,21 @@ describe('#115 — GPT family removed from native bridge auto-on (v2.0.70)', () 
     );
   });
 
-  it('Anthropic Claude family + responses route → ON', () => {
+  // v2.0.75 (#124 zhqsuo): Claude auto-on was the WRONG direction —
+  // cascade planner runs the tools in its REMOTE workspace sandbox, but
+  // every real Claude Code / Cline / Codex client wants LOCAL execution.
+  // Default reverted to OFF; only explicit env opts in.
+  it('Anthropic Claude family + responses route → OFF (post-v2.0.75)', () => {
     assert.equal(
       shouldUseNativeBridge([fnTool('Read'), fnTool('Bash')], { modelKey: 'claude-sonnet-4.6', provider: 'anthropic', route: 'responses' }),
-      true,
+      false,
     );
   });
 
-  it('Claude on chat completions route → ON (auto-on covers both routes)', () => {
+  it('Claude on chat completions route → OFF (post-v2.0.75)', () => {
     assert.equal(
       shouldUseNativeBridge([fnTool('Read')], { modelKey: 'claude-sonnet-4.6', provider: 'anthropic', route: 'chat' }),
-      true,
+      false,
     );
   });
 
