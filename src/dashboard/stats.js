@@ -29,6 +29,9 @@ const _state = {
     total: 0,
     requests_with_usage: 0,
   },
+  // v2.0.91 — track upstream rejection/cooldown events
+  policyBlockedCount: 0,
+  rateLimitedCount: 0,
 };
 
 // Load persisted stats
@@ -173,5 +176,15 @@ export function recordTokenUsage(usage) {
   _state.tokenTotals.output += output;
   _state.tokenTotals.total += fresh + cacheR + cacheW + output;
   _state.tokenTotals.requests_with_usage += 1;
+  scheduleSave();
+}
+
+export function recordPolicyBlocked() {
+  _state.policyBlockedCount = (_state.policyBlockedCount || 0) + 1;
+  scheduleSave();
+}
+
+export function recordRateLimited() {
+  _state.rateLimitedCount = (_state.rateLimitedCount || 0) + 1;
   scheduleSave();
 }

@@ -518,6 +518,12 @@ class AnthropicStreamTranslator {
   finish() {
     if (this.messageStopped) return;
     this.messageStopped = true;
+    // Ensure message_start is always sent — when the upstream stream
+    // fails before any content arrives (e.g. cascade immediate error,
+    // new-api timeout), Claude Code still expects a complete event
+    // sequence. Without this, the client sees message_delta + stop
+    // with no preceding start and reports "Content block not found".
+    if (!this.messageStarted) this.startMessage();
     this.closeCurrentBlock();
     const u = this.finalUsage || {};
     this.send('message_delta', {

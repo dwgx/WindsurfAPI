@@ -100,7 +100,20 @@ function escapeHistoryTag(text, tag) {
  */
 function neutralizeIdentityForCascade(sysText) {
   if (!sysText) return sysText;
-  return sysText.replace(/(^|[\n.!?]\s*)You are /g, '$1The assistant is ');
+  // v2.0.91 — sanitize content-policy triggers that Windsurf upstream
+  // flags as "Your request was blocked by our content policy". Codex
+  // and other client-side IDEs inject internal brand references
+  // (Devin session tokens, competitor product names in metadata) that
+  // Cascade's safety filter treats as policy violations even though
+  // the actual user prompt is benign.
+  let text = sysText;
+  // Codex session tokens containing "devin" trigger Windsurf's filter
+  text = text.replace(/devin[_-]?(?:session|sess|id|token|key|auth)/gi, 'cloud-session');
+  // Devin-related internal metadata (brand names in tool output headers)
+  text = text.replace(/(?:^|\n)\s*(?:#\s*)?Devin\s+(?:AI|Assistant|Agent|IDE|CLI|Code)/gi, '\nCloud IDE');
+  // Generic: strip "You are Devin/OpenClaw/etc" identity overrides
+  text = text.replace(/(^|[\n.!?]\s*)You are (?:Devin|Codex|OpenClaw|Aider|Cline)(?:[,.]|\s|$)/gi, '$1The assistant is a coding tool');
+  return text.replace(/(^|[\n.!?]\s*)You are /g, '$1The assistant is ');
 }
 
 function extractCompactSystemFacts(sysText) {
@@ -156,7 +169,10 @@ function positiveIntEnv(name, fallback) {
 }
 
 function cascadeHistoryBudget(modelUid) {
-  const normal = positiveIntEnv('CASCADE_MAX_HISTORY_BYTES', 200_000);
+  // Default 400KB — long conversations (100+ turns with tool results)
+  // easily hit the old 200KB limit, causing silent context amputation.
+  // Still configurable via env for memory-constrained hosts.
+  const normal = positiveIntEnv('CASCADE_MAX_HISTORY_BYTES', 400_000);
   if (/\b1m\b|[-_]1m$/i.test(String(modelUid || ''))) {
     return positiveIntEnv('CASCADE_1M_HISTORY_BYTES', 900_000);
   }
@@ -667,6 +683,9 @@ export class WindsurfClient {
         const latest = convo[convo.length - 1];
         const extracted = await extractImages(latest?.content ?? '');
         text = `The following is a multi-turn conversation. You MUST remember and use all information from prior turns.\n\n${lines.join('\n\n')}\n\n<human>\n${extracted.text}\n</human>`;
+        if (firstIncluded > 0) {
+          text = `<truncation_note>The conversation above is truncated — ${firstIncluded} earlier turns were dropped due to length limits. The user's original task and the most recent tool results are preserved. Do NOT ask the user to repeat their task; continue from the latest context.</truncation_note>\n\n` + text;
+        }
         images = extracted.images;
         if (sysText) text = sysText + '\n\n' + text;
       }

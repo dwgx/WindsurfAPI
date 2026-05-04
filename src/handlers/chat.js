@@ -9,7 +9,7 @@ import { getApiKey, acquireAccountByKey, releaseAccount, getAccountAvailability,
 import { resolveModel, getModelInfo, pickRateLimitFallback } from '../models.js';
 import { getLsFor, ensureLs } from '../langserver.js';
 import { config, log } from '../config.js';
-import { recordRequest, recordTokenUsage } from '../dashboard/stats.js';
+import { recordRequest, recordTokenUsage, recordPolicyBlocked, recordRateLimited } from '../dashboard/stats.js';
 import { extractIntentFromNarrative, detectToolIntentInNarrative } from './intent-extractor.js';
 import { markRequest as markQuietWindowRequest } from '../dashboard/quiet-window-updater.js';
 import { isModelAllowed } from '../dashboard/model-access.js';
@@ -784,9 +784,11 @@ export function extractCallerEnvironment(messages) {
   const PATTERNS = [
     ['cwd', new RegExp(
       // Form (a): line-anchored key/value, optional adjective prefix
-      `(?:^|\\n)\\s*(?:[-*]\\s+)?(?:${ADJ})?(?:Working\\s+directory|cwd|<cwd>)\\s*[:=]\\s*\`?(${PATH_TAIL})\`?` +
+      `(?:^|\\n)\\s*(?:[-*]\\s+)?(?:${ADJ})?(?:Working\\s+directory|cwd)\\s*[:=]\\s*\`?(${PATH_TAIL})\`?` +
       // Form (b): prose "current working directory is /path" (adjacent path)
-      `|(?:current\\s+working\\s+directory(?:\\s+is)?)\\s*[:=]?\\s*\`?(${PATH_TAIL})\`?`,
+      `|(?:current\\s+working\\s+directory(?:\\s+is)?)\\s*[:=]?\\s*\`?(${PATH_TAIL})\`?` +
+      // Form (c): Codex / XML-style <cwd>/path/</cwd> tags (no :/= separator)
+      `|<cwd>\\s*(${PATH_TAIL})\\s*</cwd>`,
       'gi'
     ), (v) => `- Working directory: ${v}`],
     // Git repo: accept "Is directory a git repo" (Claude Code <2.x) AND
@@ -1985,22 +1987,36 @@ async function _handleChatCompletionsInner(body, context = {}) {
     // v2.0.61 (#113): policy_blocked → don't rotate accounts, return
     // immediately. The model refused the request, swapping accounts
     // gives the same refusal but burns more quota.
-    if (errType === 'policy_blocked') return result;
+    if (errType === 'policy_blocked') { recordPolicyBlocked(); return result; }
     // Rate limit: this account is done for this model, try the next one
     if (errType === 'rate_limit_exceeded') {
-      if (!reuseEntryDead && strictReuse && checkedOutReuseEntry && fpBefore && checkedOutReuseEntry.apiKey === acct.apiKey) {
-        const availability = getAccountAvailability(acct.apiKey, routingModelKey);
-        const retryAfterMs = strictReuseRetryMs(availability);
-        poolCheckin(fpBefore, checkedOutReuseEntry, callerKey, ttlHintFromCachePolicy(cachePolicy));
-        log.info(`Chat[${reqId}]: strict reuse preserved cascade after rate limit`);
+      recordRateLimited();
+      // v2.0.91 — IP-level circuit breaker: when Windsurf upstream
+      // rate-limits several accounts for the same model in a tight
+      // window, it's usually IP-wide cooldown, not per-account.
+      // Burning through all 40+ accounts just marks them all dead
+      // for 30 min. Detect and short-circuit.
+      if (!context.__rateLimitEvents) context.__rateLimitEvents = [];
+      const RL_WINDOW_MS = 8_000;
+      const RL_BURST_THRESHOLD = 3;
+      context.__rateLimitEvents.push({ time: Date.now(), model: routingModelKey, account: acct.id });
+      // Prune old events
+      const cutoff = Date.now() - RL_WINDOW_MS;
+      while (context.__rateLimitEvents.length && context.__rateLimitEvents[0].time < cutoff) {
+        context.__rateLimitEvents.shift();
+      }
+      const sameModelBurst = context.__rateLimitEvents.filter(e => e.model === routingModelKey);
+      if (sameModelBurst.length >= RL_BURST_THRESHOLD) {
+        const maxCooldown = Math.max(...sameModelBurst.map(() => 30_000));
+        log.warn(`Chat[${reqId}]: IP-rate-limit burst detected — ${sameModelBurst.length} accounts rate-limited on ${displayModel} within ${RL_WINDOW_MS}ms. Short-circuiting.`);
         return {
           status: 429,
-          headers: { 'Retry-After': String(Math.ceil(retryAfterMs / 1000)) },
+          headers: { 'Retry-After': String(Math.ceil(maxCooldown / 1000)) },
           body: {
             error: {
-              message: strictReuseMessage(displayModel, retryAfterMs, availability.reason),
+              message: `All accounts temporarily rate-limited on ${displayModel}. Windsurf upstream is applying IP-level cooldown. Wait ${Math.ceil(maxCooldown / 1000)}s before retrying, or switch to a different model.`,
               type: 'rate_limit_exceeded',
-              retry_after_ms: retryAfterMs,
+              retry_after_ms: maxCooldown,
             },
           },
         };
@@ -3199,9 +3215,32 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
             // v2.0.61 (#113) — same policy detection as nonStreamResponse.
             const isPolicyBlocked = /cyber\s*verification|content[\s_-]+policy|policy[\s_-]+(?:violation|blocked|denied)|safety[\s_-]+(?:policy|blocked)|prompt[\s_-]+(?:rejected|blocked)\s+by[\s_-]+policy|usage[\s_-]+policy[\s_-]+violation/i.test(err.message);
             if (isAuthFail) reportError(currentApiKey);
-            if (isRateLimit) { markRateLimited(currentApiKey, rateLimitCooldownMs(err.message), modelKey); err.isRateLimit = true; err.isModelError = true; err.kind ||= 'model_error'; }
+            if (isRateLimit) { recordRateLimited(); markRateLimited(currentApiKey, rateLimitCooldownMs(err.message), modelKey); err.isRateLimit = true; err.isModelError = true; err.kind ||= 'model_error'; }
+            // v2.0.91 — IP-level rate limit circuit breaker (stream path).
+            // Same logic as non-stream: ≥3 accounts rate-limited for the
+            // same model within 8s → Windsurf is doing IP-wide cooldown,
+            // stop burning accounts and surface immediately.
+            if (isRateLimit && !context.__rlAborted) {
+              if (!context.__rateLimitEvents) context.__rateLimitEvents = [];
+              const RL_WINDOW_MS = 8_000;
+              const RL_BURST_THRESHOLD = 3;
+              const now = Date.now();
+              context.__rateLimitEvents.push({ time: now, model: modelKey, account: acct?.id });
+              const cutoff = now - RL_WINDOW_MS;
+              while (context.__rateLimitEvents.length && context.__rateLimitEvents[0].time < cutoff) {
+                context.__rateLimitEvents.shift();
+              }
+              const sameModelBurst = context.__rateLimitEvents.filter(e => e.model === modelKey);
+              if (sameModelBurst.length >= RL_BURST_THRESHOLD) {
+                context.__rlAborted = true;
+                log.warn(`Chat[${reqId}] stream: IP-rate-limit burst — ${sameModelBurst.length} accounts rate-limited on ${model} within ${RL_WINDOW_MS}ms. Short-circuiting.`);
+                const cooldown = Math.max(...sameModelBurst.map(() => 30_000));
+                lastErr = Object.assign(new Error(`All accounts temporarily rate-limited on ${model}. Windsurf upstream is applying IP-level cooldown. Wait ~${Math.ceil(cooldown / 1000)}s before retrying.`), { type: 'rate_limit_exceeded', retry_after_ms: cooldown });
+                break;
+              }
+            }
             if (isInternal) { reportInternalError(currentApiKey); err.isModelError = true; err.kind ||= 'transient_stall'; }
-            if (isPolicyBlocked) { err.isPolicyBlocked = true; err.isModelError = true; err.kind = 'policy_blocked'; }
+            if (isPolicyBlocked) { recordPolicyBlocked(); err.isPolicyBlocked = true; err.isModelError = true; err.kind = 'policy_blocked'; }
             if (isTransport) { err.isModelError = true; err.kind ||= 'transient_stall'; }
             // v2.0.56 stream-path ban detection — same 2-strike logic as
             // non-stream. See nonStreamResponse for rationale.
