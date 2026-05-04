@@ -452,71 +452,51 @@ async function windsurfLoginViaAuth1(email, password, fingerprint, proxy) {
 
   log.info(`Auth1 login OK: ${email}`);
 
-  // v2.0.61 (#114): pin OneTimeAuthToken to the SAME host PostAuth just
-  // used. Cross-host token replay was failing with "invalid token".
+  // v2.0.90 (#114 lnqdev / CharwinYAO): drop OneTimeAuthToken + Codeium
+  // register_user step entirely. Upstream GetOneTimeAuthToken started
+  // returning 401 invalid_token for ALL sessionTokens — matrix probe
+  // (scripts/probes/v2089-ott-host-matrix.mjs) confirmed 12/12 fail
+  // across 3 accounts × {sToken_new, sToken_legacy} × {OTT_new,
+  // OTT_legacy}. Cross-host retry can't save it; the OTT endpoint is
+  // gone for good (Cognition migrated to the Devin auth flow).
   //
-  // v2.0.75 (#114 CharwinYAO): one host can also become asymmetric
-  // and reject the same-host token (CharwinYAO's v2.0.71 log:
-  // `OneTimeToken legacy HTTP 401: invalid token` after PostAuth
-  // legacy succeeded). Add a cross-host retry: if the first
-  // PostAuth → OneTimeToken pair gets 401 invalid_token at the OTT
-  // step, redo PostAuth on the OPPOSITE host and try again. Treats
-  // the regression as "this gateway is sick right now, switch to
-  // the other one" rather than failing hard.
+  // Reverse-engineering windsurf-assistant v17.42.20 (2026-04-27, the
+  // upstream-tracked Windsurf account-switcher) confirms its production
+  // path is Devin-only:
+  //     Auth1 password/login → WindsurfPostAuth → sessionToken
+  // and uses sessionToken directly as the IDE auth credential. No OTT,
+  // no RegisterUser, no codeium register_user.
+  //
+  // Probe scripts/probes/v2089-sessiontoken-as-apikey.mjs verified the
+  // Cascade gRPC backend (server.codeium.com /
+  // server.self-serve.windsurf.com) accepts the raw sessionToken
+  // (devin-session-token$xxx) as metadata.apiKey on GetUserStatus
+  // → 4/4 200 OK with valid planName. The downstream protocol treats
+  // it identically to the codeium register_user-issued sk-ws-01-... key.
+  //
+  // So the chain collapses from
+  //     Auth1 → PostAuth → OTT → registerWithCodeium → apiKey
+  // to
+  //     Auth1 → PostAuth → apiKey = sessionToken.
+  // RegisterUser only accepts firebase_id_token (won't take sessionToken)
+  // and Firebase signInWithPassword now demands App Check tokens that
+  // server-side callers can't produce — so the firebase path is dead
+  // too. Devin path is the only one that works post-2026-05-04.
   const bridgeBody = JSON.stringify({ auth1Token, orgId: '' });
-
-  async function postAuthThenOtt(forcedHost) {
-    const { res: br, label: bl } = await postAuthDualPath(bridgeBody, fingerprint, proxy, forcedHost);
-    if (br.status >= 400 || !br.data?.sessionToken) return { stage: 'postauth', br, bl };
-    const sToken = br.data.sessionToken;
-    log.info(`Windsurf PostAuth OK (${bl}): ${email} account=${br.data.accountId || 'unknown'}`);
-    const oBody = JSON.stringify({ authToken: sToken });
-    const { res: oRes, label: oL } = await oneTimeTokenDualPath(oBody, fingerprint, proxy, bl);
-    if (oRes.status >= 400 || !oRes.data?.authToken) return { stage: 'ott', br, bl, oRes, oL, sToken };
-    if (oL === 'legacy') log.info(`OneTimeToken used legacy host: ${email}`);
-    return { stage: 'ok', br, bl, oRes, oL, sToken };
+  const { res: br, label: bl } = await postAuthDualPath(bridgeBody, fingerprint, proxy);
+  if (br.status >= 400 || !br.data?.sessionToken) {
+    throw new Error(`ERR_POSTAUTH_FAILED:${JSON.stringify(br.data).slice(0, 200)}`);
   }
-
-  function isInvalidTokenError(res) {
-    if (!res || res.status !== 401) return false;
-    const blob = JSON.stringify(res.data || '').toLowerCase();
-    return /invalid\s*token|unauthenticated/i.test(blob);
-  }
-
-  let attempt = await postAuthThenOtt(null);
-  if (attempt.stage === 'ott' && isInvalidTokenError(attempt.oRes)) {
-    const opposite = attempt.bl === 'new' ? 'legacy' : 'new';
-    log.warn(`OneTimeToken ${attempt.oL} returned invalid_token on ${attempt.bl}-bridge sessionToken — retrying with PostAuth on ${opposite} host`);
-    const retry = await postAuthThenOtt(opposite);
-    if (retry.stage === 'ok') {
-      attempt = retry;
-      log.info(`OneTimeToken cross-host retry succeeded: PostAuth=${retry.bl} OTT=${retry.oL}`);
-    } else if (retry.stage === 'ott') {
-      // Both hosts rejected — surface the most informative error.
-      attempt = retry;
-    }
-    // postauth_failed on the retry → keep the original attempt's
-    // ott_failed error (more useful than "the second host's PostAuth
-    // also rejected your auth1Token", which it always will if the
-    // first host already accepted it).
-  }
-
-  if (attempt.stage === 'postauth') {
-    throw new Error(`ERR_POSTAUTH_FAILED:${JSON.stringify(attempt.br.data).slice(0, 200)}`);
-  }
-  if (attempt.stage === 'ott') {
-    throw new Error(`ERR_TOKEN_FETCH_FAILED:${JSON.stringify(attempt.oRes.data).slice(0, 200)}`);
-  }
-
-  const reg = await registerWithCodeium(attempt.oRes.data.authToken, fingerprint, proxy);
-  log.info(`Codeium register via Auth1 OK: ${email} → key=${reg.api_key.slice(0, 20)}...`);
+  const sessionToken = br.data.sessionToken;
+  const accountId = br.data.accountId || 'unknown';
+  log.info(`Windsurf PostAuth OK (${bl}): ${email} account=${accountId} → using sessionToken as apiKey`);
 
   return {
-    apiKey: reg.api_key,
-    name: reg.name || email,
+    apiKey: sessionToken,
+    name: email,
     email,
-    apiServerUrl: reg.api_server_url || '',
-    sessionToken: attempt.sToken,
+    apiServerUrl: '',
+    sessionToken,
     auth1Token,
   };
 }
