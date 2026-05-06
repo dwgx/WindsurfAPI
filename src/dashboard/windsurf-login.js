@@ -34,7 +34,7 @@ const WINDSURF_BACKEND_SEAT_BASE = 'https://windsurf.com/_backend/exa.seat_manag
 const WINDSURF_POST_AUTH_URL_NEW = `${WINDSURF_BACKEND_SEAT_BASE}/WindsurfPostAuth`;
 const WINDSURF_ONE_TIME_TOKEN_URL_NEW = `${WINDSURF_BACKEND_SEAT_BASE}/GetOneTimeAuthToken`;
 
-async function postAuthDualPath(body, fingerprint, proxy, preferredHost = null) {
+async function postAuthDualPath(body, fingerprint, proxy, preferredHost = null, extraHeaders = {}) {
   // Try the new windsurf.com/_backend host first; on 5xx / network error
   // retry against the legacy server.self-serve.windsurf.com host. Both
   // accept the same Connect-RPC body shape.
@@ -43,7 +43,11 @@ async function postAuthDualPath(body, fingerprint, proxy, preferredHost = null) 
   // caller can force the OPPOSITE host on a cross-host invalid-token
   // retry — see the OneTimeToken cross-host fallback in
   // windsurfLoginViaPasswordAuth1.
-  const headers = buildJsonHeaders(fingerprint, body, { 'Connect-Protocol-Version': '1' });
+  //
+  // v2.0.91 (#134): legacy PostAuth now requires X-Devin-Auth1-Token
+  // header (previously only needed in body). Pass it explicitly so
+  // both endpoints accept the token.
+  const headers = buildJsonHeaders(fingerprint, body, { 'Connect-Protocol-Version': '1', ...extraHeaders });
   const orderedHosts = preferredHost === 'legacy'
     ? [[WINDSURF_POST_AUTH_URL, 'legacy'], [WINDSURF_POST_AUTH_URL_NEW, 'new']]
     : [[WINDSURF_POST_AUTH_URL_NEW, 'new'], [WINDSURF_POST_AUTH_URL, 'legacy']];
@@ -483,7 +487,8 @@ async function windsurfLoginViaAuth1(email, password, fingerprint, proxy) {
   // server-side callers can't produce — so the firebase path is dead
   // too. Devin path is the only one that works post-2026-05-04.
   const bridgeBody = JSON.stringify({ auth1Token, orgId: '' });
-  const { res: br, label: bl } = await postAuthDualPath(bridgeBody, fingerprint, proxy);
+  const { res: br, label: bl } = await postAuthDualPath(bridgeBody, fingerprint, proxy, null,
+    { 'X-Devin-Auth1-Token': auth1Token });
   if (br.status >= 400 || !br.data?.sessionToken) {
     throw new Error(`ERR_POSTAUTH_FAILED:${JSON.stringify(br.data).slice(0, 200)}`);
   }
