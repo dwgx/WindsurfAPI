@@ -1,8 +1,18 @@
-import { describe, it, beforeEach } from 'node:test';
+import { describe, it, beforeEach, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { cacheKey, cacheGet, cacheSet, cacheClear } from '../src/cache.js';
 
-beforeEach(() => cacheClear());
+const originalResponseCacheEnabled = process.env.RESPONSE_CACHE_ENABLED;
+
+beforeEach(() => {
+  process.env.RESPONSE_CACHE_ENABLED = '1';
+  cacheClear();
+});
+
+after(() => {
+  if (originalResponseCacheEnabled === undefined) delete process.env.RESPONSE_CACHE_ENABLED;
+  else process.env.RESPONSE_CACHE_ENABLED = originalResponseCacheEnabled;
+});
 
 describe('cacheKey', () => {
   it('produces deterministic keys', () => {
@@ -61,6 +71,13 @@ describe('cacheGet / cacheSet', () => {
     assert.equal(cacheGet('nonexistent'), null);
   });
 
+  it('defaults to enabled when RESPONSE_CACHE_ENABLED is unset', () => {
+    delete process.env.RESPONSE_CACHE_ENABLED;
+    const value = { text: 'hello', thinking: null };
+    cacheSet('default-enabled', value);
+    assert.deepEqual(cacheGet('default-enabled'), value);
+  });
+
   it('stores and retrieves values', () => {
     const value = { text: 'hello', thinking: null };
     cacheSet('key1', value);
@@ -73,5 +90,11 @@ describe('cacheGet / cacheSet', () => {
     assert.equal(cacheGet('empty'), null);
     cacheSet('empty2', { text: '', chunks: [] });
     assert.equal(cacheGet('empty2'), null);
+  });
+
+  it('can be disabled with RESPONSE_CACHE_ENABLED=0', () => {
+    process.env.RESPONSE_CACHE_ENABLED = '0';
+    cacheSet('key1', { text: 'hello' });
+    assert.equal(cacheGet('key1'), null);
   });
 });

@@ -5,6 +5,7 @@ import { cacheClear, cacheKey, cacheSet } from '../src/cache.js';
 import { handleChatCompletions } from '../src/handlers/chat.js';
 
 const createdAccountIds = [];
+const originalResponseCacheEnabled = process.env.RESPONSE_CACHE_ENABLED;
 
 function fakeRes() {
   const listeners = new Map();
@@ -42,6 +43,8 @@ function parseChatFrames(raw) {
 
 afterEach(() => {
   cacheClear();
+  if (originalResponseCacheEnabled === undefined) delete process.env.RESPONSE_CACHE_ENABLED;
+  else process.env.RESPONSE_CACHE_ENABLED = originalResponseCacheEnabled;
   while (createdAccountIds.length) {
     removeAccount(createdAccountIds.pop());
   }
@@ -57,6 +60,7 @@ describe('chat cache-hit stream shape', () => {
       stream: true,
       messages: [{ role: 'user', content: 'hi' }],
     };
+    process.env.RESPONSE_CACHE_ENABLED = '1';
     cacheSet(cacheKey(body), { text: 'cached answer', thinking: 'cached thinking' });
 
     const result = await handleChatCompletions(body);
