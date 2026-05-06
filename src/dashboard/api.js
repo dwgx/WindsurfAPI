@@ -43,14 +43,34 @@ import {
 } from './quiet-window-updater.js';
 
 export function parseProxyUrl(proxy) {
-  const proxyParts = String(proxy).match(/^(?:(\w+):\/\/)?(?:([^:]+):([^@]+)@)?([^:]+):(\d+)$/);
-  if (!proxyParts) return null;
+  // Normalize whitespace so "socks5 127.0.0.1   1089" and
+  // "socks5://127.0.0.1:1089" both parse correctly.
+  const s = String(proxy).replace(/\s+/g, ' ').trim();
+  // Try canonical URL form first: protocol://[user:pass@]host:port
+  // Host must not contain spaces — otherwise "http 1.2.3.4:8080" would
+  // greedily capture "http 1.2.3.4" as the host.
+  let m = s.match(/^(?:(\w+):\/\/)?(?:([^\s:]+):([^\s@]+)@)?([^\s:]+):(\d+)$/);
+  // Fallback: "type host port" (space-separated, no :// and no colon)
+  if (!m) m = s.match(/^(\w+)\s+([^\s:]+)\s+(\d+)$/);
+  // Fallback: "type host:port" (type prefix, no ://)
+  if (!m) m = s.match(/^(\w+)\s+([^\s:]+):(\d+)$/);
+  if (!m) return null;
+  if (m.length === 4) {
+    // space-or-type-separated form: [type] host port
+    return {
+      type: m[1],
+      host: m[2],
+      port: parseInt(m[3]),
+      username: '',
+      password: '',
+    };
+  }
   return {
-    type: proxyParts[1] || 'http',
-    host: proxyParts[4],
-    port: parseInt(proxyParts[5]),
-    username: proxyParts[2] || '',
-    password: proxyParts[3] || '',
+    type: m[1] || 'http',
+    host: m[4],
+    port: parseInt(m[5]),
+    username: m[2] || '',
+    password: m[3] || '',
   };
 }
 

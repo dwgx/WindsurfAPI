@@ -3116,7 +3116,9 @@ const App = {
     const pw = document.getElementById('proxy-pass').value;
     if (pw || !this._globalProxyHasPassword) cfg.password = pw;
     if (!cfg.host) return this.toast('enter host', 'error');
-    await this.api('PUT', '/proxy/global', cfg); this.toast('saved'); this.loadProxy();
+    const r = await this.api('PUT', '/proxy/global', cfg);
+    if (r && r.error) return this.toast(r.error, 'error');
+    this.toast('saved'); this.loadProxy();
   },
   async clearGlobalProxy() { await this.api('DELETE', '/proxy/global'); ['proxy-host','proxy-port','proxy-user','proxy-pass'].forEach(id => document.getElementById(id).value = ''); this.toast('cleared'); this.loadProxy(); },
   async editAccountProxy(id, label) {
@@ -3128,7 +3130,8 @@ const App = {
       { name: 'password', label: 'password', type: 'password', placeholder: 'optional' },
     ]);
     if (!v || !v.host) return;
-    await this.api('PUT', `/proxy/accounts/${id}`, { type: v.type || 'http', host: v.host, port: parseInt(v.port) || 8080, username: v.username || '', password: v.password || '' });
+    const r = await this.api('PUT', `/proxy/accounts/${id}`, { type: v.type || 'http', host: v.host, port: parseInt(v.port) || 8080, username: v.username || '', password: v.password || '' });
+    if (r && r.error) return this.toast(r.error, 'error');
     this.toast('saved'); this.loadProxy();
   },
   async clearAccountProxy(id) { await this.api('DELETE', `/proxy/accounts/${id}`); this.toast('cleared'); this.loadProxy(); },

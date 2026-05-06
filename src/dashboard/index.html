@@ -4257,7 +4257,8 @@ docker compose up -d --force-recreate</pre>
     const pwInput = document.getElementById('proxy-pass').value;
     if (pwInput || !this._globalProxyHasPassword) cfg.password = pwInput;
     if (!cfg.host) return this.toast(I18n.t('toast.enterProxyHost'), 'error');
-    await this.api('PUT', '/proxy/global', cfg);
+    const r = await this.api('PUT', '/proxy/global', cfg);
+    if (r && r.error) return this.toast(r.error, 'error');
     this.toast(I18n.t('toast.globalProxySaved'));
     this.loadProxy();
   },

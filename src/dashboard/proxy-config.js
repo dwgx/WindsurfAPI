@@ -68,7 +68,7 @@ export function getProxyConfigMasked() {
 export function setGlobalProxy(cfg) {
   _config.global = cfg && cfg.host ? {
     type: cfg.type || 'http',
-    host: cfg.host,
+    host: String(cfg.host).trim(),
     port: parseInt(cfg.port, 10) || 8080,
     username: cfg.username || '',
     password: mergePassword(cfg, _config.global),
@@ -80,7 +80,7 @@ export function setAccountProxy(accountId, cfg) {
   if (cfg && cfg.host) {
     _config.perAccount[accountId] = {
       type: cfg.type || 'http',
-      host: cfg.host,
+      host: String(cfg.host).trim(),
       port: parseInt(cfg.port, 10) || 8080,
       username: cfg.username || '',
       password: mergePassword(cfg, _config.perAccount[accountId]),
