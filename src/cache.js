@@ -13,6 +13,13 @@ import { log } from './config.js';
 const TTL_MS = 5 * 60 * 1000;
 const MAX_ENTRIES = 500;
 
+function isCacheEnabled() {
+  const raw = String(process.env.RESPONSE_CACHE_ENABLED ?? process.env.WINDSURFAPI_RESPONSE_CACHE ?? '1')
+    .trim()
+    .toLowerCase();
+  return !['0', 'false', 'off', 'no'].includes(raw);
+}
+
 // Map preserves insertion order → we evict the oldest when over capacity.
 const _store = new Map();
 const _stats = { hits: 0, misses: 0, stores: 0, evictions: 0 };
@@ -83,6 +90,7 @@ export function cacheKey(body, callerKey = '') {
 }
 
 export function cacheGet(key) {
+  if (!isCacheEnabled()) return null;
   const entry = _store.get(key);
   if (!entry) { _stats.misses++; return null; }
   if (entry.expiresAt < Date.now()) {
@@ -98,6 +106,7 @@ export function cacheGet(key) {
 }
 
 export function cacheSet(key, value) {
+  if (!isCacheEnabled()) return;
   // Don't cache empty or partial results
   if (!value || (!value.text && !(value.chunks && value.chunks.length))) return;
   _store.set(key, { value, expiresAt: Date.now() + TTL_MS });
@@ -112,6 +121,7 @@ export function cacheSet(key, value) {
 export function cacheStats() {
   const total = _stats.hits + _stats.misses;
   return {
+    enabled: isCacheEnabled(),
     size: _store.size,
     maxSize: MAX_ENTRIES,
     ttlMs: TTL_MS,
