@@ -223,17 +223,14 @@ export function pickToolDialect(modelKey, provider, route = null) {
   const normalizedModelKey = String(modelKey || '').toLowerCase();
   if (normalizedProvider === 'zhipu' || normalizedModelKey.startsWith('glm')) return 'glm47';
   if (normalizedProvider === 'moonshot' || normalizedModelKey.startsWith('kimi')) {
-    // The Kimi K2 vLLM dialect (`<|tool_calls_section_begin|>` ...) is
-    // verified working only against the original `kimi-k2` and
-    // `kimi-k2-thinking` SKUs. Newer Moonshot SKUs (`kimi-k2.5`,
-    // `kimi-k2-6`, ...) are served by a different runtime upstream
-    // that rejects vLLM markup with "The model produced an invalid
-    // tool call" (cookire's #102 reproduce). Default these to the
-    // OpenAI JSON-XML dialect — universally accepted and what the
-    // newer Moonshot models naturally emit.
-    if (normalizedModelKey === 'kimi-k2' || normalizedModelKey === 'kimi-k2-thinking') {
-      return 'kimi_k2';
-    }
+    // v2.0.91: The kimi_k2 vLLM section-token dialect stopped working for
+    // ALL Moonshot SKUs including kimi-k2 and kimi-k2-thinking — Cascade
+    // now returns ~16 token empty responses instead of tool calls. The
+    // openai_json_xml dialect (<tool_call> JSON XML) works universally
+    // across all Moonshot models served by the current upstream runtime.
+    //
+    // Keep the kimi_k2 parser active for backward-compat with older
+    // conversation history that may contain vLLM-formatted tool calls.
     return 'openai_json_xml';
   }
   // v2.0.62 (#115) — GPT family + Codex/Responses route uses bare-JSON
