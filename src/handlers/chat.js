@@ -1753,6 +1753,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
       tools,
       route: body.__route || 'chat',
       nativeOpts,
+      context,
     });
   }
 
@@ -3220,19 +3221,20 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
             // Same logic as non-stream: ≥3 accounts rate-limited for the
             // same model within 8s → Windsurf is doing IP-wide cooldown,
             // stop burning accounts and surface immediately.
-            if (isRateLimit && !context.__rlAborted) {
-              if (!context.__rateLimitEvents) context.__rateLimitEvents = [];
+            const ctx = deps.context || {};
+            if (isRateLimit && !ctx.__rlAborted) {
+              if (!ctx.__rateLimitEvents) ctx.__rateLimitEvents = [];
               const RL_WINDOW_MS = 8_000;
               const RL_BURST_THRESHOLD = 3;
               const now = Date.now();
-              context.__rateLimitEvents.push({ time: now, model: modelKey, account: acct?.id });
+              ctx.__rateLimitEvents.push({ time: now, model: modelKey, account: acct?.id });
               const cutoff = now - RL_WINDOW_MS;
-              while (context.__rateLimitEvents.length && context.__rateLimitEvents[0].time < cutoff) {
-                context.__rateLimitEvents.shift();
+              while (ctx.__rateLimitEvents.length && ctx.__rateLimitEvents[0].time < cutoff) {
+                ctx.__rateLimitEvents.shift();
               }
-              const sameModelBurst = context.__rateLimitEvents.filter(e => e.model === modelKey);
+              const sameModelBurst = ctx.__rateLimitEvents.filter(e => e.model === modelKey);
               if (sameModelBurst.length >= RL_BURST_THRESHOLD) {
-                context.__rlAborted = true;
+                ctx.__rlAborted = true;
                 log.warn(`Chat[${reqId}] stream: IP-rate-limit burst — ${sameModelBurst.length} accounts rate-limited on ${model} within ${RL_WINDOW_MS}ms. Short-circuiting.`);
                 const cooldown = Math.max(...sameModelBurst.map(() => 30_000));
                 lastErr = Object.assign(new Error(`All accounts temporarily rate-limited on ${model}. Windsurf upstream is applying IP-level cooldown. Wait ~${Math.ceil(cooldown / 1000)}s before retrying.`), { type: 'rate_limit_exceeded', retry_after_ms: cooldown });
