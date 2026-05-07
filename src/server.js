@@ -20,13 +20,14 @@ import { dirname, join } from 'path';
 import {
   validateApiKey, isAuthenticated, getAccountList, getAccountCount,
   addAccountByEmail, addAccountByToken, addAccountByKey, removeAccount,
-  configureBindHost, emitNoAuthWarnings, getDroughtSummary,
+  configureBindHost, emitNoAuthWarnings, getDroughtSummary, ensureLsForAccount,
 } from './auth.js';
 import { handleChatCompletions } from './handlers/chat.js';
 import { handleMessages } from './handlers/messages.js';
 import { handleResponses } from './handlers/responses.js';
 import { handleModels } from './handlers/models.js';
-import { handleDashboardApi } from './dashboard/api.js';
+import { handleDashboardApi, parseProxyUrl } from './dashboard/api.js';
+import { setAccountProxy, getProxyConfig } from './dashboard/proxy-config.js';
 import { config, log } from './config.js';
 import { VERSION } from './version.js';
 import { callerKeyFromRequest } from './caller-key.js';
@@ -248,7 +249,17 @@ async function route(req, res) {
     }
 
     try {
-      // Support batch: { accounts: [{email,password}, ...] }
+      // ── bind proxy to account ──────────────────────
+      function bindAccountProxy(accountId, proxyStr) {
+        if (!proxyStr) return;
+        const parsed = parseProxyUrl(proxyStr);
+        if (parsed) {
+          setAccountProxy(accountId, parsed);
+          ensureLsForAccount(accountId).catch(e => log.warn(`LS ensure failed: ${e.message}`));
+        }
+      }
+
+      // Support batch: { accounts: [{token,proxy}, ...] }
       if (Array.isArray(body.accounts)) {
         const results = [];
         for (const acct of body.accounts) {
@@ -264,6 +275,7 @@ async function route(req, res) {
               results.push({ error: 'Missing credentials' });
               continue;
             }
+            bindAccountProxy(result.id, acct.proxy);
             results.push({ id: result.id, email: result.email, status: result.status });
           } catch (err) {
             results.push({ email: acct.email, error: err.message });
@@ -283,6 +295,8 @@ async function route(req, res) {
       } else {
         return json(res, 400, { error: 'Provide api_key, token, or email+password' });
       }
+
+      bindAccountProxy(account.id, body.proxy);
 
       return json(res, 200, {
         success: true,
