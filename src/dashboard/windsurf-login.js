@@ -34,7 +34,20 @@ const WINDSURF_BACKEND_SEAT_BASE = 'https://windsurf.com/_backend/exa.seat_manag
 const WINDSURF_POST_AUTH_URL_NEW = `${WINDSURF_BACKEND_SEAT_BASE}/WindsurfPostAuth`;
 const WINDSURF_ONE_TIME_TOKEN_URL_NEW = `${WINDSURF_BACKEND_SEAT_BASE}/GetOneTimeAuthToken`;
 
-async function postAuthDualPath(body, fingerprint, proxy, preferredHost = null) {
+function parsePostAuthResponseData(payload) {
+  const raw = Buffer.isBuffer(payload) ? payload.toString('utf8') : String(payload || '');
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object') return parsed;
+  } catch {}
+  const sessionToken = raw.match(/devin-session-token\$[a-zA-Z0-9._-]+/)?.[0];
+  const accountId = raw.match(/account-[a-f0-9]+/)?.[0];
+  const primaryOrgId = raw.match(/org-[a-f0-9]+/)?.[0];
+  if (sessionToken) return { sessionToken, accountId, primaryOrgId };
+  return { error: raw.slice(0, 200) || 'empty response' };
+}
+
+async function postAuthDualPath(auth1Token, fingerprint, proxy, preferredHost = null) {
   // Try the new windsurf.com/_backend host first; on 5xx / network error
   // retry against the legacy server.self-serve.windsurf.com host. Both
   // accept the same Connect-RPC body shape.
@@ -43,14 +56,23 @@ async function postAuthDualPath(body, fingerprint, proxy, preferredHost = null) 
   // caller can force the OPPOSITE host on a cross-host invalid-token
   // retry — see the OneTimeToken cross-host fallback in
   // windsurfLoginViaPasswordAuth1.
-  const headers = buildJsonHeaders(fingerprint, body, { 'Connect-Protocol-Version': '1' });
+  const body = Buffer.alloc(0);
+  const headers = {
+    ...fingerprint,
+    'Content-Type': 'application/proto',
+    'Content-Length': 0,
+    'Connect-Protocol-Version': '1',
+    'X-Devin-Auth1-Token': auth1Token,
+    'Referer': 'https://windsurf.com/account/login',
+  };
   const orderedHosts = preferredHost === 'legacy'
     ? [[WINDSURF_POST_AUTH_URL, 'legacy'], [WINDSURF_POST_AUTH_URL_NEW, 'new']]
     : [[WINDSURF_POST_AUTH_URL_NEW, 'new'], [WINDSURF_POST_AUTH_URL, 'legacy']];
   let lastErr;
   for (const [url, label] of orderedHosts) {
     try {
-      const res = await httpsRequest(url, { method: 'POST', headers }, body, proxy);
+      const rawRes = await httpsRequest(url, { method: 'POST', headers, raw: true }, body, proxy);
+      const res = { ...rawRes, data: parsePostAuthResponseData(rawRes.data) };
       // 4xx is an actual auth failure (bad token, etc) — don't fall through.
       if (res.status >= 400 && res.status < 500) return { res, label };
       if (res.status >= 200 && res.status < 300 && res.data?.sessionToken) {
@@ -233,7 +255,12 @@ function httpsRequest(url, opts, postData, proxy) {
       const bufs = [];
       res.on('data', d => bufs.push(d));
       res.on('end', () => {
-        const raw = Buffer.concat(bufs).toString('utf8');
+        const rawBuffer = Buffer.concat(bufs);
+        if (opts.raw) {
+          resolve({ status: res.statusCode, data: rawBuffer });
+          return;
+        }
+        const raw = rawBuffer.toString('utf8');
         try {
           resolve({ status: res.statusCode, data: JSON.parse(raw) });
         } catch {
@@ -482,8 +509,7 @@ async function windsurfLoginViaAuth1(email, password, fingerprint, proxy) {
   // and Firebase signInWithPassword now demands App Check tokens that
   // server-side callers can't produce — so the firebase path is dead
   // too. Devin path is the only one that works post-2026-05-04.
-  const bridgeBody = JSON.stringify({ auth1Token, orgId: '' });
-  const { res: br, label: bl } = await postAuthDualPath(bridgeBody, fingerprint, proxy);
+  const { res: br, label: bl } = await postAuthDualPath(auth1Token, fingerprint, proxy);
   if (br.status >= 400 || !br.data?.sessionToken) {
     throw new Error(`ERR_POSTAUTH_FAILED:${JSON.stringify(br.data).slice(0, 200)}`);
   }

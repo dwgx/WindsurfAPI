@@ -77,6 +77,21 @@ describe('v2.0.90 OTT bypass (#114)', () => {
     );
   });
 
+  test('PostAuth uses Devin Auth1 header protocol', () => {
+    assert.ok(
+      /'X-Devin-Auth1-Token':\s*auth1Token/.test(loginSrc),
+      'PostAuth must pass auth1Token in X-Devin-Auth1-Token header'
+    );
+    assert.ok(
+      /'Content-Type':\s*'application\/proto'/.test(loginSrc),
+      'PostAuth must use the application/proto endpoint protocol'
+    );
+    assert.ok(
+      /Buffer\.alloc\(0\)/.test(loginSrc),
+      'PostAuth must send an empty proto body, not a JSON auth1Token body'
+    );
+  });
+
   test('Source still exports windsurfLogin (dispatcher unchanged)', () => {
     assert.ok(
       /export async function windsurfLogin\s*\(/.test(loginSrc),
