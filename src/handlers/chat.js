@@ -2317,6 +2317,26 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
               }
             }
           }
+          // v2.0.91 — kimi-k2 upstream outage detection. When this model
+          // returns idle_empty (0 text, 0 thinking, null content, < 20
+          // tokens), Cascade is silently rejecting the request. Bubble up
+          // a clear error so the caller can retry with a different model
+          // instead of treating empty output as a valid reply.
+          if (/^kimi/i.test(String(modelKey || ''))
+              && toolCalls.length === 0
+              && (allText || '').trim().length === 0
+              && (allThinking || '').trim().length === 0) {
+            return {
+              status: 502,
+              body: {
+                error: {
+                  message: `${model} 当前在 Cascade 上游返回空响应（可能暂时不可用）。建议切换到 claude-sonnet-4.6、gemini-2.5-flash 或 glm-4.7。此错误不是 proxy 问题，是 Windsurf 上游限制。`,
+                  type: 'upstream_model_unavailable',
+                  suggested_models: ['claude-sonnet-4.6', 'gemini-2.5-flash', 'glm-4.7'],
+                },
+              },
+            };
+          }
           // v2.0.71 (#115) — fabricate detection. When markers=none,
           // NLU recovery didn't pick up anything, AND output pattern-
           // matches a hallucinated tool result, warn at log level and
