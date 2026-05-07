@@ -2246,10 +2246,16 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
           // args case (#125 DuZunTianXia) goes from 0 tool_calls to
           // a real protocol emit on the second pass.
           //
-          // Default OFF — burns 2x account quota when active. Operator
-          // opts in via WINDSURFAPI_NLU_RETRY=1.
+          // Default ON for GLM/Kimi (notoriously narrate instead of calling
+          // tools on first pass). Claude/GPT have good first-pass compliance
+          // so they only get retry when explicitly opted in. Set
+          // WINDSURFAPI_NLU_RETRY=0 to disable globally.
+          const nluRetryEnabled = process.env.WINDSURFAPI_NLU_RETRY !== '0'
+            && (process.env.WINDSURFAPI_NLU_RETRY === '1'
+                || /zhipu|glm|moonshot|kimi/i.test(String(provider || ''))
+                || /^(?:glm|kimi)/i.test(String(modelKey || '')));
           if (toolCalls.length === 0
-              && process.env.WINDSURFAPI_NLU_RETRY === '1'
+              && nluRetryEnabled
               && Array.isArray(tools) && tools.length > 0
               && narrativeSource) {
             const lastUser = latestRealUserText(messages) || '';
