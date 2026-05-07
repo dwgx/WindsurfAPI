@@ -169,10 +169,10 @@ function positiveIntEnv(name, fallback) {
 }
 
 function cascadeHistoryBudget(modelUid) {
-  // Default 400KB — long conversations (100+ turns with tool results)
-  // easily hit the old 200KB limit, causing silent context amputation.
-  // Still configurable via env for memory-constrained hosts.
-  const normal = positiveIntEnv('CASCADE_MAX_HISTORY_BYTES', 400_000);
+  // Default 600KB — users with 30+ tool-call turns need headroom above
+  // the old 400KB default. 200KB was causing silent context amputation
+  // (#133 Chengjian-Lin). Still configurable via env.
+  const normal = positiveIntEnv('CASCADE_MAX_HISTORY_BYTES', 600_000);
   if (/\b1m\b|[-_]1m$/i.test(String(modelUid || ''))) {
     return positiveIntEnv('CASCADE_1M_HISTORY_BYTES', 900_000);
   }
