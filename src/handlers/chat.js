@@ -2317,26 +2317,6 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
               }
             }
           }
-          // v2.0.91 — kimi-k2 upstream outage. Cascade returns idle_empty
-          // (null content, 0 text, 0 thinking, < 20 tokens). Bail early
-          // with a clear error so callers get a helpful message instead of
-          // silently empty output. Checked AFTER NLU recovery/retry so any
-          // legitimate narrative output has already been promoted.
-          if (/^kimi/i.test(String(modelKey || ''))
-              && toolCalls.length === 0
-              && (allText || '').trim().length === 0
-              && (allThinking || '').trim().length === 0) {
-            return {
-              status: 502,
-              body: {
-                error: {
-                  message: `${model} 当前在 Cascade 上游返回空响应（可能暂时不可用）。建议切换到 claude-sonnet-4.6、gemini-2.5-flash 或 glm-4.7。此错误不是 proxy 问题，是 Windsurf 上游限制。`,
-                  type: 'upstream_model_unavailable',
-                  suggested_models: ['claude-sonnet-4.6', 'gemini-2.5-flash', 'glm-4.7'],
-                },
-              },
-            };
-          }
           // v2.0.71 (#115) — fabricate detection. When markers=none,
           // NLU recovery didn't pick up anything, AND output pattern-
           // matches a hallucinated tool result, warn at log level and
@@ -2457,6 +2437,23 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
     // next identical original-model request misses cache and re-
     // triggers the rate_limit + fallback cycle, burning cascade
     // quota for the whole rate-limit window.
+    // v2.0.91 — kimi-k2 upstream outage. Cascade returns idle_empty
+    // (null content, ~1-6 tokens). Return clear error with alternatives.
+    if (/^kimi/i.test(String(modelKey || ''))
+        && !toolCalls.length
+        && (!allText || allText.trim().length === 0)
+        && (!allThinking || allThinking.trim().length === 0)) {
+      return {
+        status: 502,
+        body: {
+          error: {
+            message: `${model} 在 Cascade 上游当前不可用（返回空响应）。请换用 claude-sonnet-4.6、gemini-2.5-flash 或 glm-4.7。`,
+            type: 'upstream_model_unavailable',
+          },
+        },
+      };
+    }
+
     if (ckey && !toolCalls.length) {
       cacheSet(ckey, { text: allText, thinking: allThinking });
       if (aliasCkey && aliasCkey !== ckey) {
