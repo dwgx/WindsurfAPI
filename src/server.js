@@ -27,7 +27,7 @@ import { handleMessages } from './handlers/messages.js';
 import { handleResponses } from './handlers/responses.js';
 import { handleModels } from './handlers/models.js';
 import { handleDashboardApi, parseProxyUrl } from './dashboard/api.js';
-import { setAccountProxy, getProxyConfig } from './dashboard/proxy-config.js';
+import { setAccountProxy } from './dashboard/proxy-config.js';
 import { config, log } from './config.js';
 import { VERSION } from './version.js';
 import { callerKeyFromRequest } from './caller-key.js';
@@ -256,6 +256,8 @@ async function route(req, res) {
         if (parsed) {
           setAccountProxy(accountId, parsed);
           ensureLsForAccount(accountId).catch(e => log.warn(`LS ensure failed: ${e.message}`));
+        } else {
+          log.warn(`auth/login: ignoring invalid proxy format: ${String(proxyStr).slice(0, 80)}`);
         }
       }
 
