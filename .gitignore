@@ -35,6 +35,7 @@ COPILOT.md
 .devin/
 audit/
 tmp/
+tmp-testing/
 runtime-config.json
 stats.json
 package-lock.json
