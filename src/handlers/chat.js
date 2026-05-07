@@ -2317,11 +2317,11 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
               }
             }
           }
-          // v2.0.91 — kimi-k2 upstream outage detection. When this model
-          // returns idle_empty (0 text, 0 thinking, null content, < 20
-          // tokens), Cascade is silently rejecting the request. Bubble up
-          // a clear error so the caller can retry with a different model
-          // instead of treating empty output as a valid reply.
+          // v2.0.91 — kimi-k2 upstream outage. Cascade returns idle_empty
+          // (null content, 0 text, 0 thinking, < 20 tokens). Bail early
+          // with a clear error so callers get a helpful message instead of
+          // silently empty output. Checked AFTER NLU recovery/retry so any
+          // legitimate narrative output has already been promoted.
           if (/^kimi/i.test(String(modelKey || ''))
               && toolCalls.length === 0
               && (allText || '').trim().length === 0
