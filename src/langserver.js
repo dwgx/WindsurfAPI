@@ -64,7 +64,11 @@ let _apiServerUrl = DEFAULT_API_URL;
 // `customer-...-zone-` patterns. Static-IP proxies whose username is
 // a bare login (no provider-specific markers) still skip
 // segregation, so memory stays bounded.
-const STICKY_USER_RE = /(?:[_-](?:sid|session|sessid|sticky|sess)|[+]ws_|^brd-customer-|customer-[^-]+-(?:cc|zone|country|state|city)-|-zone-[a-z]+|-cc-[a-z]{2})/i;
+// v2.0.93: expanded sticky detection. Any proxy username with a provider-
+// specific token, session marker, or non-trivial structure gets its own LS.
+// This catches more providers (iproyal, webshare, proxy-seller, etc) and
+// reduces cross-account LS sharing which triggers upstream rate limits.
+const STICKY_USER_RE = /(?:[_-](?:sid|session|sessid|sticky|sess|token|res|rotating|sticky|ip[_-]?[0-9])|[+]ws_|^brd-customer-|^customer-|^user-|^res-|^sticky-|-zone-[a-z]+|-cc-[a-z]{2}|-country-|-state-|-city-|-session-|-sess-|-sticky-|-res-|-rotating-)/i;
 function isStickyUsername(u) {
   if (typeof u !== 'string' || u.length < 4) return false;
   return STICKY_USER_RE.test(u);

@@ -111,10 +111,14 @@ async function main() {
     });
 
     try {
-      await waitForReady(15000);
+      await waitForReady(30000);
+      // v2.0.93: if default LS started but proxy-LS crashed, give the
+      // manage child (port 42101) a moment to restart before syncing models.
+      log.info('LS ready — fetching model catalog');
     } catch (err) {
       log.error(`Language server failed to start: ${err.message}`);
       log.error('Chat completions will not work without the language server.');
+      log.error('Run: bash install-ls.sh (now uses Windsurf desktop LS, not stale Exafunction)');
     }
   } else {
     log.warn(`Language server binary not found at ${binaryPath}`);
