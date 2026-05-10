@@ -41,6 +41,10 @@ const _pool = new Map();
 // same key share one spawn + readiness wait. Without this, both callers
 // would each spawn an LS process, race on the port, and leave an orphan.
 const _pending = new Map();
+// Track which LS keys are being shut down intentionally so the exit handler
+// doesn't fire an auto-restart for them. Without this, stopLanguageServer()
+// and restartLsForProxy() would trigger unwanted respawns.
+const _intentionalShutdown = new Set();
 let _nextPort = DEFAULT_PORT + 1;
 let _binaryPath = DEFAULT_BINARY;
 let _apiServerUrl = DEFAULT_API_URL;
@@ -371,9 +375,11 @@ export async function ensureLs(proxy = null) {
       // requests don't fail with ECONNRESET. Respects the retry cap and
       // tracks per-key restart attempts to avoid infinite loops on
       // permanent errors (e.g. missing binary, incompatible arch).
-      if (AUTO_RESTART_ENABLED && gone) {
+      // Skip when the exit was intentional (stopLanguageServer / restartLsForProxy).
+      if (AUTO_RESTART_ENABLED && gone && !_intentionalShutdown.has(key)) {
         scheduleLsRestart(key, gone.proxy, gonePort);
       }
+      _intentionalShutdown.delete(key);
     });
     proc.on('error', (err) => {
       if (err.code === 'ENOEXEC') {
@@ -436,6 +442,7 @@ export async function ensureLs(proxy = null) {
 export async function restartLsForProxy(proxy) {
   const key = proxyKey(proxy);
   const entry = _pool.get(key);
+  _intentionalShutdown.add(key);  // prevent auto-restart
   if (entry?.process) {
     try { entry.process.kill('SIGTERM'); } catch {}
   }
@@ -625,6 +632,7 @@ export function stopLanguageServer() {
   // cascade ids into the next LS's session window.
   const portsToClose = [];
   for (const [key, entry] of _pool) {
+    _intentionalShutdown.add(key);  // prevent auto-restart
     try { entry.process?.kill('SIGTERM'); } catch {}
     if (entry?.port) portsToClose.push({ port: entry.port, generation: entry.generation });
     log.info(`LS instance ${key} stopped`);
