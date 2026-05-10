@@ -3160,6 +3160,11 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
                 historyCoverage: cascadeResult.historyCoverage || reuseEntry?.historyCoverage || null,
                 createdAt: reuseEntry?.createdAt,
               }, callerKey, ttlHint === undefined ? 0 : ttlHint);
+
+              // Bind caller to this account for the next turn
+              if (callerKey && isStickyEnabled() && acct) {
+                setStickyBinding(callerKey, modelKey, acct.id, acct.apiKey);
+              }
             }
             // success
             if (hadSuccess) reportSuccess(currentApiKey);
