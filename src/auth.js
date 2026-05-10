@@ -6,9 +6,12 @@
  *   - Account health tracking (error count, auto-disable)
  *   - Dynamic add/remove via API
  *   - Token-based registration via api.codeium.com
+ *   - Optional sticky sessions (STICKY_SESSION_ENABLED=1) for multi-turn
+ *     conversation continuity (#93, #133)
  */
 
 import { createHash, randomUUID, timingSafeEqual } from 'crypto';
+import { isStickyEnabled, getStickyBinding, setStickyBinding, clearStickyBinding } from './account/sticky-session.js';
 import { readFileSync, writeFileSync, existsSync, renameSync, unlinkSync, readdirSync } from 'fs';
 import { config, log } from './config.js';
 import { getEffectiveProxy } from './dashboard/proxy-config.js';
@@ -613,8 +616,42 @@ export function removeAccount(id) {
  * Returns null when every account is temporarily full — callers should
  * wait a moment and retry (see handlers/chat.js queue loop).
  */
-export function getApiKey(excludeKeys = [], modelKey = null) {
+export function getApiKey(excludeKeys = [], modelKey = null, callerKey = null) {
   const now = Date.now();
+
+  // ── Sticky session: prefer the account from the last turn ────────
+  // When enabled, this keeps multi-turn conversations on the same upstream
+  // account so the cascade_id from the previous turn is still valid.
+  // Falls through to normal selection if the bound account is unavailable.
+  if (callerKey && isStickyEnabled()) {
+    const bound = getStickyBinding(callerKey, modelKey);
+    if (bound) {
+      const acct = accounts.find(a => a.id === bound.accountId && a.status === 'active' && a.apiKey === bound.apiKey);
+      if (acct) {
+        const limit = rpmLimitFor(acct);
+        const used = pruneRpmHistory(acct, now);
+        if (limit > 0 && used < limit && !isRateLimitedForModel(acct, modelKey, now)) {
+          if (!modelKey || isModelAllowedForAccount(acct, modelKey)) {
+            const reservationTimestamp = nextReservationToken(now);
+            acct._rpmHistory.push(reservationTimestamp);
+            acct.lastUsed = now;
+            acct._inflight = (acct._inflight || 0) + 1;
+            return {
+              id: acct.id, email: acct.email, apiKey: acct.apiKey,
+              apiServerUrl: acct.apiServerUrl || '',
+              proxy: getEffectiveProxy(acct.id) || null,
+              reservationTimestamp,
+              _sticky: true,
+            };
+          }
+        }
+      }
+      // Bound account is no longer usable — clear it so the next call
+      // falls through to normal selection instead of looping.
+      clearStickyBinding(callerKey, modelKey);
+    }
+  }
+
   const candidates = [];
   for (const a of accounts) {
     if (a.status !== 'active') continue;
