@@ -349,6 +349,28 @@ describe('handleResponses streaming', () => {
     assert.equal(forwarded.tools[0].__response_tool.type, 'web_search');
   });
 
+  it('returns chat handler context metadata for downstream transports', async () => {
+    const result = await handleResponses({
+      model: 'claude-sonnet-4.6',
+      input: 'Hello',
+      stream: false,
+    }, {
+      async handleChatCompletions(body, context) {
+        context.__selectedAccountId = 'acct-context';
+        return {
+          status: 200,
+          body: {
+            id: 'c', object: 'chat.completion', created: 1, model: body.model,
+            choices: [{ index: 0, message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
+          },
+        };
+      },
+    });
+
+    assert.equal(result.status, 200);
+    assert.equal(result.context.__selectedAccountId, 'acct-context');
+  });
+
   it('emits the Responses text event sequence and response.completed', async () => {
     const result = await handleResponses({ model: 'claude-sonnet-4.6', input: 'Hello', stream: true }, {
       async handleChatCompletions(body) {

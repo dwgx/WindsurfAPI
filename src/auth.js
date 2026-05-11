@@ -52,6 +52,11 @@ function positiveIntEnv(name, fallback) {
   return Number.isFinite(n) && n > 0 ? n : fallback;
 }
 
+function nonNegativeIntEnv(name, fallback) {
+  const n = parseInt(process.env[name] || '', 10);
+  return Number.isFinite(n) && n >= 0 ? n : fallback;
+}
+
 function rpmLimitFor(account) {
   return TIER_RPM[account.tier || 'unknown'] ?? 20;
 }
@@ -734,6 +739,16 @@ export function acquireAccountByKey(apiKey, modelKey = null) {
 }
 
 /**
+ * Try to reserve a specific account by account id. Codex-style sticky
+ * sessions persist account ids rather than raw upstream API keys, so this
+ * mirrors acquireAccountByKey while keeping secrets out of the sticky store.
+ */
+export function acquireAccountById(id, modelKey = null) {
+  const a = accounts.find(x => x.id === id);
+  return a ? acquireAccountByKey(a.apiKey, modelKey) : null;
+}
+
+/**
  * Explain why a pinned account cannot be used right now. Used by strict
  * Cascade reuse mode, where switching accounts would lose server-side
  * conversation context.
@@ -1391,7 +1406,11 @@ async function _probeAccountImpl(account) {
       ...PROBE_CANARIES,
       ...Object.keys(account.capabilities || {}),
     ]);
-    const MAX_CLOUD_PROBES = positiveIntEnv('MAX_CLOUD_PROBES', 10);
+    // Dynamic cloud probes are real Cascade requests. On free accounts they can
+    // consume the same low per-model/hour budget operators are trying to pool,
+    // so keep them opt-in for free tier. Set MAX_CLOUD_PROBES=N to re-enable.
+    const defaultCloudProbeCap = status?.tierName === 'free' ? 0 : 10;
+    const MAX_CLOUD_PROBES = nonNegativeIntEnv('MAX_CLOUD_PROBES', defaultCloudProbeCap);
     const cloudCandidates = allModels.filter(k => {
       if (alreadyProbed.has(k)) return false;
       const info = getModelInfo(k);

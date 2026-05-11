@@ -51,6 +51,17 @@ const DEFAULTS = {
     cooldownHours: 24,
     coldStartGraceMs: 600000,
   },
+  // Codex compatibility knobs. These are runtime settings because Codex
+  // clients vary a lot: some need durable session affinity, while normal
+  // OpenAI/Anthropic users may prefer pure load balancing.
+  codex: {
+    websocketEnabled: true,
+    stickySessionsEnabled: true,
+    stickySessionMode: 'auto', // auto | off | codex_session | prompt_cache | sticky_thread
+    promptCacheMaxAgeSeconds: 1800,
+    derivePromptCacheKey: true,
+    reallocateSticky: false,
+  },
   // System-level prompt templates injected into Cascade proto fields.
   // Editable from Dashboard so users can tune without code changes.
   systemPrompts: {
@@ -135,6 +146,38 @@ export function setExperimental(patch) {
   }
   persist();
   return getExperimental();
+}
+
+const STICKY_MODES = new Set(['auto', 'off', 'codex_session', 'prompt_cache', 'sticky_thread']);
+
+function positiveInt(value, fallback, min = 1, max = 86400 * 30) {
+  const n = parseInt(value, 10);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.max(min, Math.min(max, n));
+}
+
+export function getCodexSettings() {
+  return { ...DEFAULTS.codex, ...(_state.codex || {}) };
+}
+
+export function setCodexSettings(patch) {
+  if (!patch || typeof patch !== 'object') return getCodexSettings();
+  const cur = getCodexSettings();
+  const next = { ...cur };
+  if ('websocketEnabled' in patch) next.websocketEnabled = !!patch.websocketEnabled;
+  if ('stickySessionsEnabled' in patch) next.stickySessionsEnabled = !!patch.stickySessionsEnabled;
+  if ('derivePromptCacheKey' in patch) next.derivePromptCacheKey = !!patch.derivePromptCacheKey;
+  if ('reallocateSticky' in patch) next.reallocateSticky = !!patch.reallocateSticky;
+  if ('stickySessionMode' in patch) {
+    const mode = String(patch.stickySessionMode || '').trim();
+    if (STICKY_MODES.has(mode)) next.stickySessionMode = mode;
+  }
+  if ('promptCacheMaxAgeSeconds' in patch) {
+    next.promptCacheMaxAgeSeconds = positiveInt(patch.promptCacheMaxAgeSeconds, cur.promptCacheMaxAgeSeconds);
+  }
+  _state.codex = next;
+  persist();
+  return getCodexSettings();
 }
 
 export function getSystemPrompts() {
@@ -292,4 +335,3 @@ import('./auth.js').then(m => {
     m.setDroughtRestrictResolver(() => isExperimentalEnabled('droughtRestrictPremium'));
   }
 }).catch(() => { /* auth not yet ready, validateApiKey falls back to env */ });
-

@@ -24,8 +24,10 @@ import {
   getExperimental, setExperimental, getSystemPrompts, setSystemPrompts, resetSystemPrompt,
   getCredentials, setRuntimeApiKey, setRuntimeDashboardPassword,
   verifyPassword, getEffectiveApiKey, getEffectiveDashboardPasswordStored,
+  getCodexSettings, setCodexSettings,
 } from '../runtime-config.js';
 import { poolStats as convPoolStats, poolClear as convPoolClear } from '../conversation-pool.js';
+import { stickyStats, clearStickySessions } from '../sticky-sessions.js';
 import { getLogs, subscribeToLogs, unsubscribeFromLogs } from './logger.js';
 import { getProxyConfig, getProxyConfigMasked, setGlobalProxy, setAccountProxy, removeProxy, getEffectiveProxy } from './proxy-config.js';
 import { MODELS, MODEL_TIER_ACCESS as _TIER_TABLE, getTierModels as _getTierModels } from '../models.js';
@@ -266,6 +268,17 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
   if (subpath === '/experimental/conversation-pool' && method === 'DELETE') {
     const n = convPoolClear();
     return json(res, 200, { success: true, cleared: n });
+  }
+  if (subpath === '/codex' && method === 'GET') {
+    return json(res, 200, { settings: getCodexSettings(), sticky: stickyStats() });
+  }
+  if (subpath === '/codex' && method === 'PUT') {
+    const settings = setCodexSettings(body || {});
+    return json(res, 200, { success: true, settings, sticky: stickyStats() });
+  }
+  if (subpath === '/codex/sticky-sessions' && method === 'DELETE') {
+    const n = clearStickySessions();
+    return json(res, 200, { success: true, cleared: n, sticky: stickyStats() });
   }
 
   // ─── System prompts (tool reinforcement, communication) ──

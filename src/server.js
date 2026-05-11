@@ -31,6 +31,7 @@ import { setAccountProxy } from './dashboard/proxy-config.js';
 import { config, log } from './config.js';
 import { VERSION } from './version.js';
 import { callerKeyFromRequest } from './caller-key.js';
+import { handleResponsesWebSocketUpgrade } from './ws-responses.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = join(__dirname, '..');
@@ -334,7 +335,7 @@ async function route(req, res) {
     }
 
     const reqStartedAt = Date.now();
-    const result = await handleChatCompletions(body, { callerKey: callerKeyFromRequest(req, extractToken(req), body) });
+    const result = await handleChatCompletions(body, { callerKey: callerKeyFromRequest(req, extractToken(req), body), headers: req.headers });
     const processingMs = Date.now() - reqStartedAt;
     const modelHeaders = {
       'x-request-id': 'req-' + randomUUID(),
@@ -384,7 +385,7 @@ async function route(req, res) {
     }
 
     const reqStartedAt = Date.now();
-    const result = await handleResponses(body, { context: { callerKey: callerKeyFromRequest(req, extractToken(req), body) } });
+    const result = await handleResponses(body, { context: { callerKey: callerKeyFromRequest(req, extractToken(req), body), headers: req.headers } });
     const processingMs = Date.now() - reqStartedAt;
     const modelHeaders = {
       'x-request-id': 'req-' + randomUUID(),
@@ -455,6 +456,11 @@ export function startServer() {
 
   server.keepAliveTimeout = 65_000;
   server.headersTimeout = 66_000;
+  server.on('upgrade', (req, socket, head) => {
+    if (handleResponsesWebSocketUpgrade(req, socket, head)) return;
+    socket.write('HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n');
+    socket.destroy();
+  });
 
   let retryCount = 0;
   const maxRetries = 10;

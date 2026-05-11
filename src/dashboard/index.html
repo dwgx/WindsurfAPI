@@ -2222,6 +2222,57 @@ window._firebaseOAuth = async function(provider) {
     </div>
     <div class="section" style="margin-top:24px">
       <div class="section-header">
+        <div class="section-title">Codex WebSocket / Sticky Sessions</div>
+      </div>
+      <div class="section-body">
+        <div class="section-desc" style="margin-bottom:12px">Codex-compatible Responses WebSocket endpoints plus durable account affinity. Keep this on for Codex CLI; turn sticky off for pure round-robin OpenAI/Anthropic traffic.</div>
+        <div style="display:grid;gap:12px;padding:12px;background:var(--surface-2);border-radius:var(--radius)">
+          <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+            <label class="switch">
+              <input type="checkbox" id="codex-ws-enabled">
+              <span class="switch-slider"></span>
+            </label>
+            <div style="min-width:220px">
+              <div style="font-weight:500">Enable Responses WebSocket</div>
+              <div class="text-sm text-muted">Serves /v1/responses, /v1/ws/responses and /backend-api/codex/responses over WebSocket.</div>
+            </div>
+          </div>
+          <div style="display:flex;align-items:center;gap:16px;flex-wrap:wrap">
+            <label class="switch">
+              <input type="checkbox" id="codex-sticky-enabled">
+              <span class="switch-slider"></span>
+            </label>
+            <div style="min-width:220px">
+              <div style="font-weight:500">Enable durable sticky routing</div>
+              <div class="text-sm text-muted">Pins Codex turn/session/prompt-cache keys to the same Windsurf account when possible.</div>
+            </div>
+          </div>
+          <div style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+            <label class="text-sm text-muted">Mode</label>
+            <select id="codex-sticky-mode" class="input" style="max-width:180px">
+              <option value="auto">auto</option>
+              <option value="off">off</option>
+              <option value="codex_session">codex_session</option>
+              <option value="prompt_cache">prompt_cache</option>
+              <option value="sticky_thread">sticky_thread</option>
+            </select>
+            <label class="text-sm text-muted">Prompt-cache TTL seconds</label>
+            <input id="codex-prompt-cache-ttl" class="input" type="number" min="1" max="2592000" style="max-width:140px">
+            <label style="display:flex;gap:8px;align-items:center">
+              <input type="checkbox" id="codex-derive-cache-key"> <span class="text-sm">derive cache key</span>
+            </label>
+            <label style="display:flex;gap:8px;align-items:center">
+              <input type="checkbox" id="codex-reallocate-sticky"> <span class="text-sm">reallocate fallback</span>
+            </label>
+            <button class="btn btn-primary btn-sm" onclick="App.saveCodexSettings()">Save</button>
+            <button class="btn btn-outline btn-sm" onclick="App.clearStickySessions()">Clear sticky</button>
+          </div>
+        </div>
+        <div class="metrics-grid" id="codex-sticky-cards" style="margin-top:12px"></div>
+      </div>
+    </div>
+    <div class="section" style="margin-top:24px">
+      <div class="section-header">
         <div class="section-title" data-i18n="section.droughtRestrict.title">配额低水位时屏蔽 premium 模型</div>
       </div>
       <div class="section-body">
@@ -5318,6 +5369,7 @@ docker compose up -d --force-recreate</pre>
     const cbQw = document.getElementById('exp-quiet-window');
     if (cbQw) cbQw.checked = !!d.flags?.autoUpdateQuietWindow;
     this.loadQuietWindowStatus();
+    this.loadCodexSettings();
     // Reflect current skin cookie in the dropdown so reload state is visible.
     const skinSel = document.getElementById('skin-select');
     if (skinSel) {
@@ -5426,6 +5478,58 @@ docker compose up -d --force-recreate</pre>
       this.toast(I18n.t('toast.toggleFailed', { error: e.message }), 'error');
       this.loadExperimental();
     }
+  },
+
+  async loadCodexSettings() {
+    const holder = document.getElementById('codex-sticky-cards');
+    try {
+      const r = await this.api('GET', '/codex');
+      const s = r.settings || {};
+      const sticky = r.sticky || {};
+      const ws = document.getElementById('codex-ws-enabled');
+      const se = document.getElementById('codex-sticky-enabled');
+      const mode = document.getElementById('codex-sticky-mode');
+      const ttl = document.getElementById('codex-prompt-cache-ttl');
+      const derive = document.getElementById('codex-derive-cache-key');
+      const realloc = document.getElementById('codex-reallocate-sticky');
+      if (ws) ws.checked = !!s.websocketEnabled;
+      if (se) se.checked = !!s.stickySessionsEnabled;
+      if (mode) mode.value = s.stickySessionMode || 'auto';
+      if (ttl) ttl.value = s.promptCacheMaxAgeSeconds || 1800;
+      if (derive) derive.checked = !!s.derivePromptCacheKey;
+      if (realloc) realloc.checked = !!s.reallocateSticky;
+      if (holder) {
+        holder.innerHTML = `
+          <div class="card"><div class="card-header"><div class="card-title">Sticky entries</div></div><div class="card-value">${sticky.size || 0}</div><div class="card-sub">max ${sticky.maxSize || 0}</div></div>
+          <div class="card"><div class="card-header"><div class="card-title">Hit rate</div></div><div class="card-value">${sticky.hitRate || '0.0'}%</div><div class="card-sub">${sticky.hits || 0} hits / ${sticky.misses || 0} misses</div></div>
+          <div class="card"><div class="card-header"><div class="card-title">Stores</div></div><div class="card-value">${sticky.stores || 0}</div><div class="card-sub">${sticky.expired || 0} expired / ${sticky.evictions || 0} evicted</div></div>
+        `;
+      }
+    } catch (e) {
+      if (holder) holder.innerHTML = `<div class="text-sm text-danger">${this.esc(e.message)}</div>`;
+    }
+  },
+
+  async saveCodexSettings() {
+    const patch = {
+      websocketEnabled: !!document.getElementById('codex-ws-enabled')?.checked,
+      stickySessionsEnabled: !!document.getElementById('codex-sticky-enabled')?.checked,
+      stickySessionMode: document.getElementById('codex-sticky-mode')?.value || 'auto',
+      promptCacheMaxAgeSeconds: parseInt(document.getElementById('codex-prompt-cache-ttl')?.value || '1800', 10),
+      derivePromptCacheKey: !!document.getElementById('codex-derive-cache-key')?.checked,
+      reallocateSticky: !!document.getElementById('codex-reallocate-sticky')?.checked,
+    };
+    await this.api('PUT', '/codex', patch);
+    this.toast(I18n.t('toast.saved') || 'Saved', 'success');
+    this.loadCodexSettings();
+  },
+
+  async clearStickySessions() {
+    const ok = await this.confirm('Clear sticky sessions', 'Clear all Codex sticky account mappings?', { okText: I18n.t('action.clear') || 'Clear' });
+    if (!ok) return;
+    const r = await this.api('DELETE', '/codex/sticky-sessions');
+    this.toast(`Cleared ${r.cleared || 0} sticky sessions`, 'success');
+    this.loadCodexSettings();
   },
 
   // v2.0.70 (#112 follow-up) — quiet-window status panel + manual run.
