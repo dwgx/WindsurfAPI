@@ -53,6 +53,15 @@ try {
   mkdirSync(dataDir, { recursive: true });
 } catch {}
 
+export function defaultLsBinaryPath(platform = process.platform, arch = process.arch, home = process.env.HOME) {
+  if (platform === 'darwin') {
+    const name = arch === 'arm64' ? 'language_server_macos_arm' : 'language_server_macos_x64';
+    return `${home}/.windsurf/${name}`;
+  }
+  const name = arch === 'arm64' ? 'language_server_linux_arm' : 'language_server_linux_x64';
+  return `/opt/windsurf/${name}`;
+}
+
 export const config = {
   port: parseInt(process.env.PORT || '3003', 10),
   // Bind host. Defaults to all interfaces. Set HOST=127.0.0.1 (or BIND_HOST=)
@@ -74,11 +83,7 @@ export const config = {
   logLevel: process.env.LOG_LEVEL || 'info',
 
   // Language server
-  lsBinaryPath: process.env.LS_BINARY_PATH || (
-    process.platform === 'darwin'
-      ? `${process.env.HOME}/.windsurf/language_server_macos_${process.arch === 'arm64' ? 'arm' : 'x64'}`
-      : '/opt/windsurf/language_server_linux_x64'
-  ),
+  lsBinaryPath: process.env.LS_BINARY_PATH || defaultLsBinaryPath(),
   lsPort: parseInt(process.env.LS_PORT || '42100', 10),
 
   // Dashboard

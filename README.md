@@ -130,9 +130,14 @@ cd ~/WindsurfAPI && bash update.sh
 git clone https://github.com/dwgx/WindsurfAPI.git
 cd WindsurfAPI
 
-# Language Server 二进制 —— 一键下载 + chmod（从 Exafunction/codeium releases）
-mkdir -p /opt/windsurf/data/db
+# Language Server 二进制 —— 自动检测 Linux/macOS，一键下载 + chmod
 bash install-ls.sh
+
+# 默认安装路径：
+#   Linux x64:          /opt/windsurf/language_server_linux_x64
+#   Linux arm64:        /opt/windsurf/language_server_linux_arm
+#   macOS Apple Silicon: $HOME/.windsurf/language_server_macos_arm
+#   macOS Intel:        $HOME/.windsurf/language_server_macos_x64
 
 # 如果想用本地已下好的 binary：
 #   bash install-ls.sh /path/to/language_server_linux_x64
@@ -160,9 +165,13 @@ DEFAULT_MODEL=claude-4.5-sonnet-thinking
 MAX_TOKENS=8192
 LOG_LEVEL=info
 LS_BINARY_PATH=/opt/windsurf/language_server_linux_x64
+LS_DATA_DIR=/opt/windsurf/data
 LS_PORT=42100
 DASHBOARD_PASSWORD=
 EOF
+
+# macOS 本地部署时，使用 install-ls.sh 打印的 LS_BINARY_PATH，
+# 并把 LS_DATA_DIR 设到用户可写目录，例如 /Users/you/.windsurf/data。
 
 node src/index.js
 ```
@@ -256,6 +265,7 @@ curl http://localhost:3003/v1/messages \
 | `MAX_TOKENS` | `8192` | 默认最大回复 token 数 |
 | `LOG_LEVEL` | `info` | debug / info / warn / error |
 | `LS_BINARY_PATH` | `/opt/windsurf/language_server_linux_x64` | LS 二进制位置 |
+| `LS_DATA_DIR` | Linux: `/opt/windsurf/data`；macOS: `~/.windsurf/data` | 每个 proxy 独立的 LS 数据根目录 |
 | `LS_PORT` | `42100` | LS gRPC 端口 |
 | `DASHBOARD_PASSWORD` | 空 | 后台密码 留空不设密码 |
 | `ALLOW_PRIVATE_PROXY_HOSTS` | 空 | 设为 `1` 允许在代理测试和登录时使用内网 IP（如 `192.168.x.x`、`10.x.x.x`）。默认留空仅允许公网地址 |

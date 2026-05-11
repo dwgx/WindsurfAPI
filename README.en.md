@@ -132,9 +132,14 @@ If you are using our public instances (`skiapi.dev`, etc.), you don't need to do
 git clone https://github.com/dwgx/WindsurfAPI.git
 cd WindsurfAPI
 
-# Language Server binary — one-click download + chmod (from Exafunction/codeium releases)
-mkdir -p /opt/windsurf/data/db
+# Language Server binary — auto-detects Linux/macOS, one-click download + chmod
 bash install-ls.sh
+
+# Default install paths:
+#   Linux x64:           /opt/windsurf/language_server_linux_x64
+#   Linux arm64:         /opt/windsurf/language_server_linux_arm
+#   macOS Apple Silicon: $HOME/.windsurf/language_server_macos_arm
+#   macOS Intel:         $HOME/.windsurf/language_server_macos_x64
 
 # Or use a local binary you already have:
 #   bash install-ls.sh /path/to/language_server_linux_x64
@@ -163,9 +168,13 @@ DEFAULT_MODEL=claude-4.5-sonnet-thinking
 MAX_TOKENS=8192
 LOG_LEVEL=info
 LS_BINARY_PATH=/opt/windsurf/language_server_linux_x64
+LS_DATA_DIR=/opt/windsurf/data
 LS_PORT=42100
 DASHBOARD_PASSWORD=
 EOF
+
+# For a local macOS run, use the LS_BINARY_PATH printed by install-ls.sh
+# and set LS_DATA_DIR to a user-writable path such as /Users/you/.windsurf/data.
 
 # Note: Inline comments are supported in .env for unquoted values:
 #   PORT=3003  # Service port
@@ -187,16 +196,16 @@ Open `http://YOUR_IP:3003/dashboard` → Login to get token → Click **Sign in 
 Go to [windsurf.com/show-auth-token](https://windsurf.com/show-auth-token) to copy your token:
 
 ```bash
-curl -X POST http://localhost:3003/auth/login
-  -H "Content-Type: application/json"
+curl -X POST http://localhost:3003/auth/login \
+  -H "Content-Type: application/json" \
   -d '{"token": "YOUR_TOKEN"}'
 ```
 
 **Method 3: Batch**
 
 ```bash
-curl -X POST http://localhost:3003/auth/login
-  -H "Content-Type: application/json"
+curl -X POST http://localhost:3003/auth/login \
+  -H "Content-Type: application/json" \
   -d '{"accounts": [{"token": "t1"}, {"token": "t2"}]}'
 ```
 
@@ -224,9 +233,9 @@ claude                # Use Claude Code as usual
 
 ```bash
 # Raw curl test
-curl http://localhost:3003/v1/messages
-  -H "Authorization: Bearer YOUR_KEY"
-  -H "anthropic-version: 2023-06-01"
+curl http://localhost:3003/v1/messages \
+  -H "Authorization: Bearer YOUR_KEY" \
+  -H "anthropic-version: 2023-06-01" \
   -d '{"model":"claude-opus-4.6","max_tokens":100,"messages":[{"role":"user","content":"Hello"}]}'
 ```
 
@@ -266,7 +275,7 @@ In your client's settings for **Custom OpenAI Compatible**:
 | `LOG_LEVEL` | `info` | debug / info / warn / error |
 | `LS_BINARY_PATH` | `/opt/windsurf/language_server_linux_x64` | Path to the LS binary. |
 | `LS_PORT` | `42100` | LS gRPC port. |
-| `LS_DATA_DIR` | `/opt/windsurf` | Per-proxy LS data directory root. |
+| `LS_DATA_DIR` | Linux: `/opt/windsurf/data`; macOS: `~/.windsurf/data` | Per-proxy LS data directory root. |
 | `DASHBOARD_PASSWORD` | empty | Dashboard password. Leave empty for no password. |
 | `ALLOW_PRIVATE_PROXY_HOSTS` | empty | Set to `1` to allow private/internal IPs (e.g., `192.168.x.x`, `10.x.x.x`) in proxy tests and login. Leave empty to only allow public addresses (default). |
 | `CASCADE_REUSE_STRICT` | `0` | Set to `1` for strict conversation reuse mode (waits for same fingerprint). |

@@ -30,7 +30,7 @@ case "$os" in
       aarch64|arm64) ASSET='language_server_linux_arm' ;;
       *) err "Unsupported Linux arch: $arch"; exit 1 ;;
     esac
-    DEFAULT_PATH='/opt/windsurf/language_server_linux_x64'
+    DEFAULT_PATH="/opt/windsurf/${ASSET}"
     ;;
   Darwin)
     case "$arch" in
@@ -38,7 +38,7 @@ case "$os" in
       arm64)         ASSET='language_server_macos_arm' ;;
       *) err "Unsupported macOS arch: $arch"; exit 1 ;;
     esac
-    DEFAULT_PATH="$HOME/.windsurf/language_server_macos_${arch}"
+    DEFAULT_PATH="$HOME/.windsurf/${ASSET}"
     ;;
   *)
     err "Unsupported OS: $os (only Linux and macOS are supported)"

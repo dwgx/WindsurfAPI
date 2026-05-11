@@ -22,7 +22,7 @@ const DEFAULT_BINARY = '/opt/windsurf/language_server_linux_x64';
 const DEFAULT_PORT = 42100;
 const DEFAULT_CSRF = 'windsurf-api-csrf-fixed-token';
 const DEFAULT_API_URL = 'https://server.self-serve.windsurf.com';
-const DEFAULT_DATA_ROOT = '/opt/windsurf/data';
+const DEFAULT_LINUX_DATA_ROOT = '/opt/windsurf/data';
 
 // Pool: key -> { process, port, csrfToken, proxy, startedAt, ready }
 const _pool = new Map();
@@ -112,10 +112,16 @@ function proxyKey(proxy) {
   return key;
 }
 
+export function defaultLsDataRoot(platform = process.platform, home = process.env.HOME) {
+  return platform === 'darwin'
+    ? resolve(home || '.', '.windsurf', 'data')
+    : DEFAULT_LINUX_DATA_ROOT;
+}
+
 function dataDirForKey(key) {
   const root = process.env.LS_DATA_DIR
     ? resolve(process.cwd(), process.env.LS_DATA_DIR)
-    : DEFAULT_DATA_ROOT;
+    : defaultLsDataRoot();
   return `${root}/${key}`;
 }
 

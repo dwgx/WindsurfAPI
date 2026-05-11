@@ -3,13 +3,25 @@ set -e
 
 echo "=== WindsurfAPI Setup ==="
 
+OS="$(uname -s)"
+ARCH="$(uname -m)"
+case "$OS:$ARCH" in
+  Darwin:arm64)   LS_PATH="$HOME/.windsurf/language_server_macos_arm"; LS_DATA_DIR="$HOME/.windsurf/data" ;;
+  Darwin:x86_64)  LS_PATH="$HOME/.windsurf/language_server_macos_x64"; LS_DATA_DIR="$HOME/.windsurf/data" ;;
+  Linux:x86_64|Linux:amd64)
+                  LS_PATH="/opt/windsurf/language_server_linux_x64"; LS_DATA_DIR="/opt/windsurf/data" ;;
+  Linux:aarch64|Linux:arm64)
+                  LS_PATH="/opt/windsurf/language_server_linux_arm"; LS_DATA_DIR="/opt/windsurf/data" ;;
+  *)              LS_PATH="/opt/windsurf/language_server_linux_x64"; LS_DATA_DIR="/opt/windsurf/data" ;;
+esac
+
 # Create directories
 echo "[1/4] Creating directories..."
-mkdir -p /opt/windsurf/data/db
+mkdir -p "$(dirname "$LS_PATH")"
+mkdir -p "$LS_DATA_DIR/db"
 mkdir -p /tmp/windsurf-workspace
 
 # Check LS binary
-LS_PATH="/opt/windsurf/language_server_linux_x64"
 if [ -f "$LS_PATH" ]; then
   chmod +x "$LS_PATH"
   echo "[2/4] Language Server found at $LS_PATH"
@@ -22,14 +34,15 @@ fi
 # Generate .env if not exists
 if [ ! -f .env ]; then
   echo "[3/4] Generating .env..."
-  cat > .env << 'ENVEOF'
+  cat > .env << ENVEOF
 PORT=3003
 API_KEY=
 DATA_DIR=
 DEFAULT_MODEL=claude-4.5-sonnet-thinking
 MAX_TOKENS=8192
 LOG_LEVEL=info
-LS_BINARY_PATH=/opt/windsurf/language_server_linux_x64
+LS_BINARY_PATH=$LS_PATH
+LS_DATA_DIR=$LS_DATA_DIR
 LS_PORT=42100
 DASHBOARD_PASSWORD=
 ALLOW_PRIVATE_PROXY_HOSTS=
