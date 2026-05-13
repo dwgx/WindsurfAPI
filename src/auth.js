@@ -636,6 +636,7 @@ export function getApiKey(excludeKeys = [], modelKey = null, callerKey = null) {
             acct._rpmHistory.push(reservationTimestamp);
             acct.lastUsed = now;
             acct._inflight = (acct._inflight || 0) + 1;
+            acct._inflightAt = Date.now();
             return {
               id: acct.id, email: acct.email, apiKey: acct.apiKey,
               apiServerUrl: acct.apiServerUrl || '',
@@ -697,6 +698,7 @@ export function getApiKey(excludeKeys = [], modelKey = null, callerKey = null) {
   account._rpmHistory.push(reservationTimestamp);
   account.lastUsed = now;
   account._inflight = (account._inflight || 0) + 1;
+  account._inflightAt = now;
   // v2.0.57 Fix 4 — predictive pre-warming. When the chosen account is
   // running out of quota, fire-and-forget warm up the next-best
   // candidate so its LS / cascade pool is ready when the chosen one
@@ -740,6 +742,26 @@ export function releaseAccount(apiKey) {
   a._inflight = Math.max(0, (a._inflight || 0) - 1);
 }
 
+// v2.0.96: safety net — auto-reset stale inflight counters that weren't
+// decremented due to connection drops, crashes, or missed finally blocks.
+// Without this a single leaked inflight permanently deprioritises an
+// account in getApiKey's sort order (fixes #165).
+const INFLIGHT_STALE_MS = 120_000;
+let _inflightCleanupTimer = null;
+function startInflightCleanup() {
+  if (_inflightCleanupTimer) return;
+  _inflightCleanupTimer = setInterval(() => {
+    const now = Date.now();
+    for (const a of accounts) {
+      if ((a._inflight || 0) > 0 && a._inflightAt && (now - a._inflightAt) > INFLIGHT_STALE_MS) {
+        log.warn(`Account ${a.id} (${a.email}) inflight=${a._inflight} stale >${Math.round((now - a._inflightAt) / 1000)}s, auto-resetting`);
+        a._inflight = 0;
+        a._inflightAt = 0;
+      }
+    }
+  }, 60_000).unref();
+}
+
 /**
  * Try to re-check-out a specific account by apiKey, applying the same
  * rate-limit / status guards as getApiKey(). Used by the conversation pool
@@ -762,6 +784,7 @@ export function acquireAccountByKey(apiKey, modelKey = null) {
   a._rpmHistory.push(reservationTimestamp);
   a.lastUsed = now;
   a._inflight = (a._inflight || 0) + 1;
+  a._inflightAt = now;
   return {
     id: a.id, email: a.email, apiKey: a.apiKey,
     apiServerUrl: a.apiServerUrl || '',
@@ -1693,6 +1716,9 @@ async function refreshAllFirebaseTokens() {
 export async function initAuth() {
   // Load persisted accounts first
   loadAccounts();
+
+  // Safety net: auto-reset stale inflight counters (fixes #165)
+  startInflightCleanup();
 
   const promises = [];
 

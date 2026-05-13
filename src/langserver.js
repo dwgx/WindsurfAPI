@@ -24,6 +24,14 @@ const DEFAULT_CSRF = 'windsurf-api-csrf-fixed-token';
 const DEFAULT_API_URL = 'https://server.self-serve.windsurf.com';
 const DEFAULT_LINUX_DATA_ROOT = '/opt/windsurf/data';
 
+// v2.0.96: cap LS pool size to prevent memory blowup (#174).
+// Each LS instance uses ~200-400MB. With sticky proxy detection enabling
+// per-account LS, memory can grow unbounded. Default cap: 20 instances.
+const MAX_LS_INSTANCES = (() => {
+  const n = parseInt(process.env.LS_MAX_INSTANCES || '', 10);
+  return Number.isFinite(n) && n > 0 ? n : 20;
+})();
+
 // Auto-restart configuration (env-overridable)
 const AUTO_RESTART_ENABLED = process.env.LS_AUTO_RESTART !== '0'; // default: on
 const AUTO_RESTART_MAX_RETRIES = (() => {
@@ -282,6 +290,24 @@ export async function ensureLs(proxy = null) {
   const pending = _pending.get(key);
   if (pending) return pending;
 
+  // Evict LRU non-default LS when at the pool cap (#174).
+  if (key !== 'default' && _pool.size >= MAX_LS_INSTANCES) {
+    let lruKey = null;
+    let lruTime = Infinity;
+    for (const [k, e] of _pool) {
+      if (k === 'default') continue; // never evict default LS
+      const at = e._evictAt || e.startedAt || 0;
+      if (at < lruTime) { lruTime = at; lruKey = k; }
+    }
+    if (lruKey) {
+      const evicted = _pool.get(lruKey);
+      _intentionalShutdown.add(lruKey);
+      try { evicted?.process?.kill('SIGTERM'); } catch {}
+      _pool.delete(lruKey);
+      log.warn(`LS pool at cap (${MAX_LS_INSTANCES}), evicted LRU instance ${lruKey} (started ${evicted?.startedAt ? new Date(evicted.startedAt).toISOString() : '?'})`);
+    }
+  }
+
   const promise = (async () => {
     const isDefault = key === 'default';
     let port = isDefault ? DEFAULT_PORT : _nextPort++;
@@ -475,7 +501,9 @@ export async function restartLsForProxy(proxy) {
  * and falsely mark the account expired).
  */
 export function getLsFor(proxy) {
-  return _pool.get(proxyKey(proxy)) || null;
+  const entry = _pool.get(proxyKey(proxy));
+  if (entry) entry._evictAt = Date.now(); // touch LRU timestamp
+  return entry || null;
 }
 
 // ─── Auto-restart ─────────────────────────────────────────────
