@@ -41,4 +41,5 @@ runtime-config.json
 stats.json
 package-lock.json
 *.png
+*.pem
 .docker-data/

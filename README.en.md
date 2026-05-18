@@ -281,6 +281,8 @@ In your client's settings for **Custom OpenAI Compatible**:
 | `CASCADE_REUSE_STRICT` | `0` | Set to `1` for strict conversation reuse mode (waits for same fingerprint). |
 | `CASCADE_REUSE_STRICT_RETRY_MS` | `60000` | Retry delay in ms for strict reuse mode. |
 | `CASCADE_REUSE_HASH_SYSTEM` | `0` | Set to `1` to include system messages in conversation reuse hash. |
+| `CASCADE_REUSE_BY_CALLER` | `0` | Set to `1` to enable caller-based fallback reuse. When fingerprint misses, falls back to the latest cascade for the same caller+model. Best for single-user Claude Code setups. |
+| `CASCADE_POOL_MAX` | `500` | Max conversation pool entries. Set to `1`–`5` for single-user setups to minimize resource usage. |
 
 ## Dashboard Features
 
