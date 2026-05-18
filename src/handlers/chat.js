@@ -1792,7 +1792,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
   const strictReuse = shouldUseStrictCascadeReuse({ emulateTools, modelKey: routingModelKey });
   const fpOpts = buildReuseOpts({ tools, toolChoice: tool_choice, toolPreamble, preambleTier: preambleTier || null, emulateTools, route: body.__route || 'chat' });
   const fpBefore = reuseEnabled ? fingerprintBefore(messages, routingModelKey, callerKey, fpOpts) : null;
-  let reuseEntry = reuseEnabled ? poolCheckout(fpBefore, callerKey) : null;
+  let reuseEntry = reuseEnabled ? poolCheckout(fpBefore, callerKey, null, routingModelKey) : null;
   let checkedOutReuseEntry = reuseEntry;
   // v2.0.71 (#116 zhangzhang-bit follow-up): structured reuse log so
   // operators can see whether multi-turn cascades are actually reusing
@@ -2416,6 +2416,7 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
         lsPort: poolCtx.lsPort,
         lsGeneration: cascadeMeta.lsGeneration || poolCtx.lsGeneration,
         apiKey: poolCtx.apiKey,
+        modelKey: modelKey || '',
         stepOffset: Number.isFinite(cascadeMeta.stepOffset) ? cascadeMeta.stepOffset : poolCtx.reuseEntry?.stepOffset,
         generatorOffset: Number.isFinite(cascadeMeta.generatorOffset) ? cascadeMeta.generatorOffset : poolCtx.reuseEntry?.generatorOffset,
         historyCoverage: cascadeMeta.historyCoverage || poolCtx.reuseEntry?.historyCoverage || null,
@@ -2722,7 +2723,7 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
         && (isExperimentalEnabled('cascadeConversationReuse') || shouldForceCascadeReuse({ emulateTools, modelKey }));
       const strictReuse = shouldUseStrictCascadeReuse({ emulateTools, modelKey });
       const fpBefore = reuseEnabled ? fingerprintBefore(messages, modelKey, callerKey, fpOpts) : null;
-      let reuseEntry = reuseEnabled ? poolCheckout(fpBefore, callerKey) : null;
+      let reuseEntry = reuseEnabled ? poolCheckout(fpBefore, callerKey, null, modelKey) : null;
       let checkedOutReuseEntry = reuseEntry;
       // v2.0.25 HIGH-2: same dead-entry signal as the non-stream path.
       let reuseEntryDead = false;
@@ -3155,6 +3156,7 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
                 lsPort: ls.port,
                 lsGeneration: cascadeResult.lsGeneration || ls.generation,
                 apiKey: currentApiKey,
+                modelKey: modelKey || '',
                 stepOffset: Number.isFinite(cascadeResult.stepOffset) ? cascadeResult.stepOffset : reuseEntry?.stepOffset,
                 generatorOffset: Number.isFinite(cascadeResult.generatorOffset) ? cascadeResult.generatorOffset : reuseEntry?.generatorOffset,
                 historyCoverage: cascadeResult.historyCoverage || reuseEntry?.historyCoverage || null,

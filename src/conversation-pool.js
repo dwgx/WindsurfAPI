@@ -32,12 +32,22 @@ function positiveIntEnv(name, fallback) {
 }
 
 const POOL_TTL_MS = positiveIntEnv('CASCADE_POOL_TTL_MS', 30 * 60 * 1000);
-const POOL_MAX = 500;
+const POOL_MAX = positiveIntEnv('CASCADE_POOL_MAX', 500);
 const KEY_VERSION = 2;
 
-const _pool = new Map();
+// When enabled, a secondary index maps (callerKey + modelKey) → latest
+// fingerprint. If the primary fingerprint lookup misses but the caller has
+// a recent cascade for the same model, we fall back to it. This makes
+// reuse robust against fingerprint drift (system-prompt changes, tool-list
+// reordering, etc.) within a single Claude Code / Cline session.
+const REUSE_BY_CALLER = process.env.CASCADE_REUSE_BY_CALLER === '1';
 
-const stats = { hits: 0, misses: 0, stores: 0, evictions: 0, expired: 0 };
+const _pool = new Map();
+// Secondary index: callerKey:modelKey → fingerprint (latest). Only
+// populated when REUSE_BY_CALLER is on.
+const _callerLatest = new Map();
+
+const stats = { hits: 0, misses: 0, stores: 0, evictions: 0, expired: 0, callerFallbackHits: 0 };
 
 function sha256(s) {
   return createHash('sha256').update(s).digest('hex');
@@ -485,12 +495,23 @@ function prune(now) {
   for (const [fp, e] of _pool) {
     if (now - e.lastAccess > effectiveTtl(e)) { _pool.delete(fp); stats.expired++; }
   }
-  if (_pool.size <= POOL_MAX) return;
+  if (_pool.size <= POOL_MAX) {
+    _pruneCallerIndex();
+    return;
+  }
   const entries = [..._pool.entries()].sort((a, b) => a[1].lastAccess - b[1].lastAccess);
   const toDrop = entries.length - POOL_MAX;
   for (let i = 0; i < toDrop; i++) {
     _pool.delete(entries[i][0]);
     stats.evictions++;
+  }
+  _pruneCallerIndex();
+}
+
+function _pruneCallerIndex() {
+  if (!REUSE_BY_CALLER || !_callerLatest.size) return;
+  for (const [ck, fp] of _callerLatest) {
+    if (!_pool.has(fp)) _callerLatest.delete(ck);
   }
 }
 
@@ -505,10 +526,26 @@ function prune(now) {
  * pool boundary (MED-3). Pass `{ apiKey, lsPort, lsGeneration }` and a
  * mismatch returns null + counts a miss without leaking the entry.
  */
-export function checkout(fingerprint, callerKey = '', expected = null) {
-  if (!fingerprint) { stats.misses++; return null; }
+export function checkout(fingerprint, callerKey = '', expected = null, modelKey = '') {
+  if (!fingerprint) {
+    // No fingerprint — try caller-based fallback before giving up.
+    if (REUSE_BY_CALLER && callerKey && modelKey) {
+      const fallback = _callerFallbackCheckout(callerKey, modelKey, expected);
+      if (fallback) return fallback;
+    }
+    stats.misses++;
+    return null;
+  }
   const entry = _pool.get(fingerprint);
-  if (!entry) { stats.misses++; return null; }
+  if (!entry) {
+    // Fingerprint miss — try caller-based fallback.
+    if (REUSE_BY_CALLER && callerKey && modelKey) {
+      const fallback = _callerFallbackCheckout(callerKey, modelKey, expected);
+      if (fallback) return fallback;
+    }
+    stats.misses++;
+    return null;
+  }
 
   // Validate BEFORE removing from the pool. The previous order
   // (`delete` first, then check) had a subtle leak: when a caller's
@@ -538,6 +575,40 @@ export function checkout(fingerprint, callerKey = '', expected = null) {
 
   // Validated. Now remove and hand to the caller.
   _pool.delete(fingerprint);
+  // Clean up caller index if it pointed at this fingerprint.
+  if (REUSE_BY_CALLER && entry.callerKey) {
+    for (const [ck, fp] of _callerLatest) {
+      if (fp === fingerprint) _callerLatest.delete(ck);
+    }
+  }
+  stats.hits++;
+  return entry;
+}
+
+// Caller-based fallback: look up the latest fingerprint for this
+// callerKey+model pair and check out that entry. Same validation as
+// the primary path.
+function _callerFallbackCheckout(callerKey, modelKey, expected) {
+  const ck = `${callerKey}\0${modelKey}`;
+  const fp = _callerLatest.get(ck);
+  if (!fp) return null;
+  const entry = _pool.get(fp);
+  if (!entry) { _callerLatest.delete(ck); return null; }
+  if (entry.callerKey && callerKey && entry.callerKey !== callerKey) return null;
+  if (Date.now() - entry.lastAccess > effectiveTtl(entry)) {
+    _pool.delete(fp);
+    _callerLatest.delete(ck);
+    stats.expired++;
+    return null;
+  }
+  if (expected) {
+    if (expected.apiKey && entry.apiKey && expected.apiKey !== entry.apiKey) return null;
+    if (expected.lsPort && entry.lsPort && expected.lsPort !== entry.lsPort) return null;
+    if (expected.lsGeneration != null && entry.lsGeneration != null && expected.lsGeneration !== entry.lsGeneration) return null;
+  }
+  _pool.delete(fp);
+  _callerLatest.delete(ck);
+  stats.callerFallbackHits++;
   stats.hits++;
   return entry;
 }
@@ -588,6 +659,7 @@ export function checkin(fingerprint, entry, callerKey = '', ttlHintMs) {
       lsGeneration: entry.lsGeneration,
       apiKey: entry.apiKey,
       callerKey: callerKey || entry.callerKey || '',
+      modelKey: entry.modelKey || '',
       stepOffset: Number.isFinite(entry.stepOffset) ? entry.stepOffset : 0,
       generatorOffset: Number.isFinite(entry.generatorOffset) ? entry.generatorOffset : 0,
       historyCoverage: entry.historyCoverage || null,
@@ -602,6 +674,14 @@ export function checkin(fingerprint, entry, callerKey = '', ttlHintMs) {
   // and operators read pool efficiency wrong.
   stats.stores++;
   if (fingerprints.length > 1) stats.aliasWrites = (stats.aliasWrites || 0) + (fingerprints.length - 1);
+  // Update caller-based secondary index.
+  if (REUSE_BY_CALLER && (callerKey || entry.callerKey)) {
+    const ck = callerKey || entry.callerKey;
+    const mk = entry.modelKey || '';
+    if (ck && fingerprints[0]) {
+      _callerLatest.set(`${ck}\0${mk}`, fingerprints[0]);
+    }
+  }
   prune(now);
 }
 
@@ -647,6 +727,12 @@ export function invalidateFor({ apiKey, lsPort, lsGeneration } = {}) {
       dropped++;
     }
   }
+  // Clean caller index for dropped cascadeIds.
+  if (REUSE_BY_CALLER && dropped > 0) {
+    for (const [ck, fp] of _callerLatest) {
+      if (!_pool.has(fp)) _callerLatest.delete(ck);
+    }
+  }
   return dropped;
 }
 
@@ -655,6 +741,8 @@ export function poolStats() {
     size: _pool.size,
     maxSize: POOL_MAX,
     ttlMs: POOL_TTL_MS,
+    reuseByCaller: REUSE_BY_CALLER,
+    callerLatestSize: _callerLatest.size,
     ...stats,
     hitRate: stats.hits + stats.misses > 0
       ? ((stats.hits / (stats.hits + stats.misses)) * 100).toFixed(1)
@@ -665,6 +753,7 @@ export function poolStats() {
 export function poolClear() {
   const n = _pool.size;
   _pool.clear();
+  _callerLatest.clear();
   return n;
 }
 

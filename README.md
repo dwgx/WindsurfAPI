@@ -269,6 +269,8 @@ curl http://localhost:3003/v1/messages \
 | `LS_PORT` | `42100` | LS gRPC 端口 |
 | `DASHBOARD_PASSWORD` | 空 | 后台密码 留空不设密码 |
 | `ALLOW_PRIVATE_PROXY_HOSTS` | 空 | 设为 `1` 允许在代理测试和登录时使用内网 IP（如 `192.168.x.x`、`10.x.x.x`）。默认留空仅允许公网地址 |
+| `CASCADE_REUSE_BY_CALLER` | `0` | 设为 `1` 启用 caller 级别回退复用。指纹未命中时，按 callerKey+model 回退到最近的 cascade。适合单用户 Claude Code 场景 |
+| `CASCADE_POOL_MAX` | `500` | 对话池最大条目数。单用户场景设 `1`–`5` 即可，减少资源占用 |
 
 ## Dashboard 功能面板
 
