@@ -36,6 +36,7 @@ import { assertPublicUrlHost } from '../image.js';
 import { validateHostFormat } from '../net-safety.js';
 import { discoverWindsurfCredentials, isLoopbackAddress } from './local-windsurf.js';
 import { detectDockerSelfUpdate, runDockerSelfUpdate } from './docker-self-update.js';
+import { BatchImportParseError, parseBatchImportInput } from './import-parser.js';
 import {
   getStatus as getQuietWindowStatus,
   setEnabled as setQuietWindowEnabled,
@@ -460,6 +461,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
 
   if (subpath === '/accounts' && method === 'POST') {
     try {
+      const apiServerUrl = body.apiServerUrl || body.api_server_url || '';
       if (!body.api_key && !body.token) {
         return json(res, 400, { error: 'Provide api_key or token' });
       }
@@ -482,7 +484,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
       }
 
       const account = body.api_key
-        ? addAccountByKey(body.api_key, body.label)
+        ? addAccountByKey(body.api_key, body.label, apiServerUrl)
         : await addAccountByToken(body.token, body.label);
 
       if (parsedProxy) {
@@ -1230,41 +1232,96 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
     try {
       const { text, autoAdd = true } = body || {};
       if (!text || typeof text !== 'string') return json(res, 400, { error: 'ERR_TEXT_REQUIRED' });
-      const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
-      if (!lines.length) return json(res, 400, { error: 'ERR_NO_VALID_LINES' });
-
+      const parsed = parseBatchImportInput(text, parseProxyUrl);
+      if (!parsed.items.length) return json(res, 400, { error: 'ERR_NO_VALID_LINES' });
       const results = [];
-      for (const line of lines) {
-        const parts = line.split(/\s+/);
-        let proxy = null, email, password;
-        if (parts.length >= 3 && (parts[0].includes('://') || parts[0].includes(':'))) {
-          proxy = parts[0];
-          email = parts[1];
-          password = parts[2];
-        } else if (parts.length >= 2) {
-          email = parts[0];
-          password = parts[1];
-        } else {
-          results.push({ success: false, email: line.slice(0, 30), error: 'ERR_FORMAT_INVALID' });
+      let skippedCount = 0;
+      for (const item of parsed.items) {
+        if (item.kind === 'issue') {
+          skippedCount++;
+          results.push({
+            success: false,
+            skipped: true,
+            email: item.label,
+            error: item.error,
+            lineNumber: item.lineNumber,
+            raw: item.raw,
+          });
           continue;
         }
         try {
-          const loginProxy = proxy ? parseProxyUrl(proxy) : getProxyConfig().global;
-          const result = await processWindsurfLogin({ email, password, loginProxy, autoAdd });
-          const binding = buildBatchProxyBinding(result, proxy);
-          if (binding) {
+          let result;
+          if (item.kind === 'email_password') {
+            const loginProxy = item.proxy || getProxyConfig().global;
+            result = await processWindsurfLogin({
+              email: item.email,
+              password: item.password,
+              loginProxy,
+              autoAdd,
+            });
+            const binding = buildBatchProxyBinding(result, item.proxyRaw);
+            if (binding) {
               setAccountProxy(binding.accountId, binding.proxy);
-              result.proxy = proxy;
               ensureLsForAccount(binding.accountId).catch(() => {});
+            }
+          } else if (item.kind === 'token') {
+            const account = await addAccountByToken(item.token, item.label);
+            if (item.proxy) {
+              setAccountProxy(account.id, item.proxy);
+              ensureLsForAccount(account.id).catch(() => {});
+            }
+            result = {
+              success: true,
+              email: account.email,
+              apiKey_masked: maskApiKey(account.apiKey),
+              account: { id: account.id, email: account.email, status: account.status },
+            };
+          } else if (item.kind === 'api_key') {
+            const account = addAccountByKey(item.apiKey, item.label, item.apiServerUrl || '');
+            if (item.proxy) {
+              setAccountProxy(account.id, item.proxy);
+              ensureLsForAccount(account.id).catch(() => {});
+            }
+            result = {
+              success: true,
+              email: account.email,
+              apiKey_masked: maskApiKey(account.apiKey),
+              account: { id: account.id, email: account.email, status: account.status },
+            };
+          } else {
+            throw new Error('ERR_UNSUPPORTED_IMPORT_ITEM');
           }
+          result.proxy = item.proxyRaw || null;
+          result.importKind = item.kind;
           results.push(result);
         } catch (err) {
-          results.push({ success: false, email, error: err.message });
+          results.push({
+            success: false,
+            skipped: false,
+            email: item.email || item.label || '',
+            error: err.message,
+            lineNumber: item.lineNumber,
+            raw: item.raw,
+            proxy: item.proxyRaw || null,
+            importKind: item.kind,
+          });
         }
       }
       const successCount = results.filter(r => r.success).length;
-      return json(res, 200, { success: true, total: results.length, successCount, failCount: results.length - successCount, results });
+      const failCount = results.filter(r => !r.success && !r.skipped).length;
+      return json(res, 200, {
+        success: true,
+        mode: parsed.mode,
+        total: results.length,
+        successCount,
+        failCount,
+        skippedCount,
+        results,
+      });
     } catch (err) {
+      if (err instanceof BatchImportParseError) {
+        return json(res, 400, { error: err.code });
+      }
       return json(res, 400, { error: err.message });
     }
   }
