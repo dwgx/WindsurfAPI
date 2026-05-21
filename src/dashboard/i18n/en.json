@@ -90,6 +90,8 @@
     "configure": "Configure",
     "test": "Test",
     "readClipboard": "Read Clipboard",
+    "uploadJson": "Upload JSON",
+    "clearFile": "Clear File",
     "batchImport": "Batch Import & Login",
     "paste": "Paste",
     "add": "Add",
@@ -390,7 +392,7 @@
     },
     "batchInput": {
       "label": "Batch Import",
-      "hint": "One account per line. Format: [proxy] email password. Proxy is optional, supports http/socks5. Proxy will be automatically bound to corresponding account."
+      "hint": "One account per line. Supports: email password, email----password, email|password, email,password, email:password. JSON file upload is also supported. Optional proxy format: [proxy] email password."
     },
     "proxyType": {
       "label": "Type"
@@ -834,12 +836,17 @@
     "pasteFirst": "Please paste batch accounts first",
     "importing": "Importing...",
     "importingDesc": "{{count}} lines, please wait",
+    "importingFile": "Importing file {{name}}",
     "complete": "Batch import complete",
     "importFailed": "Batch import failed",
-    "importComplete": "Batch import complete: success {{success}} / failed {{fail}}",
+    "importComplete": "Batch import complete: success {{success}} / skipped {{skipped}} / failed {{fail}}",
     "success": "Success",
+    "skipped": "Skipped",
     "fail": "Fail",
-    "formatError": "Line {{line}} format error"
+    "formatError": "Line {{line}} format error",
+    "fileNone": "No JSON file selected",
+    "fileLoaded": "Selected file: {{name}}",
+    "fileReadFailed": "Failed to read file: {{error}}"
   },
 
   "quietWindow": {
@@ -991,6 +998,9 @@
     "ERR_TEXT_REQUIRED": "Text field is required",
     "ERR_NO_VALID_LINES": "No valid lines found",
     "ERR_FORMAT_INVALID": "Invalid format. Expected: [proxy] email password",
+    "ERR_UNSUPPORTED_IMPORT_ITEM": "Item could not be recognized as email/password, token, or API key",
+    "ERR_JSON_INVALID": "Invalid JSON format",
+    "ERR_JSON_FILE_REQUIRED": "Please choose a .json file",
     "ERR_IDTOKEN_REQUIRED": "ID token is required",
     "ERR_PROXY_PRIVATE_IP": "Proxy cannot point to private/local address",
     "ERR_PROXY_FORMAT_INVALID": "Invalid proxy format. Expected: protocol://[user:pass@]host:port",

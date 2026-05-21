@@ -90,6 +90,8 @@
     "configure": "配置",
     "test": "测试",
     "readClipboard": "读取剪贴板",
+    "uploadJson": "上传 JSON",
+    "clearFile": "清除文件",
     "batchImport": "批量导入并登录",
     "paste": "粘贴",
     "add": "添加",
@@ -373,7 +375,7 @@
     },
     "batchInput": {
       "label": "批量导入",
-      "hint": "每行一个账号。格式：[代理] 邮箱 密码。代理可选，支持 http/socks5。会自动绑定代理到对应账号。"
+      "hint": "每行一个账号。支持：邮箱 密码、邮箱----密码、邮箱|密码、邮箱,密码、邮箱:密码。也支持上传 JSON 文件。代理可选，格式：[代理] 邮箱 密码。"
     },
     "proxyType": {
       "label": "类型"
@@ -834,12 +836,17 @@
     "pasteFirst": "请先粘贴批量账号",
     "importing": "导入中...",
     "importingDesc": "{{count}} 行，请稍候",
+    "importingFile": "正在导入文件 {{name}}",
     "complete": "批量导入完成",
     "importFailed": "批量导入失败",
-    "importComplete": "批量导入完成：成功 {{success}} / 失败 {{fail}}",
+    "importComplete": "批量导入完成：成功 {{success}} / 跳过 {{skipped}} / 失败 {{fail}}",
     "success": "成功",
+    "skipped": "跳过",
     "fail": "失败",
-    "formatError": "第 {{line}} 行格式错误"
+    "formatError": "第 {{line}} 行格式错误",
+    "fileNone": "未选择 JSON 文件",
+    "fileLoaded": "已选择文件：{{name}}",
+    "fileReadFailed": "读取文件失败：{{error}}"
   },
 
   "quietWindow": {
@@ -991,6 +998,9 @@
     "ERR_TEXT_REQUIRED": "缺少 text 字段",
     "ERR_NO_VALID_LINES": "没有有效行",
     "ERR_FORMAT_INVALID": "格式错误 需要 [proxy] email password",
+    "ERR_UNSUPPORTED_IMPORT_ITEM": "该项无法识别为邮箱密码、Token 或 API Key",
+    "ERR_JSON_INVALID": "JSON 格式无效",
+    "ERR_JSON_FILE_REQUIRED": "请选择 .json 文件",
     "ERR_IDTOKEN_REQUIRED": "缺少 idToken",
     "ERR_PROXY_PRIVATE_IP": "代理地址不能指向内网/本机",
     "ERR_PROXY_FORMAT_INVALID": "代理格式错误，应为：protocol://[user:pass@]host:port",

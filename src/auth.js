@@ -344,15 +344,21 @@ async function registerWithCodeium(idToken) {
 /**
  * Add account via API key.
  */
-export function addAccountByKey(apiKey, label = '') {
+export function addAccountByKey(apiKey, label = '', apiServerUrl = '') {
   const existing = accounts.find(a => a.apiKey === apiKey);
-  if (existing) return existing;
+  if (existing) {
+    if (apiServerUrl && !existing.apiServerUrl) {
+      existing.apiServerUrl = apiServerUrl;
+      saveAccounts();
+    }
+    return existing;
+  }
 
   const account = {
     id: randomUUID().slice(0, 8),
     email: label || `key-${apiKey.slice(0, 8)}`,
     apiKey,
-    apiServerUrl: '',
+    apiServerUrl: apiServerUrl || '',
     method: 'api_key',
     status: 'active',
     lastUsed: 0,
