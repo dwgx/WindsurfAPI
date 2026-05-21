@@ -148,6 +148,23 @@ export const MODELS = {
   'o3-pro':                         { name: 'o3-pro',                         provider: 'openai', enumValue: 294, credit: 4 },
   'o4-mini':                        { name: 'o4-mini',                        provider: 'openai', enumValue: 264, credit: 0.5 },
 
+  // ── Astraflow (UCloud) ─────────────────────────────────────
+  // Astraflow is an OpenAI-compatible aggregation platform supporting 200+ models.
+  // Global endpoint: https://api-us-ca.umodelverse.ai/v1  (ASTRAFLOW_API_KEY)
+  // China  endpoint: https://api.modelverse.cn/v1         (ASTRAFLOW_CN_API_KEY)
+  // Website: https://astraflow.ucloud-global.com (global) / https://astraflow.ucloud.cn (CN)
+  // These entries use provider:'astraflow' and set enumValue:0 / modelUid equal to the
+  // upstream model ID so the passthrough layer can forward them to the Astraflow base URL.
+  'astraflow/gpt-4o':               { name: 'astraflow/gpt-4o',               provider: 'astraflow', enumValue: 0, modelUid: 'gpt-4o',                    credit: 1 },
+  'astraflow/gpt-4.1':              { name: 'astraflow/gpt-4.1',              provider: 'astraflow', enumValue: 0, modelUid: 'gpt-4.1',                   credit: 1 },
+  'astraflow/gpt-4o-mini':          { name: 'astraflow/gpt-4o-mini',          provider: 'astraflow', enumValue: 0, modelUid: 'gpt-4o-mini',               credit: 0.5 },
+  'astraflow/claude-3.5-sonnet':    { name: 'astraflow/claude-3.5-sonnet',    provider: 'astraflow', enumValue: 0, modelUid: 'claude-3-5-sonnet-20241022', credit: 2 },
+  'astraflow/claude-3.7-sonnet':    { name: 'astraflow/claude-3.7-sonnet',    provider: 'astraflow', enumValue: 0, modelUid: 'claude-3-7-sonnet-20250219', credit: 2 },
+  'astraflow/deepseek-v3':          { name: 'astraflow/deepseek-v3',          provider: 'astraflow', enumValue: 0, modelUid: 'deepseek-v3',               credit: 1 },
+  'astraflow/deepseek-r1':          { name: 'astraflow/deepseek-r1',          provider: 'astraflow', enumValue: 0, modelUid: 'deepseek-r1',               credit: 2 },
+  'astraflow/llama-3.3-70b':        { name: 'astraflow/llama-3.3-70b',        provider: 'astraflow', enumValue: 0, modelUid: 'llama-3.3-70b-instruct',    credit: 0.5 },
+  'astraflow/gemini-2.0-flash':     { name: 'astraflow/gemini-2.0-flash',     provider: 'astraflow', enumValue: 0, modelUid: 'gemini-2.0-flash',          credit: 0.5 },
+
   // ── Gemini ──────────────────────────────────────────────
   'gemini-2.5-pro':                 { name: 'gemini-2.5-pro',                 provider: 'google', enumValue: 246, modelUid: 'MODEL_GOOGLE_GEMINI_2_5_PRO', credit: 1 },
   'gemini-2.5-flash':               { name: 'gemini-2.5-flash',               provider: 'google', enumValue: 312, modelUid: 'MODEL_GOOGLE_GEMINI_2_5_FLASH', credit: 0.5 },

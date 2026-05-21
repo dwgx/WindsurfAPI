@@ -78,6 +78,13 @@ export const config = {
   codeiumPassword: process.env.CODEIUM_PASSWORD || '',
 
   codeiumApiUrl: process.env.CODEIUM_API_URL || 'https://server.self-serve.windsurf.com',
+  // Astraflow — OpenAI-compatible aggregation platform by UCloud (200+ models)
+  // Global:  https://api-us-ca.umodelverse.ai/v1  — signup: https://astraflow.ucloud-global.com
+  // China:   https://api.modelverse.cn/v1          — signup: https://astraflow.ucloud.cn
+  astraflowApiKey: process.env.ASTRAFLOW_API_KEY || '',
+  astraflowApiKeyCn: process.env.ASTRAFLOW_CN_API_KEY || '',
+  astraflowApiUrl: 'https://api-us-ca.umodelverse.ai/v1',
+  astraflowApiUrlCn: 'https://api.modelverse.cn/v1',
   defaultModel: process.env.DEFAULT_MODEL || 'claude-4.5-sonnet-thinking',
   maxTokens: parseInt(process.env.MAX_TOKENS || '8192', 10),
   logLevel: process.env.LOG_LEVEL || 'info',
