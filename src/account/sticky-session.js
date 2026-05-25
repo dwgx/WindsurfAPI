@@ -34,6 +34,8 @@
  * Related issues: #93, #133 (context loss mid-task)
  */
 
+import { isExperimentalEnabled } from '../runtime-config.js';
+
 const ENABLED = process.env.STICKY_SESSION_ENABLED === '1';
 
 const TTL_MS = (() => {
@@ -59,6 +61,9 @@ const _stats = {
  * Using \0 delimiter (valid in Map keys but never appears in user input).
  */
 function bindingKey(callerKey, modelKey) {
+  if (isExperimentalEnabled('stickyBindByUserOnly')) {
+    return callerKey + '\0' + '*';
+  }
   return callerKey + '\0' + (modelKey || '*');
 }
 

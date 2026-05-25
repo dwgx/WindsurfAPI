@@ -1,4 +1,5 @@
 import { createHash } from 'crypto';
+import { log } from './config.js';
 
 function sha256Hex(value) {
   return createHash('sha256').update(String(value || '')).digest('hex');
@@ -67,6 +68,8 @@ function ipUaFingerprint(req) {
 
 export function callerKeyFromRequest(req, apiKey = '', body = null) {
   const bodySubKey = body ? extractBodyCallerSubKey(body) : '';
+  const hasUserInBody = !!(body && typeof body.user === 'string');
+  log.info('[caller-key] body.user=%s subKey=%s', hasUserInBody ? body.user : '(none)', bodySubKey || '(none)');
   if (apiKey) {
     const base = `api:${sha256Hex(apiKey).slice(0, 32)}`;
     if (bodySubKey) return `${base}:user:${bodySubKey}`;

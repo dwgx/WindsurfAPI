@@ -41,6 +41,12 @@ const DEFAULTS = {
     // the container). Default OFF — only useful for self-hosted boxes
     // that mount /var/run/docker.sock and run via docker-compose.
     autoUpdateQuietWindow: false,
+    // When enabled with STICKY_SESSION_ENABLED=1, the sticky session
+    // binding ignores the model dimension — a user gets the same
+    // upstream account regardless of which model they request.
+    // Default OFF to preserve per-model isolation (avoids routing
+    // requests through an account that may not entitle that model).
+    stickyBindByUserOnly: false,
   },
   // v2.0.67 (#112) — Tunables for the quiet-window auto-updater.
   // Not under `experimental` because they're not boolean flags.

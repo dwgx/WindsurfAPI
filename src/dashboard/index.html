@@ -2248,6 +2248,24 @@ window._firebaseOAuth = async function(provider) {
         </div>
       </div>
     </div>
+    <div class="section" style="margin-top:24px">
+      <div class="section-header">
+        <div class="section-title">粘性会话按用户绑定</div>
+      </div>
+      <div class="section-body">
+        <div class="section-desc" style="margin-bottom:12px">开启后，同一 user 无论请求什么模型都会固定绑定到同一个上游账号。关闭时按 (user, model) 二元组分别绑定（不同模型可能分配不同账号，适合账号有模型限制的场景）。需启用 STICKY_SESSION_ENABLED=1 才生效。</div>
+        <div style="display:flex;align-items:center;gap:16px;padding:12px;background:var(--surface-2);border-radius:var(--radius)">
+          <label class="switch">
+            <input type="checkbox" id="exp-sticky-by-user" onchange="App.toggleExperimental('stickyBindByUserOnly', this.checked)">
+            <span class="switch-slider"></span>
+          </label>
+          <div>
+            <div style="font-weight:500">忽略模型维度</div>
+            <div class="text-sm text-muted">默认关闭。开启后 user_a 下的 opus/haiku/gemini 全部共享同一个绑定。</div>
+          </div>
+        </div>
+      </div>
+    </div>
     <!-- v2.0.70 (#112 follow-up): quiet-window auto-update toggle. -->
     <div class="section" style="margin-top:24px">
       <div class="section-header">
@@ -5367,6 +5385,8 @@ docker compose up -d --force-recreate</pre>
     // v2.0.70 (#112 follow-up) — quiet-window auto-update toggle.
     const cbQw = document.getElementById('exp-quiet-window');
     if (cbQw) cbQw.checked = !!d.flags?.autoUpdateQuietWindow;
+    const cbStickyByUser = document.getElementById('exp-sticky-by-user');
+    if (cbStickyByUser) cbStickyByUser.checked = !!d.flags?.stickyBindByUserOnly;
     this.loadQuietWindowStatus();
     // Reflect current skin cookie in the dropdown so reload state is visible.
     const skinSel = document.getElementById('skin-select');
