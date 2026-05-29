@@ -27,6 +27,11 @@
  * This produces two distinct, stable callerKeys → sticky sessions stay
  * pinned to separate accounts → cascade reuse works independently.
  *
+ * ── HTTP method handling ───────────────────────────────────────────────
+ * GET /v1/models (and other read endpoints) are transparently forwarded
+ * as-is.  The `user` field is only injected into POST / PUT / PATCH
+ * request bodies.
+ *
  * ── Prerequisites ──────────────────────────────────────────────────────
  * • WindsurfAPI running on 127.0.0.1:3003 with .env containing:
  *     STICKY_SESSION_ENABLED=1
@@ -114,21 +119,28 @@ http.createServer((req, res) => {
   req.on('data', chunk => body += chunk);
   req.on('end', () => {
     try {
-      const json = JSON.parse(body || '{}');
-      json.user = USER_ID;
+      const hasBody = (req.method === 'POST' || req.method === 'PUT' || req.method === 'PATCH');
+      const json = hasBody ? JSON.parse(body || '{}') : {};
+      let postData = null;
 
-      const postData = JSON.stringify(json);
+      const headers = {
+        'Authorization': req.headers['authorization'] || '',
+        'Host': `${UPSTREAM_HOST}:${UPSTREAM_PORT}`,
+      };
+
+      if (hasBody) {
+        json.user = USER_ID;
+        postData = JSON.stringify(json);
+        headers['Content-Type'] = 'application/json';
+        headers['Content-Length'] = Buffer.byteLength(postData);
+      }
+
       const opts = {
         hostname: UPSTREAM_HOST,
         port: UPSTREAM_PORT,
         path: req.url,
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Content-Length': Buffer.byteLength(postData),
-          'Authorization': req.headers['authorization'] || '',
-          'Host': `${UPSTREAM_HOST}:${UPSTREAM_PORT}`,
-        },
+        method: req.method,
+        headers,
       };
 
       const upstream = http.request(opts, (proxyRes) => {
@@ -142,7 +154,7 @@ http.createServer((req, res) => {
         res.end(JSON.stringify({ error: { message: 'Upstream error: ' + err.message } }));
       });
 
-      upstream.write(postData);
+      if (postData) upstream.write(postData);
       upstream.end();
     } catch (err) {
       res.writeHead(400, { 'Content-Type': 'application/json' });
