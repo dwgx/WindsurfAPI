@@ -708,6 +708,49 @@ export function getApiKey(excludeKeys = [], modelKey = null, callerKey = null) {
     return (x.account.lastUsed || 0) - (y.account.lastUsed || 0);
   });
 
+  // ── Tiebreaker: user-aware account sharding ─────────────────────
+  //
+  // Level 1 — strict pinning (stickyBindByUserOnly + stickyNoFallback):
+  //   When both flags are on the user wants per-user account isolation
+  //   with zero cross-contamination.  Skip all health-metric comparison
+  //   and deterministically pin each caller to a fixed account slot from
+  //   the very first request, regardless of quota / RPM / tier
+  //   differences.  Once pinned, stickyNoFallback prevents the request
+  //   from ever rotating to another account.
+  //
+  // Level 2 — soft sharding (the two flags are NOT both on):
+  //   Only re-shard candidates when the top two are genuinely tied on
+  //   every health metric.  This avoids overriding legitimate
+  //   load-balancing when one account is clearly healthier.
+  if (callerKey && candidates.length > 1) {
+    const strictPin = isExperimentalEnabled('stickyBindByUserOnly') && isExperimentalEnabled('stickyNoFallback');
+    let doShard = false;
+    if (strictPin) {
+      doShard = true;
+    } else {
+      const first = candidates[0];
+      const second = candidates[1];
+      const ix0 = first.account._inflight || 0;
+      const iy0 = second.account._inflight || 0;
+      const qx0 = Math.floor(quotaScore(first.account) / 5);
+      const qy0 = Math.floor(quotaScore(second.account) / 5);
+      const rx0 = (first.limit - first.used) / first.limit || 0;
+      const ry0 = (second.limit - second.used) / second.limit || 0;
+      doShard =
+        ix0 === iy0 && qx0 === qy0 && rx0 === ry0 &&
+        (first.account.lastUsed || 0) === (second.account.lastUsed || 0);
+    }
+    if (doShard) {
+      const hash = createHash('sha256').update(callerKey).digest();
+      const bucket = hash.readUInt32BE(0) % candidates.length;
+      if (bucket > 0) {
+        const chosen = candidates[bucket];
+        candidates[bucket] = candidates[0];
+        candidates[0] = chosen;
+      }
+    }
+  }
+
   const { account } = candidates[0];
   const reservationTimestamp = nextReservationToken(now);
   account._rpmHistory.push(reservationTimestamp);
