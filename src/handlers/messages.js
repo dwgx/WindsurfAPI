@@ -676,7 +676,8 @@ export async function handleMessages(body, context = {}) {
   // sharing one API key. Bare API-key callers and other client SDKs that
   // do not send metadata.user_id keep the original callerKey unchanged.
   const subKey = extractCallerSubKey(body);
-  const effectiveContext = subKey
+  const alreadyUserScoped = context.callerKey && context.callerKey.includes(':user:');
+  const effectiveContext = (subKey && !alreadyUserScoped)
     ? { ...context, callerKey: `${context.callerKey || ''}:user:${subKey}` }
     : context;
 

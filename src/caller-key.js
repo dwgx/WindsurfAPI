@@ -1,4 +1,5 @@
 import { createHash } from 'crypto';
+import { log } from './config.js';
 
 function sha256Hex(value) {
   return createHash('sha256').update(String(value || '')).digest('hex');
@@ -19,8 +20,8 @@ function sha256Hex(value) {
 // pinned to (apiKey, user/session). Returns '' when no usable signal.
 export function extractBodyCallerSubKey(body) {
   if (!body || typeof body !== 'object') return '';
+  if (typeof body.user === 'string') return sha256Hex(body.user).slice(0, 16);
   const candidates = [
-    typeof body.user === 'string' ? body.user : '',
     typeof body?.metadata?.conversation_id === 'string' ? body.metadata.conversation_id : '',
     typeof body.conversation === 'string' ? body.conversation : '',
     typeof body.previous_response_id === 'string' ? body.previous_response_id : '',
@@ -67,6 +68,8 @@ function ipUaFingerprint(req) {
 
 export function callerKeyFromRequest(req, apiKey = '', body = null) {
   const bodySubKey = body ? extractBodyCallerSubKey(body) : '';
+  const hasUserInBody = !!(body && typeof body.user === 'string');
+  log.info('[caller-key] body.user=%s subKey=%s', hasUserInBody ? body.user : '(none)', bodySubKey || '(none)');
   if (apiKey) {
     const base = `api:${sha256Hex(apiKey).slice(0, 32)}`;
     if (bodySubKey) return `${base}:user:${bodySubKey}`;

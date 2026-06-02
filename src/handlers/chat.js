@@ -1147,6 +1147,10 @@ async function waitForAccount(tried, signal, maxWaitMs = QUEUE_MAX_WAIT_MS, mode
   while (!acct) {
     if (signal?.aborted) return null;
     if (Date.now() >= deadline) return null;
+    if (callerKey && isStickyEnabled() && isExperimentalEnabled('stickyNoFallback')) {
+      log.info('[sticky] NO-FALLBACK waitForAccount — bound account unavailable, failing immediately');
+      return null;
+    }
     await new Promise(r => setTimeout(r, QUEUE_RETRY_MS));
     acct = getApiKey(tried, modelKey, callerKey);
   }
@@ -2023,11 +2027,19 @@ async function _handleChatCompletionsInner(body, context = {}) {
           },
         };
       }
+      if (acct?._sticky && isExperimentalEnabled('stickyNoFallback')) {
+        log.warn(`Account ${acct.email} (sticky-bound) rate-limited on ${displayModel}, stickyNoFallback enabled — not trying other accounts`);
+        break;
+      }
       log.warn(`Account ${acct.email} rate-limited on ${displayModel}, trying next account`);
       continue;
     }
     // Cascade transient 错误通常是上游或本地 LS 短暂抖动，先退避再切账号，避免连续打爆同一热窗口。
     if (errType === 'upstream_internal_error' || errType === 'upstream_transient_error') {
+      if (acct?._sticky && isExperimentalEnabled('stickyNoFallback')) {
+        log.warn(`Chat[${reqId}]: ${acct.email} (sticky-bound) upstream transient error, stickyNoFallback enabled — not trying other accounts`);
+        break;
+      }
       internalCount++;
       const backoffMs = await internalErrorBackoff(internalCount - 1);
       log.warn(`Chat[${reqId}]: ${acct.email} upstream transient error, waited ${backoffMs}ms before next account`);
@@ -2035,6 +2047,10 @@ async function _handleChatCompletionsInner(body, context = {}) {
     }
     // Model not available on this account (permission_denied, etc.)
     if (errType === 'model_not_available') {
+      if (acct?._sticky && isExperimentalEnabled('stickyNoFallback')) {
+        log.warn(`Account ${acct.email} (sticky-bound) cannot serve ${displayModel}, stickyNoFallback enabled — not trying other accounts`);
+        break;
+      }
       log.warn(`Account ${acct.email} cannot serve ${displayModel}, trying next account`);
       continue;
     }
@@ -2923,7 +2939,7 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
             }
           }
           if (!acct) {
-            acct = await waitForAccountFn(tried, abortController.signal, QUEUE_MAX_WAIT_MS, modelKey);
+            acct = await waitForAccountFn(tried, abortController.signal, QUEUE_MAX_WAIT_MS, modelKey, callerKey);
             if (!acct) {
               // Without an explicit lastErr here, the final retry-failed log
               // ends up printing an empty message and the SSE error event
@@ -3304,6 +3320,11 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
             }
             // Retry only if nothing has been streamed yet AND it's a retryable error
             if (!hadSuccess && (err.isModelError || isRateLimit)) {
+              if (acct?._sticky && isExperimentalEnabled('stickyNoFallback')) {
+                const tag = isRateLimit ? 'rate_limit' : isTransient ? 'upstream_transient' : 'model_error';
+                log.warn(`Account ${acct.email} (sticky-bound) failed (${tag}) on ${model}, stickyNoFallback enabled — not trying other accounts`);
+                break;
+              }
               const tag = isRateLimit ? 'rate_limit' : isTransient ? 'upstream_transient' : 'model_error';
               if (isTransient) {
                 streamInternalCount++;

@@ -12,6 +12,7 @@
 
 import { createHash, randomUUID, timingSafeEqual } from 'crypto';
 import { isStickyEnabled, getStickyBinding, setStickyBinding, clearStickyBinding } from './account/sticky-session.js';
+import { isExperimentalEnabled } from './runtime-config.js';
 import { readFileSync, writeFileSync, existsSync, renameSync, unlinkSync, readdirSync } from 'fs';
 import { config, log } from './config.js';
 import { getEffectiveProxy } from './dashboard/proxy-config.js';
@@ -630,6 +631,7 @@ export function getApiKey(excludeKeys = [], modelKey = null, callerKey = null) {
   // account so the cascade_id from the previous turn is still valid.
   // Falls through to normal selection if the bound account is unavailable.
   if (callerKey && isStickyEnabled()) {
+    log.info('[sticky] CHECK callerKey=%s model=%s enabled=%s', (callerKey || '(none)').slice(0, 50), modelKey || '(none)', isStickyEnabled());
     const bound = getStickyBinding(callerKey, modelKey);
     if (bound) {
       const acct = accounts.find(a => a.id === bound.accountId && a.status === 'active' && a.apiKey === bound.apiKey);
@@ -653,10 +655,17 @@ export function getApiKey(excludeKeys = [], modelKey = null, callerKey = null) {
           }
         }
       }
-      // Bound account is no longer usable — clear it so the next call
-      // falls through to normal selection instead of looping.
+      // Bound account is no longer usable
+      if (isExperimentalEnabled('stickyNoFallback')) {
+        log.info('[sticky] NO-FALLBACK callerKey=%s model=%s — bound account unavailable, refusing to rotate',
+          (callerKey || '').slice(0, 50), modelKey || '(none)');
+        return null;
+      }
+      // Clear it so the next call falls through to normal selection instead of looping.
       clearStickyBinding(callerKey, modelKey);
     }
+  } else {
+    log.info('[sticky] SKIP-CHECK callerKey=%s enabled=%s', (callerKey ? callerKey.slice(0, 30) : String(callerKey)), isStickyEnabled());
   }
 
   const candidates = [];
@@ -698,6 +707,49 @@ export function getApiKey(excludeKeys = [], modelKey = null, callerKey = null) {
     if (ry !== rx) return ry - rx;
     return (x.account.lastUsed || 0) - (y.account.lastUsed || 0);
   });
+
+  // ── Tiebreaker: user-aware account sharding ─────────────────────
+  //
+  // Level 1 — strict pinning (stickyBindByUserOnly + stickyNoFallback):
+  //   When both flags are on the user wants per-user account isolation
+  //   with zero cross-contamination.  Skip all health-metric comparison
+  //   and deterministically pin each caller to a fixed account slot from
+  //   the very first request, regardless of quota / RPM / tier
+  //   differences.  Once pinned, stickyNoFallback prevents the request
+  //   from ever rotating to another account.
+  //
+  // Level 2 — soft sharding (the two flags are NOT both on):
+  //   Only re-shard candidates when the top two are genuinely tied on
+  //   every health metric.  This avoids overriding legitimate
+  //   load-balancing when one account is clearly healthier.
+  if (callerKey && candidates.length > 1) {
+    const strictPin = isExperimentalEnabled('stickyBindByUserOnly') && isExperimentalEnabled('stickyNoFallback');
+    let doShard = false;
+    if (strictPin) {
+      doShard = true;
+    } else {
+      const first = candidates[0];
+      const second = candidates[1];
+      const ix0 = first.account._inflight || 0;
+      const iy0 = second.account._inflight || 0;
+      const qx0 = Math.floor(quotaScore(first.account) / 5);
+      const qy0 = Math.floor(quotaScore(second.account) / 5);
+      const rx0 = (first.limit - first.used) / first.limit || 0;
+      const ry0 = (second.limit - second.used) / second.limit || 0;
+      doShard =
+        ix0 === iy0 && qx0 === qy0 && rx0 === ry0 &&
+        (first.account.lastUsed || 0) === (second.account.lastUsed || 0);
+    }
+    if (doShard) {
+      const hash = createHash('sha256').update(callerKey).digest();
+      const bucket = hash.readUInt32BE(0) % candidates.length;
+      if (bucket > 0) {
+        const chosen = candidates[bucket];
+        candidates[bucket] = candidates[0];
+        candidates[0] = chosen;
+      }
+    }
+  }
 
   const { account } = candidates[0];
   const reservationTimestamp = nextReservationToken(now);

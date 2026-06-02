@@ -34,6 +34,9 @@
  * Related issues: #93, #133 (context loss mid-task)
  */
 
+import { isExperimentalEnabled } from '../runtime-config.js';
+import { log } from '../config.js';
+
 const ENABLED = process.env.STICKY_SESSION_ENABLED === '1';
 
 const TTL_MS = (() => {
@@ -59,6 +62,9 @@ const _stats = {
  * Using \0 delimiter (valid in Map keys but never appears in user input).
  */
 function bindingKey(callerKey, modelKey) {
+  if (isExperimentalEnabled('stickyBindByUserOnly')) {
+    return callerKey + '\0' + '*';
+  }
   return callerKey + '\0' + (modelKey || '*');
 }
 
@@ -97,13 +103,16 @@ export function isStickyEnabled() {
  * @returns {{ accountId: string, apiKey: string } | null}
  */
 export function getStickyBinding(callerKey, modelKey = '') {
-  if (!ENABLED || !callerKey) return null;
+  log.info('[sticky] ENTER callerKey=%s model=%s enabled=%s', (callerKey || '(none)').slice(0, 50), modelKey, ENABLED);
+  if (!ENABLED) return null;
+  if (!callerKey) { log.info('[sticky] SKIP (no callerKey) model=%s', modelKey); return null; }
   ensureCleanupTimer();
 
   const key = bindingKey(callerKey, modelKey);
   const binding = _bindings.get(key);
   if (!binding) {
     _stats.misses++;
+    log.info('[sticky] MISS key=%s model=%s', key, modelKey);
     return null;
   }
 
@@ -116,6 +125,7 @@ export function getStickyBinding(callerKey, modelKey = '') {
 
   binding.lastAccess = now;
   _stats.hits++;
+  log.info('[sticky] HIT key=%s account=%s', key, binding.accountId);
   return { accountId: binding.accountId, apiKey: binding.apiKey };
 }
 
@@ -158,7 +168,10 @@ export function setStickyBinding(callerKey, modelKey, accountId, apiKey) {
     lastAccess: now,
   });
 
-  if (!existing) _stats.creates++;
+  if (!existing) {
+    _stats.creates++;
+    log.info('[sticky] SET key=%s account=%s', key, accountId);
+  }
 }
 
 /**
@@ -170,7 +183,9 @@ export function setStickyBinding(callerKey, modelKey, accountId, apiKey) {
  */
 export function clearStickyBinding(callerKey, modelKey = '') {
   if (!ENABLED || !callerKey) return;
-  _bindings.delete(bindingKey(callerKey, modelKey));
+  const key = bindingKey(callerKey, modelKey);
+  if (_bindings.has(key)) log.info('[sticky] CLEAR key=%s', key);
+  _bindings.delete(key);
 }
 
 /**
