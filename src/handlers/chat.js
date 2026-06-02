@@ -1961,7 +1961,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
       // when this handler is the second pass of an auto-fallback
       // retry; it carries the ORIGINAL model name the client asked
       // for so the cascade pool entry gets indexed under both keys.
-      reuseEnabled ? { reuseEntry, lsPort: ls.port, apiKey: acct.apiKey, callerKey, cachePolicy, fpOpts, aliasModelKey: context.__aliasModelKey || null } : null,
+      reuseEnabled ? { reuseEntry, lsPort: ls.port, apiKey: acct.apiKey, accountId: acct.id, callerKey, cachePolicy, fpOpts, aliasModelKey: context.__aliasModelKey || null } : null,
       modelInfo?.provider || null,
       emulateTools, toolPreamble, wantJson, cachePolicy, wantThinking, tools, body.__route || 'chat',
       nativeOpts,
@@ -2426,8 +2426,8 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
       // Bind caller to this account for the next turn in the
       // conversation. Without this, the next request picks a different
       // account from the pool and the cascade_id becomes invalid.
-      if (poolCtx.callerKey && isStickyEnabled() && acct) {
-        setStickyBinding(poolCtx.callerKey, modelKey, acct.id, acct.apiKey);
+      if (poolCtx.callerKey && isStickyEnabled() && poolCtx.accountId) {
+        setStickyBinding(poolCtx.callerKey, modelKey, poolCtx.accountId, poolCtx.apiKey);
       }
     }
 

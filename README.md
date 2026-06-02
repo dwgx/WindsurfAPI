@@ -400,6 +400,18 @@ A: 八成是用了周限模型 — `claude-opus-4-7-max` / `gpt-5.5-xhigh` / `cl
   修复 chat 调用后 inferTier 把 Pro/Trial 账号降级为 free 的 bug，保护了 GetUserStatus 设定的权威 tier。
 - [@smeinecke](https://github.com/smeinecke) — [PR #43](https://github.com/dwgx/WindsurfAPI/pull/43)
   Dashboard 完整国际化：14 个 commit 覆盖中英文翻译、I18n 系统、check-i18n.js 校验工具。
+- [@you922](https://github.com/you922) — [PR #162](https://github.com/dwgx/WindsurfAPI/pull/162) + [PR #163](https://github.com/dwgx/WindsurfAPI/pull/163)
+  Sticky session 机制从零搭建（callerKey + modelKey → accountId 绑定）+ LS 崩溃指数退避自动重启。另外在 #164 提供了 SectionOverrideConfig 工具调用失效的源码级根因分析。
+- [@Fermiz](https://github.com/Fermiz) — [PR #181](https://github.com/dwgx/WindsurfAPI/pull/181)
+  Cascade 复用优化（单用户场景跳过轮询）+ HTTPS 代理层 + conversation-pool 大小可配置化。
+- [@linqichenggg](https://github.com/linqichenggg) — [PR #175](https://github.com/dwgx/WindsurfAPI/pull/175)
+  Windows / macOS / Linux 三平台 LS 路径统一：二进制路径、数据目录、安装脚本全部对齐。
+- [@lauvww](https://github.com/lauvww) — [PR #182](https://github.com/dwgx/WindsurfAPI/pull/182)
+  Dashboard 批量导入解析器重写：支持 JSON / CSV / 纯文本混合粘贴，自动检测分隔符。
+- [@ucloudnb666](https://github.com/ucloudnb666) — [PR #184](https://github.com/dwgx/WindsurfAPI/pull/184)
+  Astraflow 第三方提供商接入。
+- [@datfooldive](https://github.com/datfooldive) — [PR #173](https://github.com/dwgx/WindsurfAPI/pull/173)
+  Dashboard UI 大扫除：统一组件风格、优化卡片布局和响应式适配。
 
 想加入这份名单？欢迎提 [issue](https://github.com/dwgx/WindsurfAPI/issues) 或 [pull request](https://github.com/dwgx/WindsurfAPI/pulls)。Dashboard 左侧有"致谢"面板 能看到同样的信息。
 

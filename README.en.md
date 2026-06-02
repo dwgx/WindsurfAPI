@@ -416,6 +416,18 @@ Huge thanks to the following folks who sent pull requests or systematically audi
   Fixed inferTier demoting Pro/Trial accounts to free after every chat call, preserving the authoritative tier from GetUserStatus.
 - [@smeinecke](https://github.com/smeinecke) — [PR #43](https://github.com/dwgx/WindsurfAPI/pull/43)
   Full Dashboard i18n: 14 commits covering Chinese/English translations, I18n system, and check-i18n.js validation tool.
+- [@you922](https://github.com/you922) — [PR #162](https://github.com/dwgx/WindsurfAPI/pull/162) + [PR #163](https://github.com/dwgx/WindsurfAPI/pull/163)
+  Built sticky session from scratch (callerKey + modelKey → accountId binding) + LS crash auto-restart with exponential backoff. Also provided root-cause analysis of SectionOverrideConfig tool-call suppression in #164.
+- [@Fermiz](https://github.com/Fermiz) — [PR #181](https://github.com/dwgx/WindsurfAPI/pull/181)
+  Cascade reuse optimization for single-user setups (skip unnecessary rotation) + HTTPS proxy layer + configurable conversation-pool size.
+- [@linqichenggg](https://github.com/linqichenggg) — [PR #175](https://github.com/dwgx/WindsurfAPI/pull/175)
+  Cross-platform LS path alignment: unified binary paths, data dirs, and install scripts across Windows / macOS / Linux.
+- [@lauvww](https://github.com/lauvww) — [PR #182](https://github.com/dwgx/WindsurfAPI/pull/182)
+  Rewrote dashboard batch import parser: supports JSON / CSV / plain text mixed paste with auto-detection.
+- [@ucloudnb666](https://github.com/ucloudnb666) — [PR #184](https://github.com/dwgx/WindsurfAPI/pull/184)
+  Added Astraflow as a third-party provider.
+- [@datfooldive](https://github.com/datfooldive) — [PR #173](https://github.com/dwgx/WindsurfAPI/pull/173)
+  Dashboard UI overhaul: unified component styles, improved card layouts and responsive design.
 
 Want to be on this list? Open an [issue](https://github.com/dwgx/WindsurfAPI/issues) or a [pull request](https://github.com/dwgx/WindsurfAPI/pulls). The dashboard has a Credits panel on the left that shows the same info.
 

@@ -188,6 +188,60 @@
       "mergedAt": "2026-04-21",
       "title": "fix: 一次性审计并提交 15 个安全 / 并发 / 资源管理 bug",
       "summary": "系统性扫了一遍仓库提了 CRITICAL/HIGH/MEDIUM 15 条修复建议：XSS 转义、shell 注入防护、10MB body 上限、auth 路由顺序、gRPC 双回调保护、LS pool 并发竞态、HTTP/2 frame 16MB 上限、varint BigInt 支持。PR 因改动面过大未直接合并，但其中多项被后续独立重做。"
+    },
+    {
+      "login": "you922",
+      "pr": 162,
+      "weight": "S",
+      "weightLabel": "Sticky Session 架构师 + LS 自愈机制",
+      "mergedAt": "2026-05-12",
+      "title": "feat: sticky session + auto-restart crashed LS",
+      "summary": "两个 PR 一起出手。#162 从零搭建了 sticky session 机制：(callerKey, modelKey) → accountId 绑定 + 可配 TTL + LRU eviction，让多轮对话留在同一个上游账号上避免 cascade_id 跨账号失效。#163 给 LS 崩溃加了指数退避自动重启，process exit / SIGTERM / unresponsive 三种场景都兜住，防止单个 LS 挂掉拖垮整个账号池。另外在 #164 提供了源码级根因分析指出 SectionOverrideConfig 在 NO_TOOL 模式下抑制 tool_calling_section 的架构性问题。"
+    },
+    {
+      "login": "Fermiz",
+      "pr": 181,
+      "weight": "A+",
+      "weightLabel": "Cascade 复用优化 + HTTPS 代理层",
+      "mergedAt": "2026-05-22",
+      "title": "feat: Cascade reuse optimization + HTTPS proxy + configurable pool size",
+      "summary": "三件事一个 PR：① 单用户场景下 Cascade 复用优化 — 跳过多余的账号轮询直接命中唯一账号；② HTTPS 代理中间层 (https-proxy.js) 让反代本身也能跑 TLS；③ conversation-pool 大小可配置化。323 行新增，改动集中在 chat.js 和 conversation-pool.js 核心路径。"
+    },
+    {
+      "login": "linqichenggg",
+      "pr": 175,
+      "weight": "A",
+      "weightLabel": "跨平台 LS 路径统一",
+      "mergedAt": "2026-05-12",
+      "title": "fix: align language server paths across platforms",
+      "summary": "Windows / macOS / Linux 三平台的 LS 二进制路径、数据目录、安装脚本全部对齐。之前 macOS 用 ~/Library 路径但 install-ls.sh 写的是 Linux 路径，Windows 更是直接找不到 LS。统一到 config.js 集中管理 + platform-ls-paths.test.js 覆盖三平台断言。"
+    },
+    {
+      "login": "lauvww",
+      "pr": 182,
+      "weight": "A",
+      "weightLabel": "Dashboard 批量导入重构",
+      "mergedAt": "2026-05-21",
+      "title": "feat: improve dashboard batch import parsing",
+      "summary": "重写了 Dashboard 的账号批量导入解析器 (import-parser.js)：支持 JSON / CSV / 纯文本多种格式混合粘贴，自动检测分隔符，容错处理格式不一致的行。588 行新增含完整测试覆盖和中英双语 i18n。"
+    },
+    {
+      "login": "ucloudnb666",
+      "pr": 184,
+      "weight": "B+",
+      "weightLabel": "Astraflow 第三方提供商接入",
+      "mergedAt": "2026-05-21",
+      "title": "feat: add Astraflow provider support",
+      "summary": "让 WindsurfAPI 支持 Astraflow 作为第三方提供商路由。config.js 新增 ASTRAFLOW_API_KEY 配置项，models.js 注册 astraflow/* 模型前缀，30 行精准修改。"
+    },
+    {
+      "login": "datfooldive",
+      "pr": 173,
+      "weight": "A",
+      "weightLabel": "Dashboard UI 大扫除",
+      "mergedAt": "2026-05-12",
+      "title": "refactor(dashboard): UI cleanup",
+      "summary": "Dashboard 前端大重构：1177 行新增 / 465 行删除，全部集中在 index.html。清理了冗余样式、统一了组件风格、优化了卡片布局和响应式适配。"
     }
   ]
 }

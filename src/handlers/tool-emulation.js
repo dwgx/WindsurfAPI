@@ -1228,7 +1228,9 @@ export class ToolCallStreamParser {
     }
     if (this.inToolCode) {
       this.inToolCode = false;
+      this.buffer = remaining;
       const endIdx = this._findClosingBrace();
+      this.buffer = '';
       if (endIdx !== -1) {
         const jsonStr = remaining.slice(0, endIdx + 1);
         const tail = remaining.slice(endIdx + 1);
@@ -1239,7 +1241,9 @@ export class ToolCallStreamParser {
     }
     if (this.inBareCall) {
       this.inBareCall = false;
+      this.buffer = remaining;
       const endIdx = this._findClosingBrace();
+      this.buffer = '';
       if (endIdx !== -1) {
         const jsonStr = remaining.slice(0, endIdx + 1);
         const tail = remaining.slice(endIdx + 1);

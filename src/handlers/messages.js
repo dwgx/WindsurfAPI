@@ -191,6 +191,9 @@ function anthropicToOpenAI(body) {
           toolResults.push({ role: 'tool', tool_call_id: block.tool_use_id, content });
         }
       }
+      // Tool results must directly follow the assistant tool_calls message
+      // in OpenAI format. Push them before the user content message.
+      for (const tr of toolResults) messages.push(tr);
       if (toolCalls.length) {
         messages.push({
           role: 'assistant',
@@ -204,7 +207,6 @@ function anthropicToOpenAI(body) {
       } else if (textParts.length) {
         messages.push({ role, content: textParts.join('\n') });
       }
-      for (const tr of toolResults) messages.push(tr);
     }
   }
   // Anthropic exposes a growing set of "server-side" tool types where

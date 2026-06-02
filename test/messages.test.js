@@ -348,12 +348,13 @@ describe('Anthropic messages request translation', () => {
         };
       },
     });
-    // Only the client-side Read tool survives translation; all three
-    // server-side types must be stripped.
-    assert.equal(capturedBody.tools?.length, 1);
-    assert.equal(capturedBody.tools[0].function.name, 'Read');
+    // v2.0.93: web_search_20250305 is now converted to a function tool
+    // (not dropped). advisor + code_execution are still stripped.
+    assert.equal(capturedBody.tools?.length, 2);
     const names = capturedBody.tools.map(t => t.function.name);
-    for (const banned of ['advisor', 'web_search', 'code_execution']) {
+    assert.ok(names.includes('Read'), 'Read should survive');
+    assert.ok(names.includes('web_search'), 'web_search should be converted to function');
+    for (const banned of ['advisor', 'code_execution']) {
       assert.equal(names.includes(banned), false, `${banned} should not be forwarded`);
     }
   });
