@@ -150,6 +150,21 @@ let _binaryPath = DEFAULT_BINARY;
 let _apiServerUrl = DEFAULT_API_URL;
 let _idleSweepTimer = null;
 let _rssSnapshot = { at: 0, pidKey: '', byRootPid: new Map() };
+const _admissionStats = {
+  startAttempts: 0,
+  startSuccesses: 0,
+  startFailures: 0,
+  poolWaits: 0,
+  memoryWaits: 0,
+  poolExhausted: 0,
+  memoryGuardBlocks: 0,
+  evictions: 0,
+  lastAttempt: null,
+  lastSuccess: null,
+  lastFailure: null,
+  lastWait: null,
+  lastEviction: null,
+};
 
 function lsPoolExhaustedError(message) {
   const err = new Error(message);
@@ -238,6 +253,12 @@ function proxyKey(proxy) {
   return key;
 }
 
+function publicLsKey(key) {
+  const s = String(key || '');
+  const m = s.match(/^(px_.+_[0-9]+)_u[A-Za-z0-9_]{1,32}$/);
+  return m ? `${m[1]}_u_redacted` : s;
+}
+
 export function defaultLsDataRoot(platform = process.platform, home = process.env.HOME) {
   return platform === 'darwin'
     ? posix.join(home || '.', '.windsurf', 'data')
@@ -291,6 +312,76 @@ function invalidateEntryForShutdown(entry) {
 
 function delay(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function admissionEvent(fields = {}) {
+  const at = Date.now();
+  return { at, atIso: new Date(at).toISOString(), ...fields };
+}
+
+function safeAdmissionMessage(err) {
+  const s = String(err?.message || err || '').replace(/\s+/g, ' ').trim();
+  return s.length > 320 ? `${s.slice(0, 317)}...` : s;
+}
+
+function cloneAdmissionEvent(event) {
+  if (!event) return null;
+  const copy = { ...event };
+  if (copy.memoryGuard) copy.memoryGuard = { ...copy.memoryGuard };
+  return copy;
+}
+
+function admissionStatsSnapshot() {
+  return {
+    startAttempts: _admissionStats.startAttempts,
+    startSuccesses: _admissionStats.startSuccesses,
+    startFailures: _admissionStats.startFailures,
+    poolWaits: _admissionStats.poolWaits,
+    memoryWaits: _admissionStats.memoryWaits,
+    poolExhausted: _admissionStats.poolExhausted,
+    memoryGuardBlocks: _admissionStats.memoryGuardBlocks,
+    evictions: _admissionStats.evictions,
+    lastAttempt: cloneAdmissionEvent(_admissionStats.lastAttempt),
+    lastSuccess: cloneAdmissionEvent(_admissionStats.lastSuccess),
+    lastFailure: cloneAdmissionEvent(_admissionStats.lastFailure),
+    lastWait: cloneAdmissionEvent(_admissionStats.lastWait),
+    lastEviction: cloneAdmissionEvent(_admissionStats.lastEviction),
+  };
+}
+
+function recordAdmissionWait(kind, key, extra = {}) {
+  if (kind === 'pool_capacity') _admissionStats.poolWaits++;
+  if (kind === 'memory_guard') _admissionStats.memoryWaits++;
+  _admissionStats.lastWait = admissionEvent({ kind, key: publicLsKey(key), ...extra });
+}
+
+function recordAdmissionFailure(kind, key, err, extra = {}) {
+  if (kind === 'pool_capacity') _admissionStats.poolExhausted++;
+  if (kind === 'memory_guard') _admissionStats.memoryGuardBlocks++;
+  const errorType = err?.type || (err?.code === 'LS_MEMORY_GUARD' ? 'ls_memory_guard' : null) || (err?.code === 'LS_POOL_EXHAUSTED' ? 'ls_pool_exhausted' : null) || 'ls_start_failed';
+  _admissionStats.lastFailure = admissionEvent({
+    kind,
+    key: publicLsKey(key),
+    errorType,
+    code: err?.code || null,
+    message: safeAdmissionMessage(err),
+    ...extra,
+  });
+}
+
+function recordStartAttempt(key, extra = {}) {
+  _admissionStats.startAttempts++;
+  _admissionStats.lastAttempt = admissionEvent({ key: publicLsKey(key), ...extra });
+}
+
+function recordStartSuccess(key, extra = {}) {
+  _admissionStats.startSuccesses++;
+  _admissionStats.lastSuccess = admissionEvent({ key: publicLsKey(key), ...extra });
+}
+
+function recordStartFailure(key, err, extra = {}) {
+  _admissionStats.startFailures++;
+  recordAdmissionFailure('start_failed', key, err, extra);
 }
 
 async function waitPortReadyOrProcessExit(proc, port, timeoutMs) {
@@ -402,6 +493,13 @@ async function evictLruIdleNonDefault() {
     how = await waitProcessExit(evicted?.process, 500);
   }
   _stopping.delete(lruKey);
+  _admissionStats.evictions++;
+  _admissionStats.lastEviction = admissionEvent({
+    key: publicLsKey(lruKey),
+    pid: evicted?.process?.pid || null,
+    exit: how,
+    startedAt: evicted?.startedAt || null,
+  });
   log.warn(`LS pool at cap (${MAX_LS_INSTANCES}), evicted LRU instance ${lruKey} (${how}; started ${evicted?.startedAt ? new Date(evicted.startedAt).toISOString() : '?'})`);
   if (!lruKey) return null;
   return lruKey;
@@ -439,6 +537,58 @@ export function getLsMemoryGuardStatus({ reservedStarts = 0 } = {}) {
     reservedStarts,
     availableBytes,
     okToSpawn: !snap.enabled || availableBytes == null || availableBytes >= snap.minAvailableBytes,
+  };
+}
+
+function getLsPoolSummary(now = Date.now()) {
+  let ready = 0;
+  let starting = 0;
+  let activeRequests = 0;
+  let nonDefaultInstances = 0;
+  let defaultRunning = false;
+  for (const [key, entry] of _pool) {
+    if (key === 'default') defaultRunning = true;
+    else nonDefaultInstances++;
+    if (entry?.ready) ready++;
+    else starting++;
+    activeRequests += entry?.activeRequests || 0;
+  }
+  const pendingKeys = Array.from(_pending.keys()).map(publicLsKey);
+  const stoppingInstances = Array.from(_stopping.entries()).map(([key, entry]) => ({
+    key: publicLsKey(key),
+    pid: entry?.pid || null,
+    reason: entry?.reason || null,
+    at: entry?.at || null,
+    ageMs: entry?.at ? Math.max(0, now - entry.at) : null,
+  }));
+  const evictionCandidate = findIdleNonDefaultEvictionCandidate();
+  const occupancy = poolOccupancy();
+  const memoryGuard = getLsMemoryGuardStatus({ reservedStarts: activeSpawnReservationCount() });
+  const poolHasCapacity = occupancy < MAX_LS_INSTANCES || !!evictionCandidate;
+  const memoryOk = memoryGuard.okToSpawn || memoryGuard.availableBytes == null || !LS_MEMORY_GUARD_ENABLED;
+  const blockReason = !memoryOk
+    ? 'memory_guard'
+    : !poolHasCapacity
+      ? 'pool_full_no_idle'
+      : null;
+  return {
+    size: _pool.size,
+    occupancy,
+    maxInstances: MAX_LS_INSTANCES,
+    ready,
+    starting,
+    pending: _pending.size,
+    pendingKeys,
+    stopping: _stopping.size,
+    stoppingInstances,
+    activeRequests,
+    nonDefaultInstances,
+    defaultRunning,
+    idleEvictable: !!evictionCandidate,
+    evictionCandidateKey: evictionCandidate?.key ? publicLsKey(evictionCandidate.key) : null,
+    canStartNewNonDefault: !blockReason,
+    blockReason,
+    memoryGuard,
   };
 }
 
@@ -526,10 +676,13 @@ async function waitForPoolCapacity(key) {
     if (await evictLruIdleNonDefault()) return;
     const remaining = LS_POOL_WAIT_MS - (Date.now() - start);
     if (remaining <= 0) {
-      throw lsPoolExhaustedError(`LS pool at cap (${MAX_LS_INSTANCES}) and no idle non-default instance became evictable within ${LS_POOL_WAIT_MS}ms`);
+      const err = lsPoolExhaustedError(`LS pool at cap (${MAX_LS_INSTANCES}) and no idle non-default instance became evictable within ${LS_POOL_WAIT_MS}ms`);
+      recordAdmissionFailure('pool_capacity', key, err, { poolSize: poolOccupancy(), maxInstances: MAX_LS_INSTANCES });
+      throw err;
     }
     if (!logged) {
       logged = true;
+      recordAdmissionWait('pool_capacity', key, { poolSize: poolOccupancy(), maxInstances: MAX_LS_INSTANCES, waitMs: LS_POOL_WAIT_MS });
       log.info(`LS pool at cap (${MAX_LS_INSTANCES}); waiting up to ${LS_POOL_WAIT_MS}ms for an active non-default instance to go idle`);
     }
     await delay(Math.min(500, remaining));
@@ -550,10 +703,12 @@ async function waitForMemoryHeadroom(key) {
       const err = lsPoolExhaustedError(`LS memory guard blocked new instance ${key}: available=${snap.availableBytes} min=${snap.minAvailableBytes}`);
       err.type = 'ls_memory_guard';
       err.code = 'LS_MEMORY_GUARD';
+      recordAdmissionFailure('memory_guard', key, err, { memoryGuard: snap });
       throw err;
     }
     if (!logged) {
       logged = true;
+      recordAdmissionWait('memory_guard', key, { memoryGuard: snap, waitMs: LS_POOL_WAIT_MS });
       log.info(`LS memory guard delaying ${key}: available=${snap.availableBytes} min=${snap.minAvailableBytes}`);
     }
     await delay(Math.min(500, remaining));
@@ -812,6 +967,7 @@ export async function ensureLs(proxy = null) {
   const promise = (async () => {
     let entry = null;
     let reservedByThisCall = false;
+    let attemptedStart = false;
     await withStartAdmissionLock(async () => {
       await waitForPoolCapacity(key);
       await waitForMemoryHeadroom(key);
@@ -840,6 +996,8 @@ export async function ensureLs(proxy = null) {
     if (entry?.ready) return entry;
 
     try {
+      attemptedStart = true;
+      recordStartAttempt(key, { poolSize: poolOccupancy(), maxInstances: MAX_LS_INSTANCES, reservedByThisCall });
       const isDefault = key === 'default';
       let port = isDefault ? DEFAULT_PORT : _nextPort++;
 
@@ -922,6 +1080,17 @@ export async function ensureLs(proxy = null) {
     });
     proc.on('exit', (code, signal) => {
       log.warn(`LS instance ${key} exited: code=${code} signal=${signal}`);
+      if (!_intentionalShutdown.has(key)) {
+        _admissionStats.lastFailure = admissionEvent({
+          kind: 'process_exit',
+          key: publicLsKey(key),
+          errorType: 'ls_process_exit',
+          code,
+          signal,
+          port,
+          pid: proc.pid || null,
+        });
+      }
       if (code === 1) {
         log.error('LS crashed on startup. Common causes:');
         log.error('  1. Binary incompatible with this OS/arch — re-download with: bash install-ls.sh');
@@ -985,6 +1154,7 @@ export async function ensureLs(proxy = null) {
         entry.ready = true;
         entry.readyAt = Date.now();
         touchEntry(entry);
+        recordStartSuccess(key, { port, pid: proc.pid || null, readyMs: entry.readyAt - entry.startedAt });
         log.info(`LS instance ${key} ready on port ${port}`);
       } catch (err) {
         log.error(`LS instance ${key} failed to become ready: ${err.message}`);
@@ -997,6 +1167,7 @@ export async function ensureLs(proxy = null) {
       if (reservedByThisCall && _pool.get(key) === entry && !entry?.process) {
         _pool.delete(key);
       }
+      if (attemptedStart) recordStartFailure(key, err, { port: entry?.port || null, pid: entry?.process?.pid || null });
       throw err;
     }
   })();
@@ -1292,6 +1463,8 @@ export function getLsStatus() {
   const def = _pool.get('default');
   const now = Date.now();
   const rssByRootPid = collectTrackedRssSnapshot(now);
+  const pool = getLsPoolSummary(now);
+  const admissionStats = admissionStatsSnapshot();
   const instances = Array.from(_pool.entries()).map(([key, e]) => {
     const pid = e.process?.pid || null;
     const rss = pid ? rssByRootPid.get(pid) : null;
@@ -1319,6 +1492,8 @@ export function getLsStatus() {
     restartCount: 0,
     ...lsStatusConfig(),
     totalRssBytes: totalRssBytes || null,
+    pool,
+    admissionStats,
     instances,
   };
 }

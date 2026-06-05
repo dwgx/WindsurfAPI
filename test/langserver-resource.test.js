@@ -89,6 +89,23 @@ describe('language server resource policy', () => {
     assert.equal(typeof status.detectedMemoryLimitBytes, 'number');
     assert.equal(typeof status.memoryGuard, 'object');
     assert.equal(typeof status.memoryGuard.minAvailableBytes, 'number');
+    assert.equal(typeof status.pool, 'object');
+    assert.equal(typeof status.pool.occupancy, 'number');
+    assert.equal(typeof status.pool.ready, 'number');
+    assert.equal(typeof status.pool.starting, 'number');
+    assert.equal(typeof status.pool.pending, 'number');
+    assert.equal(typeof status.pool.stopping, 'number');
+    assert.equal(typeof status.pool.canStartNewNonDefault, 'boolean');
+    assert.equal(typeof status.pool.memoryGuard, 'object');
+    assert.equal(typeof status.admissionStats, 'object');
+    assert.equal(typeof status.admissionStats.startAttempts, 'number');
+    assert.equal(typeof status.admissionStats.startSuccesses, 'number');
+    assert.equal(typeof status.admissionStats.startFailures, 'number');
+    assert.equal(typeof status.admissionStats.poolWaits, 'number');
+    assert.equal(typeof status.admissionStats.memoryWaits, 'number');
+    assert.equal(typeof status.admissionStats.poolExhausted, 'number');
+    assert.equal(typeof status.admissionStats.memoryGuardBlocks, 'number');
+    assert.equal(typeof status.admissionStats.evictions, 'number');
     assert.ok(Array.isArray(status.instances));
   });
 
@@ -149,5 +166,23 @@ describe('language server resource policy', () => {
     assert.match(ls, /if \(!e\?\.ready\) continue/);
     assert.match(ls, /await withStartAdmissionLock/);
     assert.match(ls, /getLsMemoryGuardStatus\(\{ reservedStarts: activeSpawnReservationCount\(key\) \}\)/);
+  });
+
+  test('LS status includes admission telemetry for health and dashboard', () => {
+    const ls = readFileSync(join(__dirname, '..', 'src/langserver.js'), 'utf8');
+    assert.match(ls, /const _admissionStats = \{/);
+    assert.match(ls, /function getLsPoolSummary/);
+    assert.match(ls, /recordAdmissionWait\('pool_capacity'/);
+    assert.match(ls, /recordAdmissionWait\('memory_guard'/);
+    assert.match(ls, /recordAdmissionFailure\('pool_capacity'/);
+    assert.match(ls, /recordAdmissionFailure\('memory_guard'/);
+    assert.match(ls, /recordStartAttempt\(key/);
+    assert.match(ls, /recordStartSuccess\(key/);
+    assert.match(ls, /recordStartFailure\(key/);
+    assert.match(ls, /admissionStatsSnapshot\(\)/);
+    assert.match(ls, /function publicLsKey/);
+    assert.match(ls, /_u_redacted/);
+    assert.match(ls, /pendingKeys = Array\.from\(_pending\.keys\(\)\)\.map\(publicLsKey\)/);
+    assert.match(ls, /evictionCandidateKey: evictionCandidate\?\.key \? publicLsKey\(evictionCandidate\.key\) : null/);
   });
 });

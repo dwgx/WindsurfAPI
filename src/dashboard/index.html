@@ -787,6 +787,29 @@ tbody tr:hover td { background: var(--surface-2); }
 }
 .ls-inst .ls-dot.pending { background: var(--warn); box-shadow: 0 0 8px var(--warn); }
 .ls-inst .ls-meta { color: var(--text-dim); font-family: var(--mono); font-size: 11px; margin-top: 2px; }
+.ls-telemetry {
+  margin-top: 12px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  font-family: var(--mono);
+  font-size: 11px;
+  color: var(--text-dim);
+}
+.ls-telemetry .badge {
+  font-family: var(--mono);
+  font-size: 10.5px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.ls-telemetry .ls-telemetry-detail {
+  min-width: 180px;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 
 /* ─── Model Chips ─────────────────────────────── */
 .model-chips {
@@ -2549,6 +2572,44 @@ const App = {
     return errorCode || I18n.t(fallbackKey);
   },
 
+  renderLsPoolTelemetry(ls = {}) {
+    const pool = ls.pool || {};
+    const guard = pool.memoryGuard || ls.memoryGuard || {};
+    const stats = ls.admissionStats || {};
+    const ready = Number.isFinite(pool.ready) ? pool.ready : (ls.instances || []).filter(i => i.ready).length;
+    const starting = Number.isFinite(pool.starting) ? pool.starting : (ls.instances || []).filter(i => !i.ready).length;
+    const occupancy = Number.isFinite(pool.occupancy) ? pool.occupancy : ((ls.instances || []).length || 0);
+    const cap = pool.maxInstances || ls.maxInstances || '-';
+    const guardKnown = guard.okToSpawn !== undefined || guard.availableBytes != null || guard.minAvailableBytes != null;
+    const guardBlocked = guardKnown && guard.okToSpawn === false;
+    const guardClass = guardBlocked ? 'warn' : 'success';
+    const guardText = guardKnown
+      ? `Guard ${guardBlocked ? 'blocked' : 'ok'} ${this.fmtBytes(guard.availableBytes)}/${this.fmtBytes(guard.minAvailableBytes)}`
+      : 'Guard unknown';
+    const blockReason = pool.blockReason || (guardBlocked ? 'memory_guard' : null);
+    const last = stats.lastFailure || stats.lastWait || stats.lastEviction || null;
+    const lastKind = last?.errorType || last?.kind || null;
+    const lastKey = last?.key ? ` ${last.key}` : '';
+    const lastAge = last?.at ? ` ${this.fmtMs(Date.now() - last.at)} ago` : '';
+    const lastTitle = last?.message || last?.kind || '';
+    const details = [
+      `Pool ${occupancy}/${cap}`,
+      `ready ${ready}`,
+      `starting ${starting}`,
+      `pending ${pool.pending || 0}`,
+      `stopping ${pool.stopping || 0}`,
+      `active ${pool.activeRequests || 0}`,
+      `evictable ${pool.idleEvictable ? 'yes' : 'no'}`,
+    ].join(' | ');
+    return `
+      <div class="ls-telemetry">
+        <span class="badge info no-dot">${this.esc(details)}</span>
+        <span class="badge ${guardClass} no-dot">${this.esc(guardText)}</span>
+        ${blockReason ? `<span class="badge warn no-dot">${this.esc(blockReason)}</span>` : ''}
+        ${lastKind ? `<span class="ls-telemetry-detail" title="${this.esc(lastTitle)}">Last ${this.esc(lastKind)}${this.esc(lastKey)}${this.esc(lastAge)}</span>` : ''}
+      </div>`;
+  },
+
   async toggleLang() {
     const newLang = I18n.locale === 'zh' || I18n.locale === 'zh-CN' ? 'en' : 'zh';
     await I18n.setLocale(newLang);
@@ -3016,11 +3077,13 @@ docker compose up -d --force-recreate</pre>
               <div class="ls-meta">${this.esc(i.proxy || I18n.t('card.noProxy'))}</div>
             </div>
           `).join('')}
-        </div>`;
+        </div>
+        ${this.renderLsPoolTelemetry(ls)}`;
     } else {
       document.getElementById('ls-status').innerHTML = `
         <span class="badge ${ls.running ? 'running' : 'stopped'}">${I18n.t(ls.running ? 'card.languageServer.running' : 'card.languageServer.stopped')}</span>
         <span class="text-sm text-muted" style="margin-left:12px">PID ${ls.pid || '-'} · ${I18n.t('field.port.label')} ${ls.port || '-'} · RSS ${totalRss} · Cap ${ls.maxInstances || '-'} · ${I18n.t('card.restarts')} ${ls.restartCount || 0}</span>
+        ${this.renderLsPoolTelemetry(ls)}
       `;
       this.loadLsBinary();
     }
@@ -3526,6 +3589,7 @@ docker compose up -d --force-recreate</pre>
                   </div>
                 `).join('')}
               </div>
+              ${this.renderLsPoolTelemetry(ov?.langServer || {})}
             </div>
           </div>`;
       } else {
