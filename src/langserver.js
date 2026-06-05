@@ -26,7 +26,7 @@ const DEFAULT_API_URL = 'https://server.self-serve.windsurf.com';
 const DEFAULT_LINUX_DATA_ROOT = '/opt/windsurf/data';
 
 // v2.0.96: cap LS pool size to prevent memory blowup (#174).
-// v2.0.99: make the default adaptive. Current LS builds can consume
+// v2.0.99+: make the default adaptive. Current LS builds can consume
 // ~500-600MB RSS including the child worker, so a fixed default of 20 is
 // unsafe on 2GB VPSes. Operators with large machines can still override.
 const DEFAULT_LS_RSS_ESTIMATE_BYTES = 700 * 1024 * 1024;
@@ -308,6 +308,15 @@ function evictLruIdleNonDefault() {
   return lruKey;
 }
 
+function hasIdleNonDefaultInstance() {
+  for (const [k, e] of _pool) {
+    if (k === 'default') continue;
+    if ((e.activeRequests || 0) > 0) continue;
+    return true;
+  }
+  return false;
+}
+
 function memoryGuardSnapshot() {
   const limit = detectMemoryLimitBytes();
   const current = detectMemoryCurrentBytes();
@@ -331,6 +340,76 @@ export function getLsMemoryGuardStatus() {
   return {
     ...snap,
     okToSpawn: !snap.enabled || snap.availableBytes == null || snap.availableBytes >= snap.minAvailableBytes,
+  };
+}
+
+export function getLsAdmissionStatus(proxy = null) {
+  const key = proxyKey(proxy);
+  const existing = _pool.get(key);
+  const pending = _pending.has(key);
+  const memoryGuard = getLsMemoryGuardStatus();
+  if (existing?.ready) {
+    return {
+      ok: true,
+      wouldStart: false,
+      errorType: null,
+      reason: 'already_running',
+      key,
+      poolSize: _pool.size,
+      maxInstances: MAX_LS_INSTANCES,
+      pending,
+      memoryGuard,
+    };
+  }
+  if (pending) {
+    return {
+      ok: true,
+      wouldStart: false,
+      errorType: null,
+      reason: 'start_pending',
+      key,
+      poolSize: _pool.size,
+      maxInstances: MAX_LS_INSTANCES,
+      pending,
+      memoryGuard,
+    };
+  }
+  if (key !== 'default' && LS_MEMORY_GUARD_ENABLED && memoryGuard.availableBytes != null && !memoryGuard.okToSpawn) {
+    return {
+      ok: false,
+      wouldStart: true,
+      errorType: 'ls_memory_guard',
+      reason: 'memory_guard',
+      key,
+      poolSize: _pool.size,
+      maxInstances: MAX_LS_INSTANCES,
+      pending,
+      memoryGuard,
+    };
+  }
+  if (key !== 'default' && _pool.size >= MAX_LS_INSTANCES && !hasIdleNonDefaultInstance()) {
+    return {
+      ok: false,
+      wouldStart: true,
+      errorType: 'ls_pool_exhausted',
+      reason: 'pool_full_no_idle',
+      key,
+      poolSize: _pool.size,
+      maxInstances: MAX_LS_INSTANCES,
+      pending,
+      memoryGuard,
+    };
+  }
+  return {
+    ok: true,
+    wouldStart: true,
+    errorType: null,
+    reason: 'can_start',
+    key,
+    poolSize: _pool.size,
+    maxInstances: MAX_LS_INSTANCES,
+    pending,
+    memoryGuard,
   };
 }
 
@@ -761,6 +840,7 @@ export async function ensureLs(proxy = null) {
     });
 
     const entry = {
+      key,
       process: proc, port, csrfToken: DEFAULT_CSRF,
       proxy, startedAt: Date.now(), lastUsedAt: Date.now(), activeRequests: 0, ready: false,
       // v2.0.25 LOW-1: per-spawn UUID so the conversation pool can tell a

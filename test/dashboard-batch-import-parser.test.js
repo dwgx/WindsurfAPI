@@ -33,6 +33,27 @@ describe('parseBatchImportInput text mode', () => {
     );
   });
 
+  it('supports Chinese and key-value labels copied from chat transcripts', () => {
+    const input = [
+      '邮箱：alpha@example.com 密码：pass123',
+      '邮箱: beta@example.com 密码: pass456',
+      'email=gamma@example.com password=pass789',
+      'http://proxy.example.com:8080 邮箱：delta@example.com 密码：pass000',
+    ].join('\n');
+    const parsed = parseBatchImportInput(input, parseProxyUrl);
+    assert.equal(parsed.mode, 'text');
+    assert.equal(parsed.items.length, 4);
+    assert.deepEqual(
+      parsed.items.map(item => item.email),
+      ['alpha@example.com', 'beta@example.com', 'gamma@example.com', 'delta@example.com']
+    );
+    assert.deepEqual(
+      parsed.items.map(item => item.password),
+      ['pass123', 'pass456', 'pass789', 'pass000']
+    );
+    assert.equal(parsed.items[3].proxyRaw, 'http://proxy.example.com:8080');
+  });
+
   it('keeps parsing valid lines when one line is invalid', () => {
     const parsed = parseBatchImportInput(
       'https://proxy.example.com:8080 user1@example.com pass1\ninvalid-line\nuser2@example.com:pass2',

@@ -29,7 +29,8 @@ import {
 import {
   shouldUseNativeBridge, partitionTools, buildReverseLookup,
   buildAdditionalStepsFromHistory, parseNativeFunctionCallsFromText,
-  NativeFunctionCallStreamParser, TOOL_MAP,
+  NativeFunctionCallStreamParser, TOOL_MAP, isNativeBridgeAccountAllowed,
+  hasNativeBridgeAccountGate,
 } from '../cascade-native-bridge.js';
 import {
   handleSpecialAgentChatCompletion,
@@ -96,7 +97,7 @@ function upstreamTransientErrorMessage(model, triedCount, reason = 'internal_err
   return `${model} 上游 Windsurf Cascade 服务瞬态故障：已在 ${triedCount} 个账号上重试都收到 ${detail}。这是上游或本地语言服务器会话的瞬时问题，建议 30-60 秒后重试；若连续出现，请重启语言服务器。`;
 }
 
-export function buildToolRoutingPlan(tools, { useCascade = false, modelKey = '', provider = null, route = 'chat' } = {}) {
+export function buildToolRoutingPlan(tools, { useCascade = false, modelKey = '', provider = null, route = 'chat', callerKey = '' } = {}) {
   const hasTools = Array.isArray(tools) && tools.length > 0;
   const partition = hasTools
     ? partitionTools(tools)
@@ -105,6 +106,7 @@ export function buildToolRoutingPlan(tools, { useCascade = false, modelKey = '',
     modelKey,
     provider,
     route,
+    callerKey,
   }));
   const emulationTools = nativeBridgeOn ? partition.unmapped : (tools || []);
   return {
@@ -1347,6 +1349,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
   const reqModel = mergeReasoningEffortIntoModel(body.model, body);
   let messages = body.messages;
   const callerKey = context.callerKey || body.__callerKey || '';
+  const nativeBridgeCallerKey = context.nativeBridgeCallerKey || callerKey;
   const cachePolicy = body.__cachePolicy || null;
   const checkMessageRateLimitFn = context.checkMessageRateLimit || checkMessageRateLimit;
   const waitForAccountFn = context.waitForAccount || waitForAccount;
@@ -1528,6 +1531,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
     modelKey: routingModelKey,
     provider: modelInfo?.provider || null,
     route: body.__route || 'chat',
+    callerKey: nativeBridgeCallerKey,
   });
   const toolPartition = toolRouting.partition;
   const nativeBridgeOn = toolRouting.nativeBridgeOn;
@@ -1547,6 +1551,21 @@ async function _handleChatCompletionsInner(body, context = {}) {
     const mappedNames = toolPartition.mapped.map(t => t?.function?.name).join(',') || '(none)';
     const unmappedNames = toolPartition.unmapped.map(t => t?.function?.name).join(',') || '(none)';
     log.info(`Chat[${reqId}]: native bridge ON — model=${routingModelKey} mapped=[${mappedNames}] unmapped=[${unmappedNames}] allowlist=${nativeAllowlist.join(',')} additional_steps=${nativeAdditionalSteps.length}`);
+  }
+  if (nativeBridgeOn && hasNativeBridgeAccountGate()) {
+    const hasAllowedAccount = getAccountList()
+      .some(a => a.status === 'active' && isNativeBridgeAccountAllowed(a));
+    if (!hasAllowedAccount) {
+      return {
+        status: 503,
+        body: {
+          error: {
+            message: 'Native bridge is enabled, but no active account matches WINDSURFAPI_NATIVE_TOOL_BRIDGE_ACCOUNTS.',
+            type: 'native_bridge_account_unavailable',
+          },
+        },
+      };
+    }
   }
   // Build proto-level preamble (goes into tool_calling_section override).
   // Also inject into the last user message as fallback — some models in
@@ -1966,6 +1985,10 @@ async function _handleChatCompletionsInner(body, context = {}) {
     tried.push(acct.apiKey);
 
     try {
+      if (nativeBridgeOn && !isNativeBridgeAccountAllowed(acct)) {
+        log.info(`Chat[${reqId}]: native bridge account gate skipped ${acct.email || acct.id || '(unknown)'}`);
+        continue;
+      }
     // Pre-flight rate limit check (experimental): ask server.codeium.com if
     // this account still has message capacity before burning an LS round trip.
     if (isExperimentalEnabled('preflightRateLimit')) {
@@ -2241,9 +2264,9 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
         if (toolCalls.length === 0 && allText) {
           const fallback = parseNativeFunctionCallsFromText(allText, lookup);
           const filteredFallback = filterToolCallsByAllowlist(fallback.toolCalls, tools);
+          allText = fallback.text || '';
           if (filteredFallback.length) {
             toolCalls = filteredFallback;
-            allText = fallback.text || '';
             log.info(`Chat[non-stream]: native bridge parsed ${toolCalls.length} provider-native function_call(s) from text`);
           }
         }
@@ -3078,6 +3101,10 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
           currentApiKey = acct.apiKey;
 
           try {
+            if (nativeBridgeOn && !isNativeBridgeAccountAllowed(acct)) {
+              log.info(`Chat[${reqId}]: native bridge account gate skipped ${acct.email || acct.id || '(unknown)'}`);
+              continue;
+            }
           // Pre-flight rate limit check (experimental)
           if (isExperimentalEnabled('preflightRateLimit')) {
             try {

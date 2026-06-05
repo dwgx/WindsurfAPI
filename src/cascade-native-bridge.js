@@ -75,6 +75,13 @@ export const CASCADE_STEP = {
 // would leave the planner thinking work is still in progress.
 export const CASCADE_STEP_STATUS_DONE = 3;
 
+const DEFAULT_NATIVE_BRIDGE_TOOLS = new Set([
+  'Read', 'read_file', 'view_file',
+  'Bash', 'shell_command', 'run_command',
+  'Grep', 'grep_search', 'grep_search_v2',
+  'Glob', 'find',
+]);
+
 // ─── argument translators ─────────────────────────────────────────
 //
 // Each translator maps OpenAI-style arguments (the JSON object the caller
@@ -90,6 +97,85 @@ function safeJsonParse(s) {
   if (typeof s !== 'string' || !s) return {};
   try { const v = JSON.parse(s); return v && typeof v === 'object' ? v : {}; }
   catch { return {}; }
+}
+
+function csvSetEnv(name) {
+  return new Set(String(process.env[name] || '')
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean));
+}
+
+function csvListEnv(name) {
+  return String(process.env[name] || '')
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean);
+}
+
+function patternMatches(pattern, value, caseInsensitive = false) {
+  if (!pattern || !value) return false;
+  const p = caseInsensitive ? String(pattern).toLowerCase() : String(pattern);
+  const v = caseInsensitive ? String(value).toLowerCase() : String(value);
+  if (p === '*' || p === 'all') return true;
+  if (p.endsWith('*')) return v.startsWith(p.slice(0, -1));
+  return p === v;
+}
+
+function envGateAllows(envName, values, { caseInsensitive = false } = {}) {
+  const patterns = csvListEnv(envName);
+  if (!patterns.length) return true;
+  const candidates = values.map(v => String(v || '').trim()).filter(Boolean);
+  if (!candidates.length) return false;
+  return patterns.some(p => candidates.some(v => patternMatches(p, v, caseInsensitive)));
+}
+
+function isNativeBridgeToolAllowed(name) {
+  const configured = csvSetEnv('WINDSURFAPI_NATIVE_TOOL_BRIDGE_TOOLS');
+  const allow = configured.size ? configured : DEFAULT_NATIVE_BRIDGE_TOOLS;
+  return allow.has(String(name || ''));
+}
+
+export function nativeBridgeGrayGateStatus({
+  modelKey = '',
+  model = '',
+  provider = '',
+  route = '',
+  callerKey = '',
+} = {}) {
+  const callerKeys = [callerKey];
+  if (String(callerKey || '').includes(':api_key_allowed')) {
+    callerKeys.push(String(callerKey || '').replace(':api_key_allowed', ''));
+  }
+  if (!envGateAllows('WINDSURFAPI_NATIVE_TOOL_BRIDGE_MODELS', [modelKey, model], { caseInsensitive: true })) {
+    return { ok: false, errorType: 'native_bridge_model_not_allowed' };
+  }
+  if (!envGateAllows('WINDSURFAPI_NATIVE_TOOL_BRIDGE_PROVIDERS', [provider], { caseInsensitive: true })) {
+    return { ok: false, errorType: 'native_bridge_provider_not_allowed' };
+  }
+  if (!envGateAllows('WINDSURFAPI_NATIVE_TOOL_BRIDGE_ROUTES', [route], { caseInsensitive: true })) {
+    return { ok: false, errorType: 'native_bridge_route_not_allowed' };
+  }
+  if (!envGateAllows('WINDSURFAPI_NATIVE_TOOL_BRIDGE_CALLERS', callerKeys)) {
+    return { ok: false, errorType: 'native_bridge_caller_not_allowed' };
+  }
+  if (csvListEnv('WINDSURFAPI_NATIVE_TOOL_BRIDGE_API_KEYS').length && !String(callerKey || '').includes(':api_key_allowed')) {
+    return { ok: false, errorType: 'native_bridge_api_key_not_allowed' };
+  }
+  return { ok: true };
+}
+
+export function hasNativeBridgeAccountGate() {
+  return csvListEnv('WINDSURFAPI_NATIVE_TOOL_BRIDGE_ACCOUNTS').length > 0;
+}
+
+export function isNativeBridgeAccountAllowed(account = {}) {
+  return envGateAllows('WINDSURFAPI_NATIVE_TOOL_BRIDGE_ACCOUNTS', [
+    account.accountId,
+    account.id,
+    account.accountEmail,
+    account.email,
+  ], { caseInsensitive: true });
 }
 
 function unescapeXmlText(s) {
@@ -455,7 +541,7 @@ export function canMapAllTools(tools) {
   for (const t of tools) {
     if (t?.type !== 'function') return false;
     const name = t.function?.name;
-    if (!name || !TOOL_MAP[name]) return false;
+    if (!name || !TOOL_MAP[name] || !isNativeBridgeToolAllowed(name)) return false;
   }
   return true;
 }
@@ -480,7 +566,7 @@ export function partitionTools(tools) {
   if (Array.isArray(tools)) {
     for (const t of tools) {
       if (t?.type !== 'function' || !t.function?.name) continue;
-      if (TOOL_MAP[t.function.name]) mapped.push(t);
+      if (TOOL_MAP[t.function.name] && isNativeBridgeToolAllowed(t.function.name)) mapped.push(t);
       else unmapped.push(t);
     }
   }
@@ -907,58 +993,55 @@ export function parseNativeFunctionCallsFromText(text, callerLookup = new Map())
     return { text: text || '', toolCalls: [] };
   }
   const calls = [];
-  const keep = [];
-  let last = 0;
+  const keepOutsideBlocks = [];
+  let lastBlockEnd = 0;
+  const blockRe = /<function_calls\b[^>]*>([\s\S]*?)<\/function_calls>/gi;
   const invokeRe = /<invoke\b([^>]*)>([\s\S]*?)<\/invoke>/gi;
-  let match;
-  while ((match = invokeRe.exec(text)) !== null) {
-    keep.push(text.slice(last, match.index));
-    last = match.index + match[0].length;
-    const nameAttr = match[1].match(/\bname\s*=\s*"([^"]+)"/i)
-      || match[1].match(/\bname\s*=\s*'([^']+)'/i);
-    const rawName = nameAttr ? unescapeXmlText(nameAttr[1]).trim() : '';
-    const entry = TOOL_MAP[rawName];
-    if (!rawName || !entry) {
-      keep.push(match[0]);
-      continue;
+  let block;
+  while ((block = blockRe.exec(text)) !== null) {
+    keepOutsideBlocks.push(text.slice(lastBlockEnd, block.index));
+    lastBlockEnd = block.index + block[0].length;
+    invokeRe.lastIndex = 0;
+    let match;
+    while ((match = invokeRe.exec(block[1])) !== null) {
+      const nameAttr = match[1].match(/\bname\s*=\s*"([^"]+)"/i)
+        || match[1].match(/\bname\s*=\s*'([^']+)'/i);
+      const rawName = nameAttr ? unescapeXmlText(nameAttr[1]).trim() : '';
+      const entry = TOOL_MAP[rawName];
+      if (!rawName || !entry) continue;
+      const params = {};
+      const paramRe = /<parameter\b([^>]*)>([\s\S]*?)<\/parameter>/gi;
+      let pm;
+      while ((pm = paramRe.exec(match[2])) !== null) {
+        const paramNameAttr = pm[1].match(/\bname\s*=\s*"([^"]+)"/i)
+          || pm[1].match(/\bname\s*=\s*'([^']+)'/i);
+        const paramName = paramNameAttr ? unescapeXmlText(paramNameAttr[1]).trim() : '';
+        if (!paramName) continue;
+        const rawValue = unescapeXmlText(pm[2].trim());
+        const parsed = safeJsonParse(rawValue);
+        params[paramName] = Object.keys(parsed).length || /^[\[{]/.test(rawValue.trim())
+          ? parsed
+          : rawValue;
+      }
+      const cascadeKind = entry.kind;
+      const candidates = callerLookup?.get(cascadeKind) || [];
+      const callerName = candidates[0];
+      if (!callerName) continue;
+      const reverseFn = TOOL_MAP[callerName]?.reverse || identityArgs;
+      let openaiArgs;
+      try { openaiArgs = reverseFn(entry.forward(params)); }
+      catch { openaiArgs = params; }
+      calls.push({
+        id: `call_native_${calls.length}_${Date.now().toString(36)}`,
+        name: callerName,
+        argumentsJson: JSON.stringify(openaiArgs ?? {}),
+      });
     }
-    const params = {};
-    const paramRe = /<parameter\b([^>]*)>([\s\S]*?)<\/parameter>/gi;
-    let pm;
-    while ((pm = paramRe.exec(match[2])) !== null) {
-      const paramNameAttr = pm[1].match(/\bname\s*=\s*"([^"]+)"/i)
-        || pm[1].match(/\bname\s*=\s*'([^']+)'/i);
-      const paramName = paramNameAttr ? unescapeXmlText(paramNameAttr[1]).trim() : '';
-      if (!paramName) continue;
-      const rawValue = unescapeXmlText(pm[2].trim());
-      const parsed = safeJsonParse(rawValue);
-      params[paramName] = Object.keys(parsed).length || /^[\[{]/.test(rawValue.trim())
-        ? parsed
-        : rawValue;
-    }
-    const cascadeKind = entry.kind;
-    const candidates = callerLookup?.get(cascadeKind) || [];
-    const callerName = candidates[0];
-    if (!callerName) {
-      keep.push(match[0]);
-      continue;
-    }
-    const reverseFn = TOOL_MAP[callerName]?.reverse || identityArgs;
-    let openaiArgs;
-    try { openaiArgs = reverseFn(entry.forward(params)); }
-    catch { openaiArgs = params; }
-    calls.push({
-      id: `call_native_${calls.length}_${Date.now().toString(36)}`,
-      name: callerName,
-      argumentsJson: JSON.stringify(openaiArgs ?? {}),
-    });
   }
-  keep.push(text.slice(last));
-  if (!calls.length) return { text, toolCalls: [] };
-  let outText = keep.join('');
-  outText = outText.replace(/<function_calls>\s*<\/function_calls>/gi, '');
-  outText = outText.replace(/<\/?function_calls>/gi, '');
-  return { text: outText.trim(), toolCalls: calls };
+  const trailing = text.slice(lastBlockEnd);
+  const danglingOpen = trailing.search(/<function_calls\b/i);
+  keepOutsideBlocks.push(danglingOpen === -1 ? trailing : trailing.slice(0, danglingOpen));
+  return { text: keepOutsideBlocks.join('').trim(), toolCalls: calls };
 }
 
 /**
@@ -1005,7 +1088,6 @@ export class NativeFunctionCallStreamParser {
       const closeMatch = tail.match(/<\/function_calls>/i);
       if (!closeMatch) {
         if (flush) {
-          out.push(tail);
           this.buffer = '';
         } else {
           this.buffer = tail;
@@ -1175,11 +1257,13 @@ export function buildAdditionalStepsFromHistory(messages) {
  *   WINDSURFAPI_NATIVE_TOOL_BRIDGE=all_mapped → on only if all tools map
  *   WINDSURFAPI_NATIVE_TOOL_BRIDGE_OFF=1      → force off (highest priority)
  */
-export function shouldUseNativeBridge(tools, { modelKey = '', provider = '', route = '' } = {}) {
+export function shouldUseNativeBridge(tools, { modelKey = '', provider = '', route = '', callerKey = '' } = {}) {
   if (process.env.WINDSURFAPI_NATIVE_TOOL_BRIDGE_OFF === '1') return false;
   const mode = String(process.env.WINDSURFAPI_NATIVE_TOOL_BRIDGE || '').trim().toLowerCase();
   const explicitOn = mode === '1' || mode === 'true' || mode === 'force';
   const allMappedOnly = mode === 'all_mapped' || mode === 'all-mapped' || mode === 'mapped_only' || mode === 'mapped-only';
+  const grayGate = nativeBridgeGrayGateStatus({ modelKey, provider, route, callerKey });
+  if (!grayGate.ok) return false;
   const part = partitionTools(tools);
   if (!part.hasAny) return false;
   if (allMappedOnly) return part.unmapped.length === 0;

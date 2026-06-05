@@ -17,7 +17,7 @@ import {
   getDroughtSummary,
 } from '../auth.js';
 import { restartLsForProxy } from '../langserver.js';
-import { getLsStatus, stopLanguageServer, startLanguageServer, isLanguageServerRunning } from '../langserver.js';
+import { getLsStatus, stopLanguageServer, startLanguageServer, isLanguageServerRunning, getLsAdmissionStatus } from '../langserver.js';
 import { getStats, resetStats, recordRequest } from './stats.js';
 import { cacheStats, cacheClear } from '../cache.js';
 import {
@@ -47,11 +47,24 @@ function shouldPrewarmLsOnAccountAdd() {
   return process.env.LS_PREWARM_ON_ACCOUNT_ADD === '1' || process.env.LS_PREWARM_PROXIES === '1';
 }
 
+async function runAccountWarmup(accountId, { probe = true, requireOptIn = true } = {}) {
+  if (requireOptIn && !shouldPrewarmLsOnAccountAdd()) return { ok: true, skipped: true, reason: 'prewarm_disabled' };
+  const ls = await ensureLsForAccount(accountId);
+  if (!ls?.ok) return { ok: false, skipped: false, reason: ls?.errorType || 'ls_start_failed', ls };
+  if (!probe) return { ok: true, skipped: false, ls };
+  try {
+    const probeResult = await probeAccount(accountId);
+    return { ok: true, skipped: false, ls, probe: probeResult };
+  } catch (e) {
+    return { ok: false, skipped: false, reason: e?.message || 'probe_failed', ls };
+  }
+}
+
 function scheduleAccountWarmup(accountId, { probe = true } = {}) {
   if (!shouldPrewarmLsOnAccountAdd()) return;
-  ensureLsForAccount(accountId)
-    .then(() => {
-      if (probe) return probeAccount(accountId);
+  runAccountWarmup(accountId, { probe, requireOptIn: false })
+    .then(r => {
+      if (r && !r.ok) log.warn(`LS warmup failed for account ${accountId}: ${r.reason || 'unknown_error'}`);
       return null;
     })
     .catch(e => log.warn(`LS ensure failed: ${e.message}`));
@@ -937,9 +950,13 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
       }
     }
     setAccountProxy(proxyAccount[1], body);
-    // Spawn (or adopt) the LS instance for this proxy so chat routes immediately
-    ensureLsForAccount(proxyAccount[1]).catch(e => log.warn(`LS ensure failed: ${e.message}`));
-    return json(res, 200, { success: true });
+    const admission = getLsAdmissionStatus(body?.host ? body : null);
+    const warmupRequested = body?.warmup === true || body?.prewarm === true || shouldPrewarmLsOnAccountAdd();
+    let warmup = { ok: true, skipped: true, reason: 'warmup_not_requested' };
+    if (warmupRequested) {
+      warmup = await runAccountWarmup(proxyAccount[1], { probe: false, requireOptIn: false });
+    }
+    return json(res, 200, { success: true, admission, warmup });
   }
   if (proxyAccount && method === 'DELETE') {
     removeProxy('account', proxyAccount[1]);

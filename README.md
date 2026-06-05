@@ -273,13 +273,15 @@ curl http://localhost:3003/v1/messages \
 | `LS_MEMORY_GUARD` | `1` | 设 `0` 可关闭 LS 内存护栏（仅在你有外部 memory limit/监控时考虑） |
 | `LS_IDLE_TTL_MS` | `1200000` | 非 default LS 空闲超过该时间自动停止；`0` 关闭 |
 | `LS_IDLE_SWEEP_MS` | 自动推导 | LS 空闲回收扫描间隔 |
-| `LS_PREWARM_PROXIES` | `0` | 设为 `1` 才在启动时预热所有 proxy LS；默认按需启动 |
+| `LS_PREWARM_PROXIES` | `0` | 设为 `1` 才在启动时预热所有 proxy LS；默认按需启动。后台 scheduled probe / 预测 prewarm 只复用已常驻或启动中的 LS，不会为了探测新开/驱逐 LS |
 | `LS_PREWARM_ON_ACCOUNT_ADD` | `0` | 设为 `1` 才在 Dashboard/批量导入/OAuth 添加账号后立即预热对应 LS；默认避免批量录入打爆内存 |
-| `WINDSURFAPI_NATIVE_TOOL_BRIDGE` | 空 | `all_mapped` 仅在 Read/Bash/Grep/Glob/WebSearch/WebFetch 等全部可映射时走 native bridge，不再把这些工具塞进 prompt preamble；`1` 为混合工具强制 partition 模式 |
+| `WINDSURFAPI_NATIVE_TOOL_BRIDGE` | 空 | `all_mapped` 仅在 Read/Bash/Grep/Glob 及其别名全部可映射时走 native bridge；`1` 为混合工具 partition 模式。WebSearch/WebFetch 默认仍走 prompt emulation，需显式加入工具 allowlist |
+| `WINDSURFAPI_NATIVE_TOOL_BRIDGE_TOOLS` | `Read,Bash,Grep,Glob` 语义族 | native bridge 工具 allowlist。默认包含 `Read/read_file/view_file`、`Bash/shell_command/run_command`、`Grep/grep_search_v2`、`Glob/find`，不含 WebSearch/WebFetch |
+| `WINDSURFAPI_NATIVE_TOOL_BRIDGE_MODELS` / `PROVIDERS` / `ROUTES` / `CALLERS` / `ACCOUNTS` / `API_KEYS` | 空 | native bridge 灰度门。为空表示不限；设置后必须匹配才启用。`ACCOUNTS` 可填账号 id/email，`API_KEYS` 匹配调用方 API key 但不会把明文 key 传进 chat 逻辑 |
 | `WINDSURFAPI_NATIVE_TOOL_BRIDGE_OFF` | 空 | 设为 `1` 强制关闭 native tool bridge，优先级高于上面的开关 |
 | `WINDSURFAPI_SPECIAL_AGENT_BACKEND` | 空 | 可选 special-agent 后端。设为 `devin-cli` 后，`swe-1.6` / `swe-1.6-fast` / `adaptive` / `arena-*` 不再走 direct Cascade，而是走 Devin CLI PoC |
 | `DEVIN_CLI_PATH` | `devin` | Devin CLI 可执行文件路径；Docker/macOS 都需要自己安装或挂载，不是基础镜像硬依赖 |
-| `DEVIN_CLI_MODE` | `print` | 当前只实现 `devin -p` print 模式；ACP/stdio 后端预留，未默认启用 |
+| `DEVIN_CLI_MODE` | `print` | `print` 为 `devin -p` 保守模式；`acp` 为实验 ACP stdio 后端，使用账号池上游 Windsurf apiKey 认证，默认不全量启用 |
 | `DEVIN_MAX_PROCS` | `1` | Devin CLI 最大并发进程数，避免 special-agent 路径把内存打爆 |
 | `DEVIN_CLI_USE_ACCOUNT_POOL` | `1` | 默认从 WindsurfAPI 账号池取一个账号并把 apiKey 注入 `WINDSURF_API_KEY`；设 `0` 表示 Devin CLI 自己管理登录态 |
 | `DASHBOARD_PASSWORD` | 空 | 后台密码 留空不设密码 |

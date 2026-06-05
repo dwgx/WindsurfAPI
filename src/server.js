@@ -68,6 +68,16 @@ export function extractToken(req) {
   return xApiKey;
 }
 
+function nativeBridgeCallerKeyForRequest(req, token, body, callerKey = '') {
+  const key = callerKey || callerKeyFromRequest(req, token, body);
+  const tokenAllowlist = String(process.env.WINDSURFAPI_NATIVE_TOOL_BRIDGE_API_KEYS || '')
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean);
+  if (!tokenAllowlist.length) return key;
+  return tokenAllowlist.includes(String(token || '').trim()) ? `${key}:api_key_allowed` : key;
+}
+
 function json(res, status, body) {
   const data = JSON.stringify(body);
   res.writeHead(status, {
@@ -248,7 +258,11 @@ async function route(req, res) {
         const parsed = parseProxyUrl(proxyStr);
         if (parsed) {
           setAccountProxy(accountId, parsed);
-          ensureLsForAccount(accountId).catch(e => log.warn(`LS ensure failed: ${e.message}`));
+          if (process.env.LS_PREWARM_ON_ACCOUNT_ADD === '1' || process.env.LS_PREWARM_PROXIES === '1') {
+            ensureLsForAccount(accountId).then(r => {
+              if (r && !r.ok) log.warn(`LS ensure skipped/failed: ${r.errorType || r.error}`);
+            }).catch(e => log.warn(`LS ensure failed: ${e.message}`));
+          }
         } else {
           log.warn(`auth/login: ignoring invalid proxy format: ${String(proxyStr).slice(0, 80)}`);
         }
@@ -327,7 +341,12 @@ async function route(req, res) {
     }
 
     const reqStartedAt = Date.now();
-    const result = await handleChatCompletions(body, { callerKey: callerKeyFromRequest(req, extractToken(req), body) });
+    const token = extractToken(req);
+    const callerKey = callerKeyFromRequest(req, token, body);
+    const result = await handleChatCompletions(body, {
+      callerKey,
+      nativeBridgeCallerKey: nativeBridgeCallerKeyForRequest(req, token, body, callerKey),
+    });
     const processingMs = Date.now() - reqStartedAt;
     const modelHeaders = {
       'x-request-id': 'req-' + randomUUID(),
@@ -377,7 +396,14 @@ async function route(req, res) {
     }
 
     const reqStartedAt = Date.now();
-    const result = await handleResponses(body, { context: { callerKey: callerKeyFromRequest(req, extractToken(req), body) } });
+    const token = extractToken(req);
+    const callerKey = callerKeyFromRequest(req, token, body);
+    const result = await handleResponses(body, {
+      context: {
+        callerKey,
+        nativeBridgeCallerKey: nativeBridgeCallerKeyForRequest(req, token, body, callerKey),
+      },
+    });
     const processingMs = Date.now() - reqStartedAt;
     const modelHeaders = {
       'x-request-id': 'req-' + randomUUID(),
@@ -411,7 +437,12 @@ async function route(req, res) {
     if (!Array.isArray(body.messages) || body.messages.length === 0) {
       return json(res, 400, { type: 'error', error: { type: 'invalid_request_error', message: 'messages must be a non-empty array' } });
     }
-    const result = await handleMessages(body, { callerKey: callerKeyFromRequest(req, extractToken(req), body) });
+    const token = extractToken(req);
+    const callerKey = callerKeyFromRequest(req, token, body);
+    const result = await handleMessages(body, {
+      callerKey,
+      nativeBridgeCallerKey: nativeBridgeCallerKeyForRequest(req, token, body, callerKey),
+    });
     const anthropicHeaders = {
       'request-id': 'req-' + randomUUID(),
       'anthropic-model': body.model || '',

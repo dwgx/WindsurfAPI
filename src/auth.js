@@ -17,6 +17,7 @@ import { readFileSync, writeFileSync, existsSync, renameSync, unlinkSync, readdi
 import { config, log } from './config.js';
 import { getEffectiveProxy } from './dashboard/proxy-config.js';
 import { getTierModels, getModelKeysByEnum, MODELS, registerDiscoveredFreeModel } from './models.js';
+import { getLsAdmissionStatus } from './langserver.js';
 
 import { join } from 'path';
 // accounts.json lives in the cluster-shared dir so add-account writes from
@@ -786,10 +787,19 @@ function schedulePrewarm(nextAccount) {
   if (!nextAccount) return;
   const now = Date.now();
   if (nextAccount._prewarmAt && now - nextAccount._prewarmAt < PREWARM_COOLDOWN_MS) return;
+  const admission = getLsAdmissionForAccount(nextAccount.id);
+  if (!admission.ok || admission.wouldStart) {
+    log.debug(`Prewarm ${nextAccount.id} skipped: ${admission.errorType || admission.reason} (wouldStart=${!!admission.wouldStart}, ls=${admission.key || '?'})`);
+    return;
+  }
   nextAccount._prewarmAt = now;
   // ensureLsForAccount already triggers a cascade warmup; we only need to
   // kick it off without awaiting.
-  Promise.resolve().then(() => ensureLsForAccount(nextAccount.id)).catch(e => {
+  Promise.resolve().then(() => ensureLsForAccount(nextAccount.id)).then(r => {
+    if (!r?.ok) {
+      log.debug(`Prewarm ${nextAccount.id} failed: ${r?.errorType || 'ls_start_failed'} ${r?.error || ''}`.trim());
+    }
+  }).catch(e => {
     log.debug(`Prewarm ${nextAccount.id} failed: ${e?.message || e}`);
   });
   log.info(`Prewarm: chosen account is low on quota (score ${quotaScore(accounts.find(a => a.id === nextAccount.id) || nextAccount).toFixed(0)}); warming up next candidate ${nextAccount.id}`);
@@ -916,6 +926,14 @@ export function getRpmStats() {
 export async function ensureLsForAccount(accountId) {
   const { ensureLs } = await import('./langserver.js');
   const account = accounts.find(a => a.id === accountId);
+  if (!account) {
+    return {
+      ok: false,
+      accountId,
+      errorType: 'account_not_found',
+      error: 'Account not found',
+    };
+  }
   const proxy = getEffectiveProxy(accountId) || null;
   try {
     const ls = await ensureLs(proxy);
@@ -927,9 +945,38 @@ export async function ensureLsForAccount(accountId) {
       const client = new WindsurfClient(account.apiKey, ls.port, ls.csrfToken);
       client.warmupCascade().catch(e => log.warn(`Cascade warmup failed: ${e.message}`));
     }
+    return {
+      ok: true,
+      accountId,
+      lsKey: ls?.key || null,
+      port: ls?.port || null,
+      proxy: proxy ? `${proxy.host}:${proxy.port || 8080}` : null,
+    };
   } catch (e) {
     log.error(`Failed to start LS for account ${accountId}: ${e.message}`);
+    return {
+      ok: false,
+      accountId,
+      errorType: e?.type || e?.code || 'ls_start_failed',
+      error: e?.message || String(e),
+      proxy: proxy ? `${proxy.host}:${proxy.port || 8080}` : null,
+    };
   }
+}
+
+export function getLsAdmissionForAccount(accountId) {
+  const account = accounts.find(a => a.id === accountId);
+  if (!account) {
+    return {
+      ok: false,
+      accountId,
+      errorType: 'account_not_found',
+      reason: 'account_not_found',
+    };
+  }
+  const proxy = getEffectiveProxy(accountId) || null;
+  const admission = getLsAdmissionStatus(proxy);
+  return { accountId, ...admission };
 }
 
 /**
@@ -1196,6 +1243,8 @@ export function getAccountList() {
   return accounts.map(a => {
     const rpmLimit = rpmLimitFor(a);
     const rpmUsed = pruneRpmHistory(a, now);
+    const proxy = getEffectiveProxy(a.id) || null;
+    const lsAdmission = getLsAdmissionStatus(proxy);
     return {
       id: a.id,
       email: a.email,
@@ -1222,6 +1271,20 @@ export function getAccountList() {
       tierModels: getTierModels(a.tier || 'unknown'),
       userStatus: a.userStatus || null,
       userStatusLastFetched: a.userStatusLastFetched || 0,
+      lsAdmission: {
+        ok: lsAdmission.ok,
+        reason: lsAdmission.reason,
+        errorType: lsAdmission.errorType,
+        key: lsAdmission.key,
+        wouldStart: lsAdmission.wouldStart,
+        poolSize: lsAdmission.poolSize,
+        maxInstances: lsAdmission.maxInstances,
+        memoryGuard: {
+          okToSpawn: lsAdmission.memoryGuard?.okToSpawn ?? null,
+          availableBytes: lsAdmission.memoryGuard?.availableBytes ?? null,
+          minAvailableBytes: lsAdmission.memoryGuard?.minAvailableBytes ?? null,
+        },
+      },
     };
   });
 }
@@ -1814,6 +1877,11 @@ export async function initAuth() {
   setInterval(async () => {
     for (const a of accounts) {
       if (a.status !== 'active') continue;
+      const admission = getLsAdmissionForAccount(a.id);
+      if (!admission.ok || admission.wouldStart) {
+        log.info(`Scheduled probe ${a.id} skipped: ${admission.errorType || admission.reason} (wouldStart=${!!admission.wouldStart}, ls=${admission.key || '?'})`);
+        continue;
+      }
       try { await probeAccount(a.id); }
       catch (e) { log.warn(`Scheduled probe ${a.id} failed: ${e.message}`); }
     }

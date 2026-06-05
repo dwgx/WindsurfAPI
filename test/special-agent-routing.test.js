@@ -1,5 +1,8 @@
 import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { handleChatCompletions } from '../src/handlers/chat.js';
 import { handleMessages } from '../src/handlers/messages.js';
 import { handleResponses } from '../src/handlers/responses.js';
@@ -13,6 +16,7 @@ import {
   buildSpecialAgentPrompt,
   getSpecialAgentStatus,
   isSpecialAgentModelInfo,
+  runDevinAcp,
 } from '../src/special-agent.js';
 
 const ENV_KEYS = [
@@ -20,6 +24,7 @@ const ENV_KEYS = [
   'DEVIN_CLI_ENABLED',
   'DEVIN_CLI_PATH',
   'DEVIN_CLI_ARGS_JSON',
+  'DEVIN_CLI_ACP_ARGS_JSON',
   'DEVIN_CLI_USE_ACCOUNT_POOL',
   'DEVIN_CLI_ALLOW_CLIENT_TOOLS',
   'DEVIN_CLI_ALLOW_MEDIA',
@@ -116,6 +121,39 @@ describe('special-agent model routing', () => {
     assert.equal(result.body.choices[0].message.content, 'SPECIAL_OK');
     assert.match(seenPrompt, /System:\nbe direct/);
     assert.match(seenPrompt, /User:\nship the smallest PoC/);
+  });
+
+  it('routes acp mode through the ACP runner with account-pool credentials', async () => {
+    process.env.WINDSURFAPI_SPECIAL_AGENT_BACKEND = 'devin-cli';
+    process.env.DEVIN_CLI_MODE = 'acp';
+
+    let seenPrompt = '';
+    let released = false;
+    const result = await handleChatCompletions({
+      model: 'swe-1.6-fast',
+      messages: [user('use ACP')],
+    }, {
+      specialAgent: {
+        checkoutAccount: () => ({
+          id: 'acct-1',
+          apiKey: 'windsurf-upstream-key',
+          apiServerUrl: 'https://server.self-serve.windsurf.com',
+        }),
+        runDevinAcp: async (prompt, opts) => {
+          seenPrompt = prompt;
+          assert.equal(opts.modelKey, 'swe-1.6-fast');
+          assert.equal(opts.apiKey, 'windsurf-upstream-key');
+          assert.equal(opts.apiServerUrl, 'https://server.self-serve.windsurf.com');
+          return { text: 'ACP_OK' };
+        },
+        releaseAccount: () => { released = true; },
+      },
+    });
+
+    assert.equal(result.status, 200);
+    assert.equal(result.body.choices[0].message.content, 'ACP_OK');
+    assert.match(seenPrompt, /User:\nuse ACP/);
+    assert.equal(released, true);
   });
 
   it('rejects caller-local tools on print backend by default', async () => {
@@ -331,5 +369,70 @@ describe('special-agent prompt/status helpers', () => {
     const model = listModels().find(m => m.id === 'swe-1.6');
     assert.equal(model?._backend, 'special_agent');
     assert.equal(model?._available, true);
+  });
+});
+
+describe('Devin ACP runner', () => {
+  it('authenticates with ACP _meta api_key and collects agent message chunks', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'windsurfapi-acp-test-'));
+    const script = join(dir, 'fake-devin-acp.mjs');
+    writeFileSync(script, `
+import readline from 'node:readline';
+
+const rl = readline.createInterface({ input: process.stdin });
+function send(obj) {
+  process.stdout.write(JSON.stringify(obj) + '\\n');
+}
+rl.on('line', line => {
+  const msg = JSON.parse(line);
+  if (msg.method === 'initialize') {
+    send({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: 1, authMethods: [{ id: 'windsurf-api-key' }] } });
+    return;
+  }
+  if (msg.method === 'authenticate') {
+    if (msg.params?._meta?.api_key !== 'upstream-key') {
+      send({ jsonrpc: '2.0', id: msg.id, error: { code: -32603, message: 'bad key' } });
+      return;
+    }
+    send({ jsonrpc: '2.0', id: msg.id, result: {} });
+    return;
+  }
+  if (msg.method === 'session/new') {
+    send({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 'session-1' } });
+    return;
+  }
+  if (msg.method === 'session/prompt') {
+    send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'session-1', update: { sessionUpdate: 'agent_thought_chunk', content: { text: 'hidden thought' } } } });
+    send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'session-1', update: { sessionUpdate: 'agent_message_chunk', content: { text: 'ACP' } } } });
+    send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'session-1', update: { sessionUpdate: 'agent_message_chunk', content: { text: '_OK' } } } });
+    send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn', usage: { totalTokens: 12 } } });
+    return;
+  }
+});
+`, 'utf8');
+
+    const savedPath = process.env.DEVIN_CLI_PATH;
+    const savedArgs = process.env.DEVIN_CLI_ACP_ARGS_JSON;
+    const savedTimeout = process.env.DEVIN_TIMEOUT_MS;
+    process.env.DEVIN_CLI_PATH = process.execPath;
+    process.env.DEVIN_CLI_ACP_ARGS_JSON = JSON.stringify([script]);
+    process.env.DEVIN_TIMEOUT_MS = '5000';
+    try {
+      const result = await runDevinAcp('reply exactly OK', {
+        modelKey: 'swe-1.6-fast',
+        apiKey: 'upstream-key',
+        apiServerUrl: 'https://server.self-serve.windsurf.com',
+      });
+      assert.equal(result.text, 'ACP_OK');
+      assert.deepEqual(result.usage, { totalTokens: 12 });
+    } finally {
+      if (savedPath === undefined) delete process.env.DEVIN_CLI_PATH;
+      else process.env.DEVIN_CLI_PATH = savedPath;
+      if (savedArgs === undefined) delete process.env.DEVIN_CLI_ACP_ARGS_JSON;
+      else process.env.DEVIN_CLI_ACP_ARGS_JSON = savedArgs;
+      if (savedTimeout === undefined) delete process.env.DEVIN_TIMEOUT_MS;
+      else process.env.DEVIN_TIMEOUT_MS = savedTimeout;
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 });

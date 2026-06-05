@@ -276,6 +276,18 @@ In your client's settings for **Custom OpenAI Compatible**:
 | `LS_BINARY_PATH` | `/opt/windsurf/language_server_linux_x64` | Path to the LS binary. |
 | `LS_PORT` | `42100` | LS gRPC port. |
 | `LS_DATA_DIR` | Linux: `/opt/windsurf/data`; macOS: `~/.windsurf/data` | Per-proxy LS data directory root. |
+| `LS_MAX_INSTANCES` | adaptive, max `20` | Maximum LS pool size. The adaptive default reserves at least one non-default proxy slot on small hosts. |
+| `LS_SPAWN_MIN_AVAILABLE_BYTES` | `700MB` | Minimum available memory required before starting a new non-default LS. |
+| `LS_PREWARM_PROXIES` | `0` | Set to `1` to prewarm all proxy LS instances on startup. Scheduled probes and predictive prewarm only reuse resident/pending LS instances. |
+| `LS_PREWARM_ON_ACCOUNT_ADD` | `0` | Set to `1` to prewarm LS immediately after dashboard/import/OAuth account add. Default avoids memory spikes during bulk import. |
+| `WINDSURFAPI_NATIVE_TOOL_BRIDGE` | empty | `all_mapped` enables native bridge only when every tool is in the Read/Bash/Grep/Glob semantic families; `1` enables partition mode for mixed toolsets. WebSearch/WebFetch stay on prompt emulation unless explicitly allowlisted. |
+| `WINDSURFAPI_NATIVE_TOOL_BRIDGE_TOOLS` | Read/Bash/Grep/Glob families | Tool allowlist for native bridge. Defaults include aliases such as `read_file`, `view_file`, `shell_command`, `run_command`, `grep_search_v2`, and `find`; excludes WebSearch/WebFetch. |
+| `WINDSURFAPI_NATIVE_TOOL_BRIDGE_MODELS` / `PROVIDERS` / `ROUTES` / `CALLERS` / `ACCOUNTS` / `API_KEYS` | empty | Optional native-bridge gray gates. Empty means unrestricted; when set, the request must match. `ACCOUNTS` accepts upstream account id/email. `API_KEYS` matches caller API keys without passing plaintext tokens into chat logic. |
+| `WINDSURFAPI_NATIVE_TOOL_BRIDGE_OFF` | empty | Set to `1` to force native bridge off. |
+| `WINDSURFAPI_SPECIAL_AGENT_BACKEND` | empty | Optional special-agent backend. Set `devin-cli` to route `swe-1.6`, `swe-1.6-fast`, `adaptive`, and `arena-*` through Devin CLI instead of direct Cascade. |
+| `DEVIN_CLI_PATH` | `devin` | Devin CLI executable path. Docker/macOS deployments must install or mount it themselves. |
+| `DEVIN_CLI_MODE` | `print` | `print` uses conservative `devin -p`; `acp` is an experimental ACP stdio backend using upstream Windsurf account-pool apiKeys. |
+| `DEVIN_MAX_PROCS` | `1` | Maximum concurrent Devin CLI processes. |
 | `DASHBOARD_PASSWORD` | empty | Dashboard password. Leave empty for no password. |
 | `ALLOW_PRIVATE_PROXY_HOSTS` | empty | Set to `1` to allow private/internal IPs (e.g., `192.168.x.x`, `10.x.x.x`) in proxy tests and login. Leave empty to only allow public addresses (default). |
 | `CASCADE_REUSE_STRICT` | `0` | Set to `1` for strict conversation reuse mode (waits for same fingerprint). |

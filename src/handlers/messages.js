@@ -678,7 +678,13 @@ export async function handleMessages(body, context = {}) {
   const subKey = extractCallerSubKey(body);
   const alreadyUserScoped = context.callerKey && context.callerKey.includes(':user:');
   const effectiveContext = (subKey && !alreadyUserScoped)
-    ? { ...context, callerKey: `${context.callerKey || ''}:user:${subKey}` }
+    ? {
+        ...context,
+        callerKey: `${context.callerKey || ''}:user:${subKey}`,
+        nativeBridgeCallerKey: context.nativeBridgeCallerKey
+          ? `${context.nativeBridgeCallerKey}:user:${subKey}`
+          : context.nativeBridgeCallerKey,
+      }
     : context;
 
   if (!wantStream) {

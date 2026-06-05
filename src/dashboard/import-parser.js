@@ -81,12 +81,23 @@ function buildEntry(base) {
 
 function parsePasswordRemainder(remainder) {
   if (!remainder) return '';
-  if (/^\s+/.test(remainder)) return remainder.trim();
   const trimmed = remainder.trimStart();
-  for (const separator of ['----', '|', ',', ':']) {
+  const label = trimmed.match(/^(?:(?:密码|密碼|口令)\s*[:：=]?\s*|(?:password|pass|pwd)\b\s*(?:[:：=]\s*|\s+))/i);
+  if (label) return trimmed.slice(label[0].length).trim();
+  if (/^\s+/.test(remainder)) return remainder.trim();
+  for (const separator of ['----', '|', ',', ':', '：', '=']) {
     if (trimmed.startsWith(separator)) return trimmed.slice(separator.length).trim();
   }
   return '';
+}
+
+function normalizeEmailPrefix(prefix) {
+  const raw = String(prefix || '').trim();
+  if (!raw) return '';
+  const withoutLabel = raw
+    .replace(/(?:\s*(?:邮箱|账号|账户|邮件|email|e-mail|mail|username|user)\s*[:：=]?)+\s*$/i, '')
+    .trim();
+  return withoutLabel || '';
 }
 
 export function parseBatchImportTextLine(rawLine, lineNumber, parseProxyUrl) {
@@ -99,7 +110,7 @@ export function parseBatchImportTextLine(rawLine, lineNumber, parseProxyUrl) {
   const email = emailMatch[0];
   const start = emailMatch.index || 0;
   const end = start + email.length;
-  const prefix = line.slice(0, start).trim();
+  const prefix = normalizeEmailPrefix(line.slice(0, start));
   const remainder = line.slice(end);
   let proxyRaw = null;
   let proxy = null;

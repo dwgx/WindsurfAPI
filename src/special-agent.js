@@ -2,10 +2,11 @@
  * Optional special-agent backend for models that do not work through the
  * direct Cascade chat path (SWE/adaptive/arena).
  *
- * The first backend is a conservative Devin CLI print-mode adapter. It is
- * disabled by default and intentionally does not execute or emulate caller
- * tools. Real client-tool bridging should be implemented through ACP once the
- * protocol surface is verified.
+ * The default backend mode is a conservative Devin CLI print-mode adapter. It
+ * is disabled by default and intentionally does not execute or emulate caller
+ * tools. DEVIN_CLI_MODE=acp is available as an experimental stdio backend; it
+ * is kept small and separate in devin-acp.js so this routing module does not
+ * become the protocol implementation.
  */
 
 import { spawn } from 'child_process';
@@ -14,6 +15,7 @@ import { getApiKey, releaseAccount } from './auth.js';
 import { config, log } from './config.js';
 import { recordRequest } from './dashboard/stats.js';
 import { sanitizeText } from './sanitize.js';
+import { runDevinAcpProcess } from './devin-acp.js';
 
 const SPECIAL_BACKEND = 'special_agent';
 const DEFAULT_SPECIAL_MODELS = new Set([
@@ -222,6 +224,15 @@ export function getSpecialAgentStatus() {
   };
 }
 
+export async function runDevinAcp(prompt, { modelKey = '', apiKey = '', apiServerUrl = '', signal = null } = {}) {
+  const release = await acquireSlot(signal);
+  try {
+    return await runDevinAcpProcess(prompt, { modelKey, apiKey, apiServerUrl, signal });
+  } finally {
+    release();
+  }
+}
+
 export async function runDevinPrint(prompt, { modelKey = '', apiKey = '', signal = null } = {}) {
   const release = await acquireSlot(signal);
   try {
@@ -422,10 +433,14 @@ export async function handleSpecialAgentChatCompletion(body, route, deps = {}) {
         return errorResponse(503, 'pool_exhausted', 'No active account is available for Devin CLI special-agent backend.');
       }
     }
-    const runner = deps.runDevinPrint || runDevinPrint;
+    const mode = String(process.env.DEVIN_CLI_MODE || 'print').trim().toLowerCase();
+    const runner = mode === 'acp'
+      ? (deps.runDevinAcp || runDevinAcp)
+      : (deps.runDevinPrint || runDevinPrint);
     const result = await runner(prompt, {
       modelKey,
       apiKey: acct?.apiKey || '',
+      apiServerUrl: acct?.apiServerUrl || '',
       signal: route?.signal || null,
     });
     const text = sanitizeText(result?.text || '');
@@ -442,6 +457,9 @@ export async function handleSpecialAgentChatCompletion(body, route, deps = {}) {
       backend: 'devin-cli',
     });
   } finally {
-    if (acct?.apiKey) releaseAccount(acct.apiKey);
+    if (acct?.apiKey) {
+      const releaser = deps.releaseAccount || releaseAccount;
+      releaser(acct.apiKey);
+    }
   }
 }

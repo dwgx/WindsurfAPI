@@ -109,4 +109,17 @@ describe('language server resource policy', () => {
     assert.match(src, /LS_PREWARM_ON_ACCOUNT_ADD === '1'/);
     assert.match(src, /function scheduleAccountWarmup/);
   });
+
+  test('scheduled probes only reuse resident or pending LS instances', () => {
+    assert.match(AUTH_JS, /const admission = getLsAdmissionForAccount\(a\.id\)/);
+    assert.match(AUTH_JS, /!admission\.ok \|\| admission\.wouldStart/);
+    assert.match(AUTH_JS, /Scheduled probe .*wouldStart=/);
+  });
+
+  test('predictive prewarm is admission-gated and reports structured failures', () => {
+    assert.match(AUTH_JS, /const admission = getLsAdmissionForAccount\(nextAccount\.id\)/);
+    assert.match(AUTH_JS, /!admission\.ok \|\| admission\.wouldStart/);
+    assert.match(AUTH_JS, /ensureLsForAccount\(nextAccount\.id\)\)\.then\(r =>/);
+    assert.match(AUTH_JS, /r\?\.errorType \|\| 'ls_start_failed'/);
+  });
 });

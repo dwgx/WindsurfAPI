@@ -141,7 +141,7 @@ describe('shouldUseNativeBridge — auto-on heuristic', () => {
     process.env.WINDSURFAPI_NATIVE_TOOL_BRIDGE = 'all_mapped';
     try {
       assert.equal(
-        shouldUseNativeBridge([fnTool('Read'), fnTool('Bash'), fnTool('Grep'), fnTool('Glob'), fnTool('WebSearch'), fnTool('WebFetch')], {
+        shouldUseNativeBridge([fnTool('Read'), fnTool('Bash'), fnTool('Grep'), fnTool('Glob')], {
           modelKey: 'claude-sonnet-4.6', provider: 'anthropic', route: 'chat',
         }),
         true,
@@ -264,12 +264,20 @@ describe('parseNativeFunctionCallsFromText', () => {
     assert.ok(!out.text.includes('<invoke'));
   });
 
-  it('leaves unknown invokes as text instead of inventing caller tools', () => {
+  it('drops unknown invokes instead of leaking XML or inventing caller tools', () => {
     const lookup = buildReverseLookup([fnTool('Read')]);
     const text = '<function_calls><invoke name="unknown_tool"><parameter name="x">1</parameter></invoke></function_calls>';
     const out = parseNativeFunctionCallsFromText(text, lookup);
     assert.equal(out.toolCalls.length, 0);
-    assert.equal(out.text, text);
+    assert.equal(out.text, '');
+  });
+
+  it('drops known invokes when the caller did not declare a matching tool', () => {
+    const lookup = buildReverseLookup([fnTool('Bash')]);
+    const text = 'before <function_calls><invoke name="read_file"><parameter name="path">README.md</parameter></invoke></function_calls> after';
+    const out = parseNativeFunctionCallsFromText(text, lookup);
+    assert.equal(out.toolCalls.length, 0);
+    assert.equal(out.text, 'before  after');
   });
 
   it('stream parser withholds provider-native XML until it can emit a tool_call', () => {
@@ -303,13 +311,20 @@ describe('parseNativeFunctionCallsFromText', () => {
     assert.deepEqual(JSON.parse(b.toolCalls[0].argumentsJson), { file_path: 'a.txt' });
   });
 
-  it('stream parser returns incomplete XML as text on flush', () => {
+  it('stream parser drops incomplete XML on flush', () => {
     const lookup = buildReverseLookup([fnTool('Read')]);
     const parser = new NativeFunctionCallStreamParser(lookup);
     assert.deepEqual(parser.feed('start <function_calls><invoke name="read_file">'), { text: 'start ', toolCalls: [] });
     const tail = parser.flush();
-    assert.equal(tail.text, '<function_calls><invoke name="read_file">');
+    assert.equal(tail.text, '');
     assert.equal(tail.toolCalls.length, 0);
+  });
+
+  it('non-stream parser drops dangling function_calls blocks', () => {
+    const lookup = buildReverseLookup([fnTool('Read')]);
+    const out = parseNativeFunctionCallsFromText('prefix <function_calls><invoke name="read_file">', lookup);
+    assert.equal(out.text, 'prefix');
+    assert.equal(out.toolCalls.length, 0);
   });
 });
 
@@ -540,10 +555,10 @@ describe('CASCADE_STEP type constants — sanity', () => {
 // ─── v2.0.66 (#115) — partition mode + codex CLI mapping ──────────────
 
 describe('partitionTools — v2.0.66 mixed-mapping splitter', () => {
-  it('splits mapped vs unmapped on a real codex CLI 0.128 toolset (v2.0.70: web_search now mapped to search_web)', () => {
+  it('splits mapped vs unmapped on a real codex CLI 0.128 toolset (web_search default-off)', () => {
     // Captured live from `dump-codex-tools.mjs`: codex CLI 0.128 declares
-    // these 11 tools by default. v2.0.70 added `web_search` mapping
-    // (search_web step), so 2 tools are now mapped instead of 1.
+    // these 11 tools by default. Native web search/fetch remain opt-in in
+    // the bridge allowlist, so the default mapped set stays shell-only.
     const codexTools = [
       'shell_command', 'update_plan', 'request_user_input',
       'apply_patch', 'web_search', 'view_image',
@@ -552,10 +567,11 @@ describe('partitionTools — v2.0.66 mixed-mapping splitter', () => {
     const part = partitionTools(codexTools);
     assert.equal(part.hasAny, true);
     const mappedNames = part.mapped.map(t => t.function.name).sort();
-    assert.deepEqual(mappedNames, ['shell_command', 'web_search']);
-    assert.equal(part.unmapped.length, 9);
+    assert.deepEqual(mappedNames, ['shell_command']);
+    assert.equal(part.unmapped.length, 10);
     assert.ok(part.unmapped.find(t => t.function.name === 'apply_patch'));
     assert.ok(part.unmapped.find(t => t.function.name === 'update_plan'));
+    assert.ok(part.unmapped.find(t => t.function.name === 'web_search'));
   });
 
   it('returns hasAny=false when no tool maps', () => {
