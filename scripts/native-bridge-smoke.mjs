@@ -11,6 +11,7 @@ const requestTimeoutMs = Math.max(5_000, Number(process.env.NATIVE_BRIDGE_SMOKE_
 const streamEarlyTool = process.env.NATIVE_BRIDGE_SMOKE_EARLY_TOOL !== '0';
 const includeEnv = process.env.NATIVE_BRIDGE_SMOKE_ENV !== '0';
 const includeHealth = process.env.NATIVE_BRIDGE_SMOKE_HEALTH !== '0';
+const requireNativeBridgeTool = process.env.NATIVE_BRIDGE_SMOKE_REQUIRE_NATIVE !== '0';
 async function sha256Hex(text) {
   const bytes = new TextEncoder().encode(String(text || ''));
   const digest = await crypto.subtle.digest('SHA-256', bytes);
@@ -254,6 +255,7 @@ function streamDiagnostics(text, calls = []) {
     responseIds: [...new Set(responseIds)].slice(0, 3),
     finishReasons: [...new Set(finishReasons)],
     toolCallNames: namesFromCalls(calls),
+    toolCallSources: calls.map(toolCallSource),
     contentPreview: compactText(contents.join('')),
     reasoningPreview: compactText(reasoning.join('')),
     usage: usageFrames.at(-1) || null,
@@ -268,6 +270,7 @@ function nonStreamDiagnostics(json, rawText, calls = []) {
   return {
     finishReason: choice.finish_reason || null,
     toolCallNames: namesFromCalls(calls),
+    toolCallSources: calls.map(toolCallSource),
     contentPreview: compactText(message.content || ''),
     usage: json?.usage || null,
     rawPreview: compactText(rawText),
@@ -283,11 +286,37 @@ function namesFromCalls(calls) {
   return calls.map(c => c.function?.name || c.name || '').filter(Boolean);
 }
 
+function toolCallSource(call) {
+  const id = String(call?.id || '');
+  if (id.startsWith('native:')) return 'cascade_native';
+  if (id.startsWith('call_native_')) return 'provider_xml';
+  if (id.startsWith('nlu_') || id.startsWith('nlu_retry_')) return 'nlu_recovery';
+  if (id.startsWith('call_')) return 'openai_tool_call';
+  return id ? 'unknown' : 'missing_id';
+}
+
+function isNativeBridgeToolCall(call) {
+  const source = toolCallSource(call);
+  return source === 'cascade_native' || source === 'provider_xml';
+}
+
+function matchingToolCalls(calls, expected) {
+  return (calls || []).filter(call => {
+    const name = call?.function?.name || call?.name || '';
+    return !expected || name === expected;
+  });
+}
+
 function assertExpectedTool(calls, scenarioName, expected, diagnostic = null) {
+  const matches = matchingToolCalls(calls, expected);
   const names = namesFromCalls(calls);
   if (!names.length) throw smokeError(`${scenarioName}: produced no tool_calls`, diagnostic);
   if (expected && !names.includes(expected)) {
     throw smokeError(`${scenarioName}: expected ${expected}, got ${names.join(',')}`, diagnostic);
+  }
+  if (requireNativeBridgeTool && !matches.some(isNativeBridgeToolCall)) {
+    const sources = [...new Set(matches.map(toolCallSource))].join(',') || '(none)';
+    throw smokeError(`${scenarioName}: produced tool_calls but no native bridge tool_call (sources=${sources})`, diagnostic);
   }
   return names;
 }
