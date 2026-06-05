@@ -636,29 +636,50 @@ function buildNativeCascadeToolConfig(allowlist = null) {
   const list = Array.isArray(allowlist) && allowlist.length
     ? allowlist
     : ['view_file', 'run_command', 'grep_search_v2', 'find', 'list_dir'];
+  const enabled = nativeToolConfigSwitches(list);
   const parts = [];
   // Empty messages = "use defaults" for each enabled tool. Setting the
   // submessage at all is what tells the LS the tool is on.
-  if (list.includes('run_command')) {
-    parts.push(writeMessageField(8, Buffer.alloc(0)));
+  if (enabled.runCommand) {
+    parts.push(writeEmptyMessageField(8));
   }
-  if (list.includes('view_file')) {
-    parts.push(writeMessageField(10, Buffer.alloc(0)));
+  if (enabled.viewFile) {
+    parts.push(writeEmptyMessageField(10));
   }
-  if (list.includes('list_dir') || list.includes('list_directory')) {
-    parts.push(writeMessageField(19, Buffer.alloc(0)));
+  if (enabled.listDir) {
+    parts.push(writeEmptyMessageField(19));
   }
-  if (list.includes('grep_search_v2') || list.includes('grep_search')) {
-    parts.push(writeMessageField(33, Buffer.alloc(0)));
+  if (enabled.grepV2) {
+    parts.push(writeEmptyMessageField(33));
   }
-  if (list.includes('find')) {
-    parts.push(writeMessageField(5, Buffer.alloc(0)));
+  if (enabled.find) {
+    parts.push(writeEmptyMessageField(5));
   }
   // tool_allowlist (field 32, repeated string)
   for (const name of list) {
     parts.push(writeStringField(32, name));
   }
   return Buffer.concat(parts);
+}
+
+function writeEmptyMessageField(field) {
+  // writeMessageField intentionally drops empty buffers for most call sites;
+  // CascadeToolConfig needs the field presence itself, encoded as len=0.
+  return writeBytesField(field, Buffer.alloc(0));
+}
+
+function nativeToolConfigSwitches(list) {
+  const names = new Set((Array.isArray(list) ? list : [])
+    .map(v => String(v || '').trim())
+    .filter(Boolean));
+  const has = (...aliases) => aliases.some(name => names.has(name));
+  return {
+    runCommand: has('run_command', 'shell_command', 'shell', 'Bash'),
+    viewFile: has('view_file', 'read_file', 'Read'),
+    listDir: has('list_dir', 'list_directory'),
+    grepV2: has('grep_v2', 'grep_search_v2', 'grep_search', 'Grep'),
+    find: has('find', 'Glob'),
+  };
 }
 
 /**

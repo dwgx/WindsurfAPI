@@ -530,6 +530,23 @@ describe('buildSendCascadeMessageRequest — additional_steps on field 9', () =>
     assert.equal(getField(conv, 12, 2), null, 'nativeMode must not write a no-tool additional_instructions_section');
   });
 
+  it('native allowlist experiment aliases still enable the matching tool sub-configs', () => {
+    const proto = buildSendCascadeMessageRequest('k', 'cid', 'hi', 12345, 'MODEL_TEST', 'sess', {
+      nativeMode: true,
+      nativeAllowlist: ['read_file', 'grep_v2', 'list_dir'],
+    });
+    const top = parseFields(proto);
+    const cfg = parseFields(getField(top, 5, 2).value);
+    const planner = parseFields(getField(cfg, 1, 2).value);
+    const tc = parseFields(getField(planner, 13, 2).value);
+    const allow = getAllFields(tc, 32).map(f => f.value.toString('utf8'));
+    assert.deepEqual(allow, ['read_file', 'grep_v2', 'list_dir']);
+    assert.ok(getField(tc, 10, 2), 'read_file should still enable ViewFileToolConfig field 10');
+    assert.ok(getField(tc, 33, 2), 'grep_v2 should still enable GrepV2ToolConfig field 33');
+    assert.ok(getField(tc, 19, 2), 'list_dir should enable ListDirToolConfig field 19');
+    assert.equal(getField(tc, 5, 2), null, 'list_dir experiment should not also enable FindToolConfig');
+  });
+
   it('nativeMode=true can carry environment facts without tool emulation schema', () => {
     const proto = buildSendCascadeMessageRequest('k', 'cid', 'hi', 12345, 'MODEL_TEST', 'sess', {
       nativeMode: true,
