@@ -89,17 +89,24 @@ gated live smoke before they can join the default native bridge allowlist.
 ## Experiment Hooks
 
 `WINDSURFAPI_NATIVE_TOOL_BRIDGE_CONFIG_RAW` can inject exact protobuf bytes
-for native tool subconfigs:
+for native tool subconfigs or unknown top-level `CascadeToolConfig` fields:
 
 ```text
-read_file:<hex>;grep_v2:base64:<base64>;find:<hex>;list_dir:<hex>
+read_file:<hex>;grep_v2:base64:<base64>;find:<hex>;list_dir:<hex>;field42:<hex>;field40:
 ```
 
 The hook is default-off and exists only for matrix testing. Smoke must still
 require native source plus argument validation; a raw subconfig that merely
 causes natural-language or degraded `pattern:"*"` output is not a success.
 There is intentionally no `search_web` / `read_url_content` raw-config alias
-until the tool-config field numbers are proven.
+until the tool-config field numbers are proven. Use `fieldNN:<hex>`,
+`field_NN:<hex>`, or `fNN:<hex>` only in a gated lab account.
+
+`WINDSURFAPI_NATIVE_TOOL_BRIDGE_POLL_AFTER_TOOL=1` is also lab-only. It keeps
+polling Cascade after the first `cascade_native` tool call so protobuf traces
+can capture post-tool result/document payloads. Production bridge traffic should
+leave it unset; the default behavior stops at the tool proposal so OpenAI
+clients execute the tool locally instead of the remote LS workspace doing it.
 
 ## Next Matrix
 

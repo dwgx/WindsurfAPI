@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { grpcFrame } from '../src/grpc.js';
-import { writeBoolField, writeMessageField, writeStringField, writeVarintField } from '../src/proto.js';
+import { writeBoolField, writeBytesField, writeMessageField, writeStringField, writeVarintField } from '../src/proto.js';
 import { buildSendCascadeMessageRequest } from '../src/windsurf.js';
 import {
   _resetProtoTraceForTests,
@@ -139,6 +139,36 @@ describe('proto trace', () => {
     assert.ok(grep.bytes > 0);
   });
 
+  it('summarizes unknown native tool config fields for web matrix experiments', () => {
+    process.env.WINDSURFAPI_PROTO_TRACE = '1';
+    const toolConfig = Buffer.concat([
+      writeMessageField(42, writeStringField(1, 'web')),
+      writeBytesField(40, Buffer.alloc(0)),
+      writeStringField(32, 'search_web'),
+      writeStringField(32, 'read_url_content'),
+    ]);
+    const planner = writeMessageField(13, toolConfig);
+    const cascadeConfig = writeMessageField(1, planner);
+    const proto = writeMessageField(5, cascadeConfig);
+
+    traceGrpcPayload({
+      port: 42100,
+      path: '/exa.language_server_pb.LanguageServerService/SendUserCascadeMessage',
+      direction: 'request',
+      body: grpcFrame(proto),
+      transport: 'grpc',
+      framed: true,
+    });
+
+    const file = join(dir, `ls-proto-${process.pid}-SendUserCascadeMessage.jsonl`);
+    const rec = JSON.parse(readFileSync(file, 'utf8').trim());
+    assert.deepEqual(rec.semantic.nativeToolConfig.allowlist, ['search_web', 'read_url_content']);
+    assert.deepEqual(rec.semantic.nativeToolConfig.subconfigFields, []);
+    assert.deepEqual(rec.semantic.nativeToolConfig.unknownFields.map(f => f.field), [42, 40]);
+    assert.deepEqual(rec.semantic.nativeToolConfig.unknownFields[0].summary.fieldNumbers, [1]);
+    assert.equal(rec.semantic.nativeToolConfig.unknownFields[1].bytes, 0);
+  });
+
   it('adds semantic GetCascadeTrajectorySteps native oneof summaries', () => {
     process.env.WINDSURFAPI_PROTO_TRACE = '1';
     const grepBody = Buffer.concat([
@@ -170,6 +200,57 @@ describe('proto trace', () => {
     assert.equal(rec.semantic.steps[0].nativeOneofs[0].field, 105);
     assert.equal(rec.semantic.steps[0].nativeOneofs[0].kind, 'grep_search_v2');
     assert.equal(rec.semantic.steps[0].nativeOneofs[0].body.rawOutputBytes, 'README.md\n'.length);
+  });
+
+  it('summarizes web trajectory payload shapes for protocol diffing', () => {
+    process.env.WINDSURFAPI_PROTO_TRACE = '1';
+    const doc = Buffer.concat([
+      writeStringField(1, 'title'),
+      writeStringField(2, 'https://example.com/'),
+    ]);
+    const searchBody = Buffer.concat([
+      writeStringField(1, 'WindsurfAPI native bridge'),
+      writeMessageField(2, doc),
+      writeStringField(3, 'example.com'),
+      writeStringField(5, 'summary'),
+    ]);
+    const fetchBody = Buffer.concat([
+      writeStringField(1, 'https://example.com/'),
+      writeMessageField(2, doc),
+      writeStringField(5, 'body summary'),
+    ]);
+    const response = Buffer.concat([
+      writeMessageField(1, Buffer.concat([
+        writeVarintField(1, 42),
+        writeVarintField(4, 3),
+        writeMessageField(42, searchBody),
+      ])),
+      writeMessageField(1, Buffer.concat([
+        writeVarintField(1, 40),
+        writeVarintField(4, 3),
+        writeMessageField(40, fetchBody),
+      ])),
+    ]);
+    traceGrpcPayload({
+      port: 42100,
+      path: '/exa.language_server_pb.LanguageServerService/GetCascadeTrajectorySteps',
+      direction: 'response',
+      body: response,
+      transport: 'grpc',
+      framed: false,
+    });
+
+    const file = join(dir, `ls-proto-${process.pid}-GetCascadeTrajectorySteps.jsonl`);
+    const rec = JSON.parse(readFileSync(file, 'utf8').trim());
+    const search = rec.semantic.steps[0].nativeOneofs[0];
+    assert.equal(search.kind, 'search_web');
+    assert.equal(search.body.webDocumentCount, 1);
+    assert.deepEqual(search.body.fieldNumbers, [1, 2, 3, 5]);
+    assert.equal(search.body.messageFields[0].field, 2);
+    const fetch = rec.semantic.steps[1].nativeOneofs[0];
+    assert.equal(fetch.kind, 'read_url_content');
+    assert.deepEqual(fetch.body.fieldNumbers, [1, 2, 5]);
+    assert.equal(fetch.body.messageFields[0].field, 2);
   });
 
   it('summarizes non-oneof step message fields for protocol diffing', () => {

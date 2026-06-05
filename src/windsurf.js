@@ -657,6 +657,9 @@ function buildNativeCascadeToolConfig(allowlist = null) {
   if (enabled.find) {
     parts.push(writeNativeToolConfigField(5, 'find', rawSubconfigs));
   }
+  for (const [field, payload] of rawSubconfigs.unknownFields) {
+    parts.push(writeBytesField(field, payload));
+  }
   // tool_allowlist (field 32, repeated string)
   for (const name of list) {
     parts.push(writeStringField(32, name));
@@ -672,8 +675,9 @@ function writeNativeToolConfigField(field, kind, rawSubconfigs) {
 
 function parseNativeToolConfigRawOverrides() {
   const raw = String(process.env.WINDSURFAPI_NATIVE_TOOL_BRIDGE_CONFIG_RAW || '').trim();
-  if (!raw) return new Map();
   const out = new Map();
+  out.unknownFields = new Map();
+  if (!raw) return out;
   for (const entry of raw.split(';')) {
     const item = entry.trim();
     if (!item) continue;
@@ -681,13 +685,22 @@ function parseNativeToolConfigRawOverrides() {
     if (sep <= 0) throw new Error(`Invalid WINDSURFAPI_NATIVE_TOOL_BRIDGE_CONFIG_RAW entry: ${item}`);
     const kind = normalizeNativeToolConfigKind(item.slice(0, sep));
     const payload = decodeNativeToolConfigRawPayload(item.slice(sep + 1));
-    out.set(kind, payload);
+    if (typeof kind === 'number') out.unknownFields.set(kind, payload);
+    else out.set(kind, payload);
   }
   return out;
 }
 
 function normalizeNativeToolConfigKind(kind) {
   const key = String(kind || '').trim();
+  const fieldMatch = key.match(/^(?:field_|field|f)([1-9]\d{0,8})$/i);
+  if (fieldMatch) {
+    const n = Number(fieldMatch[1]);
+    if (!Number.isInteger(n) || n <= 0 || n > 536870911 || n === 32) {
+      throw new Error(`Invalid native tool config field override: ${key}`);
+    }
+    return n;
+  }
   const map = new Map([
     ['run_command', 'run_command'],
     ['shell_command', 'run_command'],

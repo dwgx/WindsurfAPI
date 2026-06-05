@@ -120,9 +120,19 @@ function summarizeNativeToolConfig(toolCfgBuf) {
   const subconfigs = [...NATIVE_TOOL_CONFIG_FIELDS.keys()]
     .map(num => summarizeNativeToolSubconfig(fields, num))
     .filter(Boolean);
+  const known = new Set([...NATIVE_TOOL_CONFIG_FIELDS.keys(), 32]);
+  const unknownFields = fields
+    .filter(f => f.wireType === 2 && !known.has(f.field))
+    .slice(0, positiveIntEnv('WINDSURFAPI_PROTO_TRACE_TOOL_CONFIG_UNKNOWN_LIMIT', 24))
+    .map(f => ({
+      field: f.field,
+      bytes: f.value.length,
+      summary: summarizeMessageChildren(f.value, 10),
+    }));
   return {
     subconfigFields: subconfigs.map(s => s.field),
     subconfigs,
+    unknownFields,
     allowlist: getAllFields(fields, 32)
       .filter(f => f.wireType === 2)
       .map(f => f.value.toString('utf8')),
@@ -230,6 +240,30 @@ function summarizeNativeStepBody(kind, bodyBuf) {
     return {
       directoryPathUriBytes: stringField(f, 1).length,
       childCount: getAllFields(f, 2).filter(x => x.wireType === 2).length,
+    };
+  }
+  if (kind === 'search_web') {
+    return {
+      queryBytes: stringField(f, 1).length,
+      webDocumentCount: getAllFields(f, 2).filter(x => x.wireType === 2).length,
+      domainBytes: stringField(f, 3).length,
+      summaryBytes: stringField(f, 5).length,
+      fieldNumbers: f.map(x => x.field),
+      messageFields: f
+        .filter(x => x.wireType === 2 && ![1, 3, 5].includes(x.field))
+        .slice(0, 8)
+        .map(x => ({ field: x.field, ...summarizeMessageChildren(x.value, 8) })),
+    };
+  }
+  if (kind === 'read_url_content') {
+    return {
+      urlBytes: stringField(f, 1).length,
+      summaryBytes: stringField(f, 5).length,
+      fieldNumbers: f.map(x => x.field),
+      messageFields: f
+        .filter(x => x.wireType === 2 && ![1, 5].includes(x.field))
+        .slice(0, 8)
+        .map(x => ({ field: x.field, ...summarizeMessageChildren(x.value, 8) })),
     };
   }
   return { fieldCount: f.length };

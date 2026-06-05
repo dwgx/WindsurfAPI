@@ -599,6 +599,25 @@ describe('buildSendCascadeMessageRequest — additional_steps on field 9', () =>
     }
   });
 
+  it('native tool config raw overrides can inject unknown top-level fields for matrix experiments', () => {
+    process.env.WINDSURFAPI_NATIVE_TOOL_BRIDGE_CONFIG_RAW = 'field42:0a03776562;field40:';
+    try {
+      const proto = buildSendCascadeMessageRequest('k', 'cid', 'hi', 12345, 'MODEL_TEST', 'sess', {
+        nativeMode: true,
+        nativeAllowlist: ['search_web', 'read_url_content'],
+      });
+      const top = parseFields(proto);
+      const cfg = parseFields(getField(top, 5, 2).value);
+      const planner = parseFields(getField(cfg, 1, 2).value);
+      const tc = parseFields(getField(planner, 13, 2).value);
+      assert.equal(getField(tc, 42, 2).value.toString('hex'), '0a03776562');
+      assert.equal(getField(tc, 40, 2).value.length, 0);
+      assert.deepEqual(getAllFields(tc, 32).map(f => f.value.toString('utf8')), ['search_web', 'read_url_content']);
+    } finally {
+      delete process.env.WINDSURFAPI_NATIVE_TOOL_BRIDGE_CONFIG_RAW;
+    }
+  });
+
   it('nativeMode=true can carry environment facts without tool emulation schema', () => {
     const proto = buildSendCascadeMessageRequest('k', 'cid', 'hi', 12345, 'MODEL_TEST', 'sess', {
       nativeMode: true,

@@ -368,4 +368,83 @@ describe('WindsurfClient cascade panel retry', () => {
       assert.equal(streamed.filter(c => c.nativeToolCall).length, 1);
     });
   });
+
+  it('native bridge protocol lab can poll after a cascade-native tool call', async () => {
+    const prevPollAfterTool = process.env.WINDSURFAPI_NATIVE_TOOL_BRIDGE_POLL_AFTER_TOOL;
+    process.env.WINDSURFAPI_NATIVE_TOOL_BRIDGE_POLL_AFTER_TOOL = '1';
+    process.env.CASCADE_POLL_INTERVAL_MS = '10';
+    process.env.CASCADE_IDLE_GRACE_MS = '1';
+    process.env.CASCADE_MAX_WAIT_MS = '700';
+    process.env.CASCADE_COLD_STALL_BASE_MS = '700';
+    process.env.CASCADE_WARM_STALL_MS = '700';
+    process.env.GRPC_PROTOCOL = 'connect';
+
+    let statusPolls = 0;
+    let stepPolls = 0;
+    const streamed = [];
+
+    try {
+      await withFakeLanguageServer((stream, headers) => {
+        const chunks = [];
+        stream.on('data', chunk => chunks.push(chunk));
+        stream.on('end', () => {
+          const path = String(headers[':path'] || '');
+          const method = path.split('/').pop();
+
+          if (method === 'StartCascade') {
+            stream.respond({ ':status': 200, 'content-type': headers['content-type'] || 'application/grpc' });
+            stream.end(responseBody(startCascadeResponse('native-cascade-lab'), headers));
+            return;
+          }
+
+          if (method === 'SendUserCascadeMessage') {
+            stream.respond({ ':status': 200, 'content-type': headers['content-type'] || 'application/grpc' });
+            stream.end(responseBody(Buffer.alloc(0), headers));
+            return;
+          }
+
+          if (method === 'GetCascadeTrajectorySteps') {
+            stepPolls++;
+            stream.respond({ ':status': 200, 'content-type': headers['content-type'] || 'application/grpc' });
+            stream.end(responseBody(runCommandStepResponse('printf LAB'), headers));
+            return;
+          }
+
+          if (method === 'GetCascadeTrajectory') {
+            statusPolls++;
+            stream.respond({ ':status': 200, 'content-type': headers['content-type'] || 'application/grpc' });
+            stream.end(responseBody(trajectoryStatusResponse(1), headers));
+            return;
+          }
+
+          if (method === 'GetCascadeTrajectoryGeneratorMetadata') {
+            stream.respond({ ':status': 200, 'content-type': headers['content-type'] || 'application/grpc' });
+            stream.end(responseBody(Buffer.alloc(0), headers));
+            return;
+          }
+
+          stream.respond({ ':status': 404 });
+          stream.end();
+        });
+      }, async (port) => {
+        const { WindsurfClient } = await import('../src/client.js');
+        const client = new WindsurfClient('test-api-key', port, 'csrf-token');
+        const chunks = await client.cascadeChat([{ role: 'user', content: 'run it' }], 0, 'claude-4.5-haiku', {
+          nativeMode: true,
+          nativeAllowlist: ['run_command'],
+          onChunk: c => streamed.push(c),
+        });
+
+        assert.ok(stepPolls > 1, 'lab mode should keep polling trajectory steps after the native tool call');
+        assert.ok(statusPolls > 0, 'lab mode should poll trajectory status instead of returning immediately');
+        assert.equal(chunks.toolCalls.length, 1);
+        assert.equal(chunks.toolCalls[0].name, 'run_command');
+        assert.match(chunks.toolCalls[0].argumentsJson, /printf LAB/);
+        assert.equal(streamed.filter(c => c.nativeToolCall).length, 1);
+      });
+    } finally {
+      if (prevPollAfterTool === undefined) delete process.env.WINDSURFAPI_NATIVE_TOOL_BRIDGE_POLL_AFTER_TOOL;
+      else process.env.WINDSURFAPI_NATIVE_TOOL_BRIDGE_POLL_AFTER_TOOL = prevPollAfterTool;
+    }
+  });
 });

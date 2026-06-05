@@ -852,6 +852,8 @@ export class WindsurfClient {
       const { maxWaitMs: maxWait, pollIntervalMs: pollInterval, idleGraceMs: IDLE_GRACE_MS, warmStallMs: NO_GROWTH_STALL_MS, stallRetryMinText: STALL_RETRY_MIN_TEXT } = CASCADE_TIMEOUTS;
       const startTime = Date.now();
       let endReason = 'unknown';
+      const nativeBridgePollAfterTool = nativeMode && process.env.WINDSURFAPI_NATIVE_TOOL_BRIDGE_POLL_AFTER_TOOL === '1';
+      let nativeBridgePollAfterToolLogged = false;
 
       while (Date.now() - startTime < maxWait) {
         if (aborted()) { endReason = 'aborted'; break; }
@@ -959,8 +961,14 @@ export class WindsurfClient {
             // polling immediately so the LS does not keep executing the
             // built-in tool in the remote workspace while the client waits.
             if (nativeMode && step.toolCalls.some(tc => tc.cascade_native)) {
-              endReason = 'native_tool_call';
-              break;
+              if (!nativeBridgePollAfterTool) {
+                endReason = 'native_tool_call';
+                break;
+              }
+              if (!nativeBridgePollAfterToolLogged) {
+                nativeBridgePollAfterToolLogged = true;
+                log.warn('Native bridge protocol lab is polling after a cascade-native tool call; remote LS may execute the built-in tool');
+              }
             }
           }
 
