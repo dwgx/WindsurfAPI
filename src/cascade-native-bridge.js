@@ -32,8 +32,14 @@
  *      unmapped requests are not split — partial native coverage would
  *      confuse the planner about which tools it actually has.
  *
- * Activation: gated by env var WINDSURFAPI_NATIVE_TOOL_BRIDGE=1 OR opt-in
- * runtime config flag `nativeToolBridge`. Default OFF until field-tested.
+ * Activation:
+ *   WINDSURFAPI_NATIVE_TOOL_BRIDGE=1
+ *     Force on for any request with at least one mapped tool.
+ *   WINDSURFAPI_NATIVE_TOOL_BRIDGE=all_mapped
+ *     Enable only when every declared function tool maps to a Cascade-native
+ *     kind. This avoids partial native + prompt-emulation mixing.
+ *
+ * Default OFF until field-tested.
  */
 
 import {
@@ -84,6 +90,15 @@ function safeJsonParse(s) {
   if (typeof s !== 'string' || !s) return {};
   try { const v = JSON.parse(s); return v && typeof v === 'object' ? v : {}; }
   catch { return {}; }
+}
+
+function unescapeXmlText(s) {
+  return String(s || '')
+    .replace(/&lt;/g, '<')
+    .replace(/&gt;/g, '>')
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&amp;/g, '&');
 }
 
 function buildFileUri(absolutePath) {
@@ -874,6 +889,151 @@ export function decodeCascadeStepToToolCall(stepFields, kind, callerLookup) {
   };
 }
 
+/**
+ * Claude sometimes emits its provider-native tool syntax while Cascade is in
+ * native bridge mode:
+ *
+ *   <function_calls>
+ *   <invoke name="read_file">
+ *   <parameter name="path">README.md</parameter>
+ *   </invoke>
+ *
+ * This is not prompt emulation. It is a native-format fallback for models that
+ * did not surface a CortexTrajectoryStep but still produced a structured tool
+ * proposal. Convert it back to the caller's declared tool name.
+ */
+export function parseNativeFunctionCallsFromText(text, callerLookup = new Map()) {
+  if (typeof text !== 'string' || !/<function_calls\b/i.test(text)) {
+    return { text: text || '', toolCalls: [] };
+  }
+  const calls = [];
+  const keep = [];
+  let last = 0;
+  const invokeRe = /<invoke\b([^>]*)>([\s\S]*?)<\/invoke>/gi;
+  let match;
+  while ((match = invokeRe.exec(text)) !== null) {
+    keep.push(text.slice(last, match.index));
+    last = match.index + match[0].length;
+    const nameAttr = match[1].match(/\bname\s*=\s*"([^"]+)"/i)
+      || match[1].match(/\bname\s*=\s*'([^']+)'/i);
+    const rawName = nameAttr ? unescapeXmlText(nameAttr[1]).trim() : '';
+    const entry = TOOL_MAP[rawName];
+    if (!rawName || !entry) {
+      keep.push(match[0]);
+      continue;
+    }
+    const params = {};
+    const paramRe = /<parameter\b([^>]*)>([\s\S]*?)<\/parameter>/gi;
+    let pm;
+    while ((pm = paramRe.exec(match[2])) !== null) {
+      const paramNameAttr = pm[1].match(/\bname\s*=\s*"([^"]+)"/i)
+        || pm[1].match(/\bname\s*=\s*'([^']+)'/i);
+      const paramName = paramNameAttr ? unescapeXmlText(paramNameAttr[1]).trim() : '';
+      if (!paramName) continue;
+      const rawValue = unescapeXmlText(pm[2].trim());
+      const parsed = safeJsonParse(rawValue);
+      params[paramName] = Object.keys(parsed).length || /^[\[{]/.test(rawValue.trim())
+        ? parsed
+        : rawValue;
+    }
+    const cascadeKind = entry.kind;
+    const candidates = callerLookup?.get(cascadeKind) || [];
+    const callerName = candidates[0];
+    if (!callerName) {
+      keep.push(match[0]);
+      continue;
+    }
+    const reverseFn = TOOL_MAP[callerName]?.reverse || identityArgs;
+    let openaiArgs;
+    try { openaiArgs = reverseFn(entry.forward(params)); }
+    catch { openaiArgs = params; }
+    calls.push({
+      id: `call_native_${calls.length}_${Date.now().toString(36)}`,
+      name: callerName,
+      argumentsJson: JSON.stringify(openaiArgs ?? {}),
+    });
+  }
+  keep.push(text.slice(last));
+  if (!calls.length) return { text, toolCalls: [] };
+  let outText = keep.join('');
+  outText = outText.replace(/<function_calls>\s*<\/function_calls>/gi, '');
+  outText = outText.replace(/<\/?function_calls>/gi, '');
+  return { text: outText.trim(), toolCalls: calls };
+}
+
+/**
+ * Streaming guard for Claude provider-native <function_calls> blocks in native
+ * bridge mode. It withholds any partial block from content deltas until a
+ * closing </function_calls> arrives, then converts it to OpenAI tool_calls.
+ */
+export class NativeFunctionCallStreamParser {
+  constructor(callerLookup = new Map()) {
+    this.callerLookup = callerLookup;
+    this.buffer = '';
+  }
+
+  feed(delta) {
+    if (!delta) return { text: '', toolCalls: [] };
+    this.buffer += String(delta);
+    return this._drain(false);
+  }
+
+  flush() {
+    return this._drain(true);
+  }
+
+  _drain(flush) {
+    const out = [];
+    const toolCalls = [];
+    const openRe = /<function_calls\b/i;
+    while (this.buffer) {
+      const open = this.buffer.search(openRe);
+      if (open === -1) {
+        const hold = partialFunctionCallsPrefixLength(this.buffer);
+        if (!flush && hold > 0) {
+          out.push(this.buffer.slice(0, this.buffer.length - hold));
+          this.buffer = this.buffer.slice(this.buffer.length - hold);
+          break;
+        }
+        out.push(this.buffer);
+        this.buffer = '';
+        break;
+      }
+
+      out.push(this.buffer.slice(0, open));
+      const tail = this.buffer.slice(open);
+      const closeMatch = tail.match(/<\/function_calls>/i);
+      if (!closeMatch) {
+        if (flush) {
+          out.push(tail);
+          this.buffer = '';
+        } else {
+          this.buffer = tail;
+        }
+        break;
+      }
+
+      const end = open + closeMatch.index + closeMatch[0].length;
+      const block = this.buffer.slice(open, end);
+      const parsed = parseNativeFunctionCallsFromText(block, this.callerLookup);
+      out.push(parsed.text || '');
+      toolCalls.push(...(parsed.toolCalls || []));
+      this.buffer = this.buffer.slice(end);
+    }
+    return { text: out.join(''), toolCalls };
+  }
+}
+
+function partialFunctionCallsPrefixLength(text) {
+  const lit = '<function_calls';
+  const lower = String(text || '').toLowerCase();
+  const max = Math.min(lit.length - 1, lower.length);
+  for (let n = max; n > 0; n--) {
+    if (lower.endsWith(lit.slice(0, n))) return n;
+  }
+  return 0;
+}
+
 // ─── Inject caller's tool history as additional_steps ───────────────
 //
 // When the caller's prior turns include role:"tool" messages (responses to
@@ -1010,15 +1170,18 @@ export function buildAdditionalStepsFromHistory(messages) {
  * therefore has to be OFF — opt in via env when the deployer knows the
  * caller wants remote execution.
  *
- * Both env knobs still work:
- *   WINDSURFAPI_NATIVE_TOOL_BRIDGE=1     → force on for all callers
- *   WINDSURFAPI_NATIVE_TOOL_BRIDGE_OFF=1 → force off (default, but
- *                                          stays available for clarity)
+ * Env knobs:
+ *   WINDSURFAPI_NATIVE_TOOL_BRIDGE=1          → force on for any mapped subset
+ *   WINDSURFAPI_NATIVE_TOOL_BRIDGE=all_mapped → on only if all tools map
+ *   WINDSURFAPI_NATIVE_TOOL_BRIDGE_OFF=1      → force off (highest priority)
  */
 export function shouldUseNativeBridge(tools, { modelKey = '', provider = '', route = '' } = {}) {
   if (process.env.WINDSURFAPI_NATIVE_TOOL_BRIDGE_OFF === '1') return false;
-  const explicitOn = process.env.WINDSURFAPI_NATIVE_TOOL_BRIDGE === '1';
+  const mode = String(process.env.WINDSURFAPI_NATIVE_TOOL_BRIDGE || '').trim().toLowerCase();
+  const explicitOn = mode === '1' || mode === 'true' || mode === 'force';
+  const allMappedOnly = mode === 'all_mapped' || mode === 'all-mapped' || mode === 'mapped_only' || mode === 'mapped-only';
   const part = partitionTools(tools);
   if (!part.hasAny) return false;
+  if (allMappedOnly) return part.unmapped.length === 0;
   return explicitOn;
 }

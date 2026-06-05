@@ -27,9 +27,14 @@ import {
   buildSchemaCompactToolPreambleForProto, buildSkinnyToolPreambleForProto,
 } from './tool-emulation.js';
 import {
-  shouldUseNativeBridge, canMapAllTools, partitionTools, buildReverseLookup,
-  buildAdditionalStepsFromHistory, TOOL_MAP,
+  shouldUseNativeBridge, partitionTools, buildReverseLookup,
+  buildAdditionalStepsFromHistory, parseNativeFunctionCallsFromText,
+  NativeFunctionCallStreamParser, TOOL_MAP,
 } from '../cascade-native-bridge.js';
+import {
+  handleSpecialAgentChatCompletion,
+  isSpecialAgentModelInfo,
+} from '../special-agent.js';
 import { sanitizeText, sanitizeToolCall, PathSanitizeStream } from '../sanitize.js';
 import { registerSseController } from '../sse-registry.js';
 
@@ -89,6 +94,43 @@ function upstreamTransientErrorMessage(model, triedCount, reason = 'internal_err
     ? 'Cascade/语言服务器 HTTP/2 流被取消'
     : 'internal_error';
   return `${model} 上游 Windsurf Cascade 服务瞬态故障：已在 ${triedCount} 个账号上重试都收到 ${detail}。这是上游或本地语言服务器会话的瞬时问题，建议 30-60 秒后重试；若连续出现，请重启语言服务器。`;
+}
+
+export function buildToolRoutingPlan(tools, { useCascade = false, modelKey = '', provider = null, route = 'chat' } = {}) {
+  const hasTools = Array.isArray(tools) && tools.length > 0;
+  const partition = hasTools
+    ? partitionTools(tools)
+    : { mapped: [], unmapped: tools || [], hasAny: false };
+  const nativeBridgeOn = !!(useCascade && hasTools && shouldUseNativeBridge(tools, {
+    modelKey,
+    provider,
+    route,
+  }));
+  const emulationTools = nativeBridgeOn ? partition.unmapped : (tools || []);
+  return {
+    hasTools,
+    partition,
+    nativeBridgeOn,
+    emulationTools,
+    nativeCallerTools: nativeBridgeOn ? partition.mapped : [],
+    shouldBuildToolPreamble: Array.isArray(emulationTools) && emulationTools.length > 0,
+  };
+}
+
+function isLsPoolExhausted(err) {
+  return err?.code === 'LS_POOL_EXHAUSTED' || err?.type === 'ls_pool_exhausted';
+}
+
+function lsPoolExhaustedResponse(err) {
+  return {
+    status: err?.status || 503,
+    body: {
+      error: {
+        message: err?.message || 'Language server pool is exhausted',
+        type: 'ls_pool_exhausted',
+      },
+    },
+  };
 }
 
 export function isUpstreamTransientError(err, isInternal = false) {
@@ -1424,6 +1466,26 @@ async function _handleChatCompletionsInner(body, context = {}) {
   // `claude-opus-4-7-medium`. Fall back to the canonical name if the request
   // omitted model.
   const displayModel = reqModel || modelInfo?.name || config.defaultModel;
+
+  // Global model access control (allowlist / blocklist from dashboard).
+  // This must run before special-agent routing as well as Cascade routing;
+  // otherwise SWE/adaptive models would bypass operator policy.
+  const access = isModelAllowed(routingModelKey);
+  if (!access.allowed) {
+    return { status: 403, body: { error: { message: access.reason, type: 'model_blocked' } } };
+  }
+
+  if (isSpecialAgentModelInfo(modelInfo)) {
+    log.info(`Chat[${reqId}]: routing ${routingModelKey} through special-agent backend`);
+    return handleSpecialAgentChatCompletion(body, {
+      id: genId(),
+      created: Math.floor(Date.now() / 1000),
+      model: displayModel,
+      modelKey: routingModelKey,
+      messages,
+      callerKey,
+    }, context.specialAgent || {});
+  }
   const modelEnum = modelInfo?.enumValue || 0;
   const modelUid = modelInfo?.modelUid || null;
   // Cascade requires either a valid modelUid (string) or a recognized modelEnum.
@@ -1461,12 +1523,14 @@ async function _handleChatCompletionsInner(body, context = {}) {
   //
   // v2.0.65 used canMapAllTools (all-or-nothing) which never fired for
   // codex CLI in production — the gate is now partitionTools().hasAny.
-  const toolPartition = hasTools ? partitionTools(tools) : { mapped: [], unmapped: tools || [], hasAny: false };
-  const nativeBridgeOn = useCascade && hasTools && shouldUseNativeBridge(tools, {
+  const toolRouting = buildToolRoutingPlan(tools, {
+    useCascade,
     modelKey: routingModelKey,
     provider: modelInfo?.provider || null,
     route: body.__route || 'chat',
   });
+  const toolPartition = toolRouting.partition;
+  const nativeBridgeOn = toolRouting.nativeBridgeOn;
   const nativeAdditionalSteps = nativeBridgeOn
     ? buildAdditionalStepsFromHistory(messages || [])
     : [];
@@ -1477,8 +1541,8 @@ async function _handleChatCompletionsInner(body, context = {}) {
     : [];
   // Tools we ship to the emulation toolPreamble: the unmapped subset when
   // bridge is on, or the full tools[] when bridge is off (legacy behaviour).
-  const emulationTools = nativeBridgeOn ? toolPartition.unmapped : (tools || []);
-  const nativeCallerTools = nativeBridgeOn ? toolPartition.mapped : [];
+  const emulationTools = toolRouting.emulationTools;
+  const nativeCallerTools = toolRouting.nativeCallerTools;
   if (nativeBridgeOn) {
     const mappedNames = toolPartition.mapped.map(t => t?.function?.name).join(',') || '(none)';
     const unmappedNames = toolPartition.unmapped.map(t => t?.function?.name).join(',') || '(none)';
@@ -1503,7 +1567,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
   // shapes. Only the actual payload after fallback is compared with the
   // hard cap; v2.0.9 rejected on the full-schema size before compacting,
   // which broke real opencode / Claude Code setups with 30-50 MCP tools.
-  if (emulateTools) {
+  if (emulateTools && toolRouting.shouldBuildToolPreamble) {
     // v2.0.66: when partition-mode native bridge is on, emulation only
     // describes the *unmapped* tools. Mapped tools are delivered via
     // cascade native trajectory steps and would only confuse the planner
@@ -1520,7 +1584,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
     // confused about whether it should be using the cascade-native path
     // or the emulation path.
     const suppressEmul = nativeBridgeOn && process.env.WINDSURFAPI_NATIVE_BRIDGE_NO_EMUL === '1';
-    const budgetTools = suppressEmul ? [] : (emulationTools.length ? emulationTools : (tools || []));
+    const budgetTools = suppressEmul ? [] : emulationTools;
     const budget = applyToolPreambleBudget(budgetTools, tool_choice, callerEnv, {
       modelKey: routingModelKey,
       provider: modelInfo?.provider || null,
@@ -1670,12 +1734,6 @@ async function _handleChatCompletionsInner(body, context = {}) {
     };
   }
 
-  // Global model access control (allowlist / blocklist from dashboard)
-  const access = isModelAllowed(routingModelKey);
-  if (!access.allowed) {
-    return { status: 403, body: { error: { message: access.reason, type: 'model_blocked' } } };
-  }
-
   // Per-account model routing preflight: if NO active account has this
   // model in its tier ∩ available list, fail fast instead of looping
   // through every account trying to find one. This surfaces tier
@@ -1759,6 +1817,9 @@ async function _handleChatCompletionsInner(body, context = {}) {
       route: body.__route || 'chat',
       nativeOpts,
       context,
+      ensureLs: context.ensureLs,
+      getLsFor: context.getLsFor,
+      WindsurfClient: context.WindsurfClient,
     });
   }
 
@@ -1942,7 +2003,10 @@ async function _handleChatCompletionsInner(body, context = {}) {
       }
     }
 
-    await ensureLs(acct.proxy);
+    try { await ensureLs(acct.proxy); } catch (e) {
+      lastErr = isLsPoolExhausted(e) ? lsPoolExhaustedResponse(e) : { status: e.status || 503, body: { error: { message: e.message || String(e), type: e.type || 'ls_unavailable' } } };
+      break;
+    }
     const ls = getLsFor(acct.proxy);
     if (!ls) { lastErr = { status: 503, body: { error: { message: 'No LS instance available', type: 'ls_unavailable' } } }; break; }
     // Cascade pins cascade_id to a specific LS port too; if the LS it was
@@ -2174,6 +2238,15 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
           });
         }
         toolCalls = filterToolCallsByAllowlist(nativeCalls, tools);
+        if (toolCalls.length === 0 && allText) {
+          const fallback = parseNativeFunctionCallsFromText(allText, lookup);
+          const filteredFallback = filterToolCallsByAllowlist(fallback.toolCalls, tools);
+          if (filteredFallback.length) {
+            toolCalls = filteredFallback;
+            allText = fallback.text || '';
+            log.info(`Chat[non-stream]: native bridge parsed ${toolCalls.length} provider-native function_call(s) from text`);
+          }
+        }
         // Strip any tool-call markup that may have leaked into text — the
         // planner sometimes narrates "I'm going to look at X" alongside
         // emitting the cascade step, and the caller doesn't want that
@@ -2615,6 +2688,9 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
 function streamResponse(id, created, model, modelKey, provider, messages, cascadeMessages, modelEnum, modelUid, useCascade, ckey, emulateTools, toolPreamble, reqId, wantJson = false, callerKey = '', deps = {}) {
   const checkMessageRateLimitFn = deps.checkMessageRateLimit || checkMessageRateLimit;
   const waitForAccountFn = deps.waitForAccount || waitForAccount;
+  const ensureLsFn = deps.ensureLs || ensureLs;
+  const getLsForFn = deps.getLsFor || getLsFor;
+  const ClientClass = deps.WindsurfClient || WindsurfClient;
   // Cache policy threads through deps because streamResponse is a top-level
   // helper, not a closure. Without this, lines that compute TTL hints or
   // attribute usage to ephemeral_5m_input_tokens / ephemeral_1h_input_tokens
@@ -2770,6 +2846,9 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
       // if a path straddles a chunk boundary. See src/sanitize.js.
       let pathStreamText = new PathSanitizeStream();
       let pathStreamThinking = new PathSanitizeStream();
+      let nativeFunctionParser = nativeBridgeOn
+        ? new NativeFunctionCallStreamParser(nativeOpts?.callerLookup || new Map())
+        : null;
 
       const emitContent = (clean) => {
         if (!clean) return;
@@ -2799,6 +2878,17 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
               function: { name: tc.name, arguments: sanitizeText(tc.argumentsJson || '{}') },
             }],
           }, finish_reason: null }] });
+      };
+
+      const emitNativeFallbackCalls = (rawCalls) => {
+        const filtered = filterToolCallsByAllowlist(rawCalls || [], declaredTools);
+        for (const rawTc of filtered) {
+          const tc = sanitizeToolCall(repairToolCallArguments(rawTc, messages));
+          const idx = collectedToolCalls.length;
+          collectedToolCalls.push(tc);
+          emitToolCallDelta(tc, idx);
+        }
+        return filtered.length;
       };
 
       const onChunk = (chunk) => {
@@ -2848,8 +2938,16 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
           //              →  PathSanitizeStream   (scrub server paths)
           //              →  client
           let safeText = chunk.text;
+          if (nativeFunctionParser) {
+            const nativeParsed = nativeFunctionParser.feed(safeText);
+            safeText = nativeParsed.text;
+            const emitted = emitNativeFallbackCalls(nativeParsed.toolCalls);
+            if (emitted) {
+              log.info(`Chat[stream]: native bridge parsed ${emitted} provider-native function_call(s) from stream`);
+            }
+          }
           if (toolParser) {
-            const parsed = toolParser.feed(chunk.text);
+            const parsed = toolParser.feed(safeText);
             safeText = parsed.text;
             if (Array.isArray(parsed.items) && parsed.items.length) {
               for (const item of parsed.items) {
@@ -2913,6 +3011,9 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
             }
             pathStreamText = new PathSanitizeStream();
             pathStreamThinking = new PathSanitizeStream();
+            nativeFunctionParser = nativeBridgeOn
+              ? new NativeFunctionCallStreamParser(nativeOpts?.callerLookup || new Map())
+              : null;
           }
           let acct = null;
           if (reuseEntry && attempt === 0) {
@@ -3005,8 +3106,13 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
             }
           }
 
-          try { await ensureLs(acct.proxy); } catch (e) { lastErr = e; break; }
-          const ls = getLsFor(acct.proxy);
+          try { await ensureLsFn(acct.proxy); } catch (e) {
+            lastErr = isLsPoolExhausted(e)
+              ? Object.assign(new Error(e.message), { type: 'ls_pool_exhausted', status: e.status || 503 })
+              : e;
+            break;
+          }
+          const ls = getLsForFn(acct.proxy);
           if (!ls) { lastErr = new Error('No LS instance available'); break; }
           if (reuseEntry && reuseEntry.lsPort !== ls.port) {
             log.info(`Chat[${reqId}]: reuse MISS — LS port changed`);
@@ -3018,7 +3124,7 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
             return n + (typeof c === 'string' ? c.length : Array.isArray(c) ? c.reduce((k, p) => k + (typeof p?.text === 'string' ? p.text.length : 0), 0) : 0);
           }, 0);
           log.info(`Chat: model=${model} flow=${useCascade ? 'cascade' : 'legacy'} stream=true attempt=${attempt + 1} account=${acct.email} ls=${ls.port} turns=${(messages||[]).length} chars=${_msgCharsStream}${reuseEntry ? ' reuse=1' : ''}`);
-          const client = new WindsurfClient(acct.apiKey, ls.port, ls.csrfToken);
+          const client = new ClientClass(acct.apiKey, ls.port, ls.csrfToken);
           let cascadeResult = null;
           try {
             if (useCascade) {
@@ -3034,12 +3140,22 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
               await client.rawGetChatMessage(messages, modelEnum, modelUid, { onChunk });
             }
             // Flush order matters:
-            //   1. ToolCallStreamParser tail → may produce more text deltas
+            //   1. NativeFunctionCallStreamParser tail → may produce provider
+            //      native tool_calls withheld from content deltas
+            //   2. ToolCallStreamParser tail → may produce more text deltas
             //      (e.g., a dangling <tool_call> that never closed falls
             //      through as literal text)
-            //   2. PathSanitizeStream tail (text) → scrubs anything the tool
+            //   3. PathSanitizeStream tail (text) → scrubs anything the tool
             //      parser held back AND anything we were holding ourselves
-            //   3. PathSanitizeStream tail (thinking)
+            //   4. PathSanitizeStream tail (thinking)
+            if (nativeFunctionParser) {
+              const nativeTail = nativeFunctionParser.flush();
+              const emitted = emitNativeFallbackCalls(nativeTail.toolCalls);
+              if (emitted) {
+                log.info(`Chat[stream]: native bridge parsed ${emitted} provider-native function_call(s) from stream tail`);
+              }
+              if (nativeTail.text) emitContent(pathStreamText.feed(nativeTail.text));
+            }
             if (toolParser) {
               const tail = toolParser.flush();
               if (tail.text) emitContent(pathStreamText.feed(tail.text));
@@ -3352,10 +3468,13 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
           const temporaryUnavailable = isAllTemporarilyUnavailable(modelKey);
           const rl = isAllRateLimited(modelKey);
           const allInternal = streamInternalCount > 0 && tried.length > 0 && streamInternalCount >= tried.length;
+          const poolExhausted = isLsPoolExhausted(lastErr);
           // 优先暴露 upstream_transient，避免把 Cascade transport 抖动误报成账号限流。
           const lastIsTransport = isCascadeTransportError(lastErr);
           const errMsg = allInternal
             ? upstreamTransientErrorMessage(model, tried.length, lastIsTransport ? 'cascade_transport' : 'internal_error')
+            : poolExhausted
+            ? sanitizeText(lastErr?.message || 'language server pool exhausted')
             : temporaryUnavailable.allUnavailable
             ? `${model} 所有账号暂时不可用，请 ${Math.ceil(temporaryUnavailable.retryAfterMs / 1000)} 秒后重试`
             : rl.allLimited
@@ -3380,6 +3499,8 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
             // go to the server log.
             const errType = allInternal
               ? 'upstream_transient_error'
+              : poolExhausted
+                ? 'ls_pool_exhausted'
               : (temporaryUnavailable.allUnavailable || lastErr?.type === 'rate_limit_exceeded')
                 ? 'rate_limit_exceeded'
                 : 'upstream_error';
@@ -3388,6 +3509,8 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
           } else {
             const errType = allInternal
               ? 'upstream_transient_error'
+              : poolExhausted
+                ? 'ls_pool_exhausted'
               : (temporaryUnavailable.allUnavailable || lastErr?.type === 'rate_limit_exceeded')
                 ? 'rate_limit_exceeded'
                 : 'upstream_error';

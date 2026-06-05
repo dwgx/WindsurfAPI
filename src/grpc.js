@@ -12,6 +12,7 @@
 import http2 from 'http2';
 import { log } from './config.js';
 import { wrapRequest, StreamingFrameParser } from './connect.js';
+import { traceGrpcPayload } from './proto-trace.js';
 
 const USE_CONNECT = process.env.GRPC_PROTOCOL === 'connect';
 export const _USE_CONNECT_FOR_TEST = USE_CONNECT;
@@ -160,6 +161,14 @@ export function grpcUnary(port, csrfToken, path, body, timeout = 30000) {
     };
 
     const req = client.request(headers);
+    traceGrpcPayload({
+      port,
+      path,
+      direction: 'request',
+      body,
+      transport: USE_CONNECT ? 'connect' : 'grpc',
+      framed: true,
+    });
     req.on('data', (chunk) => chunks.push(chunk));
 
     let grpcStatus = '0', grpcMessage = '';
@@ -200,10 +209,26 @@ export function grpcUnary(port, csrfToken, path, body, timeout = 30000) {
         const payload = dataFrames.length > 0
           ? Buffer.concat(dataFrames.map(f => f.payload))
           : full;
+        traceGrpcPayload({
+          port,
+          path,
+          direction: 'response',
+          body: payload,
+          transport: 'connect',
+          framed: false,
+        });
         done(resolve, payload);
       } else {
         const frames = extractGrpcFrames(full);
         const payload = frames.length > 0 ? Buffer.concat(frames) : stripGrpcFrame(full);
+        traceGrpcPayload({
+          port,
+          path,
+          direction: 'response',
+          body: payload,
+          transport: 'grpc',
+          framed: false,
+        });
         done(resolve, payload);
       }
     });
@@ -264,6 +289,14 @@ export function grpcStream(port, csrfToken, path, body, opts = {}) {
   };
 
   const req = client.request(streamHeaders);
+  traceGrpcPayload({
+    port,
+    path,
+    direction: 'request',
+    body,
+    transport: USE_CONNECT ? 'connect' : 'grpc',
+    framed: true,
+  });
   const connectParser = USE_CONNECT ? new StreamingFrameParser() : null;
 
   req.on('data', (chunk) => {
@@ -285,6 +318,14 @@ export function grpcStream(port, csrfToken, path, body, opts = {}) {
               }
             } catch {}
           } else {
+            traceGrpcPayload({
+              port,
+              path,
+              direction: 'response',
+              body: frame.payload,
+              transport: 'connect',
+              framed: false,
+            });
             onData?.(frame.payload);
           }
         }
@@ -313,6 +354,14 @@ export function grpcStream(port, csrfToken, path, body, opts = {}) {
 
       if (compressed === 0) {
         const payload = pendingBuf.subarray(5, 5 + msgLen);
+        traceGrpcPayload({
+          port,
+          path,
+          direction: 'response',
+          body: payload,
+          transport: 'grpc',
+          framed: false,
+        });
         onData?.(payload);
       }
       pendingBuf = pendingBuf.subarray(5 + msgLen);

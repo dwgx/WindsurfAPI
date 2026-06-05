@@ -62,6 +62,18 @@ describe('addAccountByEmail wiring (#follow-up)', () => {
     assert.match(body, /if \(!email \|\| !password\)/,
       'must short-circuit on missing credentials so we never POST {email:"",password:""} to Windsurf');
   });
+
+  test('addAccountByEmail updates an existing email instead of duplicating the account', () => {
+    const m = AUTH_JS.match(/export async function addAccountByEmail[\s\S]+?\n\}/);
+    assert.ok(m);
+    const body = m[0];
+    assert.match(body, /existingByEmail/,
+      'must look up an existing account by normalized email before adding a new one');
+    assert.match(body, /existingByEmail \|\| addAccountByKey\(/,
+      'must reuse the existing email account instead of always appending');
+    assert.match(body, /account\.apiKey = result\.apiKey/,
+      'must refresh the existing account apiKey after re-login');
+  });
 });
 
 describe('CheckUserLoginMethod empty-body fallback (#follow-up)', () => {

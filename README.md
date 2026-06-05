@@ -267,6 +267,17 @@ curl http://localhost:3003/v1/messages \
 | `LS_BINARY_PATH` | `/opt/windsurf/language_server_linux_x64` | LS 二进制位置 |
 | `LS_DATA_DIR` | Linux: `/opt/windsurf/data`；macOS: `~/.windsurf/data` | 每个 proxy 独立的 LS 数据根目录 |
 | `LS_PORT` | `42100` | LS gRPC 端口 |
+| `LS_MAX_INSTANCES` | 内存自适应，最多 `20` | LS 池最大实例数；2GB VPS 建议 `2` |
+| `LS_IDLE_TTL_MS` | `1200000` | 非 default LS 空闲超过该时间自动停止；`0` 关闭 |
+| `LS_IDLE_SWEEP_MS` | 自动推导 | LS 空闲回收扫描间隔 |
+| `LS_PREWARM_PROXIES` | `0` | 设为 `1` 才在启动时预热所有 proxy LS；默认按需启动 |
+| `WINDSURFAPI_NATIVE_TOOL_BRIDGE` | 空 | `all_mapped` 仅在 Read/Bash/Grep/Glob/WebSearch/WebFetch 等全部可映射时走 native bridge，不再把这些工具塞进 prompt preamble；`1` 为混合工具强制 partition 模式 |
+| `WINDSURFAPI_NATIVE_TOOL_BRIDGE_OFF` | 空 | 设为 `1` 强制关闭 native tool bridge，优先级高于上面的开关 |
+| `WINDSURFAPI_SPECIAL_AGENT_BACKEND` | 空 | 可选 special-agent 后端。设为 `devin-cli` 后，`swe-1.6` / `swe-1.6-fast` / `adaptive` / `arena-*` 不再走 direct Cascade，而是走 Devin CLI PoC |
+| `DEVIN_CLI_PATH` | `devin` | Devin CLI 可执行文件路径；Docker/macOS 都需要自己安装或挂载，不是基础镜像硬依赖 |
+| `DEVIN_CLI_MODE` | `print` | 当前只实现 `devin -p` print 模式；ACP/stdio 后端预留，未默认启用 |
+| `DEVIN_MAX_PROCS` | `1` | Devin CLI 最大并发进程数，避免 special-agent 路径把内存打爆 |
+| `DEVIN_CLI_USE_ACCOUNT_POOL` | `1` | 默认从 WindsurfAPI 账号池取一个账号并把 apiKey 注入 `WINDSURF_API_KEY`；设 `0` 表示 Devin CLI 自己管理登录态 |
 | `DASHBOARD_PASSWORD` | 空 | 后台密码 留空不设密码 |
 | `ALLOW_PRIVATE_PROXY_HOSTS` | 空 | 设为 `1` 允许在代理测试和登录时使用内网 IP（如 `192.168.x.x`、`10.x.x.x`）。默认留空仅允许公网地址 |
 | `CASCADE_REUSE_BY_CALLER` | `0` | 设为 `1` 启用 caller 级别回退复用。指纹未命中时，按 callerKey+model 回退到最近的 cascade。适合单用户 Claude Code 场景 |
@@ -325,6 +336,8 @@ gemini-2.5-pro / flash · gemini-3.0-pro / flash（minimal / low / medium / high
 swe-1.5 / 1.5-fast / 1.6 / 1.6-fast · arena-fast · arena-smart
 
 </details>
+
+> `swe-1.6` / `swe-1.6-fast` / `adaptive` / `arena-*` 属于 special-agent 路径。direct Cascade 会报 unknown model UID / route 不通；默认不会假装可用。需要测试时显式开启 `WINDSURFAPI_SPECIAL_AGENT_BACKEND=devin-cli`，并安装/挂载 Devin CLI。当前 PoC 是 `devin -p` print 模式，默认拒绝 caller-local tools/media；ACP 工具桥接另做。
 
 > **免费账号 entitled 模型**主要是 `gemini-2.5-flash`、`glm-4.7`、`glm-5` / `5.1`、`kimi-k2` / `k2.5` / `k2-6`、`qwen-3` 等开源系列；Claude / GPT 全系 + Opus 系列要 Pro。具体每个账号的 entitled 清单看 dashboard。
 >

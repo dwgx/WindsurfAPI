@@ -13,7 +13,7 @@ import { execSync } from 'child_process';
 import { log } from './config.js';
 import { extractImages } from './image.js';
 import { closeSessionForPort, grpcFrame, grpcUnary, grpcStream } from './grpc.js';
-import { getLsEntryByPort } from './langserver.js';
+import { beginLsUse, endLsUse, getLsEntryByPort } from './langserver.js';
 import {
   buildRawGetChatMessageRequest, parseRawResponse,
   buildInitializePanelStateRequest,
@@ -366,66 +366,72 @@ export class WindsurfClient {
    * @param {object} opts - { onChunk, onEnd, onError }
    */
   rawGetChatMessage(messages, modelEnum, modelName, opts = {}) {
-    const { onChunk, onEnd, onError } = opts;
-    // Reuse the LS-scoped session_id instead of letting buildMetadata
-    // mint a fresh UUID on every call. A stable session per LS matches
-    // what a real Windsurf IDE instance sends (one session for the whole
-    // window's lifetime) and gives upstream fingerprinting less to latch
-    // onto. Cascade path already does this via lsEntry.sessionId; this
-    // closes the same gap for the legacy channel.
-    const lsEntry = getLsEntryByPort(this.port);
-    if (lsEntry && !lsEntry.sessionId) lsEntry.sessionId = randomUUID();
-    const sessionId = lsEntry?.sessionId;
-    const proto = buildRawGetChatMessageRequest(this.apiKey, messages, modelEnum, modelName, sessionId);
-    const body = grpcFrame(proto);
+    beginLsUse(this.port);
+    try {
+      const { onChunk, onEnd, onError } = opts;
+      // Reuse the LS-scoped session_id instead of letting buildMetadata
+      // mint a fresh UUID on every call. A stable session per LS matches
+      // what a real Windsurf IDE instance sends (one session for the whole
+      // window's lifetime) and gives upstream fingerprinting less to latch
+      // onto. Cascade path already does this via lsEntry.sessionId; this
+      // closes the same gap for the legacy channel.
+      const lsEntry = getLsEntryByPort(this.port);
+      if (lsEntry && !lsEntry.sessionId) lsEntry.sessionId = randomUUID();
+      const sessionId = lsEntry?.sessionId;
+      const proto = buildRawGetChatMessageRequest(this.apiKey, messages, modelEnum, modelName, sessionId);
+      const body = grpcFrame(proto);
 
-    log.debug(`RawGetChatMessage: enum=${modelEnum} msgs=${messages.length}`);
+      log.debug(`RawGetChatMessage: enum=${modelEnum} msgs=${messages.length}`);
 
-    return new Promise((resolve, reject) => {
-      const chunks = [];
-      // Once the promise has settled, ignore any further stream events. The
-      // LS occasionally emits an error frame followed by a trailing onEnd;
-      // without this guard the second callback re-resolves/re-rejects.
-      let done = false;
+      return new Promise((resolve, reject) => {
+        const chunks = [];
+        // Once the promise has settled, ignore any further stream events. The
+        // LS occasionally emits an error frame followed by a trailing onEnd;
+        // without this guard the second callback re-resolves/re-rejects.
+        let done = false;
 
-      grpcStream(this.port, this.csrfToken, `${LS_SERVICE}/RawGetChatMessage`, body, {
-        onData: (payload) => {
-          if (done) return;
-          try {
-            const parsed = parseRawResponse(payload);
-            if (parsed.text) {
-              // Detect server-side errors returned as text
-              const errMatch = /^(permission_denied|failed_precondition|not_found|unauthenticated):/.test(parsed.text.trim());
-              if (parsed.isError || errMatch) {
-                const err = new Error(parsed.text.trim());
-                // Mark model-level errors so they don't count against the account
-                err.isModelError = /permission_denied|failed_precondition/.test(parsed.text);
-                if (err.isModelError) err.kind = 'model_error';
-                done = true;
-                reject(err);
-                return;
+        grpcStream(this.port, this.csrfToken, `${LS_SERVICE}/RawGetChatMessage`, body, {
+          onData: (payload) => {
+            if (done) return;
+            try {
+              const parsed = parseRawResponse(payload);
+              if (parsed.text) {
+                // Detect server-side errors returned as text
+                const errMatch = /^(permission_denied|failed_precondition|not_found|unauthenticated):/.test(parsed.text.trim());
+                if (parsed.isError || errMatch) {
+                  const err = new Error(parsed.text.trim());
+                  // Mark model-level errors so they don't count against the account
+                  err.isModelError = /permission_denied|failed_precondition/.test(parsed.text);
+                  if (err.isModelError) err.kind = 'model_error';
+                  done = true;
+                  reject(err);
+                  return;
+                }
+                chunks.push(parsed);
+                onChunk?.(parsed);
               }
-              chunks.push(parsed);
-              onChunk?.(parsed);
+            } catch (e) {
+              log.error('RawGetChatMessage parse error:', e.message);
             }
-          } catch (e) {
-            log.error('RawGetChatMessage parse error:', e.message);
-          }
-        },
-        onEnd: () => {
-          if (done) return;
-          done = true;
-          onEnd?.(chunks);
-          resolve(chunks);
-        },
-        onError: (err) => {
-          if (done) return;
-          done = true;
-          onError?.(err);
-          reject(err);
-        },
-      });
-    });
+          },
+          onEnd: () => {
+            if (done) return;
+            done = true;
+            onEnd?.(chunks);
+            resolve(chunks);
+          },
+          onError: (err) => {
+            if (done) return;
+            done = true;
+            onError?.(err);
+            reject(err);
+          },
+        });
+      }).finally(() => endLsUse(this.port));
+    } catch (err) {
+      endLsUse(this.port);
+      throw err;
+    }
   }
 
   /**
@@ -519,7 +525,11 @@ export class WindsurfClient {
    * @param {object} opts - { onChunk, onEnd, onError }
    */
   async cascadeChat(messages, modelEnum, modelUid, opts = {}) {
-    let {
+    let onChunk, onEnd, onError, signal, reuseEntry, toolPreamble, displayModel;
+    let nativeMode, nativeAllowlist, additionalSteps;
+    beginLsUse(this.port);
+    try {
+    ({
       onChunk, onEnd, onError, signal, reuseEntry, toolPreamble, displayModel,
       // v2.0.65 native tool bridge handles. When nativeMode=true the
       // upstream cascade_config switches the planner to DEFAULT mode + a
@@ -527,7 +537,7 @@ export class WindsurfClient {
       // carries fake "completed" trajectory steps for the caller's prior
       // tool turns so the planner reasons from post-tool state.
       nativeMode, nativeAllowlist, additionalSteps,
-    } = opts;
+    } = opts);
     const aborted = () => signal?.aborted;
     const inputChars = messages.reduce((n, m) => n + contentToString(m?.content).length, 0);
 
@@ -556,7 +566,6 @@ export class WindsurfClient {
     // UpdateWorkspaceTrust) and reopen the cascade.
     const isUntrustedWorkspace = (e) => /untrusted workspace|workspace.*not.*trusted/i.test(e?.message || '');
 
-    try {
       // Step 1: Start cascade — with retry on panel-state-not-found
       let cascadeId;
       const openCascade = async () => {
@@ -1208,6 +1217,8 @@ export class WindsurfClient {
       }
       onError?.(err);
       throw err;
+    } finally {
+      endLsUse(this.port);
     }
   }
 
@@ -1229,22 +1240,27 @@ export class WindsurfClient {
   // model allowlist + credit usage + trial end time. Replaces the
   // probe-based tier inference for accounts where this call succeeds.
   async getUserStatus() {
-    const proto = buildGetUserStatusRequest(this.apiKey);
-    const resp = await grpcUnary(
-      this.port, this.csrfToken,
-      `${LS_SERVICE}/GetUserStatus`, grpcFrame(proto), 10000,
-    );
-    const userStatusBytes = extractUserStatusBytes(resp);
-    const lsEntry = getLsEntryByPort(this.port);
-    if (lsEntry && !lsEntry.sessionId) lsEntry.sessionId = randomUUID();
-    const sessionId = lsEntry?.sessionId || null;
-    const panelProto = buildUpdatePanelStateWithUserStatusRequest(this.apiKey, sessionId, userStatusBytes);
-    grpcUnary(
-      this.port, this.csrfToken,
-      `${LS_SERVICE}/UpdatePanelStateWithUserStatus`, grpcFrame(panelProto), 5000,
-    ).catch(err => {
-      log.debug(`UpdatePanelStateWithUserStatus: ${err.message}`);
-    });
-    return parseGetUserStatusResponse(resp);
+    beginLsUse(this.port);
+    try {
+      const proto = buildGetUserStatusRequest(this.apiKey);
+      const resp = await grpcUnary(
+        this.port, this.csrfToken,
+        `${LS_SERVICE}/GetUserStatus`, grpcFrame(proto), 10000,
+      );
+      const userStatusBytes = extractUserStatusBytes(resp);
+      const lsEntry = getLsEntryByPort(this.port);
+      if (lsEntry && !lsEntry.sessionId) lsEntry.sessionId = randomUUID();
+      const sessionId = lsEntry?.sessionId || null;
+      const panelProto = buildUpdatePanelStateWithUserStatusRequest(this.apiKey, sessionId, userStatusBytes);
+      grpcUnary(
+        this.port, this.csrfToken,
+        `${LS_SERVICE}/UpdatePanelStateWithUserStatus`, grpcFrame(panelProto), 5000,
+      ).catch(err => {
+        log.debug(`UpdatePanelStateWithUserStatus: ${err.message}`);
+      });
+      return parseGetUserStatusResponse(resp);
+    } finally {
+      endLsUse(this.port);
+    }
   }
 }

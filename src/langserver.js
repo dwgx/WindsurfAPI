@@ -9,12 +9,13 @@
  */
 
 import { spawn, execSync } from 'child_process';
-import { mkdirSync } from 'fs';
+import { mkdirSync, readFileSync } from 'fs';
 import { existsSync } from 'fs';
 import http2 from 'http2';
 import net from 'net';
 import { randomUUID } from 'crypto';
-import { resolve } from 'path';
+import { totalmem } from 'os';
+import { posix, resolve } from 'path';
 import { log } from './config.js';
 import { closeSessionForPort } from './grpc.js';
 
@@ -25,11 +26,54 @@ const DEFAULT_API_URL = 'https://server.self-serve.windsurf.com';
 const DEFAULT_LINUX_DATA_ROOT = '/opt/windsurf/data';
 
 // v2.0.96: cap LS pool size to prevent memory blowup (#174).
-// Each LS instance uses ~200-400MB. With sticky proxy detection enabling
-// per-account LS, memory can grow unbounded. Default cap: 20 instances.
+// v2.0.98: make the default adaptive. Current LS builds can consume
+// ~500-600MB RSS including the child worker, so a fixed default of 20 is
+// unsafe on 2GB VPSes. Operators with large machines can still override.
+const DEFAULT_LS_RSS_ESTIMATE_BYTES = 700 * 1024 * 1024;
+const RSS_SNAPSHOT_TTL_MS = 5000;
+
+export function detectMemoryLimitBytes(readFile = readFileSync, hostTotalBytes = totalmem()) {
+  const candidates = [];
+  const readLimit = (path) => {
+    try {
+      const raw = String(readFile(path, 'utf-8')).trim();
+      if (!raw || raw === 'max') return;
+      const n = Number(raw);
+      if (Number.isFinite(n) && n > 0) candidates.push(n);
+    } catch {}
+  };
+  readLimit('/sys/fs/cgroup/memory.max');
+  readLimit('/sys/fs/cgroup/memory/memory.limit_in_bytes');
+  const hostTotal = Number(hostTotalBytes) || 0;
+  const sane = candidates
+    // cgroup v1 often reports absurd sentinel values when unlimited.
+    .filter(n => n < 1_000_000_000_000_000)
+    .filter(n => hostTotal <= 0 || n <= hostTotal);
+  return sane.length ? Math.min(...sane) : hostTotal;
+}
+
+export function estimateDefaultMaxLsInstances(totalBytes = totalmem(), perInstanceBytes = DEFAULT_LS_RSS_ESTIMATE_BYTES) {
+  const total = Number(totalBytes) || 0;
+  const per = Number(perInstanceBytes) || DEFAULT_LS_RSS_ESTIMATE_BYTES;
+  if (total <= 0 || per <= 0) return 2;
+  // Keep one slot for the default LS plus one proxy slot. The default LS is
+  // warmed on startup and is intentionally not LRU-evicted, so returning 1 on
+  // tiny cgroups would make every proxied account fail with LS_POOL_EXHAUSTED.
+  return Math.max(2, Math.min(20, Math.floor(total / per)));
+}
 const MAX_LS_INSTANCES = (() => {
   const n = parseInt(process.env.LS_MAX_INSTANCES || '', 10);
-  return Number.isFinite(n) && n > 0 ? n : 20;
+  return Number.isFinite(n) && n > 0 ? n : estimateDefaultMaxLsInstances(detectMemoryLimitBytes());
+})();
+
+const LS_IDLE_TTL_MS = (() => {
+  const n = parseInt(process.env.LS_IDLE_TTL_MS || '', 10);
+  return Number.isFinite(n) && n >= 0 ? n : 20 * 60 * 1000;
+})();
+const LS_IDLE_SWEEP_MS = (() => {
+  const n = parseInt(process.env.LS_IDLE_SWEEP_MS || '', 10);
+  if (Number.isFinite(n) && n > 0) return n;
+  return LS_IDLE_TTL_MS > 0 ? Math.max(60_000, Math.min(5 * 60_000, Math.floor(LS_IDLE_TTL_MS / 2))) : 0;
 })();
 
 // Auto-restart configuration (env-overridable)
@@ -56,6 +100,17 @@ const _intentionalShutdown = new Set();
 let _nextPort = DEFAULT_PORT + 1;
 let _binaryPath = DEFAULT_BINARY;
 let _apiServerUrl = DEFAULT_API_URL;
+let _idleSweepTimer = null;
+let _rssSnapshot = { at: 0, pidKey: '', byRootPid: new Map() };
+
+function lsPoolExhaustedError(message) {
+  const err = new Error(message);
+  err.code = 'LS_POOL_EXHAUSTED';
+  err.status = 503;
+  err.type = 'ls_pool_exhausted';
+  err.isResourceExhausted = true;
+  return err;
+}
 
 // v2.0.71 (#119 follow-up): heuristic to recognise sticky-IP proxy
 // usernames. Common providers embed a session/IP token inside the
@@ -137,7 +192,7 @@ function proxyKey(proxy) {
 
 export function defaultLsDataRoot(platform = process.platform, home = process.env.HOME) {
   return platform === 'darwin'
-    ? resolve(home || '.', '.windsurf', 'data')
+    ? posix.join(home || '.', '.windsurf', 'data')
     : DEFAULT_LINUX_DATA_ROOT;
 }
 
@@ -154,6 +209,136 @@ function proxyUrl(proxy) {
     ? `${encodeURIComponent(proxy.username)}:${encodeURIComponent(proxy.password || '')}@`
     : '';
   return `http://${auth}${proxy.host}:${proxy.port || 8080}`;
+}
+
+function touchEntry(entry) {
+  if (!entry) return;
+  const now = Date.now();
+  entry.lastUsedAt = now;
+  entry._evictAt = now;
+}
+
+export function beginLsUse(port) {
+  const entry = getLsEntryByPort(port);
+  if (!entry) return null;
+  entry.activeRequests = (entry.activeRequests || 0) + 1;
+  touchEntry(entry);
+  return entry;
+}
+
+export function endLsUse(port) {
+  const entry = getLsEntryByPort(port);
+  if (!entry) return;
+  entry.activeRequests = Math.max(0, (entry.activeRequests || 0) - 1);
+  touchEntry(entry);
+}
+
+function invalidateEntryForShutdown(entry) {
+  if (!entry?.port) return;
+  closeSessionForPort(entry.port);
+  import('./conversation-pool.js')
+    .then(m => m.invalidateFor({ lsPort: entry.port, lsGeneration: entry.generation }))
+    .catch(() => {});
+}
+
+export function sweepIdleLanguageServers(now = Date.now()) {
+  if (!LS_IDLE_TTL_MS) return { scanned: _pool.size, stopped: 0, ttlMs: LS_IDLE_TTL_MS };
+  let stopped = 0;
+  for (const [key, entry] of _pool) {
+    if (key === 'default') continue;
+    if (!entry?.ready) continue;
+    if ((entry.activeRequests || 0) > 0) continue;
+    const last = entry.lastUsedAt || entry.startedAt || now;
+    if (now - last < LS_IDLE_TTL_MS) continue;
+    _intentionalShutdown.add(key);
+    try { entry.process?.kill('SIGTERM'); } catch {}
+    invalidateEntryForShutdown(entry);
+    _pool.delete(key);
+    stopped++;
+    log.info(`LS idle reaper stopped ${key} after ${Math.round((now - last) / 1000)}s idle`);
+  }
+  return { scanned: _pool.size + stopped, stopped, ttlMs: LS_IDLE_TTL_MS };
+}
+
+function ensureIdleSweeper() {
+  if (_idleSweepTimer || !LS_IDLE_SWEEP_MS) return;
+  _idleSweepTimer = setInterval(() => {
+    try { sweepIdleLanguageServers(); } catch (e) { log.warn(`LS idle reaper: ${e.message}`); }
+  }, LS_IDLE_SWEEP_MS);
+  try { _idleSweepTimer.unref(); } catch {}
+}
+
+function collectTrackedRssSnapshot(now = Date.now()) {
+  const trackedPids = new Set();
+  for (const entry of _pool.values()) {
+    const pid = entry?.process?.pid;
+    if (Number.isInteger(pid) && pid > 0) trackedPids.add(pid);
+  }
+  const pidKey = [...trackedPids].sort((a, b) => a - b).join(',');
+  if (!trackedPids.size) {
+    _rssSnapshot = { at: now, pidKey, byRootPid: new Map() };
+    return _rssSnapshot.byRootPid;
+  }
+  if (_rssSnapshot.pidKey === pidKey && now - _rssSnapshot.at < RSS_SNAPSHOT_TTL_MS) return _rssSnapshot.byRootPid;
+  if (process.platform === 'win32') {
+    _rssSnapshot = { at: now, pidKey, byRootPid: new Map() };
+    return _rssSnapshot.byRootPid;
+  }
+
+  try {
+    const out = execSync('ps -e -o pid=,ppid=,rss=', { timeout: 3000, encoding: 'utf-8' });
+    const childrenByParent = new Map();
+    const rssByPid = new Map();
+    for (const line of out.split('\n')) {
+      const m = line.trim().match(/^(\d+)\s+(\d+)\s+(\d+)$/);
+      if (!m) continue;
+      const pid = parseInt(m[1], 10);
+      const ppid = parseInt(m[2], 10);
+      const rssKb = parseInt(m[3], 10);
+      rssByPid.set(pid, rssKb);
+      if (!childrenByParent.has(ppid)) childrenByParent.set(ppid, []);
+      childrenByParent.get(ppid).push(pid);
+    }
+
+    const byRootPid = new Map();
+    for (const rootPid of trackedPids) {
+      let rssKb = 0;
+      let processCount = 0;
+      const seen = new Set();
+      const stack = [rootPid];
+      while (stack.length) {
+        const pid = stack.pop();
+        if (!Number.isInteger(pid) || seen.has(pid)) continue;
+        seen.add(pid);
+        if (rssByPid.has(pid)) {
+          rssKb += rssByPid.get(pid) || 0;
+          processCount++;
+        }
+        for (const child of (childrenByParent.get(pid) || [])) stack.push(child);
+      }
+      if (processCount > 0) byRootPid.set(rootPid, {
+        rssKb,
+        rssBytes: rssKb * 1024,
+        processCount,
+      });
+    }
+    _rssSnapshot = { at: now, pidKey, byRootPid };
+  } catch (e) {
+    _rssSnapshot = { at: now, pidKey, byRootPid: new Map() };
+    log.debug(`LS RSS snapshot unavailable: ${e.message}`);
+  }
+  return _rssSnapshot.byRootPid;
+}
+
+function lsStatusConfig() {
+  return {
+    maxInstances: MAX_LS_INSTANCES,
+    idleTtlMs: LS_IDLE_TTL_MS,
+    idleSweepMs: LS_IDLE_SWEEP_MS,
+    estimatedRssBytesPerInstance: DEFAULT_LS_RSS_ESTIMATE_BYTES,
+    systemMemoryBytes: totalmem(),
+    detectedMemoryLimitBytes: detectMemoryLimitBytes(),
+  };
 }
 
 // Pass only what the LS binary actually needs to its child env. Forwarding
@@ -279,9 +464,13 @@ async function waitPortReady(port, timeoutMs = 20000) {
  * Idempotent — returns the existing entry if one is already running.
  */
 export async function ensureLs(proxy = null) {
+  ensureIdleSweeper();
   const key = proxyKey(proxy);
   const existing = _pool.get(key);
-  if (existing && existing.ready) return existing;
+  if (existing && existing.ready) {
+    touchEntry(existing);
+    return existing;
+  }
 
   // Coalesce concurrent callers onto a single spawn. The chat handlers
   // call ensureLs(acct.proxy) on every request; before this guard, a burst
@@ -296,15 +485,19 @@ export async function ensureLs(proxy = null) {
     let lruTime = Infinity;
     for (const [k, e] of _pool) {
       if (k === 'default') continue; // never evict default LS
-      const at = e._evictAt || e.startedAt || 0;
+      if ((e.activeRequests || 0) > 0) continue;
+      const at = e.lastUsedAt || e._evictAt || e.startedAt || 0;
       if (at < lruTime) { lruTime = at; lruKey = k; }
     }
     if (lruKey) {
       const evicted = _pool.get(lruKey);
       _intentionalShutdown.add(lruKey);
       try { evicted?.process?.kill('SIGTERM'); } catch {}
+      invalidateEntryForShutdown(evicted);
       _pool.delete(lruKey);
       log.warn(`LS pool at cap (${MAX_LS_INSTANCES}), evicted LRU instance ${lruKey} (started ${evicted?.startedAt ? new Date(evicted.startedAt).toISOString() : '?'})`);
+    } else {
+      throw lsPoolExhaustedError(`LS pool at cap (${MAX_LS_INSTANCES}) and no idle non-default instance can be evicted`);
     }
   }
 
@@ -433,7 +626,7 @@ export async function ensureLs(proxy = null) {
 
     const entry = {
       process: proc, port, csrfToken: DEFAULT_CSRF,
-      proxy, startedAt: Date.now(), ready: false,
+      proxy, startedAt: Date.now(), lastUsedAt: Date.now(), activeRequests: 0, ready: false,
       // v2.0.25 LOW-1: per-spawn UUID so the conversation pool can tell a
       // new LS that landed on the same port apart from the dead one. Used
       // by checkout(expected={lsGeneration}) and invalidateFor({lsGeneration}).
@@ -449,6 +642,7 @@ export async function ensureLs(proxy = null) {
     try {
       await waitPortReady(port, 25000);
       entry.ready = true;
+      touchEntry(entry);
       log.info(`LS instance ${key} ready on port ${port}`);
     } catch (err) {
       log.error(`LS instance ${key} failed to become ready: ${err.message}`);
@@ -502,7 +696,7 @@ export async function restartLsForProxy(proxy) {
  */
 export function getLsFor(proxy) {
   const entry = _pool.get(proxyKey(proxy));
-  if (entry) entry._evictAt = Date.now(); // touch LRU timestamp
+  if (entry) touchEntry(entry);
   return entry || null;
 }
 
@@ -744,18 +938,35 @@ export async function waitForReady(/* timeoutMs */) {
 
 export function getLsStatus() {
   const def = _pool.get('default');
+  const now = Date.now();
+  const rssByRootPid = collectTrackedRssSnapshot(now);
+  const instances = Array.from(_pool.entries()).map(([key, e]) => {
+    const pid = e.process?.pid || null;
+    const rss = pid ? rssByRootPid.get(pid) : null;
+    const lastUsedAt = e.lastUsedAt || e.startedAt || null;
+    return {
+      key, port: e.port,
+      pid,
+      proxy: e.proxy ? `${e.proxy.host}:${e.proxy.port}` : null,
+      startedAt: e.startedAt,
+      lastUsedAt,
+      idleMs: lastUsedAt ? Math.max(0, now - lastUsedAt) : null,
+      activeRequests: e.activeRequests || 0,
+      ready: e.ready,
+      rssKb: rss?.rssKb ?? null,
+      rssBytes: rss?.rssBytes ?? null,
+      processCount: rss?.processCount ?? null,
+    };
+  });
+  const totalRssBytes = instances.reduce((n, i) => n + (Number.isFinite(i.rssBytes) ? i.rssBytes : 0), 0);
   return {
     running: _pool.size > 0,
     pid: def?.process?.pid || null,
     port: def?.port || DEFAULT_PORT,
     startedAt: def?.startedAt || null,
     restartCount: 0,
-    instances: Array.from(_pool.entries()).map(([key, e]) => ({
-      key, port: e.port,
-      pid: e.process?.pid || null,
-      proxy: e.proxy ? `${e.proxy.host}:${e.proxy.port}` : null,
-      startedAt: e.startedAt,
-      ready: e.ready,
-    })),
+    ...lsStatusConfig(),
+    totalRssBytes: totalRssBytes || null,
+    instances,
   };
 }

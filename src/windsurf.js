@@ -479,7 +479,7 @@ function buildCascadeConfig(modelEnum, modelUid, { toolPreamble, forceDefault, n
         sp.communicationWithTools),
     ]);
     convParts.push(writeMessageField(13, toolCommOverride));
-  } else {
+  } else if (!nativeMode) {
     // ── No client tools ──
     // Override system prompt sections to suppress Cascade's IDE-assistant
     // persona. Field numbers from CascadeConversationalPlannerConfig in

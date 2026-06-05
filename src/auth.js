@@ -426,14 +426,22 @@ export async function addAccountByEmail(email, password) {
   if (!email || !password) {
     throw new Error('email and password required');
   }
+  const emailKey = String(email).trim().toLowerCase();
   const { windsurfLogin } = await import('./dashboard/windsurf-login.js');
   const result = await windsurfLogin(email, password, null);
   if (!result?.apiKey) {
     throw new Error('Login succeeded but no apiKey returned');
   }
-  const account = addAccountByKey(result.apiKey, result.name || email);
-  if (account.email !== (result.name || email)) {
-    account.email = result.name || email;
+  const label = result.name || email;
+  const existingByEmail = accounts.find(a => String(a.email || '').trim().toLowerCase() === emailKey);
+  const account = existingByEmail || addAccountByKey(result.apiKey, label);
+  if (existingByEmail) {
+    account.apiKey = result.apiKey;
+    if (account.status === 'error') account.status = 'active';
+    account.errorCount = 0;
+  }
+  if (account.email !== label) {
+    account.email = label;
   }
   account.method = 'email';
   if (result.apiServerUrl && !account.apiServerUrl) {
@@ -1831,14 +1839,19 @@ export async function initAuth() {
     refreshAllFirebaseTokens().catch(e => log.warn(`Scheduled token refresh: ${e.message}`));
   }, TOKEN_REFRESH_INTERVAL).unref?.();
 
-  // Warm up an LS instance for each account's configured proxy so the first
-  // chat request doesn't pay the spawn cost.
+  // Warm up the default LS so first chat avoids spawn cost. Proxy-specific
+  // LS instances are on-demand by default: current LS builds can consume
+  // ~500MB RSS including the child worker, so prewarming every proxy on a
+  // small VPS can exhaust memory before any request arrives.
   const { ensureLs } = await import('./langserver.js');
   const uniqueProxies = new Map();
-  for (const a of accounts) {
-    const p = getEffectiveProxy(a.id);
-    const k = p ? `${p.host}:${p.port}` : 'default';
-    if (!uniqueProxies.has(k)) uniqueProxies.set(k, p || null);
+  uniqueProxies.set('default', null);
+  if (process.env.LS_PREWARM_PROXIES === '1') {
+    for (const a of accounts) {
+      const p = getEffectiveProxy(a.id);
+      const k = p ? `${p.host}:${p.port}` : 'default';
+      if (!uniqueProxies.has(k)) uniqueProxies.set(k, p || null);
+    }
   }
   for (const p of uniqueProxies.values()) {
     try { await ensureLs(p); }

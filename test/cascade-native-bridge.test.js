@@ -21,6 +21,7 @@ import {
   TOOL_MAP, CASCADE_STEP,
   canMapAllTools, partitionTools, shouldUseNativeBridge,
   buildAdditionalStep, buildAdditionalStepsFromHistory, buildReverseLookup,
+  parseNativeFunctionCallsFromText, NativeFunctionCallStreamParser,
 } from '../src/cascade-native-bridge.js';
 import {
   parseTrajectorySteps,
@@ -135,6 +136,28 @@ describe('shouldUseNativeBridge — auto-on heuristic', () => {
     }
   });
 
+  it('all_mapped mode enables only when every function tool maps', () => {
+    const orig = process.env.WINDSURFAPI_NATIVE_TOOL_BRIDGE;
+    process.env.WINDSURFAPI_NATIVE_TOOL_BRIDGE = 'all_mapped';
+    try {
+      assert.equal(
+        shouldUseNativeBridge([fnTool('Read'), fnTool('Bash'), fnTool('Grep'), fnTool('Glob'), fnTool('WebSearch'), fnTool('WebFetch')], {
+          modelKey: 'claude-sonnet-4.6', provider: 'anthropic', route: 'chat',
+        }),
+        true,
+      );
+      assert.equal(
+        shouldUseNativeBridge([fnTool('Read'), fnTool('Bash'), fnTool('update_plan')], {
+          modelKey: 'claude-sonnet-4.6', provider: 'anthropic', route: 'chat',
+        }),
+        false,
+      );
+    } finally {
+      if (orig === undefined) delete process.env.WINDSURFAPI_NATIVE_TOOL_BRIDGE;
+      else process.env.WINDSURFAPI_NATIVE_TOOL_BRIDGE = orig;
+    }
+  });
+
   it('OFF override beats auto-on', () => {
     const offOrig = process.env.WINDSURFAPI_NATIVE_TOOL_BRIDGE_OFF;
     process.env.WINDSURFAPI_NATIVE_TOOL_BRIDGE_OFF = '1';
@@ -224,6 +247,69 @@ describe('buildReverseLookup', () => {
     assert.ok(list.includes('Read'));
     assert.ok(list.includes('view_file'));
     assert.ok(list.includes('read_file'));
+  });
+});
+
+describe('parseNativeFunctionCallsFromText', () => {
+  it('maps Claude provider-native read_file invoke back to caller Read', () => {
+    const lookup = buildReverseLookup([fnTool('Read')]);
+    const out = parseNativeFunctionCallsFromText(
+      'I will inspect it.\n<function_calls>\n<invoke name="read_file">\n<parameter name="path">/tmp/a.txt</parameter>\n</invoke>\n</function_calls>',
+      lookup,
+    );
+    assert.equal(out.toolCalls.length, 1);
+    assert.equal(out.toolCalls[0].name, 'Read');
+    assert.deepEqual(JSON.parse(out.toolCalls[0].argumentsJson), { file_path: '/tmp/a.txt' });
+    assert.ok(!out.text.includes('<function_calls>'));
+    assert.ok(!out.text.includes('<invoke'));
+  });
+
+  it('leaves unknown invokes as text instead of inventing caller tools', () => {
+    const lookup = buildReverseLookup([fnTool('Read')]);
+    const text = '<function_calls><invoke name="unknown_tool"><parameter name="x">1</parameter></invoke></function_calls>';
+    const out = parseNativeFunctionCallsFromText(text, lookup);
+    assert.equal(out.toolCalls.length, 0);
+    assert.equal(out.text, text);
+  });
+
+  it('stream parser withholds provider-native XML until it can emit a tool_call', () => {
+    const lookup = buildReverseLookup([fnTool('Read')]);
+    const parser = new NativeFunctionCallStreamParser(lookup);
+    const a = parser.feed('<function_calls>\n<invoke name="read_file">\n');
+    assert.equal(a.text, '');
+    assert.equal(a.toolCalls.length, 0);
+    const b = parser.feed('<parameter name="path">README.md</parameter>\n');
+    assert.equal(b.text, '');
+    assert.equal(b.toolCalls.length, 0);
+    const c = parser.feed('</invoke>\n</function_calls>');
+    assert.equal(c.text, '');
+    assert.equal(c.toolCalls.length, 1);
+    assert.equal(c.toolCalls[0].name, 'Read');
+    assert.deepEqual(JSON.parse(c.toolCalls[0].argumentsJson), { file_path: 'README.md' });
+    const tail = parser.flush();
+    assert.equal(tail.text, '');
+    assert.equal(tail.toolCalls.length, 0);
+  });
+
+  it('stream parser holds partial opening tags across chunk boundaries', () => {
+    const lookup = buildReverseLookup([fnTool('Read')]);
+    const parser = new NativeFunctionCallStreamParser(lookup);
+    const a = parser.feed('prefix <fun');
+    assert.equal(a.text, 'prefix ');
+    assert.equal(a.toolCalls.length, 0);
+    const b = parser.feed('ction_calls><invoke name="read_file"><parameter name="path">a.txt</parameter></invoke></function_calls> suffix');
+    assert.equal(b.text, ' suffix');
+    assert.equal(b.toolCalls.length, 1);
+    assert.deepEqual(JSON.parse(b.toolCalls[0].argumentsJson), { file_path: 'a.txt' });
+  });
+
+  it('stream parser returns incomplete XML as text on flush', () => {
+    const lookup = buildReverseLookup([fnTool('Read')]);
+    const parser = new NativeFunctionCallStreamParser(lookup);
+    assert.deepEqual(parser.feed('start <function_calls><invoke name="read_file">'), { text: 'start ', toolCalls: [] });
+    const tail = parser.flush();
+    assert.equal(tail.text, '<function_calls><invoke name="read_file">');
+    assert.equal(tail.toolCalls.length, 0);
   });
 });
 
@@ -425,6 +511,8 @@ describe('buildSendCascadeMessageRequest — additional_steps on field 9', () =>
     const conv = parseFields(getField(planner, 2, 2).value);
     const mode = getField(conv, 4, 0);
     assert.equal(mode.value, 1, 'planner_mode in nativeMode should be DEFAULT (1)');
+    assert.equal(getField(conv, 10, 2), null, 'nativeMode must not write a no-tool tool_calling_section');
+    assert.equal(getField(conv, 12, 2), null, 'nativeMode must not write a no-tool additional_instructions_section');
   });
 
   it('nativeMode=false (default) keeps planner_mode = NO_TOOL (3) and skips tool_config', () => {

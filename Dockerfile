@@ -9,7 +9,7 @@ ENV NODE_ENV=production \
 WORKDIR /app
 
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends bash curl ca-certificates \
+    && apt-get install -y --no-install-recommends bash curl ca-certificates procps \
     && rm -rf /var/lib/apt/lists/*
 
 COPY package.json ./

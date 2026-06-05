@@ -216,18 +216,20 @@ export const MODELS = {
   'swe-1.5':                        { name: 'swe-1.5',                        provider: 'windsurf', enumValue: 377, modelUid: 'MODEL_SWE_1_5_SLOW', credit: 0.5 },
   'swe-1.5-fast':                   { name: 'swe-1.5-fast',                   provider: 'windsurf', enumValue: 359, modelUid: 'MODEL_SWE_1_5', credit: 0.5 },
   'swe-1.5-thinking':               { name: 'swe-1.5-thinking',               provider: 'windsurf', enumValue: 369, modelUid: 'MODEL_SWE_1_5_THINKING', credit: 0.75 },
-  'swe-1.6':                        { name: 'swe-1.6',                        provider: 'windsurf', enumValue: 420, modelUid: 'MODEL_SWE_1_6', credit: 0.5 },
-  'swe-1.6-fast':                   { name: 'swe-1.6-fast',                   provider: 'windsurf', enumValue: 421, modelUid: 'MODEL_SWE_1_6_FAST', credit: 0.5 },
+  'swe-1.6':                        { name: 'swe-1.6',                        provider: 'windsurf', enumValue: 420, modelUid: 'MODEL_SWE_1_6', credit: 0.5, backend: 'special_agent' },
+  'swe-1.6-fast':                   { name: 'swe-1.6-fast',                   provider: 'windsurf', enumValue: 421, modelUid: 'MODEL_SWE_1_6_FAST', credit: 0.5, backend: 'special_agent' },
 
   // ── Adaptive (Windsurf 2026-04-06 changelog) ────────────
   // Adaptive Model Router + Arena models live in the cloud catalog but their
   // UIDs aren't recognized by SendUserCascadeMessage's direct-call path —
   // upstream returns "unknown model UID adaptive: model not found". They only
   // work through the Windsurf IDE's special routing layer that Cascade-direct
-  // doesn't expose. Mark deprecated so they stop showing in /v1/models. #109.
-  'adaptive':                       { name: 'adaptive',                       provider: 'windsurf', enumValue: 0,   modelUid: 'adaptive', credit: 1, deprecated: true },
-  'arena-fast':                     { name: 'arena-fast',                     provider: 'windsurf', enumValue: 0,   modelUid: 'arena-fast', credit: 0.5, deprecated: true },
-  'arena-smart':                    { name: 'arena-smart',                    provider: 'windsurf', enumValue: 0,   modelUid: 'arena-smart', credit: 1, deprecated: true },
+  // doesn't expose. Keep them hidden from /v1/models by default, but route
+  // explicit calls through the optional special-agent backend instead of the
+  // broken direct Cascade path. #109/#190.
+  'adaptive':                       { name: 'adaptive',                       provider: 'windsurf', enumValue: 0,   modelUid: 'adaptive', credit: 1, deprecated: true, backend: 'special_agent' },
+  'arena-fast':                     { name: 'arena-fast',                     provider: 'windsurf', enumValue: 0,   modelUid: 'arena-fast', credit: 0.5, deprecated: true, backend: 'special_agent' },
+  'arena-smart':                    { name: 'arena-smart',                    provider: 'windsurf', enumValue: 0,   modelUid: 'arena-smart', credit: 1, deprecated: true, backend: 'special_agent' },
 };
 
 // Build reverse lookup
@@ -237,8 +239,14 @@ for (const [id, info] of Object.entries(MODELS)) {
   _lookup.set(id.toLowerCase(), id);
   _lookup.set(info.name, id);
   _lookup.set(info.name.toLowerCase(), id);
-  if (info.modelUid) _lookup.set(info.modelUid, id);
-  if (info.modelUid) _lookup.set(info.modelUid.toLowerCase(), id);
+  // modelUid can be a provider-local upstream id. Astraflow entries, for
+  // example, use modelUid="gpt-4o"; that must not steal the public
+  // "gpt-4o" alias from the native Windsurf model.
+  if (info.modelUid && !_lookup.has(info.modelUid)) _lookup.set(info.modelUid, id);
+  if (info.modelUid) {
+    const lowerUid = info.modelUid.toLowerCase();
+    if (!_lookup.has(lowerUid)) _lookup.set(lowerUid, id);
+  }
 }
 // Legacy aliases
 _lookup.set('claude-sonnet-4-6-thinking', 'claude-sonnet-4.6-thinking');

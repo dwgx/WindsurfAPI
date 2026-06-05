@@ -2962,6 +2962,7 @@ docker compose up -d --force-recreate</pre>
     const uptime = d.uptime ? this.fmtDuration(d.uptime) : '-';
     const ls = d.langServer || {};
     const poolCount = (ls.instances || []).length || (ls.running ? 1 : 0);
+    const totalRss = ls.totalRssBytes ? this.fmtBytes(ls.totalRssBytes) : '-';
     document.getElementById('overview-cards').innerHTML = `
       <div class="card success">
         <div class="card-header"><div class="card-title">${I18n.t('card.activeAccounts.title')}</div>
@@ -2989,7 +2990,7 @@ docker compose up -d --force-recreate</pre>
           <svg class="card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2"/><rect x="2" y="14" width="20" height="8" rx="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
         </div>
         <div class="card-value" style="font-size:20px">${I18n.t(ls.running ? 'card.languageServer.running' : 'card.languageServer.stopped')}</div>
-        <div class="card-sub">${I18n.t('card.languageServer.subtitle', { count: poolCount, port: ls.port || '-' })}</div>
+        <div class="card-sub">${I18n.t('card.languageServer.subtitle', { count: poolCount, port: ls.port || '-' })} · RSS ${totalRss} · Cap ${ls.maxInstances || '-'}</div>
       </div>
       <div class="card info">
         <div class="card-header"><div class="card-title">${I18n.t('card.responseCache.title')}</div>
@@ -3010,6 +3011,8 @@ docker compose up -d --force-recreate</pre>
                 ${this.esc(i.key === 'default' ? I18n.t('card.defaultInstance') : i.key.replace(/^px_/, ''))}
               </div>
               <div class="ls-meta">${I18n.t('field.port.label')} ${i.port} · PID ${i.pid || '-'}</div>
+              <div class="ls-meta">RSS ${i.rssBytes ? this.fmtBytes(i.rssBytes) : '-'} · Active ${i.activeRequests || 0} · Idle ${i.idleMs != null ? this.fmtMs(i.idleMs) : '-'}</div>
+              <div class="ls-meta">Processes ${i.processCount || '-'} · Cap ${ls.maxInstances || '-'}</div>
               <div class="ls-meta">${this.esc(i.proxy || I18n.t('card.noProxy'))}</div>
             </div>
           `).join('')}
@@ -3017,7 +3020,7 @@ docker compose up -d --force-recreate</pre>
     } else {
       document.getElementById('ls-status').innerHTML = `
         <span class="badge ${ls.running ? 'running' : 'stopped'}">${I18n.t(ls.running ? 'card.languageServer.running' : 'card.languageServer.stopped')}</span>
-        <span class="text-sm text-muted" style="margin-left:12px">PID ${ls.pid || '-'} · ${I18n.t('field.port.label')} ${ls.port || '-'} · ${I18n.t('card.restarts')} ${ls.restartCount || 0}</span>
+        <span class="text-sm text-muted" style="margin-left:12px">PID ${ls.pid || '-'} · ${I18n.t('field.port.label')} ${ls.port || '-'} · RSS ${totalRss} · Cap ${ls.maxInstances || '-'} · ${I18n.t('card.restarts')} ${ls.restartCount || 0}</span>
       `;
       this.loadLsBinary();
     }
@@ -3496,6 +3499,7 @@ docker compose up -d --force-recreate</pre>
       this.api('GET', '/overview').catch(() => null),
     ]);
     const instances = ov?.langServer?.instances || [];
+    const lsCap = ov?.langServer?.maxInstances || '-';
     const poolCard = document.getElementById('ls-pool-card');
     if (poolCard) {
       if (instances.length > 0) {
@@ -3516,6 +3520,8 @@ docker compose up -d --force-recreate</pre>
                       ${this.esc(i.key === 'default' ? I18n.t('section.lsPool.defaultInstance') : i.key.replace(/^px_/, ''))}
                     </div>
                     <div class="ls-meta">${I18n.t('section.lsPool.port')} ${i.port} · PID ${i.pid || '-'}</div>
+                    <div class="ls-meta">RSS ${i.rssBytes ? this.fmtBytes(i.rssBytes) : '-'} · Active ${i.activeRequests || 0} · Idle ${i.idleMs != null ? this.fmtMs(i.idleMs) : '-'}</div>
+                    <div class="ls-meta">Processes ${i.processCount || '-'} · Cap ${lsCap}</div>
                     <div class="ls-meta">${this.esc(i.proxy || I18n.t('section.lsPool.noProxy'))}</div>
                   </div>
                 `).join('')}
@@ -5716,6 +5722,24 @@ docker compose up -d --force-recreate</pre>
     if (d > 0) return `${d}${I18n.t('time.day')} ${h}${I18n.t('time.hour')} ${m}${I18n.t('time.minute')}`;
     if (h > 0) return `${h}${I18n.t('time.hour')} ${m}${I18n.t('time.minute')}`;
     return `${m}${I18n.t('time.minute')} ${s}${I18n.t('time.second')}`;
+  },
+  fmtMs(ms) {
+    const n = Number(ms);
+    if (!Number.isFinite(n) || n < 0) return '-';
+    if (n < 1000) return `${Math.round(n)}ms`;
+    return this.fmtDuration(n / 1000);
+  },
+  fmtBytes(bytes) {
+    const n = Number(bytes);
+    if (!Number.isFinite(n) || n <= 0) return '-';
+    const units = ['B', 'KB', 'MB', 'GB'];
+    let value = n;
+    let unit = 0;
+    while (value >= 1024 && unit < units.length - 1) {
+      value /= 1024;
+      unit++;
+    }
+    return `${value >= 10 || unit === 0 ? value.toFixed(0) : value.toFixed(1)}${units[unit]}`;
   },
   async revealAndCopyKey(accountId) {
     try {
