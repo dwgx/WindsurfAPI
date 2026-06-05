@@ -1,14 +1,18 @@
 import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { config } from '../src/config.js';
-import { configureBindHost } from '../src/auth.js';
+import { configureBindHost, _resetLockoutForTests } from '../src/auth.js';
 import { handleDashboardApi } from '../src/dashboard/api.js';
 import { isLoopbackAddress } from '../src/dashboard/local-windsurf.js';
+import { setRuntimeApiKey, setRuntimeDashboardPassword } from '../src/runtime-config.js';
 
 const originalDashboardPassword = config.dashboardPassword;
 const originalApiKey = config.apiKey;
 
 afterEach(() => {
+  _resetLockoutForTests();
+  setRuntimeApiKey('');
+  setRuntimeDashboardPassword('');
   config.dashboardPassword = originalDashboardPassword;
   config.apiKey = originalApiKey;
   configureBindHost('127.0.0.1');
@@ -39,6 +43,9 @@ describe('isLoopbackAddress (high-risk address parsing)', () => {
 
 describe('GET /accounts/import-local (security posture)', () => {
   it('rejects public binds even when dashboard secret is provided', async () => {
+    _resetLockoutForTests();
+    setRuntimeApiKey('');
+    setRuntimeDashboardPassword('');
     config.dashboardPassword = 'dash-secret';
     configureBindHost('0.0.0.0');
 
@@ -56,6 +63,9 @@ describe('GET /accounts/import-local (security posture)', () => {
   });
 
   it('rejects remote callers that are not loopback on local binds', async () => {
+    _resetLockoutForTests();
+    setRuntimeApiKey('');
+    setRuntimeDashboardPassword('');
     config.dashboardPassword = '';
     config.apiKey = '';
     configureBindHost('127.0.0.1');
@@ -74,6 +84,9 @@ describe('GET /accounts/import-local (security posture)', () => {
   });
 
   it('does not leak absolute paths in discovery metadata', async () => {
+    _resetLockoutForTests();
+    setRuntimeApiKey('');
+    setRuntimeDashboardPassword('');
     config.dashboardPassword = '';
     config.apiKey = '';
     configureBindHost('127.0.0.1');

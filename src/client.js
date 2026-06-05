@@ -1119,7 +1119,8 @@ export class WindsurfClient {
         lastStatus,
         ms: Date.now() - startTime,
       };
-      if (totalYielded < 20 && endReason !== 'aborted') {
+      const shortNormalDone = endReason === 'idle_done' && (sawText || seenToolCallIds.size > 0);
+      if (totalYielded < 20 && endReason !== 'aborted' && !shortNormalDone) {
         log.warn('Cascade short reply', summary);
       } else {
         log.info('Cascade done', summary);
