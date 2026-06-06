@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 
+import { closeSync, existsSync, openSync, readSync, readdirSync, statSync } from 'node:fs';
+import { join } from 'node:path';
+
 const baseUrl = (process.env.BASE_URL || process.env.WINDSURFAPI_BASE_URL || 'http://127.0.0.1:3003').replace(/\/+$/, '');
 const apiKey = process.env.API_KEY || process.env.WINDSURFAPI_API_KEY || '';
 const model = process.env.MODEL || process.env.WINDSURFAPI_SMOKE_MODEL || 'claude-sonnet-4.6';
@@ -15,6 +18,10 @@ const requireNativeBridgeTool = process.env.NATIVE_BRIDGE_SMOKE_REQUIRE_NATIVE !
 const validateToolArgs = process.env.NATIVE_BRIDGE_SMOKE_VALIDATE_ARGS !== '0';
 const enforceLsBudget = process.env.NATIVE_BRIDGE_SMOKE_LS_BUDGET !== '0';
 const requireNativeBridgeEnabled = process.env.NATIVE_BRIDGE_SMOKE_REQUIRE_BRIDGE_ENABLED !== '0';
+const includeProtoTraceSummary = process.env.NATIVE_BRIDGE_SMOKE_PROTO_TRACE_SUMMARY !== '0';
+const protoTraceDir = process.env.NATIVE_BRIDGE_SMOKE_PROTO_TRACE_DIR
+  || process.env.WINDSURFAPI_PROTO_TRACE_DIR
+  || '/data/proto-trace';
 async function sha256Hex(text) {
   const bytes = new TextEncoder().encode(String(text || ''));
   const digest = await crypto.subtle.digest('SHA-256', bytes);
@@ -617,6 +624,84 @@ function nativeBridgeDecisionDelta(before, after) {
   };
 }
 
+function readTailText(file, maxBytes = 2 * 1024 * 1024) {
+  const stat = statSync(file);
+  const size = stat.size;
+  const start = Math.max(0, size - maxBytes);
+  const length = size - start;
+  const fd = openSync(file, 'r');
+  try {
+    const buf = Buffer.alloc(length);
+    readSync(fd, buf, 0, length, start);
+    return buf.toString('utf8');
+  } finally {
+    closeSync(fd);
+  }
+}
+
+function summarizeWebFetchTraceDir(dir = protoTraceDir) {
+  try {
+    if (!includeProtoTraceSummary) return null;
+    if (!dir || !existsSync(dir)) return { available: false, dir, reason: 'trace_dir_missing' };
+    const files = readdirSync(dir)
+      .filter(name => /GetCascadeTrajectorySteps.*\.jsonl$/i.test(name))
+      .map(name => {
+        const path = join(dir, name);
+        const stat = statSync(path);
+        return { name, path, mtimeMs: stat.mtimeMs, size: stat.size };
+      })
+      .sort((a, b) => b.mtimeMs - a.mtimeMs)
+      .slice(0, 6);
+    const stateCounts = {};
+    const recent = [];
+    let records = 0;
+    let parseErrors = 0;
+    for (const file of files) {
+      const lines = readTailText(file.path).split('\n').filter(Boolean);
+      for (const line of lines) {
+        let rec;
+        try {
+          rec = JSON.parse(line);
+        } catch {
+          parseErrors++;
+          continue;
+        }
+        records++;
+        const steps = rec?.semantic?.steps || [];
+        for (const step of steps) {
+          const trace = step?.webFetchTrace;
+          if (!trace?.state) continue;
+          stateCounts[trace.state] = (stateCounts[trace.state] || 0) + 1;
+          recent.push({
+            file: file.name,
+            method: rec.method || '',
+            direction: rec.direction || '',
+            stepIndex: step.index,
+            state: trace.state,
+            stepType: trace.stepType,
+            status: trace.status,
+            hasRequestedInteraction: !!trace.hasRequestedInteraction,
+            hasReadUrlOneof: !!trace.hasReadUrlOneof,
+            hasWebDocument: !!trace.hasWebDocument,
+            errorClassifications: trace.errorClassifications || {},
+          });
+        }
+      }
+    }
+    return {
+      available: true,
+      dir,
+      files: files.map(f => ({ name: f.name, size: f.size })),
+      records,
+      parseErrors,
+      stateCounts,
+      recent: recent.slice(-12),
+    };
+  } catch (error) {
+    return { available: false, dir, reason: 'trace_summary_failed', error: String(error?.message || error) };
+  }
+}
+
 const selected = expandScenarios(requestedScenarios);
 if (!selected.length) {
   console.error(`No valid scenarios selected. Use one or more of: ${Object.keys(SCENARIOS).join(',')},all`);
@@ -655,6 +740,7 @@ if (!failures.length) {
   }
 }
 const healthAfter = await fetchHealthSnapshot('after');
+const protoTraceSummary = summarizeWebFetchTraceDir();
 
 console.log(JSON.stringify({
   ok: failures.length === 0,
@@ -675,6 +761,7 @@ console.log(JSON.stringify({
   results,
   failures,
   nativeBridgeDecisionDelta: nativeBridgeDecisionDelta(healthBefore, healthAfter),
+  protoTraceSummary,
   healthBefore,
   healthAfter,
 }, null, 2));

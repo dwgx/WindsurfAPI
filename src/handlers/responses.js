@@ -219,6 +219,40 @@ function normalizeResponseToolChoice(toolChoice) {
   return toolChoice;
 }
 
+function requestedResponseToolChoiceName(toolChoice) {
+  if (!toolChoice || typeof toolChoice !== 'object') return '';
+  if (toolChoice.type === 'function') {
+    return encodeToolName(toolChoice.function?.name || toolChoice.name || '', toolChoice.function?.namespace || toolChoice.namespace || '');
+  }
+  if (toolChoice.type === 'custom' || toolChoice.type === 'namespace') {
+    return encodeToolName(toolChoice.name || toolChoice.function?.name || '', toolChoice.namespace || toolChoice.function?.namespace || '');
+  }
+  if (toolChoice.type === 'web_search' || toolChoice.type === 'web_search_preview') return 'web_search';
+  if (toolChoice.type === 'tool_search') return 'tool_search';
+  return toolChoice.name || toolChoice.function?.name || toolChoice.type || '';
+}
+
+function pruneResponseToolChoice(toolChoice, forwardedTools) {
+  const normalized = normalizeResponseToolChoice(toolChoice);
+  if (normalized == null) return undefined;
+  if (normalized === 'auto' || normalized === 'required' || normalized === 'none') return normalized;
+
+  const requested = requestedResponseToolChoiceName(toolChoice);
+  const availableNames = new Set((forwardedTools || []).map(t => t.function?.name || t.name).filter(Boolean));
+  const forcedName = normalized.function?.name || '';
+  if (forcedName) {
+    if (availableNames.has(forcedName)) return normalized;
+    log.warn(`responses: dropped forced tool_choice "${requested || forcedName}" because the matching tool was not forwarded (available=[${[...availableNames].join(',') || 'none'}])`);
+    return undefined;
+  }
+
+  if (toolChoice && typeof toolChoice === 'object' && UNBRIDGED_SERVER_SIDE_TYPES.has(toolChoice.type)) {
+    log.warn(`responses: dropped forced server-side tool_choice "${toolChoice.type}" because this proxy does not bridge that tool type`);
+    return undefined;
+  }
+  return normalized;
+}
+
 function normalizeResponseTextFormat(format) {
   if (!format || typeof format !== 'object') return null;
   if (format.type === 'json_object') return { type: 'json_object' };
@@ -306,6 +340,9 @@ export function responsesToChat(body) {
 
   const tools = flattenResponseTools(body.tools || []);
   const responseFormat = normalizeResponseTextFormat(body.text?.format);
+  const forwardedToolChoice = body.tool_choice != null
+    ? pruneResponseToolChoice(body.tool_choice, tools)
+    : undefined;
   return {
     model: body.model || 'claude-sonnet-4.6',
     messages,
@@ -315,7 +352,7 @@ export function responsesToChat(body) {
     ...(tools.length ? { tools } : {}),
     ...(body.temperature != null ? { temperature: body.temperature } : {}),
     ...(body.top_p != null ? { top_p: body.top_p } : {}),
-    ...(body.tool_choice != null ? { tool_choice: normalizeResponseToolChoice(body.tool_choice) } : {}),
+    ...(forwardedToolChoice != null ? { tool_choice: forwardedToolChoice } : {}),
     ...(responseFormat ? { response_format: responseFormat } : {}),
   };
 }

@@ -222,6 +222,54 @@ export function effectiveToolsForToolChoice(tools, toolChoice) {
   return tools.filter(t => (t?.function?.name || t?.name || '') === forced);
 }
 
+function toolNameList(tools) {
+  if (!Array.isArray(tools)) return [];
+  return tools.map(t => t?.function?.name || t?.name || '').filter(Boolean);
+}
+
+export function summarizeToolRoutingDiagnostics({ tools, effectiveTools, toolChoice, toolRouting, preambleBudget = null }) {
+  const requested = toolNameList(tools);
+  const effective = toolNameList(effectiveTools);
+  const forcedName = toolChoice && typeof toolChoice === 'object'
+    ? (toolChoice.function?.name || toolChoice.name || '')
+    : '';
+  const reasons = [];
+
+  if (toolChoice === 'none') reasons.push('tool_choice_none');
+  if (forcedName && requested.length && !requested.includes(forcedName)) reasons.push('forced_tool_not_declared');
+  if (requested.length && effective.length === 0 && toolChoice !== 'none') reasons.push('effective_tools_empty');
+  if (toolRouting?.nativeDecision?.reason) reasons.push(toolRouting.nativeDecision.reason);
+  if (toolRouting?.nativeBridgeOn) reasons.push('native_bridge_on');
+  if (preambleBudget?.tier) reasons.push(`preamble_${preambleBudget.tier}`);
+  if (preambleBudget?.compacted) reasons.push('preamble_compacted');
+  if (preambleBudget && preambleBudget.ok === false) reasons.push('preamble_too_large');
+
+  return {
+    requested,
+    effective,
+    mapped: toolNameList(toolRouting?.partition?.mapped || []),
+    unmapped: toolNameList(toolRouting?.partition?.unmapped || []),
+    nativeBridgeOn: !!toolRouting?.nativeBridgeOn,
+    nativeDecisionReason: toolRouting?.nativeDecision?.reason || '',
+    preambleTier: preambleBudget?.tier || null,
+    preambleBytes: preambleBudget?.finalBytes ?? null,
+    forcedName,
+    reasons: [...new Set(reasons)],
+  };
+}
+
+function logToolRoutingDiagnostics(reqId, diag) {
+  if (!diag || (!diag.requested.length && !diag.reasons.length)) return;
+  log.info(
+    `ToolRoute[${reqId}]: requested=[${diag.requested.join(',') || 'none'}] ` +
+    `effective=[${diag.effective.join(',') || 'none'}] ` +
+    `mapped=[${diag.mapped.join(',') || 'none'}] unmapped=[${diag.unmapped.join(',') || 'none'}] ` +
+    `native=${diag.nativeBridgeOn ? 'on' : 'off'} nativeReason=${diag.nativeDecisionReason || 'none'} ` +
+    `preamble=${diag.preambleTier || 'none'}${diag.preambleBytes != null ? `/${Math.round(diag.preambleBytes / 1024)}KB` : ''} ` +
+    `forced=${diag.forcedName || 'none'} reasons=[${diag.reasons.join(',') || 'none'}]`,
+  );
+}
+
 export function redactRequestLogText(text) {
   return String(text || '')
     .replace(/sk-[A-Za-z0-9_-]{20,}/g, 'sk-***')
@@ -1768,6 +1816,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
   const callerEnv = emulateTools ? extractCallerEnvironment(messages) : '';
   let toolPreamble = '';
   let preambleTier = null;
+  let toolPreambleBudget = null;
   // Payload budget for the proto-level tool preamble. The upstream LS
   // panel state caps total request size at ~30KB; the preamble alone can
   // approach that with 30+ tools (Claude Code, opencode, Cline). Past the
@@ -1801,6 +1850,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
       // route picks the gpt_native dialect (bare-JSON anti-refusal).
       route: body.__route || 'chat',
     });
+    toolPreambleBudget = budget;
     preambleTier = budget.tier;
     if (budget.compacted) {
       log.warn(`Probe[${reqId}]: toolPreamble ${Math.round(budget.fullBytes / 1024)}KB exceeds soft cap ${Math.round(budget.softBytes / 1024)}KB; using ${budget.tier} tier (${Math.round(budget.finalBytes / 1024)}KB, ${budgetTools.length} tools)`);
@@ -1821,6 +1871,13 @@ async function _handleChatCompletionsInner(body, context = {}) {
     }
     toolPreamble = budget.preamble;
   }
+  logToolRoutingDiagnostics(reqId, summarizeToolRoutingDiagnostics({
+    tools,
+    effectiveTools,
+    toolChoice: tool_choice,
+    toolRouting,
+    preambleBudget: toolPreambleBudget,
+  }));
   // Diagnostic: surface whether environment lifting actually fired so a real
   // request log immediately tells us if Claude Code 2.x changed `<env>` block
   // wording, or if the extraction guard rejected a valid hint. Cheap to log,

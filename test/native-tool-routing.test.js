@@ -11,6 +11,7 @@ import {
   buildToolRoutingPlan,
   effectiveToolsForToolChoice,
   handleChatCompletions,
+  summarizeToolRoutingDiagnostics,
 } from '../src/handlers/chat.js';
 import {
   buildReverseLookup,
@@ -168,6 +169,29 @@ describe('native mapped-tool routing', () => {
     });
     assert.equal(forcedPlan.nativeBridgeOn, true);
     assert.deepEqual(forcedPlan.nativeCallerTools.map(t => t.function.name), ['Read']);
+  });
+
+  it('diagnoses forced tool_choice that leaves no effective tools', () => {
+    const tools = [fnTool('Read'), fnTool('Bash')];
+    const effective = effectiveToolsForToolChoice(tools, { type: 'function', function: { name: 'MissingTool' } });
+    const plan = buildToolRoutingPlan(effective, {
+      useCascade: true,
+      modelKey: 'claude-sonnet-4.6',
+      provider: 'anthropic',
+      route: 'chat',
+    });
+    const diag = summarizeToolRoutingDiagnostics({
+      tools,
+      effectiveTools: effective,
+      toolChoice: { type: 'function', function: { name: 'MissingTool' } },
+      toolRouting: plan,
+    });
+
+    assert.deepEqual(diag.requested, ['Read', 'Bash']);
+    assert.deepEqual(diag.effective, []);
+    assert.equal(diag.forcedName, 'MissingTool');
+    assert.ok(diag.reasons.includes('forced_tool_not_declared'));
+    assert.ok(diag.reasons.includes('effective_tools_empty'));
   });
 
   it('defaults native bridge production canaries to Bash/run_command only', () => {

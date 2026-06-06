@@ -324,6 +324,36 @@ describe('handleResponses streaming', () => {
     assert.equal(forwarded.tools[0].function.name, 'do_thing');
   });
 
+  it('drops forced tool_choice when a Responses server-side tool was not forwarded', async () => {
+    let forwarded = null;
+    const result = await handleResponses({
+      model: 'claude-sonnet-4.6',
+      input: 'Hello',
+      stream: false,
+      tools: [
+        { type: 'file_search' },
+        { type: 'function', name: 'do_thing', parameters: { type: 'object' } },
+      ],
+      tool_choice: { type: 'file_search' },
+    }, {
+      async handleChatCompletions(chatBody) {
+        forwarded = chatBody;
+        return {
+          status: 200,
+          body: {
+            id: 'c1', object: 'chat.completion', created: 1, model: chatBody.model,
+            choices: [{ index: 0, message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
+            usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+          },
+        };
+      },
+    });
+    assert.equal(result.status, 200);
+    assert.equal(forwarded.tools.length, 1);
+    assert.equal(forwarded.tools[0].function.name, 'do_thing');
+    assert.equal(forwarded.tool_choice, undefined);
+  });
+
   it('translates web_search_preview to a function tool the same way as web_search', async () => {
     let forwarded = null;
     await handleResponses({
