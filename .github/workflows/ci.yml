@@ -46,4 +46,4 @@ jobs:
           node-version: '20'
 
       - name: Run tests
-        run: npm test
+        run: npm run test:release

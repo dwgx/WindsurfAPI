@@ -8,6 +8,7 @@
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
     "test": "node --test --test-force-exit test/*.test.js",
+    "test:release": "node --test --test-force-exit test/dashboard-api.test.js test/proto-trace.test.js test/secret-scan.test.js test/release-workflow.test.js test/version.test.js",
     "smoke:native-bridge": "node scripts/native-bridge-smoke.mjs",
     "smoke:special-agent": "node scripts/special-agent-smoke.mjs",
     "smoke:lsp-matrix": "node scripts/lsp-capacity-matrix.mjs",

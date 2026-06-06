@@ -3,6 +3,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 
 const workflow = readFileSync('.github/workflows/release.yml', 'utf8');
+const ciWorkflow = readFileSync('.github/workflows/ci.yml', 'utf8');
 
 function jobBlock(name) {
   const start = workflow.indexOf(`\n  ${name}:\n`);
@@ -17,11 +18,15 @@ describe('release workflow', () => {
     const test = jobBlock('test');
     const docker = jobBlock('docker');
     const release = jobBlock('release');
-    assert.match(test, /\brun:\s*npm test\b/);
+    assert.match(test, /\brun:\s*npm run test:release\b/);
     assert.match(test, /\btimeout-minutes:\s*10\b/);
     assert.match(docker, /\bneeds:\s*test\b/);
     assert.match(docker, /\btimeout-minutes:\s*30\b/);
     assert.match(release, /\bneeds:\s*docker\b/);
+  });
+
+  it('uses the bounded release test gate in CI', () => {
+    assert.match(ciWorkflow, /\brun:\s*npm run test:release\b/);
   });
 
   it('injects build metadata into the Docker build', () => {
