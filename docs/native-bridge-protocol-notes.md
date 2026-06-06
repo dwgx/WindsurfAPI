@@ -132,6 +132,23 @@ show `type=14` with payload on `field=19`, and `type=15` with `field=20`
 planner response data. Keep parsing based on actual oneof/message fields and
 trace unknown message-field children before promoting a new mapping.
 
+For the observed Read wrapper (`type=14`, `field=19`), v2.0.131 only promotes
+field `1` or `2` when the candidate is clearly path-like. Live traces showed
+field `2` can also contain the full prompt/environment text, so this is a
+stop-loss guard, not a confirmed schema. Enable proto trace to inspect
+`semantic.steps[].readWrapperField19` before changing the parser again:
+
+```text
+WINDSURFAPI_PROTO_TRACE=1
+# Optional, only for a gated lab run. Redaction still applies.
+WINDSURFAPI_PROTO_TRACE_READ_WRAPPER_STRINGS=1
+```
+
+The dedicated summary records child field numbers, wire types, byte lengths,
+hashes, and safe classifications such as `looksPathLike` and
+`looksPromptLike`. Do not use the global raw-string trace switch for production
+traffic; it can capture prompts.
+
 Trajectory parsing now recognizes the web step oneofs observed so far:
 
 - `read_url_content` = field `40`, body `{ url=1, summary=5 }`

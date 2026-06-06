@@ -13,4 +13,11 @@ describe('web search direct probe script', () => {
     assert.match(source, /CODEIUM_API_KEY/);
     assert.match(source, /accounts\.json/);
   });
+
+  it('is a direct API probe, not a WebFetch/native bridge rollout', () => {
+    const source = readFileSync(scriptPath, 'utf8');
+    assert.match(source, /getWebSearchResults/);
+    assert.doesNotMatch(source, /read_url_content/);
+    assert.doesNotMatch(source, /WINDSURFAPI_NATIVE_TOOL_BRIDGE/);
+  });
 });

@@ -18,6 +18,7 @@ docs
 audit
 scripts/*
 !scripts/native-bridge-smoke.mjs
+!scripts/special-agent-smoke.mjs
 !scripts/lsp-capacity-matrix.mjs
 !scripts/web-search-direct-probe.mjs
 bugsy

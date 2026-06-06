@@ -7,6 +7,7 @@ sshpass2.sh
 deploy-us.py
 scripts/*
 !scripts/native-bridge-smoke.mjs
+!scripts/special-agent-smoke.mjs
 !scripts/lsp-capacity-matrix.mjs
 !scripts/web-search-direct-probe.mjs
 src/get-token.js

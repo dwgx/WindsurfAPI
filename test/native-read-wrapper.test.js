@@ -118,6 +118,38 @@ describe('native Read wrapper trajectory parsing', () => {
     assert.equal(calls.length, 0);
   });
 
+  it('prefers wrapper field 1 path over field 2 prompt text', () => {
+    const wrapper = Buffer.concat([
+      writeStringField(1, 'file:///home/user/projects/workspace-abc123/README.md'),
+      writeStringField(2, '- Working directory: /tmp/project\n\nUse the Read tool exactly once for README.md.'),
+      writeStringField(4, 'observed content'),
+    ]);
+    const step = Buffer.concat([
+      writeVarintField(1, 14),
+      writeVarintField(4, 3),
+      writeMessageField(19, wrapper),
+    ]);
+    const steps = parseTrajectorySteps(trajectoryStepsResponse(step));
+    const calls = steps[0].toolCalls.filter(tc => tc.cascade_native);
+    assert.equal(calls.length, 1);
+    assert.equal(JSON.parse(calls[0].argumentsJson).absolute_path_uri, 'file:///home/user/projects/workspace-abc123/README.md');
+  });
+
+  it('does not promote a nested wrapper field before the field role is confirmed', () => {
+    const wrapper = Buffer.concat([
+      writeMessageField(3, writeStringField(1, 'file:///home/user/projects/workspace-abc123/README.md')),
+      writeStringField(4, 'observed content'),
+    ]);
+    const step = Buffer.concat([
+      writeVarintField(1, 14),
+      writeVarintField(4, 3),
+      writeMessageField(19, wrapper),
+    ]);
+    const steps = parseTrajectorySteps(trajectoryStepsResponse(step));
+    const calls = steps[0].toolCalls.filter(tc => tc.cascade_native);
+    assert.equal(calls.length, 0);
+  });
+
   it('repairs native Read workspace paths to caller cwd-relative paths before sanitizing', () => {
     const tc = {
       name: 'Read',

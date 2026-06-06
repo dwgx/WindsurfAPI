@@ -26,6 +26,7 @@ RUN apt-get update \
 COPY package.json ./
 COPY src ./src
 COPY scripts/native-bridge-smoke.mjs ./scripts/native-bridge-smoke.mjs
+COPY scripts/special-agent-smoke.mjs ./scripts/special-agent-smoke.mjs
 COPY scripts/lsp-capacity-matrix.mjs ./scripts/lsp-capacity-matrix.mjs
 COPY scripts/web-search-direct-probe.mjs ./scripts/web-search-direct-probe.mjs
 COPY install-ls.sh setup.sh .env.example ./

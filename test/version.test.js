@@ -8,6 +8,11 @@ const ENV_KEYS = [
   'WINDSURFAPI_BUILD_COMMIT_MESSAGE',
   'WINDSURFAPI_BUILD_COMMIT_DATE',
   'WINDSURFAPI_BUILD_BRANCH',
+  'BUILD_VERSION',
+  'BUILD_COMMIT',
+  'BUILD_COMMIT_MESSAGE',
+  'BUILD_COMMIT_DATE',
+  'BUILD_BRANCH',
 ];
 
 function withEnv(vars, fn) {
@@ -42,5 +47,20 @@ describe('version metadata', () => {
 
   it('falls back to package version', () => withEnv({}, () => {
     assert.equal(getVersionInfo().version, VERSION);
+  }));
+
+  it('accepts generic Docker build args after they are exported as env', () => withEnv({
+    BUILD_VERSION: '2.0.132',
+    BUILD_COMMIT: '99a4b42dc21e5da8a2efced130eae29dd83c687a',
+    BUILD_COMMIT_MESSAGE: 'fix(native): trace read wrapper',
+    BUILD_COMMIT_DATE: '2026-06-06T00:26:27Z',
+    BUILD_BRANCH: 'v2.0.132',
+  }, () => {
+    const info = getVersionInfo();
+    assert.equal(info.version, '2.0.132');
+    assert.equal(info.commit, '99a4b42dc21e');
+    assert.equal(info.commitMessage, 'fix(native): trace read wrapper');
+    assert.equal(info.commitDate, '2026-06-06T00:26:27Z');
+    assert.equal(info.branch, 'v2.0.132');
   }));
 });

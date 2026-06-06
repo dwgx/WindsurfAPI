@@ -54,6 +54,42 @@ function redactPreview(s) {
     .slice(0, 240);
 }
 
+function looksPathLike(s) {
+  const value = String(s || '').trim();
+  if (!value || value.length > 1024 || /[\r\n<>]/.test(value)) return false;
+  if (/^file:\/\/\/?(?:[A-Za-z]:[\\/]|\/|~[\\/])/.test(value)) return true;
+  if (/^(?:[A-Za-z]:[\\/]|\/|~[\\/]|\.{1,2}[\\/])\S+/.test(value)) return true;
+  return /^[A-Za-z0-9._-]+(?:[\\/][A-Za-z0-9._-]+)*\.[A-Za-z0-9]{1,12}$/.test(value);
+}
+
+function looksPromptLike(s) {
+  const value = String(s || '');
+  if (!value) return false;
+  if (value.includes('Working directory:') || value.includes('Use the Read tool')) return true;
+  if (value.includes('<env>') || value.includes('</env>') || value.includes('<system-reminder>')) return true;
+  return value.length > 512 && /(?:tool|prompt|environment|platform|workspace)/i.test(value);
+}
+
+function basenameOfPath(s) {
+  const value = String(s || '').trim().replace(/^file:\/+/, '');
+  const parts = value.split(/[\\/]+/).filter(Boolean);
+  return parts.length ? parts[parts.length - 1].slice(0, 120) : '';
+}
+
+function looksLikeMessage(buf) {
+  if (!buf?.length) return false;
+  const key = buf[0];
+  const wireType = key & 7;
+  const field = key >> 3;
+  if (!field || ![0, 1, 2, 5].includes(wireType)) return false;
+  try {
+    const parsed = parseFields(buf);
+    return parsed.length > 0 && parsed.every(f => f.field > 0);
+  } catch {
+    return false;
+  }
+}
+
 function stringField(fields, num) {
   const f = getField(fields, num, 2);
   return f ? f.value.toString('utf8') : '';
@@ -343,6 +379,50 @@ function summarizeNativeStepBody(kind, bodyBuf) {
   return { fieldCount: f.length };
 }
 
+function summarizeReadWrapperField19(wrapperBuf) {
+  const fields = parseFields(wrapperBuf);
+  return {
+    bytes: wrapperBuf.length,
+    fieldNumbers: fields.map(f => f.field),
+    children: fields.slice(0, positiveIntEnv('WINDSURFAPI_PROTO_TRACE_READ_WRAPPER_CHILD_LIMIT', 24))
+      .map((f) => {
+        const out = {
+          field: f.field,
+          wireType: f.wireType,
+        };
+        if (f.wireType === 0) {
+          out.type = 'varint';
+          out.value = typeof f.value === 'bigint' ? f.value.toString() : f.value;
+          return out;
+        }
+        if (!Buffer.isBuffer(f.value)) return out;
+        out.bytes = f.value.length;
+        out.sha256 = shortHash(f.value);
+        if (looksLikeMessage(f.value)) {
+          out.type = 'message_or_bytes';
+          out.summary = summarizeMessageChildren(f.value, 8);
+          return out;
+        }
+        if (mostlyText(f.value)) {
+          const text = f.value.toString('utf8');
+          out.type = 'string';
+          out.hasNewline = /[\r\n]/.test(text);
+          out.hasAngleBracket = /[<>]/.test(text);
+          out.looksPathLike = looksPathLike(text);
+          out.looksPromptLike = looksPromptLike(text);
+          out.basename = out.looksPathLike ? basenameOfPath(text) : '';
+          if (process.env.WINDSURFAPI_PROTO_TRACE_READ_WRAPPER_STRINGS === '1') {
+            out.preview = redactPreview(text);
+          }
+          return out;
+        }
+        out.type = 'message_or_bytes';
+        out.summary = summarizeMessageChildren(f.value, 8);
+        return out;
+      }),
+  };
+}
+
 function summarizeTrajectoryStep(stepBuf, index) {
   const fields = parseFields(stepBuf);
   const oneofFields = [];
@@ -363,13 +443,16 @@ function summarizeTrajectoryStep(stepBuf, index) {
       field: f.field,
       ...summarizeMessageChildren(f.value, 8),
     }));
+  const type = numberField(fields, 1);
+  const wrapper19 = type === 14 ? getField(fields, 19, 2) : null;
   return {
     index,
-    type: numberField(fields, 1),
+    type,
     status: numberField(fields, 4),
     fieldNumbers: fields.map(f => f.field),
     nativeOneofs: oneofFields,
     messageFields: interestingFields,
+    ...(wrapper19 ? { readWrapperField19: summarizeReadWrapperField19(wrapper19.value) } : {}),
   };
 }
 

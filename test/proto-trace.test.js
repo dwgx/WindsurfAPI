@@ -337,4 +337,72 @@ describe('proto trace', () => {
     assert.equal(rec.semantic.steps[0].messageFields[0].field, 19);
     assert.deepEqual(rec.semantic.steps[0].messageFields[0].fieldNumbers, [2, 3, 4]);
   });
+
+  it('summarizes read wrapper field 19 children without raw strings by default', () => {
+    process.env.WINDSURFAPI_PROTO_TRACE = '1';
+    const viewWrapper = Buffer.concat([
+      writeStringField(1, 'file:///workspace/README.md'),
+      writeStringField(2, '- Working directory: /tmp/project\nUse the Read tool exactly once.'),
+      writeMessageField(3, writeStringField(1, './nested/README.md')),
+      writeStringField(4, 'observed content'),
+    ]);
+    const step = Buffer.concat([
+      writeVarintField(1, 14),
+      writeVarintField(4, 3),
+      writeMessageField(19, viewWrapper),
+    ]);
+    traceGrpcPayload({
+      port: 42100,
+      path: '/exa.language_server_pb.LanguageServerService/GetCascadeTrajectorySteps',
+      direction: 'response',
+      body: writeMessageField(1, step),
+      transport: 'grpc',
+      framed: false,
+    });
+
+    const file = join(dir, `ls-proto-${process.pid}-GetCascadeTrajectorySteps.jsonl`);
+    const rec = JSON.parse(readFileSync(file, 'utf8').trim());
+    const summary = rec.semantic.steps[0].readWrapperField19;
+    assert.deepEqual(summary.fieldNumbers, [1, 2, 3, 4]);
+    const pathChild = summary.children.find(c => c.field === 1);
+    const promptChild = summary.children.find(c => c.field === 2);
+    const nestedChild = summary.children.find(c => c.field === 3);
+    assert.equal(pathChild.type, 'string');
+    assert.equal(pathChild.looksPathLike, true);
+    assert.equal(pathChild.basename, 'README.md');
+    assert.equal(pathChild.preview, undefined);
+    assert.equal(promptChild.looksPromptLike, true);
+    assert.equal(promptChild.hasNewline, true);
+    assert.equal(promptChild.preview, undefined);
+    assert.equal(nestedChild.type, 'message_or_bytes');
+    assert.deepEqual(nestedChild.summary.fieldNumbers, [1]);
+  });
+
+  it('can include redacted read wrapper string previews behind a dedicated switch', () => {
+    process.env.WINDSURFAPI_PROTO_TRACE = '1';
+    process.env.WINDSURFAPI_PROTO_TRACE_READ_WRAPPER_STRINGS = '1';
+    const viewWrapper = Buffer.concat([
+      writeStringField(1, 'file:///workspace/README.md'),
+      writeStringField(2, 'api_key=abcdefghijklmnopqrstuvwxyz1234567890abcdef Working directory: /tmp/project'),
+    ]);
+    const step = Buffer.concat([
+      writeVarintField(1, 14),
+      writeVarintField(4, 3),
+      writeMessageField(19, viewWrapper),
+    ]);
+    traceGrpcPayload({
+      port: 42100,
+      path: '/exa.language_server_pb.LanguageServerService/GetCascadeTrajectorySteps',
+      direction: 'response',
+      body: writeMessageField(1, step),
+      transport: 'grpc',
+      framed: false,
+    });
+
+    const file = join(dir, `ls-proto-${process.pid}-GetCascadeTrajectorySteps.jsonl`);
+    const rec = JSON.parse(readFileSync(file, 'utf8').trim());
+    const promptChild = rec.semantic.steps[0].readWrapperField19.children.find(c => c.field === 2);
+    assert.match(promptChild.preview, /<redacted-secret>/);
+    assert.doesNotMatch(promptChild.preview, /abcdefghijklmnopqrstuvwxyz1234567890abcdef/);
+  });
 });
