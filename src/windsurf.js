@@ -910,6 +910,14 @@ export function parseTrajectorySteps(buf) {
   const steps = getAllFields(fields, 1).filter(f => f.wireType === 2);
   const results = [];
 
+  const isLikelyPathOrFileUri = (value) => {
+    const s = String(value || '').trim();
+    if (!s || s.length > 1024 || /[\r\n<>]/.test(s)) return false;
+    if (/^file:\/\/\/?(?:[A-Za-z]:[\\/]|\/|~[\\/])/.test(s)) return true;
+    if (/^(?:[A-Za-z]:[\\/]|\/|~[\\/]|\.{1,2}[\\/])\S+/.test(s)) return true;
+    return /^[A-Za-z0-9._-]+(?:[\\/][A-Za-z0-9._-]+)*\.[A-Za-z0-9]{1,12}$/.test(s);
+  };
+
   for (const step of steps) {
     const sf = parseFields(step.value);
     const typeField = getField(sf, 1, 0);
@@ -1176,7 +1184,7 @@ export function parseTrajectorySteps(buf) {
           const body = parseFields(wrapper.value);
           const uri = getField(body, 1, 2)?.value?.toString('utf8')
                    || getField(body, 2, 2)?.value?.toString('utf8') || '';
-          if (uri) {
+          if (isLikelyPathOrFileUri(uri)) {
             const args = { absolute_path_uri: uri, offset: 0, limit: 0, start_line: 0, end_line: 0 };
             entry.toolCalls.push({
               id: `native:view_file:${results.length}`,

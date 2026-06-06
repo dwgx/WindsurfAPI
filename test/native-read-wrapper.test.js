@@ -102,6 +102,22 @@ describe('native Read wrapper trajectory parsing', () => {
     assert.equal(calls[0].result, 'observed content');
   });
 
+  it('does not promote wrapper field 2 when it contains the prompt text', () => {
+    const wrapper = Buffer.concat([
+      writeStringField(2, '- Working directory: /tmp/project\n\nUse the Read tool exactly once for README.md.'),
+      writeMessageField(3, writeStringField(1, 'nested request')),
+      writeStringField(4, 'observed content'),
+    ]);
+    const step = Buffer.concat([
+      writeVarintField(1, 14),
+      writeVarintField(4, 3),
+      writeMessageField(19, wrapper),
+    ]);
+    const steps = parseTrajectorySteps(trajectoryStepsResponse(step));
+    const calls = steps[0].toolCalls.filter(tc => tc.cascade_native);
+    assert.equal(calls.length, 0);
+  });
+
   it('repairs native Read workspace paths to caller cwd-relative paths before sanitizing', () => {
     const tc = {
       name: 'Read',
