@@ -3,6 +3,10 @@
  *
  * Translates between OpenAI-shaped client tools (Read/Bash/Glob/Grep/...) and
  * Cascade's built-in IDE step kinds (view_file/run_command/find/grep_search_v2/...).
+ * Runtime enablement is deliberately narrower than TOOL_MAP: by default only
+ * the Bash/run_command family is allowlisted. Read/Grep/Glob/WebSearch/WebFetch
+ * remain lab/protocol mappings until an operator explicitly allowlists them
+ * behind model/account/API-key gates.
  *
  * Why this layer exists
  * ─────────────────────
@@ -39,7 +43,8 @@
  *     Enable only when every declared function tool maps to a Cascade-native
  *     kind. This avoids partial native + prompt-emulation mixing.
  *
- * Default OFF until field-tested.
+ * Default OFF until field-tested. Do not enable this for local IDE agents
+ * unless remote Windsurf-workspace execution is the intended behavior.
  */
 
 import {

@@ -11,6 +11,7 @@ scripts/*
 !scripts/lsp-capacity-matrix.mjs
 !scripts/web-search-direct-probe.mjs
 !scripts/secret-scan.mjs
+!scripts/run-test-shard.mjs
 src/get-token.js
 src/test-cascade.js
 src/runtime-config.json

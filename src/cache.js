@@ -12,6 +12,7 @@ import { log } from './config.js';
 
 const TTL_MS = 5 * 60 * 1000;
 const MAX_ENTRIES = 500;
+const DEFAULT_MAX_BYTES = 16 * 1024 * 1024;
 
 function isCacheEnabled() {
   const raw = String(process.env.RESPONSE_CACHE_ENABLED ?? process.env.WINDSURFAPI_RESPONSE_CACHE ?? '1')
@@ -22,7 +23,49 @@ function isCacheEnabled() {
 
 // Map preserves insertion order → we evict the oldest when over capacity.
 const _store = new Map();
-const _stats = { hits: 0, misses: 0, stores: 0, evictions: 0 };
+const _stats = { hits: 0, misses: 0, stores: 0, evictions: 0, skips: 0 };
+let _bytes = 0;
+
+function bytesEnv(names, fallback) {
+  for (const name of names) {
+    const raw = String(process.env[name] || '').trim();
+    if (!raw) continue;
+    const m = raw.match(/^(\d+(?:\.\d+)?)\s*(b|kb|kib|k|mb|mib|m|gb|gib|g)?$/i);
+    if (!m) continue;
+    const n = Number(m[1]);
+    if (!Number.isFinite(n) || n <= 0) continue;
+    const unit = (m[2] || 'b').toLowerCase();
+    const mul = unit === 'gb' || unit === 'gib' || unit === 'g' ? 1024 ** 3
+      : unit === 'mb' || unit === 'mib' || unit === 'm' ? 1024 ** 2
+        : unit === 'kb' || unit === 'kib' || unit === 'k' ? 1024
+          : 1;
+    return Math.floor(n * mul);
+  }
+  return fallback;
+}
+
+function maxBytes() {
+  return bytesEnv(
+    ['RESPONSE_CACHE_MAX_BYTES', 'WINDSURFAPI_RESPONSE_CACHE_MAX_BYTES'],
+    DEFAULT_MAX_BYTES
+  );
+}
+
+function valueBytes(value) {
+  try {
+    return Buffer.byteLength(JSON.stringify(value), 'utf8');
+  } catch {
+    return Number.POSITIVE_INFINITY;
+  }
+}
+
+function deleteEntry(key) {
+  const entry = _store.get(key);
+  if (!entry) return false;
+  _store.delete(key);
+  _bytes = Math.max(0, _bytes - (Number(entry.bytes) || 0));
+  return true;
+}
 
 function digestBase64Data(data = '', mime = '') {
   const compact = String(data).replace(/\s/g, '');
@@ -94,7 +137,7 @@ export function cacheGet(key) {
   const entry = _store.get(key);
   if (!entry) { _stats.misses++; return null; }
   if (entry.expiresAt < Date.now()) {
-    _store.delete(key);
+    deleteEntry(key);
     _stats.misses++;
     return null;
   }
@@ -109,11 +152,20 @@ export function cacheSet(key, value) {
   if (!isCacheEnabled()) return;
   // Don't cache empty or partial results
   if (!value || (!value.text && !(value.chunks && value.chunks.length))) return;
-  _store.set(key, { value, expiresAt: Date.now() + TTL_MS });
+  const bytes = valueBytes(value);
+  const limit = maxBytes();
+  deleteEntry(key);
+  if (!Number.isFinite(bytes) || bytes > limit) {
+    _stats.skips++;
+    return;
+  }
+  _store.set(key, { value, expiresAt: Date.now() + TTL_MS, bytes });
+  _bytes += bytes;
   _stats.stores++;
-  while (_store.size > MAX_ENTRIES) {
+  while (_store.size > MAX_ENTRIES || _bytes > limit) {
     const oldest = _store.keys().next().value;
-    _store.delete(oldest);
+    if (oldest === undefined) break;
+    deleteEntry(oldest);
     _stats.evictions++;
   }
 }
@@ -124,17 +176,21 @@ export function cacheStats() {
     enabled: isCacheEnabled(),
     size: _store.size,
     maxSize: MAX_ENTRIES,
+    bytes: _bytes,
+    maxBytes: maxBytes(),
     ttlMs: TTL_MS,
     hits: _stats.hits,
     misses: _stats.misses,
     stores: _stats.stores,
     evictions: _stats.evictions,
+    skips: _stats.skips,
     hitRate: total > 0 ? ((_stats.hits / total) * 100).toFixed(1) : '0.0',
   };
 }
 
 export function cacheClear() {
   _store.clear();
-  _stats.hits = 0; _stats.misses = 0; _stats.stores = 0; _stats.evictions = 0;
+  _bytes = 0;
+  _stats.hits = 0; _stats.misses = 0; _stats.stores = 0; _stats.evictions = 0; _stats.skips = 0;
   log.info('Response cache cleared');
 }

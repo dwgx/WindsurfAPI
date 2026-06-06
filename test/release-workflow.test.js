@@ -26,7 +26,8 @@ describe('release workflow', () => {
   });
 
   it('uses the bounded release test gate in CI', () => {
-    assert.match(ciWorkflow, /\brun:\s*npm run test:release\b/);
+    assert.match(ciWorkflow, /\bmatrix:\s*\n\s*shard:\s*\[0, 1, 2, 3\]/);
+    assert.match(ciWorkflow, /\brun:\s*npm run test:shard -- \$\{\{ matrix\.shard \}\} 4\b/);
   });
 
   it('injects build metadata into the Docker build', () => {

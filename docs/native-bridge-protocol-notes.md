@@ -14,6 +14,12 @@ allowlist. To test them, set
 `WINDSURFAPI_NATIVE_TOOL_BRIDGE_TOOLS=Read,Bash,Grep,Glob` or a narrower list
 for a gated account/API key/model.
 
+For Claude Code, Cline, Codex, Cursor-style local agents, the safe production
+default is still prompt/tool emulation. Native bridge means Cascade may execute
+the built-in tool in the remote Windsurf workspace, not on the caller's local
+machine. Do not recommend `all_mapped` as a general fix for "tools not called";
+use it only for narrow canaries with explicit model/account/API-key gates.
+
 Do not add `WebSearch` / `WebFetch` to a production allowlist yet. v2.0.126
 confirmed their tool-config fields and subconfig enums, but live LS canaries
 still return a `permission_denied` Cascade error step before any web oneof is

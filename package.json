@@ -1,6 +1,6 @@
 {
   "name": "windsurf-api",
-  "version": "2.0.137",
+  "version": "2.0.138",
   "description": "Windsurf to OpenAI + Anthropic compatible API proxy. Turns Windsurf's 107 AI models (Claude, GPT, Gemini, DeepSeek, Grok, Qwen, Kimi, GLM, SWE) into dual-protocol API endpoints. Zero npm deps.",
   "type": "module",
   "main": "src/index.js",
@@ -8,7 +8,8 @@
     "start": "node src/index.js",
     "dev": "node --watch src/index.js",
     "test": "node --test --test-force-exit test/*.test.js",
-    "test:release": "node --test --test-force-exit test/dashboard-api.test.js test/proto-trace.test.js test/secret-scan.test.js test/release-workflow.test.js test/version.test.js",
+    "test:shard": "node scripts/run-test-shard.mjs",
+    "test:release": "node --test --test-force-exit test/cache.test.js test/dashboard-api.test.js test/dashboard-syntax.test.js test/native-bridge-docs.test.js test/proto-trace.test.js test/secret-scan.test.js test/test-shard-script.test.js test/release-workflow.test.js test/version.test.js",
     "smoke:native-bridge": "node scripts/native-bridge-smoke.mjs",
     "smoke:special-agent": "node scripts/special-agent-smoke.mjs",
     "smoke:lsp-matrix": "node scripts/lsp-capacity-matrix.mjs",

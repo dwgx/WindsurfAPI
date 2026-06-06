@@ -37,3 +37,23 @@ test('dashboard batch login history uses each result proxy instead of an undefin
   assert.match(html, /proxy:\s*this\.getWindsurfProxyLabel\(item\.proxy\)/);
   assert.doesNotMatch(html, /proxy:\s*this\.getWindsurfProxyLabel\(proxy\),\s*\r?\n\s*status:\s*item\.success/);
 });
+
+test('dashboard proxy and abnormal-account tables use paged account summaries', () => {
+  const html = readFileSync(join(root, 'src/dashboard/index.html'), 'utf8');
+  assert.match(html, /id="proxy-accounts-pagination"/);
+  assert.match(html, /id="ban-pagination"/);
+  assert.match(html, /setProxyPage\(page\)/);
+  assert.match(html, /setBansPage\(page\)/);
+  assert.match(html, /this\.accountsListUrl\(\{\s*page:\s*this\.proxyPage,\s*pageSize:\s*this\.proxyPageSize/s);
+  assert.match(html, /filter:\s*'flagged'/);
+  assert.doesNotMatch(html, /pageSize=1000/);
+  assert.doesNotMatch(html, /pageSize=500/);
+});
+
+test('dashboard sketch proxy and abnormal-account tables use lightweight summaries', () => {
+  const html = readFileSync(join(root, 'src/dashboard/index-sketch.html'), 'utf8');
+  assert.match(html, /\/accounts\?view=summary&pageSize=200/);
+  assert.match(html, /\/accounts\?view=summary&filter=flagged&pageSize=200/);
+  assert.doesNotMatch(html, /pageSize=1000/);
+  assert.doesNotMatch(html, /pageSize=500/);
+});

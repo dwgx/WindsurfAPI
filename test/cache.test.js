@@ -1,8 +1,12 @@
 import { describe, it, beforeEach } from 'node:test';
 import assert from 'node:assert/strict';
-import { cacheKey, cacheGet, cacheSet, cacheClear } from '../src/cache.js';
+import { cacheKey, cacheGet, cacheSet, cacheClear, cacheStats } from '../src/cache.js';
 
-beforeEach(() => cacheClear());
+beforeEach(() => {
+  delete process.env.RESPONSE_CACHE_MAX_BYTES;
+  delete process.env.WINDSURFAPI_RESPONSE_CACHE_MAX_BYTES;
+  cacheClear();
+});
 
 describe('cacheKey', () => {
   it('produces deterministic keys', () => {
@@ -73,5 +77,49 @@ describe('cacheGet / cacheSet', () => {
     assert.equal(cacheGet('empty'), null);
     cacheSet('empty2', { text: '', chunks: [] });
     assert.equal(cacheGet('empty2'), null);
+  });
+
+  it('skips entries larger than the configured byte limit', () => {
+    process.env.RESPONSE_CACHE_MAX_BYTES = '80';
+    cacheSet('too-large', { text: 'x'.repeat(200) });
+
+    assert.equal(cacheGet('too-large'), null);
+    const stats = cacheStats();
+    assert.equal(stats.size, 0);
+    assert.equal(stats.skips, 1);
+    assert.equal(stats.maxBytes, 80);
+  });
+
+  it('accepts byte units for the configured byte limit', () => {
+    process.env.RESPONSE_CACHE_MAX_BYTES = '0.25kb';
+    cacheSet('unit-sized', { text: 'x'.repeat(200) });
+
+    assert.deepEqual(cacheGet('unit-sized'), { text: 'x'.repeat(200) });
+    assert.equal(cacheStats().maxBytes, 256);
+  });
+
+  it('replaces an existing key with no cache entry when the new value is too large', () => {
+    process.env.RESPONSE_CACHE_MAX_BYTES = '80';
+    cacheSet('same', { text: 'small' });
+    cacheSet('same', { text: 'x'.repeat(200) });
+
+    assert.equal(cacheGet('same'), null);
+    assert.equal(cacheStats().skips, 1);
+  });
+
+  it('evicts oldest entries to stay under the configured byte limit', () => {
+    process.env.RESPONSE_CACHE_MAX_BYTES = '120';
+    cacheSet('first', { text: 'a'.repeat(40) });
+    cacheSet('second', { text: 'b'.repeat(40) });
+    cacheSet('third', { text: 'c'.repeat(40) });
+
+    assert.equal(cacheGet('first'), null);
+    assert.deepEqual(cacheGet('second'), { text: 'b'.repeat(40) });
+    assert.deepEqual(cacheGet('third'), { text: 'c'.repeat(40) });
+
+    const stats = cacheStats();
+    assert.equal(stats.size, 2);
+    assert.ok(stats.bytes <= stats.maxBytes);
+    assert.equal(stats.evictions, 1);
   });
 });

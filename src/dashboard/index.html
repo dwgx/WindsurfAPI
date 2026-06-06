@@ -2122,6 +2122,17 @@ window._firebaseOAuth = async function(provider) {
             <tbody></tbody>
           </table>
         </div>
+        <div class="table-pagination" id="proxy-accounts-pagination">
+          <button class="btn btn-ghost btn-xs" id="proxy-accounts-prev" onclick="App.setProxyPage(App.proxyPage - 1)">Prev</button>
+          <span class="page-label" id="proxy-accounts-page-label">-</span>
+          <select class="select" id="proxy-accounts-page-size" onchange="App.setProxyPageSize(this.value)">
+            <option value="25">25</option>
+            <option value="50">50</option>
+            <option value="100">100</option>
+            <option value="200">200</option>
+          </select>
+          <button class="btn btn-ghost btn-xs" id="proxy-accounts-next" onclick="App.setProxyPage(App.proxyPage + 1)">Next</button>
+        </div>
       </div>
     </div>
   </section>
@@ -2298,6 +2309,17 @@ window._firebaseOAuth = async function(provider) {
             <thead><tr><th data-i18n="table.header.account">账号</th><th data-i18n="table.header.status">状态</th><th data-i18n="table.header.errorCount">错误数</th><th data-i18n="table.header.lastUsed">最后使用</th><th data-i18n="table.header.action">操作</th></tr></thead>
             <tbody></tbody>
           </table>
+        </div>
+        <div class="table-pagination" id="ban-pagination">
+          <button class="btn btn-ghost btn-xs" id="ban-prev" onclick="App.setBansPage(App.bansPage - 1)">Prev</button>
+          <span class="page-label" id="ban-page-label">-</span>
+          <select class="select" id="ban-page-size" onchange="App.setBansPageSize(this.value)">
+            <option value="25">25</option>
+            <option value="50">50</option>
+            <option value="100">100</option>
+            <option value="200">200</option>
+          </select>
+          <button class="btn btn-ghost btn-xs" id="ban-next" onclick="App.setBansPage(App.bansPage + 1)">Next</button>
         </div>
       </div>
     </div>
@@ -2676,6 +2698,10 @@ const App = {
   accountsPageSize: Number(localStorage.getItem('accountsPageSize') || 50),
   accountsTotal: 0,
   accountsHasMore: false,
+  proxyPage: 1,
+  proxyPageSize: Number(localStorage.getItem('proxyAccountsPageSize') || 50),
+  bansPage: 1,
+  bansPageSize: Number(localStorage.getItem('bansPageSize') || 50),
   _accountDetails: new Map(),
 
   applyLang() {
@@ -3741,26 +3767,31 @@ docker compose up -d --force-recreate</pre>
     return `/accounts?${qs.toString()}`;
   },
 
-  renderAccountsPagination(d = {}) {
+  renderTablePagination(prefix, d = {}, pageStateKey, pageSizeStateKey) {
     const total = Number(d.total || 0);
-    const pageSize = Number(d.pageSize || this.accountsPageSize || 50);
-    const page = Number(d.page || this.accountsPage || 1);
-    this.accountsPage = page;
-    this.accountsPageSize = pageSize;
-    this.accountsTotal = total;
-    this.accountsHasMore = !!d.hasMore;
-    const label = document.getElementById('accounts-page-label');
-    const prev = document.getElementById('accounts-prev');
-    const next = document.getElementById('accounts-next');
-    const size = document.getElementById('accounts-page-size');
+    const pageSize = Number(d.pageSize || this[pageSizeStateKey] || 50);
+    const page = Number(d.page || this[pageStateKey] || 1);
+    this[pageStateKey] = page;
+    this[pageSizeStateKey] = pageSize;
+    const label = document.getElementById(`${prefix}-page-label`);
+    const prev = document.getElementById(`${prefix}-prev`);
+    const next = document.getElementById(`${prefix}-next`);
+    const size = document.getElementById(`${prefix}-page-size`);
     if (label) {
-      const from = total === 0 ? 0 : ((page - 1) * pageSize + 1);
-      const to = Math.min(total, from + (d.accounts?.length || 0) - 1);
+      const count = (d.accounts || []).length || 0;
+      const from = total === 0 || count === 0 ? 0 : ((page - 1) * pageSize + 1);
+      const to = total === 0 || count === 0 ? 0 : Math.min(total, from + count - 1);
       label.textContent = `${from}-${to} / ${total}`;
     }
     if (prev) prev.disabled = page <= 1;
     if (next) next.disabled = !d.hasMore;
     if (size) size.value = String(pageSize);
+  },
+
+  renderAccountsPagination(d = {}) {
+    this.renderTablePagination('accounts', d, 'accountsPage', 'accountsPageSize');
+    this.accountsTotal = Number(d.total || 0);
+    this.accountsHasMore = !!d.hasMore;
   },
 
   setAccountsPage(page) {
@@ -3776,6 +3807,36 @@ docker compose up -d --force-recreate</pre>
     this.accountsPage = 1;
     localStorage.setItem('accountsPageSize', String(next));
     this.loadAccounts();
+  },
+
+  setProxyPage(page) {
+    const next = Math.max(1, Number(page) || 1);
+    if (next === this.proxyPage) return;
+    this.proxyPage = next;
+    this.loadProxy();
+  },
+
+  setProxyPageSize(value) {
+    const next = Math.max(1, Math.min(200, Number(value) || 50));
+    this.proxyPageSize = next;
+    this.proxyPage = 1;
+    localStorage.setItem('proxyAccountsPageSize', String(next));
+    this.loadProxy();
+  },
+
+  setBansPage(page) {
+    const next = Math.max(1, Number(page) || 1);
+    if (next === this.bansPage) return;
+    this.bansPage = next;
+    this.loadBans();
+  },
+
+  setBansPageSize(value) {
+    const next = Math.max(1, Math.min(200, Number(value) || 50));
+    this.bansPageSize = next;
+    this.bansPage = 1;
+    localStorage.setItem('bansPageSize', String(next));
+    this.loadBans();
   },
 
   async getAccountDetail(id, { force = false } = {}) {
@@ -4637,7 +4698,11 @@ docker compose up -d --force-recreate</pre>
       document.getElementById('proxy-pass').placeholder = I18n.t('proxy.placeholderPassword');
       document.getElementById('proxy-current').textContent = I18n.t('proxy.notConfigured');
     }
-    const accts = await this.api('GET', '/accounts?view=summary&pageSize=1000');
+    const accts = await this.api('GET', this.accountsListUrl({
+      page: this.proxyPage,
+      pageSize: this.proxyPageSize,
+    }));
+    this.renderTablePagination('proxy-accounts', accts, 'proxyPage', 'proxyPageSize');
     const tbody = document.querySelector('#proxy-accounts-table tbody');
     const pa = d.perAccount || {};
     tbody.innerHTML = (accts.accounts || []).map(a => {
@@ -5994,7 +6059,12 @@ docker compose up -d --force-recreate</pre>
 
   // ─── Ban Detection ───────────────────────────
   async loadBans() {
-    const d = await this.api('GET', '/accounts?view=summary&filter=flagged&pageSize=500');
+    const d = await this.api('GET', this.accountsListUrl({
+      page: this.bansPage,
+      pageSize: this.bansPageSize,
+      filter: 'flagged',
+    }));
+    this.renderTablePagination('ban', d, 'bansPage', 'bansPageSize');
     const accounts = d.accounts || [];
     const stats = d.stats || {};
     const errored = accounts.filter(a => a.status === 'error' || a.errorCount > 0 || a.rateLimited);

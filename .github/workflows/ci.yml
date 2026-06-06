@@ -34,9 +34,13 @@ jobs:
           done
 
   test:
-    name: Unit tests
+    name: Unit tests shard ${{ matrix.shard }}
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
     steps:
       - uses: actions/checkout@v4
 
@@ -46,4 +50,4 @@ jobs:
           node-version: '20'
 
       - name: Run tests
-        run: npm run test:release
+        run: npm run test:shard -- ${{ matrix.shard }} 4
