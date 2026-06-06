@@ -1,9 +1,25 @@
-import { describe, it } from 'node:test';
+import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import http2 from 'http2';
 import { isCascadeTransportError } from '../src/client.js';
-import { chatStreamError, isUpstreamDeadlineExceeded, isUpstreamTransientError, redactRequestLogText } from '../src/handlers/chat.js';
+import { addAccountByKey, getApiKey, removeAccount } from '../src/auth.js';
+import {
+  chatStreamError,
+  finishPartialStreamAfterError,
+  handleChatCompletions,
+  isUpstreamDeadlineExceeded,
+  isUpstreamTransientError,
+  redactRequestLogText,
+} from '../src/handlers/chat.js';
 import { handleMessages } from '../src/handlers/messages.js';
+
+const createdAccountIds = [];
+
+afterEach(() => {
+  while (createdAccountIds.length) {
+    removeAccount(createdAccountIds.pop());
+  }
+});
 
 function parseEvents(raw) {
   return raw.trim().split('\n\n').filter(Boolean).map(frame => {
@@ -100,6 +116,124 @@ describe('stream error protocol', () => {
     const events = parseEvents(res.body);
     assert.equal(events[0].event, 'error');
     assert.equal(events[0].data.error.type, 'upstream_transient_error');
+  });
+
+  it('closes partial OpenAI streams without appending an error JSON frame', () => {
+    const res = fakeRes();
+    const send = (data) => res.write(`data: ${JSON.stringify(data)}\n\n`);
+
+    send({
+      id: 'chatcmpl_partial',
+      object: 'chat.completion.chunk',
+      created: 1,
+      model: 'claude-sonnet-4.6',
+      choices: [{ index: 0, delta: { role: 'assistant', content: '' }, finish_reason: null }],
+    });
+    send({
+      id: 'chatcmpl_partial',
+      object: 'chat.completion.chunk',
+      created: 1,
+      model: 'claude-sonnet-4.6',
+      choices: [{ index: 0, delta: { content: 'partial answer' }, finish_reason: null }],
+    });
+
+    finishPartialStreamAfterError({
+      id: 'chatcmpl_partial',
+      created: 1,
+      model: 'claude-sonnet-4.6',
+      send,
+      res,
+    });
+    res.end();
+
+    assert.equal(res.body.includes('"error"'), false);
+    const frames = res.body
+      .split('\n\n')
+      .filter(Boolean)
+      .map(frame => frame.split('\n').find(line => line.startsWith('data: '))?.slice(6))
+      .filter(Boolean);
+    assert.equal(frames.at(-1), '[DONE]');
+    const finish = JSON.parse(frames.at(-2));
+    assert.equal(finish.choices[0].finish_reason, 'stop');
+  });
+
+  it('does not append stream error JSON after content already reached the client', async () => {
+    const account = addAccountByKey(`partial-deadline-${Date.now()}-${Math.random().toString(36).slice(2)}`, 'partial-deadline');
+    createdAccountIds.push(account.id);
+
+    class PartialDeadlineClient {
+      async cascadeChat(_messages, _modelEnum, _modelUid, opts = {}) {
+        opts.onChunk({ text: 'partial answer' });
+        throw new Error('Encountered retryable error from model provider: context deadline exceeded (Client.Timeout or context cancellation while reading body)');
+      }
+    }
+
+    const result = await handleChatCompletions({
+      model: 'gemini-2.5-flash',
+      stream: true,
+      messages: [{ role: 'user', content: 'write a long answer' }],
+    }, {
+      async waitForAccount(tried, _signal, _maxWaitMs, modelKey) {
+        return tried.length === 0 ? getApiKey(tried, modelKey) : null;
+      },
+      async ensureLs() {},
+      getLsFor() {
+        return { port: 17777, csrfToken: 'csrf', generation: 1 };
+      },
+      WindsurfClient: PartialDeadlineClient,
+    });
+
+    assert.equal(result.status, 200);
+    assert.equal(result.stream, true);
+
+    const res = fakeRes();
+    await result.handler(res);
+
+    assert.match(res.body, /partial answer/);
+    assert.equal(res.body.includes('"error"'), false);
+    const frames = res.body
+      .split('\n\n')
+      .filter(Boolean)
+      .filter(frame => !frame.startsWith(':'))
+      .map(frame => frame.split('\n').find(line => line.startsWith('data: '))?.slice(6))
+      .filter(Boolean);
+    assert.equal(frames.at(-1), '[DONE]');
+    const finish = JSON.parse(frames.at(-2));
+    assert.equal(finish.choices[0].finish_reason, 'stop');
+  });
+
+  it('still sends a structured stream error when only an empty role chunk was emitted', async () => {
+    const account = addAccountByKey(`empty-deadline-${Date.now()}-${Math.random().toString(36).slice(2)}`, 'empty-deadline');
+    createdAccountIds.push(account.id);
+
+    class EmptyThenDeadlineClient {
+      async cascadeChat(_messages, _modelEnum, _modelUid, opts = {}) {
+        opts.onChunk({ text: '' });
+        throw new Error('Encountered retryable error from model provider: context deadline exceeded (Client.Timeout or context cancellation while reading body)');
+      }
+    }
+
+    const result = await handleChatCompletions({
+      model: 'gemini-2.5-flash',
+      stream: true,
+      messages: [{ role: 'user', content: 'hi' }],
+    }, {
+      async waitForAccount(tried, _signal, _maxWaitMs, modelKey) {
+        return tried.length === 0 ? getApiKey(tried, modelKey) : null;
+      },
+      async ensureLs() {},
+      getLsFor() {
+        return { port: 17777, csrfToken: 'csrf', generation: 1 };
+      },
+      WindsurfClient: EmptyThenDeadlineClient,
+    });
+
+    const res = fakeRes();
+    await result.handler(res);
+
+    assert.match(res.body, /"error"/);
+    assert.match(res.body, /"type":"upstream_deadline_exceeded"/);
+    assert.match(res.body, /data: \[DONE\]/);
   });
 
   it('routes oversized Connect frame parser errors to onError without throwing from data handlers', async () => {

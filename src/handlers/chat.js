@@ -292,6 +292,19 @@ export function chatStreamError(message, type = 'upstream_error', code = null) {
   return { error: { message: sanitizeText(message || 'Upstream stream error'), type, code } };
 }
 
+export function finishPartialStreamAfterError({ id, created, model, send, res }) {
+  if (typeof send === 'function') {
+    send({
+      id,
+      object: 'chat.completion.chunk',
+      created,
+      model,
+      choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+    });
+  }
+  if (res && !res.writableEnded) res.write('data: [DONE]\n\n');
+}
+
 /**
  * v2.0.71 (#115 server-side fabricate detection): when a tool-emulation
  * request comes back with `markers=none` AND the model output looks like
@@ -3119,6 +3132,7 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
       // Accumulate chunks so we can cache a successful response at the end.
       let accText = '';
       let accThinking = '';
+      let emittedClientPayload = false;
 
       // Cascade conversation pool (stream path). Opus 4.7 tool-emulated
       // requests opt in even when the global experiment toggle is off, because
@@ -3172,17 +3186,20 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
         // middle of a stream (fence might straddle a chunk, and we'd need
         // lookahead). On finish we'll emit one clean JSON payload.
         if (wantJson) return;
+        emittedClientPayload = true;
         send({ id, object: 'chat.completion.chunk', created, model,
           choices: [{ index: 0, delta: { content: clean }, finish_reason: null }] });
       };
       const emitThinking = (clean) => {
         if (!clean) return;
         accThinking += clean;
+        emittedClientPayload = true;
         send({ id, object: 'chat.completion.chunk', created, model,
           choices: [{ index: 0, delta: { reasoning_content: clean }, finish_reason: null }] });
       };
 
       const emitToolCallDelta = (tc, idx) => {
+        emittedClientPayload = true;
         send({ id, object: 'chat.completion.chunk', created, model,
           choices: [{ index: 0, delta: {
             tool_calls: [{
@@ -3840,23 +3857,14 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
             log.info(`Chat[${reqId}]: stream reuse entry was invalidated (cascade not_found upstream); not restoring to pool`);
           }
 
-          if (hadSuccess) {
+          if (emittedClientPayload) {
             // We already streamed real assistant content. Injecting
             // "[Error: ...]" as a content delta here would corrupt the
             // assistant message (clients display it verbatim as model
             // output). Close cleanly with a plain stop — the caller saw
             // whatever partial content we produced. Error details only
             // go to the server log.
-            const errType = allInternal
-              ? 'upstream_transient_error'
-              : deadlineExceeded
-                ? 'upstream_deadline_exceeded'
-              : poolExhausted
-                ? 'ls_pool_exhausted'
-              : (temporaryUnavailable.allUnavailable || lastErr?.type === 'rate_limit_exceeded')
-                ? 'rate_limit_exceeded'
-                : 'upstream_error';
-            send(chatStreamError(errMsg, errType, deadlineExceeded ? 'windsurf_provider_deadline' : null));
+            finishPartialStreamAfterError({ id, created, model, send, res });
             log.warn(`Stream: partial response delivered then failed (${errMsg})`);
           } else {
             const errType = allInternal
@@ -3870,7 +3878,7 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
                 : 'upstream_error';
             send(chatStreamError(errMsg, errType, deadlineExceeded ? 'windsurf_provider_deadline' : null));
           }
-          res.write('data: [DONE]\n\n');
+          if (!emittedClientPayload) res.write('data: [DONE]\n\n');
         } catch {}
         if (!res.writableEnded) res.end();
       } finally {
