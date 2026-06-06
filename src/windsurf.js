@@ -1162,6 +1162,34 @@ export function parseTrajectorySteps(buf) {
       });
     }
 
+    // Newer LS builds sometimes emit a completed read_file/view_file step as
+    // type=14 with the body wrapped on field 19 instead of the historical
+    // oneof field 14. Live traces show wrapper fields [2,3,4], where field 2
+    // carries the file URI/path and field 4 carries the observed content.
+    // Promote that shape to the same cascade-native tool call so native
+    // bridge can return the proposal before the remote workspace executor
+    // reports its follow-up "invalid tool call" error.
+    if (entry.type === 14 && !entry.toolCalls.some(tc => tc.cascade_native && tc.name === 'view_file')) {
+      const wrapper = getField(sf, 19, 2);
+      if (wrapper) {
+        try {
+          const body = parseFields(wrapper.value);
+          const uri = getField(body, 1, 2)?.value?.toString('utf8')
+                   || getField(body, 2, 2)?.value?.toString('utf8') || '';
+          if (uri) {
+            const args = { absolute_path_uri: uri, offset: 0, limit: 0, start_line: 0, end_line: 0 };
+            entry.toolCalls.push({
+              id: `native:view_file:${results.length}`,
+              name: 'view_file',
+              argumentsJson: JSON.stringify(args),
+              result: getField(body, 4, 2)?.value?.toString('utf8') || '',
+              cascade_native: true,
+            });
+          }
+        } catch {}
+      }
+    }
+
     if (plannerField) {
       const pf = parseFields(plannerField.value);
       const textField = getField(pf, 1, 2);

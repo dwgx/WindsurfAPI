@@ -726,7 +726,92 @@ function extractRequestedBashCommands(text) {
   return [...new Set(out)];
 }
 
+function readPathKey(args) {
+  if (Object.prototype.hasOwnProperty.call(args, 'file_path')) return 'file_path';
+  if (Object.prototype.hasOwnProperty.call(args, 'path')) return 'path';
+  if (Object.prototype.hasOwnProperty.call(args, 'absolute_path')) return 'absolute_path';
+  if (Object.prototype.hasOwnProperty.call(args, 'absolute_path_uri')) return 'absolute_path_uri';
+  return 'file_path';
+}
+
+function stripFileUriForRepair(path) {
+  const raw = String(path || '').replace(/^file:\/\//i, '');
+  try { return decodeURIComponent(raw); } catch { return raw; }
+}
+
+function internalWorkspaceTail(path) {
+  let s = stripFileUriForRepair(path).replace(/\\/g, '/');
+  s = s.replace(/^\/([A-Za-z]:\/)/, '$1');
+  const patterns = [
+    /^(?:[A-Za-z]:)?\/home\/user\/projects\/workspace-[a-z0-9]+(?:\/(.*))?$/i,
+    /^\/tmp\/windsurf-workspace(?:\/(.*))?$/i,
+  ];
+  for (const re of patterns) {
+    const m = s.match(re);
+    if (m) return (m[1] || '').replace(/^\/+/, '');
+  }
+  if (String(path || '').trim() === '<workspace>') return '';
+  return null;
+}
+
+function callerWorkingDirectory(messages) {
+  const env = extractCallerEnvironment(messages);
+  const m = String(env || '').match(/(?:^|\n)- Working directory:\s*([^\n]+)/);
+  return m ? m[1].trim() : '';
+}
+
+function joinCallerPath(cwd, rel) {
+  const cleanRel = String(rel || '').replace(/^[\\/]+/, '');
+  if (!cleanRel) return '';
+  if (!cwd || internalWorkspaceTail(cwd) !== null || cwd === '<workspace>') return cleanRel;
+  const sep = cwd.includes('\\') && !cwd.includes('/') ? '\\' : '/';
+  return `${cwd.replace(/[\\/]+$/, '')}${sep}${cleanRel.replace(/[\\/]+/g, sep)}`;
+}
+
+function repairedPathForKey(key, path) {
+  const s = String(path || '');
+  if (key !== 'absolute_path_uri' || !s || /^file:\/\//i.test(s)) return s;
+  if (/^[A-Za-z]:[\\/]/.test(s)) return `file:///${s.replace(/\\/g, '/')}`;
+  if (s.startsWith('/')) return `file://${s}`;
+  return s;
+}
+
+function extractRequestedReadPath(messages) {
+  const text = recentUserText(messages);
+  if (!text) return '';
+  const backtick = [...text.matchAll(/`([^`\r\n]+)`/g)].map(m => m[1]);
+  const bare = [...text.matchAll(/((?:[A-Za-z]:[\\/]|\/|~[\\/]|\.{1,2}[\\/])[^"'`<>\s]+|[A-Za-z0-9._-]+(?:[\\/][A-Za-z0-9._-]+)*\.[A-Za-z0-9]{1,12})/g)].map(m => m[1]);
+  for (const candidate of [...backtick, ...bare]) {
+    const tail = internalWorkspaceTail(candidate);
+    if (tail !== null) return tail || '';
+    if (candidate && candidate !== '<workspace>') return candidate;
+  }
+  return '';
+}
+
+function repairReadToolCallArguments(tc, messages) {
+  const name = String(tc?.name || '').toLowerCase();
+  if (!['read', 'read_file', 'view_file'].includes(name) || typeof tc.argumentsJson !== 'string') return tc;
+  let args;
+  try { args = JSON.parse(tc.argumentsJson); } catch { return tc; }
+  if (!args || typeof args !== 'object' || Array.isArray(args)) return tc;
+  const key = readPathKey(args);
+  const current = args[key];
+  if (typeof current !== 'string') return tc;
+  const tail = internalWorkspaceTail(current);
+  if (tail === null) return tc;
+  const replacement = tail
+    ? joinCallerPath(callerWorkingDirectory(messages), tail)
+    : extractRequestedReadPath(messages);
+  if (!replacement || replacement === current) return tc;
+  const outputKey = key === 'absolute_path_uri' && name !== 'view_file' ? 'file_path' : key;
+  const next = { ...args, [outputKey]: repairedPathForKey(outputKey, replacement) };
+  if (outputKey !== key) delete next[key];
+  return { ...tc, argumentsJson: JSON.stringify(next) };
+}
+
 export function repairToolCallArguments(tc, messages) {
+  tc = repairReadToolCallArguments(tc, messages);
   if (!tc || String(tc.name || '').toLowerCase() !== 'bash' || typeof tc.argumentsJson !== 'string') return tc;
   let args;
   try { args = JSON.parse(tc.argumentsJson); } catch { return tc; }

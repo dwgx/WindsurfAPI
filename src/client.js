@@ -867,11 +867,14 @@ export class WindsurfClient {
           this.port, this.csrfToken, `${LS_SERVICE}/GetCascadeTrajectorySteps`, grpcFrame(stepsProto)
         );
         const steps = parseTrajectorySteps(stepsResp);
+        const hasNativeProposalInBatch = nativeMode && !nativeBridgePollAfterTool
+          && steps.some(step => Array.isArray(step?.toolCalls)
+            && step.toolCalls.some(tc => tc?.cascade_native));
 
         // CORTEX_STEP_TYPE_ERROR_MESSAGE = 17. An error step means the cascade
         // refused the request (permission denied, model unavailable, etc.) —
         // raise it as a model-level error so the account isn't blamed.
-        for (const step of steps) {
+        for (const step of hasNativeProposalInBatch ? [] : steps) {
           if (step.type === 17 && step.errorText) {
             // Log the full trajectory context so we can see WHICH tool call
             // (if any) the error refers to. "invalid tool call" without
