@@ -416,12 +416,12 @@ function reverseWebSearchArgs(cascade) {
 }
 
 // ── WebFetch ↔ read_url_content (v2.0.93) ─────────────────────────
-// CortexStepReadUrlContent { url=1, summary=5 }
+// CortexStepReadUrlContent { url=1, web_document=2, resolved_url=3, ... }
 function forwardWebFetchArgs(args) {
   return { url: args.url || args.uri || args.link || '' };
 }
 function reverseWebFetchArgs(cascade) {
-  return { url: cascade.url || '', summary: cascade.summary || '' };
+  return { url: cascade.url || '' };
 }
 
 // ── apply_patch ↔ write_to_file (single-file fan-out, v2.0.70) ──
@@ -799,12 +799,44 @@ function buildSearchWebBody(args) {
 }
 
 // v2.0.93 — read_url_content (CortexStepReadUrlContent = field 40 oneof).
-//   url     = 1 string
-//   summary = 5 string  (server-filled)
+//   url           = 1 string
+//   web_document  = 2 KnowledgeBaseItem
+//   resolved_url  = 3 string
+//   latency_ms    = 4 uint64
+//   user_rejected = 6 bool
+//   auto_decision = 7 enum
+//
+// KnowledgeBaseItem fields confirmed from the official Windsurf 2.3.15
+// generated client: text=2, url=3, title=4, chunks=6, summary=7.
+function buildKnowledgeBaseItem(args = {}) {
+  const text = typeof args.text === 'string'
+    ? args.text
+    : (typeof args.content === 'string' ? args.content : '');
+  const summary = typeof args.summary === 'string' ? args.summary : '';
+  const url = typeof args.url === 'string' ? args.url : '';
+  const title = typeof args.title === 'string' ? args.title : '';
+  const parts = [];
+  if (text) parts.push(writeStringField(2, text));
+  if (url) parts.push(writeStringField(3, url));
+  if (title) parts.push(writeStringField(4, title));
+  if (summary) parts.push(writeStringField(7, summary));
+  return Buffer.concat(parts);
+}
+
 function buildReadUrlContentBody(args) {
   const parts = [];
   if (args.url) parts.push(writeStringField(1, args.url));
-  if (typeof args.summary === 'string') parts.push(writeStringField(5, args.summary));
+  const doc = buildKnowledgeBaseItem({
+    text: args.text || args.content || args.summary || '',
+    summary: args.summary || '',
+    url: args.url || args.resolved_url || '',
+    title: args.title || '',
+  });
+  if (doc.length) parts.push(writeMessageField(2, doc));
+  if (args.resolved_url) parts.push(writeStringField(3, args.resolved_url));
+  if (args.latency_ms != null) parts.push(writeVarintField(4, Number(args.latency_ms) || 0));
+  if (args.user_rejected) parts.push(writeBoolField(6, true));
+  if (args.auto_run_decision != null) parts.push(writeVarintField(7, Number(args.auto_run_decision) || 0));
   return Buffer.concat(parts);
 }
 
@@ -975,11 +1007,60 @@ function decodeSearchWebStep(buf) {
   };
 }
 
-function decodeReadUrlContentStep(buf) {
+function decodeMarkdownChunk(buf) {
   const f = parseFields(buf);
   return {
+    text: getField(f, 2, 2)?.value?.toString('utf8') || '',
+  };
+}
+
+function decodeKnowledgeBaseChunk(buf) {
+  const f = parseFields(buf);
+  const markdown = getField(f, 3, 2);
+  return {
+    text: getField(f, 1, 2)?.value?.toString('utf8') || '',
+    markdown_text: markdown ? decodeMarkdownChunk(markdown.value).text : '',
+  };
+}
+
+function decodeKnowledgeBaseItem(buf) {
+  const f = parseFields(buf);
+  return {
+    text: getField(f, 2, 2)?.value?.toString('utf8') || '',
+    url: getField(f, 3, 2)?.value?.toString('utf8') || '',
+    title: getField(f, 4, 2)?.value?.toString('utf8') || '',
+    chunks: getAllFields(f, 6)
+      .filter(x => x.wireType === 2)
+      .map(x => decodeKnowledgeBaseChunk(x.value)),
+    summary: getField(f, 7, 2)?.value?.toString('utf8') || '',
+  };
+}
+
+function knowledgeBaseItemText(doc = {}) {
+  if (doc.text) return doc.text;
+  const chunkText = (doc.chunks || [])
+    .map(c => c.text || c.markdown_text || '')
+    .filter(Boolean)
+    .join('\n');
+  return chunkText || doc.summary || '';
+}
+
+function decodeReadUrlContentStep(buf) {
+  const f = parseFields(buf);
+  const webDocumentField = getField(f, 2, 2);
+  const web_document = webDocumentField ? decodeKnowledgeBaseItem(webDocumentField.value) : null;
+  const legacy_summary = getField(f, 5, 2)?.value?.toString('utf8') || '';
+  const content = knowledgeBaseItemText(web_document || {}) || legacy_summary;
+  return {
     url: getField(f, 1, 2)?.value?.toString('utf8') || '',
-    summary: getField(f, 5, 2)?.value?.toString('utf8') || '',
+    web_document,
+    resolved_url: getField(f, 3, 2)?.value?.toString('utf8') || '',
+    latency_ms: Number(getField(f, 4, 0)?.value || 0),
+    legacy_summary,
+    content,
+    summary: web_document?.summary || legacy_summary,
+    user_rejected: !!getField(f, 6, 0)?.value,
+    auto_run_decision: Number(getField(f, 7, 0)?.value || 0),
   };
 }
 
@@ -1250,6 +1331,7 @@ export function buildAdditionalStepsFromHistory(messages) {
         //   list_directory  → children (2, repeated)
         //   write_to_file   → file_created (4) ← bool, ignore content
         //   search_web      → summary (5)
+        //   read_url_content → web_document.text (2.2)
         //   propose_code    → no native result field (proxy passes back
         //                    through emulation toolPreamble result text)
         if (entry.kind === 'view_file') cascadeArgs.content = observation;
@@ -1269,7 +1351,7 @@ export function buildAdditionalStepsFromHistory(messages) {
         } else if (entry.kind === 'search_web') {
           cascadeArgs.summary = observation;
         } else if (entry.kind === 'read_url_content') {
-          cascadeArgs.summary = observation;
+          cascadeArgs.content = observation;
         }
       }
       const buf = buildAdditionalStep(entry.kind, cascadeArgs);

@@ -132,6 +132,41 @@ function summarizeMessageChildren(buf, maxFields = 12) {
   };
 }
 
+function summarizeKnowledgeBaseChunk(buf) {
+  const fields = parseFields(buf);
+  const markdown = getField(fields, 3, 2);
+  let markdownTextBytes = 0;
+  if (markdown) {
+    try {
+      markdownTextBytes = stringField(parseFields(markdown.value), 2).length;
+    } catch {}
+  }
+  return {
+    bytes: buf.length,
+    textBytes: stringField(fields, 1).length,
+    markdownTextBytes,
+    fieldNumbers: fields.map(f => f.field),
+  };
+}
+
+function summarizeKnowledgeBaseItem(buf) {
+  const fields = parseFields(buf);
+  const chunks = getAllFields(fields, 6)
+    .filter(f => f.wireType === 2)
+    .map(f => summarizeKnowledgeBaseChunk(f.value));
+  return {
+    bytes: buf.length,
+    textBytes: stringField(fields, 2).length,
+    urlBytes: stringField(fields, 3).length,
+    titleBytes: stringField(fields, 4).length,
+    summaryBytes: stringField(fields, 7).length,
+    chunkCount: chunks.length,
+    chunkTextBytes: chunks.reduce((sum, chunk) => sum + chunk.textBytes + chunk.markdownTextBytes, 0),
+    fieldNumbers: fields.map(f => f.field),
+    chunks: chunks.slice(0, 4),
+  };
+}
+
 const NATIVE_TOOL_CONFIG_FIELDS = new Map([
   [5, 'find'],
   [8, 'run_command'],
@@ -297,6 +332,16 @@ const NATIVE_STEP_FIELDS = new Map([
   [105, 'grep_search_v2'],
 ]);
 
+const REQUESTED_INTERACTION_FIELDS = new Map([
+  [2, 'deploy'],
+  [3, 'run_command'],
+  [5, 'run_extension_code'],
+  [11, 'resolve_task'],
+  [13, 'upsert_codemap'],
+  [14, 'read_url_content'],
+  [15, 'ask_user_question'],
+]);
+
 function summarizeNativeStepBody(kind, bodyBuf) {
   const f = parseFields(bodyBuf);
   if (kind === 'view_file') {
@@ -367,17 +412,59 @@ function summarizeNativeStepBody(kind, bodyBuf) {
     };
   }
   if (kind === 'read_url_content') {
+    const webDocument = getField(f, 2, 2);
     return {
       urlBytes: stringField(f, 1).length,
-      summaryBytes: stringField(f, 5).length,
+      webDocument: webDocument ? summarizeKnowledgeBaseItem(webDocument.value) : null,
+      resolvedUrlBytes: stringField(f, 3).length,
+      latencyMs: numberField(f, 4) || 0,
+      legacySummaryBytes: stringField(f, 5).length,
+      userRejected: boolField(f, 6),
+      autoRunDecision: numberField(f, 7),
       fieldNumbers: f.map(x => x.field),
       messageFields: f
-        .filter(x => x.wireType === 2 && ![1, 5].includes(x.field))
+        .filter(x => x.wireType === 2 && ![1, 2, 3, 4, 5, 6, 7].includes(x.field))
         .slice(0, 8)
         .map(x => ({ field: x.field, ...summarizeMessageChildren(x.value, 8) })),
     };
   }
   return { fieldCount: f.length };
+}
+
+function summarizeRequestedInteractionBody(kind, bodyBuf) {
+  const fields = parseFields(bodyBuf);
+  if (kind === 'read_url_content') {
+    const url = stringField(fields, 1);
+    const origin = stringField(fields, 2);
+    return {
+      urlBytes: url.length,
+      urlHash: url ? shortHash(Buffer.from(url, 'utf8')) : null,
+      originBytes: origin.length,
+      originHash: origin ? shortHash(Buffer.from(origin, 'utf8')) : null,
+      fieldNumbers: fields.map(f => f.field),
+    };
+  }
+  return summarizeMessageChildren(bodyBuf, 8);
+}
+
+function summarizeRequestedInteraction(buf) {
+  const fields = parseFields(buf);
+  const interactions = [];
+  for (const [fieldNum, kind] of REQUESTED_INTERACTION_FIELDS) {
+    const f = getField(fields, fieldNum, 2);
+    if (!f) continue;
+    interactions.push({
+      field: fieldNum,
+      kind,
+      bytes: f.value.length,
+      body: summarizeRequestedInteractionBody(kind, f.value),
+    });
+  }
+  return {
+    bytes: buf.length,
+    fieldNumbers: fields.map(f => f.field),
+    interactions,
+  };
 }
 
 function summarizeReadWrapperField19(wrapperBuf) {
@@ -547,7 +634,7 @@ function summarizeTrajectoryStep(stepBuf, index) {
     });
   }
   const interestingFields = fields
-    .filter(f => f.wireType === 2 && ![5].includes(f.field))
+    .filter(f => f.wireType === 2 && ![5, 56].includes(f.field))
     .slice(0, positiveIntEnv('WINDSURFAPI_PROTO_TRACE_SEMANTIC_FIELD_LIMIT', 12))
     .map(f => ({
       field: f.field,
@@ -555,6 +642,7 @@ function summarizeTrajectoryStep(stepBuf, index) {
     }));
   const type = numberField(fields, 1);
   const wrapper19 = type === 14 ? getField(fields, 19, 2) : null;
+  const requestedInteraction = getField(fields, 56, 2);
   const errorStep = summarizeErrorStep(fields);
   return {
     index,
@@ -564,6 +652,7 @@ function summarizeTrajectoryStep(stepBuf, index) {
     nativeOneofs: oneofFields,
     messageFields: interestingFields,
     ...(wrapper19 ? { readWrapperField19: summarizeReadWrapperField19(wrapper19.value) } : {}),
+    ...(requestedInteraction ? { requestedInteraction: summarizeRequestedInteraction(requestedInteraction.value) } : {}),
     ...(errorStep ? { errorStep } : {}),
   };
 }

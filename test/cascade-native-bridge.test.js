@@ -414,6 +414,31 @@ describe('buildAdditionalStep / buildAdditionalStepsFromHistory', () => {
     assert.equal(getField(body, 4, 2).value.toString('utf8'), '127.0.0.1 localhost\n');
   });
 
+  it('WebFetch history encodes tool result as read_url_content web_document', () => {
+    const messages = [
+      {
+        role: 'assistant',
+        content: null,
+        tool_calls: [{
+          id: 'call_fetch',
+          type: 'function',
+          function: { name: 'WebFetch', arguments: JSON.stringify({ url: 'https://example.com/docs' }) },
+        }],
+      },
+      { role: 'tool', tool_call_id: 'call_fetch', content: 'fetched document body' },
+    ];
+    const steps = buildAdditionalStepsFromHistory(messages);
+    assert.equal(steps.length, 1);
+    const fields = parseFields(steps[0]);
+    assert.equal(getField(fields, 1, 0).value, 40);
+    const body = parseFields(getField(fields, 40, 2).value);
+    assert.equal(getField(body, 1, 2).value.toString('utf8'), 'https://example.com/docs');
+    assert.equal(getField(body, 5, 2), null, 'read_url_content must not encode legacy top-level summary field 5');
+    const doc = parseFields(getField(body, 2, 2).value);
+    assert.equal(getField(doc, 2, 2).value.toString('utf8'), 'fetched document body');
+    assert.equal(getField(doc, 3, 2).value.toString('utf8'), 'https://example.com/docs');
+  });
+
   it('skips unmapped tool_calls (fall back to emulation path)', () => {
     const messages = [
       {

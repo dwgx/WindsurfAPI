@@ -910,6 +910,34 @@ export function parseTrajectorySteps(buf) {
   const steps = getAllFields(fields, 1).filter(f => f.wireType === 2);
   const results = [];
 
+  const decodeKnowledgeBaseItemText = (docBuf) => {
+    try {
+      const doc = parseFields(docBuf);
+      const text = getField(doc, 2, 2)?.value?.toString('utf8') || '';
+      if (text) return text;
+      const chunks = getAllFields(doc, 6)
+        .filter(x => x.wireType === 2)
+        .map((chunkField) => {
+          try {
+            const chunk = parseFields(chunkField.value);
+            const chunkText = getField(chunk, 1, 2)?.value?.toString('utf8') || '';
+            if (chunkText) return chunkText;
+            const markdown = getField(chunk, 3, 2);
+            if (!markdown) return '';
+            const md = parseFields(markdown.value);
+            return getField(md, 2, 2)?.value?.toString('utf8') || '';
+          } catch {
+            return '';
+          }
+        })
+        .filter(Boolean);
+      if (chunks.length) return chunks.join('\n');
+      return getField(doc, 7, 2)?.value?.toString('utf8') || '';
+    } catch {
+      return '';
+    }
+  };
+
   const isLikelyPathOrFileUri = (value) => {
     const s = String(value || '').trim();
     if (!s || s.length > 1024 || /[\r\n<>]/.test(s)) return false;
@@ -1040,7 +1068,7 @@ export function parseTrajectorySteps(buf) {
     //   23  CortexStepWriteToFile        {target_file_uri=1, code_content=2*}
     //   28  CortexStepRunCommand         {command_line=23, combined_output=21, ...}
     //   34  CortexStepFind               {pattern=1, search_directory=10, ...}
-    //   40  CortexStepReadUrlContent     {url=1, summary=5}
+    //   40  CortexStepReadUrlContent     {url=1, web_document=2, resolved_url=3, ...}
     //   42  CortexStepSearchWeb          {query=1, domain=3, summary=5}
     //   105 CortexStepGrepSearchV2       {pattern=2, path=3, raw_output=15, ...}
     //
@@ -1145,7 +1173,9 @@ export function parseTrajectorySteps(buf) {
             url: getField(body, 1, 2)?.value?.toString('utf8') || '',
           };
           argumentsJson = JSON.stringify(args);
-          result = getField(body, 5, 2)?.value?.toString('utf8') || '';
+          const webDocument = getField(body, 2, 2);
+          result = webDocument ? decodeKnowledgeBaseItemText(webDocument.value) : '';
+          if (!result) result = getField(body, 5, 2)?.value?.toString('utf8') || '';
         } else if (kind === 'search_web') {
           const args = {
             query: getField(body, 1, 2)?.value?.toString('utf8') || '',

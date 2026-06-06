@@ -166,8 +166,24 @@ preconditions without dumping complete prompts or account material.
 
 Trajectory parsing now recognizes the web step oneofs observed so far:
 
-- `read_url_content` = field `40`, body `{ url=1, summary=5 }`
+- `read_url_content` = field `40`, body
+  `{ url=1, web_document=2, resolved_url=3, latency_ms=4,
+  user_rejected=6, auto_run_decision=7 }`
 - `search_web` = field `42`, body `{ query=1, domain=3, summary=5 }`
+
+Official Windsurf 2.3.15 generated client fields for the WebFetch document:
+
+- `KnowledgeBaseItem.text` = field `2`
+- `KnowledgeBaseItem.url` = field `3`
+- `KnowledgeBaseItem.title` = field `4`
+- `KnowledgeBaseItem.chunks` = repeated field `6`
+- `KnowledgeBaseItem.summary` = field `7`
+- `KnowledgeBaseChunk.text` = field `1`
+- `KnowledgeBaseChunk.markdown_chunk` = field `3`, whose text is field `2`
+
+There is no confirmed top-level `CortexStepReadUrlContent.summary=5` in the
+official 2.3.15 client. The parser keeps field `5` only as a legacy fallback
+for older local traces; new injection writes `web_document` instead.
 
 This is trace visibility, not a production enablement decision. The bridge can
 decode these steps when Cascade emits them, but WebSearch/WebFetch still need
@@ -264,6 +280,48 @@ web executor that currently returns `permission_denied`.
 There is not yet an equivalent confirmed direct WebFetch/read-url endpoint.
 Do not implement WebFetch direct bridging from guesswork; keep it on emulation
 or native lab traces until a descriptor-backed endpoint is found.
+
+## Official WebFetch Permission Flow
+
+Static inspection of the official Windsurf 2.3.15 client found no direct
+API-server method that returns URL contents. `RecordReadUrlContent` only
+records `{ metadata=1, url=2, web_document=3, latency_ms=4, is_cached=5 }`
+and returns an empty response.
+
+The official client handles WebFetch through the language server:
+
+- `CortexTrajectoryStep.requested_interaction` = field `56`
+- `RequestedInteraction.read_url_content` = field `14`
+- `CascadeReadUrlContentInteractionSpec.url` = field `1`
+- `CascadeReadUrlContentInteractionSpec.origin` = field `2`
+- RPC:
+  `/exa.language_server_pb.LanguageServerService/HandleCascadeUserInteraction`
+- `HandleCascadeUserInteractionRequest.cascade_id` = field `1`
+- `HandleCascadeUserInteractionRequest.interaction` = field `2`
+- `CascadeUserInteraction.trajectory_id` = field `1`
+- `CascadeUserInteraction.step_index` = field `2`
+- `CascadeUserInteraction.read_url_content` = field `15`
+- `CascadeReadUrlContentInteraction.action` = field `1`
+- `CascadeReadUrlContentInteraction.url` = field `2`
+- `CascadeReadUrlContentInteraction.origin` = field `3`
+
+`ReadUrlContentAction` enum values:
+
+- `1` = allow once
+- `2` = reject
+- `3` = always allow origin
+
+User settings that influence auto-approval:
+
+- `cascade_user_allowed_web_origins` = field `88`
+- `cascade_removed_default_web_origins` = field `89`
+- `cascade_web_requests_auto_execution_policy` = field `90`
+  (`1` disabled, `2` allowlist, `3` turbo)
+
+`WINDSURFAPI_PROTO_TRACE` now summarizes `requested_interaction=56` and its
+read-url body with byte lengths and hashes only. The next valid WebFetch canary
+decision point is: did the LS emit a read-url requested interaction, a completed
+`field=40` step with `web_document`, or an error step before either?
 
 ## Experiment Hooks
 

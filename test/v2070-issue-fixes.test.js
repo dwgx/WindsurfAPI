@@ -251,9 +251,17 @@ describe('parseTrajectorySteps recognises propose_code + search_web (v2.0.70)', 
   });
 
   it('read_url_content step exposes url/result when parsed natively', () => {
+    const doc = Buffer.concat([
+      writeStringField(2, 'document body text'),
+      writeStringField(3, 'https://example.com/docs'),
+      writeStringField(4, 'Example docs'),
+      writeStringField(7, 'document summary'),
+    ]);
     const body = Buffer.concat([
       writeStringField(1, 'https://example.com/docs'),
-      writeStringField(5, 'document summary'),
+      writeMessageField(2, doc),
+      writeStringField(3, 'https://example.com/docs?resolved=1'),
+      writeVarintField(4, 42),
     ]);
     const resp = wrapResp(wrapStep(40, 40, body));
     const steps = parseTrajectorySteps(resp);
@@ -263,6 +271,19 @@ describe('parseTrajectorySteps recognises propose_code + search_web (v2.0.70)', 
     assert.deepEqual(JSON.parse(calls[0].argumentsJson), {
       url: 'https://example.com/docs',
     });
-    assert.equal(calls[0].result, 'document summary');
+    assert.equal(calls[0].result, 'document body text');
+  });
+
+  it('read_url_content step can extract result from KnowledgeBaseItem chunks', () => {
+    const markdownChunk = writeStringField(2, 'markdown chunk text');
+    const chunk = writeMessageField(3, markdownChunk);
+    const doc = writeMessageField(6, chunk);
+    const body = Buffer.concat([
+      writeStringField(1, 'https://example.com/chunked'),
+      writeMessageField(2, doc),
+    ]);
+    const resp = wrapResp(wrapStep(40, 40, body));
+    const calls = parseTrajectorySteps(resp)[0].toolCalls.filter(tc => tc.cascade_native);
+    assert.equal(calls[0].result, 'markdown chunk text');
   });
 });

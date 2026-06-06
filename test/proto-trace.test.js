@@ -260,8 +260,11 @@ describe('proto trace', () => {
   it('summarizes web trajectory payload shapes for protocol diffing', () => {
     process.env.WINDSURFAPI_PROTO_TRACE = '1';
     const doc = Buffer.concat([
-      writeStringField(1, 'title'),
-      writeStringField(2, 'https://example.com/'),
+      writeStringField(2, 'document text'),
+      writeStringField(3, 'https://example.com/'),
+      writeStringField(4, 'title'),
+      writeMessageField(6, writeStringField(1, 'chunk text')),
+      writeStringField(7, 'document summary'),
     ]);
     const searchBody = Buffer.concat([
       writeStringField(1, 'WindsurfAPI native bridge'),
@@ -272,7 +275,9 @@ describe('proto trace', () => {
     const fetchBody = Buffer.concat([
       writeStringField(1, 'https://example.com/'),
       writeMessageField(2, doc),
-      writeStringField(5, 'body summary'),
+      writeStringField(3, 'https://example.com/resolved'),
+      writeVarintField(4, 123),
+      writeVarintField(7, 2),
     ]);
     const response = Buffer.concat([
       writeMessageField(1, Buffer.concat([
@@ -304,8 +309,17 @@ describe('proto trace', () => {
     assert.equal(search.body.messageFields[0].field, 2);
     const fetch = rec.semantic.steps[1].nativeOneofs[0];
     assert.equal(fetch.kind, 'read_url_content');
-    assert.deepEqual(fetch.body.fieldNumbers, [1, 2, 5]);
-    assert.equal(fetch.body.messageFields[0].field, 2);
+    assert.deepEqual(fetch.body.fieldNumbers, [1, 2, 3, 4, 7]);
+    assert.equal(fetch.body.webDocument.textBytes, 'document text'.length);
+    assert.equal(fetch.body.webDocument.urlBytes, 'https://example.com/'.length);
+    assert.equal(fetch.body.webDocument.titleBytes, 'title'.length);
+    assert.equal(fetch.body.webDocument.summaryBytes, 'document summary'.length);
+    assert.equal(fetch.body.webDocument.chunkCount, 1);
+    assert.equal(fetch.body.webDocument.chunkTextBytes, 'chunk text'.length);
+    assert.equal(fetch.body.resolvedUrlBytes, 'https://example.com/resolved'.length);
+    assert.equal(fetch.body.latencyMs, 123);
+    assert.equal(fetch.body.autoRunDecision, 2);
+    assert.deepEqual(fetch.body.messageFields, []);
   });
 
   it('summarizes non-oneof step message fields for protocol diffing', () => {
@@ -336,6 +350,42 @@ describe('proto trace', () => {
     assert.deepEqual(rec.semantic.steps[0].nativeOneofs, []);
     assert.equal(rec.semantic.steps[0].messageFields[0].field, 19);
     assert.deepEqual(rec.semantic.steps[0].messageFields[0].fieldNumbers, [2, 3, 4]);
+  });
+
+  it('summarizes read-url requested interactions without raw URLs', () => {
+    process.env.WINDSURFAPI_PROTO_TRACE = '1';
+    const spec = Buffer.concat([
+      writeStringField(1, 'https://example.com/private/page'),
+      writeStringField(2, 'https://example.com'),
+    ]);
+    const requestedInteraction = writeMessageField(14, spec);
+    const step = Buffer.concat([
+      writeVarintField(1, 40),
+      writeVarintField(4, 2),
+      writeMessageField(56, requestedInteraction),
+    ]);
+    traceGrpcPayload({
+      port: 42100,
+      path: '/exa.language_server_pb.LanguageServerService/GetCascadeTrajectorySteps',
+      direction: 'response',
+      body: writeMessageField(1, step),
+      transport: 'grpc',
+      framed: false,
+    });
+
+    const file = join(dir, `ls-proto-${process.pid}-GetCascadeTrajectorySteps.jsonl`);
+    const line = readFileSync(file, 'utf8').trim();
+    const rec = JSON.parse(line);
+    const summary = rec.semantic.steps[0].requestedInteraction;
+    assert.deepEqual(summary.fieldNumbers, [14]);
+    assert.equal(summary.interactions[0].field, 14);
+    assert.equal(summary.interactions[0].kind, 'read_url_content');
+    assert.equal(summary.interactions[0].body.urlBytes, 'https://example.com/private/page'.length);
+    assert.equal(summary.interactions[0].body.originBytes, 'https://example.com'.length);
+    assert.ok(summary.interactions[0].body.urlHash);
+    assert.ok(summary.interactions[0].body.originHash);
+    assert.doesNotMatch(line, /private\/page/);
+    assert.doesNotMatch(line, /https:\/\/example\.com/);
   });
 
   it('summarizes read wrapper field 19 children without raw strings by default', () => {
