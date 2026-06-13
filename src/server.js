@@ -212,6 +212,7 @@ async function route(req, res) {
     if (method === 'POST' || method === 'PUT' || method === 'PATCH') {
       try { body = JSON.parse(await readBody(req)); } catch (err) {
         if (sendBodyTooLargeIfNeeded(res, err, 'dashboard')) return;
+        return json(res, 400, { ok: false, error: 'Invalid JSON' });
       }
     }
     const subpath = path.slice('/dashboard/api'.length);
