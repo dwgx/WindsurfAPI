@@ -2013,6 +2013,11 @@ window._firebaseOAuth = async function(provider) {
           <label><input type="radio" name="model-mode" value="allowlist" onchange="App.setModelMode(this.value)"><span data-i18n="model.mode.allowlist">白名单</span></label>
           <label><input type="radio" name="model-mode" value="blocklist" onchange="App.setModelMode(this.value)"><span data-i18n="model.mode.blocklist">黑名单</span></label>
         </div>
+        <div class="field mt-4">
+          <label class="field-label" data-i18n="field.defaultModel.label">默认模型</label>
+          <input id="default-model-input" class="input" data-i18n-placeholder="field.defaultModel.placeholder" placeholder="白名单外的模型将使用此模型，留空则拒绝" oninput="App.handleDefaultModelInput()">
+          <div class="field-hint" data-i18n="field.defaultModel.hint">当请求的模型不在白名单中时，将使用此模型代替。留空则拒绝白名单外的请求。</div>
+        </div>
       </div>
     </div>
 
@@ -4598,6 +4603,7 @@ docker compose up -d --force-recreate</pre>
     this.allModels = modelData.models || [];
     this.modelAccessConfig = accessData.mode ? accessData : { mode: 'all', list: [] };
     document.querySelector(`input[name="model-mode"][value="${this.modelAccessConfig.mode}"]`).checked = true;
+    document.getElementById('default-model-input').value = this.modelAccessConfig.defaultModel || '';
     this.updateModelListUI();
   },
 
@@ -4653,10 +4659,18 @@ docker compose up -d --force-recreate</pre>
   },
 
   async setModelMode(mode) {
-    await this.api('PUT', '/model-access', { mode });
+    const defaultModel = document.getElementById('default-model-input').value.trim();
+    await this.api('PUT', '/model-access', { mode, defaultModel });
     this.modelAccessConfig.mode = mode;
+    this.modelAccessConfig.defaultModel = defaultModel;
     this.updateModelListUI();
     this.toast(I18n.t('toast.modeUpdated'));
+  },
+
+  async handleDefaultModelInput() {
+    const defaultModel = document.getElementById('default-model-input').value.trim();
+    await this.api('PUT', '/model-access', { defaultModel });
+    this.modelAccessConfig.defaultModel = defaultModel;
   },
 
   async toggleModelInList(modelId) {

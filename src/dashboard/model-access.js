@@ -14,6 +14,7 @@ const ACCESS_FILE = join(config.dataDir, 'model-access.json');
 const _config = {
   mode: 'all',
   list: [],          // model IDs in the list
+  defaultModel: '',  // default model to use if the requested one is blocked or not specified; optional, for UI purposes
 };
 
 // Load
@@ -58,6 +59,15 @@ export function addModelToList(modelId) {
 export function removeModelFromList(modelId) {
   _config.list = _config.list.filter(m => m !== modelId);
   save();
+}
+
+export function setDefaultModel(modelId) {
+  _config.defaultModel = modelId || '';
+  save();
+}
+
+export function getDefaultModel() {
+  return _config.defaultModel || '';
 }
 
 /**

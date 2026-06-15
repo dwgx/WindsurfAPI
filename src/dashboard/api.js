@@ -30,7 +30,7 @@ import { getLogs, subscribeToLogs, unsubscribeFromLogs } from './logger.js';
 import { getProxyConfig, getProxyConfigMasked, setGlobalProxy, setAccountProxy, removeProxy, getEffectiveProxy } from './proxy-config.js';
 import { MODELS, MODEL_TIER_ACCESS as _TIER_TABLE, getTierModels as _getTierModels } from '../models.js';
 import { windsurfLogin, refreshFirebaseToken, reRegisterWithCodeium } from './windsurf-login.js';
-import { getModelAccessConfig, setModelAccessMode, setModelAccessList, addModelToList, removeModelFromList } from './model-access.js';
+import { getModelAccessConfig, setModelAccessMode, setModelAccessList, addModelToList, removeModelFromList, setDefaultModel } from './model-access.js';
 import { checkMessageRateLimit } from '../windsurf-api.js';
 import { getNativeBridgeConfigStatus } from '../cascade-native-bridge.js';
 import { getNativeBridgeStats } from '../native-bridge-stats.js';
@@ -1251,6 +1251,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
   if (subpath === '/model-access' && method === 'PUT') {
     if (body.mode) setModelAccessMode(body.mode);
     if (body.list) setModelAccessList(body.list);
+    if (body.defaultModel !== undefined) setDefaultModel(body.defaultModel);
     return json(res, 200, { success: true, config: getModelAccessConfig() });
   }
 
@@ -1556,7 +1557,7 @@ async function gitStatus() {
   try {
     await runGit(['fetch', '--quiet', 'origin']);
     remote = (await runGit(['rev-parse', `origin/${branch}`])).trim();
-  } catch {}
+  } catch { }
   const localMsg = (await runGit(['log', '-1', '--pretty=format:%s'])).trim();
   const behind = remote && remote !== commit;
   const remoteMsg = behind ? (await runGit(['log', '-1', '--pretty=format:%s', remote]).catch(() => '')).trim() : '';
@@ -1611,21 +1612,21 @@ async function testProxy({ host, port, username, password, type }) {
 
   // TLS handshake + GET to verify the tunnel works
   return new Promise((resolve, reject) => {
-      const tlsSock = tls.connect({ socket, servername: targetHost, rejectUnauthorized: false }, () => {
-        tlsSock.write(`GET / HTTP/1.1\r\nHost: ${targetHost}\r\nConnection: close\r\nUser-Agent: WindsurfAPI/ProxyTest\r\n\r\n`);
-      });
-      const chunks = [];
-      tlsSock.on('data', c => chunks.push(c));
-      tlsSock.on('end', () => {
-        const body = Buffer.concat(chunks).toString('utf-8');
-        const match = body.match(/\r\n\r\n([^\r\n]+)/);
-        const ip = match ? match[1].trim() : '';
-        tlsSock.destroy();
-        if (!ip || !/^\d+\.\d+\.\d+\.\d+$/.test(ip)) {
-          return reject(new Error('ERR_TLS_TUNNEL_ERROR'));
-        }
-        resolve({ egressIp: ip, type });
-      });
-      tlsSock.on('error', (err) => reject(new Error(`ERR_TLS_FAILED:${err.message}`)));
+    const tlsSock = tls.connect({ socket, servername: targetHost, rejectUnauthorized: false }, () => {
+      tlsSock.write(`GET / HTTP/1.1\r\nHost: ${targetHost}\r\nConnection: close\r\nUser-Agent: WindsurfAPI/ProxyTest\r\n\r\n`);
+    });
+    const chunks = [];
+    tlsSock.on('data', c => chunks.push(c));
+    tlsSock.on('end', () => {
+      const body = Buffer.concat(chunks).toString('utf-8');
+      const match = body.match(/\r\n\r\n([^\r\n]+)/);
+      const ip = match ? match[1].trim() : '';
+      tlsSock.destroy();
+      if (!ip || !/^\d+\.\d+\.\d+\.\d+$/.test(ip)) {
+        return reject(new Error('ERR_TLS_TUNNEL_ERROR'));
+      }
+      resolve({ egressIp: ip, type });
+    });
+    tlsSock.on('error', (err) => reject(new Error(`ERR_TLS_FAILED:${err.message}`)));
   });
 }
