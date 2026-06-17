@@ -450,4 +450,8 @@ Want to be on this list? Open an [issue](https://github.com/dwgx/WindsurfAPI/iss
 
 ## License
 
-MIT
+MIT License. See [LICENSE](LICENSE).
+
+## Star History
+
+https://www.star-history.com/?type=date&repos=dwgx/WindsurfAPI

@@ -2,9 +2,10 @@
 
 Status: planning artifact (2026-06-10). Goal: make WindsurfAPI's reverse-engineered
 Cascade protocol layer complete/correct ("protocol perfect"), at cliproxyapi-class
-quality. Execute the heavy steps via Codex when its backend recovers (it was returning
-`503` from `v-api.hk.yesfuture.ai` at planning time). Claude orchestrates + verifies on
-the lab box; do not burn Claude tokens on bulk reads/traces that Codex can do.
+quality. Execute heavy inventory, trace analysis, and test work in the lab workflow
+when backend access is available; one backend was returning `503` from
+`v-api.hk.yesfuture.ai` at planning time. Keep credentials out of prompts, logs, and
+repo files.
 
 ## Lab box runbook (the RE asset)
 
@@ -76,15 +77,15 @@ Missing vs cliproxyapi-class:
 - OpenAI `/v1/embeddings` (only if Cascade exposes embeddings — verify first).
 - OpenAI legacy `/v1/completions` (minor).
 
-## Codex delegation queue (run when 503 clears)
+## Implementation work queue (run when backend access is healthy)
 - A: external benchmark — cliproxyapi (router-for-me/CLIProxyAPI) + kiro.rs feature/protocol
   matrix (retry the task that 503'd).
 - B: internal protocol-RE inventory (retry the task that 503'd) — confirmed vs stub map.
 - C: implement endpoint(s) from item 5 (start with count_tokens) with tests.
-- D: given lab-box traces Claude supplies, update windsurf.js/proto-trace.js parsers + tests
+- D: given lab-box traces, update windsurf.js/proto-trace.js parsers + tests
   per items 1–4.
-Pattern: Codex does bulk reads/writes/tests; Claude supplies trace evidence from the lab box
-and verifies results. Keep credentials out of Codex prompts/logs.
+Pattern: use bulk automation for reads, writes, and tests; use lab-box trace evidence
+for parser changes and verification. Keep credentials out of prompts and logs.
 
 ## Verification + release rules (unchanged)
 Per [docs/MAINTAINER_NOTES.md]: focused tests + `npm run test:release` + `npm run secret-scan`,

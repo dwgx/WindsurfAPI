@@ -453,8 +453,12 @@ A: 不能。长 thinking / 长输出在约 236-243 秒断流，是 Windsurf prov
 
 ## 授权
 
-MIT
+MIT License. See [LICENSE](LICENSE).
 
 ## Release and Secret Boundary
 
 Release automation may publish Docker images and GitHub Releases. Keep tokens, API keys, cookies, and provider credentials out of issues, pull requests, logs, and committed config. If a report needs authentication details, share only redacted metadata and reproduction steps.
+
+## Star History
+
+https://www.star-history.com/?type=date&repos=dwgx/WindsurfAPI

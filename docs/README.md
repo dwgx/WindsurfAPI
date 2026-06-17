@@ -2,9 +2,8 @@
 
 ## Start Here
 
-- [Agent Handoff](HANDOFF.md): current state, open issues, next priority order,
-  VPS entrypoint notes, and hard boundaries for the next agent after a context
-  reset.
+- [Maintainer Status](HANDOFF.md): current state, open issues, next priority
+  order, VPS entrypoint notes, and hard boundaries for maintenance work.
 - [Maintainer Notes](MAINTAINER_NOTES.md): persistent quality, release,
   security, native bridge, SWE, WebFetch, code, and UI working rules.
 
@@ -27,10 +26,10 @@
 ## Release History
 
 - [Release notes index](releases/): release-specific changes.
-- Release notes are append-only history. Put current handoff or roadmap changes
+- Release notes are append-only history. Put current status or roadmap changes
   in `HANDOFF.md` / `audits/`, not in old release notes.
 
 ## Generated Site
 
 - [index.html](index.html): GitHub Pages/static docs output. Do not use it as
-  the canonical place for operational handoff.
+  the canonical place for operational status.

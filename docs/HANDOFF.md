@@ -1,18 +1,18 @@
-# WindsurfAPI Agent Handoff
+# WindsurfAPI Maintainer Status
 
 Last updated: 2026-06-07.
 
-This is the first file to read after a context reset. It summarizes the current
-state, what is still open, what not to claim, and where the supporting docs
-live. Do not paste secrets, account credentials, API keys, or raw session tokens
-into this file.
+This is the first file to read before maintenance work. It summarizes the
+current state, what is still open, what not to claim, and where the supporting
+docs live. Do not paste secrets, account credentials, API keys, or raw session
+tokens into this file.
 
 ## Current State
 
 - Repository: `D:\Project\WindsurfAPI`
-- Local/remote branch state at handoff: `master` is clean and aligned with
+- Local/remote branch state at last status update: `master` is clean and aligned with
   `origin/master`.
-- Last verified repository baseline before this handoff update: `562f98c`
+- Last verified repository baseline before this status update: `562f98c`
   (`docs: update handoff for v2.0.144`). After pulling, use
   `git log -1 --oneline` for the newest commit.
 - Latest release tag: `v2.0.144` at `3945c51`
@@ -149,5 +149,5 @@ For docs-only changes:
   LS preflight refused with `ls_capacity:memory_guard`; that is not protocol
   evidence.
 - The current docs intentionally keep issue audit, maintainer rules, release
-  notes, and protocol notes separate so the next agent can update the right
-  layer without rewriting everything.
+  notes, and protocol notes separate so maintainers can update the right layer
+  without rewriting everything.
