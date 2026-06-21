@@ -21,7 +21,7 @@
 - `POST /v1/chat/completions` — **OpenAI 兼容** 任何 OpenAI SDK 直接用
 - `POST /v1/messages` — **Anthropic 兼容** Claude Code / Cline / Cursor 直接连
 
-**100+ 模型**：Claude 4.5/4.6/Opus 4.7 · GPT-5/5.1/5.2/5.4 全系 · Gemini 2.5/3.0/3.1 · Grok · Qwen · Kimi K2.x · GLM 4.7/5/5.1 · MiniMax · SWE 1.5/1.6 · Arena 等。零 npm 依赖 纯 Node.js。
+**100+ 模型**：Claude 4.5/4.6/Opus 4.7 · GPT-5/5.1/5.2/5.4 全系 · Gemini 2.5/3.0/3.1 · Grok · Qwen · Kimi K2.x · GLM 4.7/5/5.1/5.2 · MiniMax · SWE 1.5/1.6 · Arena 等。零 npm 依赖 纯 Node.js。
 
 ## 它到底在干嘛
 
@@ -333,7 +333,7 @@ gemini-2.5-pro / flash · gemini-3.0-pro / flash（minimal / low / medium / high
 <details>
 <summary><b>开源 / 国产</b></summary>
 
-**Kimi**: kimi-k2 / k2.5 / k2-6 · **GLM**: glm-4.7 / 5 / 5.1 · **Qwen**: qwen-3 · **Grok**: grok-3 / grok-3-mini-thinking / grok-code-fast-1 · **MiniMax**: minimax-m2.5
+**Kimi**: kimi-k2 / k2.5 / k2-6 / k2-7 · **GLM**: glm-4.7 / 5 / 5.1 / 5.2 · **Qwen**: qwen-3 · **Grok**: grok-3 / grok-3-mini-thinking / grok-code-fast-1 · **MiniMax**: minimax-m2.5
 
 </details>
 

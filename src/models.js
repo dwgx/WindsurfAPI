@@ -199,12 +199,14 @@ export const MODELS = {
   'kimi-k2-thinking':               { name: 'kimi-k2-thinking',               provider: 'moonshot', enumValue: 394, modelUid: 'MODEL_KIMI_K2_THINKING', credit: 1 },
   'kimi-k2.5':                      { name: 'kimi-k2.5',                      provider: 'moonshot', enumValue: 0,   modelUid: 'kimi-k2-5', credit: 1 },
   'kimi-k2-6':                      { name: 'kimi-k2-6',                      provider: 'moonshot', enumValue: 0,   modelUid: 'kimi-k2-6', credit: 1 },
+  'kimi-k2-7':                      { name: 'kimi-k2-7',                      provider: 'moonshot', enumValue: 0,   modelUid: 'kimi-k2-7', credit: 1 },
 
   // ── GLM ─────────────────────────────────────────────────
   'glm-4.7':                        { name: 'glm-4.7',                        provider: 'zhipu', enumValue: 417, modelUid: 'MODEL_GLM_4_7', credit: 0.25 },
   'glm-4.7-fast':                   { name: 'glm-4.7-fast',                   provider: 'zhipu', enumValue: 418, modelUid: 'MODEL_GLM_4_7_FAST', credit: 0.5 },
   'glm-5':                          { name: 'glm-5',                          provider: 'zhipu', enumValue: 0,   modelUid: 'glm-5', credit: 1.5 },
   'glm-5.1':                        { name: 'glm-5.1',                        provider: 'zhipu', enumValue: 0,   modelUid: 'glm-5-1', credit: 1.5 },
+  'glm-5.2':                        { name: 'glm-5.2',                        provider: 'zhipu', enumValue: 0,   modelUid: 'glm-5-2', credit: 1.5 },
 
   // ── MiniMax ─────────────────────────────────────────────
   // proto enum 419 = MODEL_MINIMAX_M2_1; the canonical name in cloud configs is m2.5.
@@ -312,6 +314,10 @@ _lookup.set('swe-1-6', 'swe-1.6');
 _lookup.set('swe-1-6-fast', 'swe-1.6-fast');
 _lookup.set('minimax-m2-5', 'minimax-m2.5');
 _lookup.set('kimi-k2-5', 'kimi-k2.5');
+_lookup.set('kimi-k2.6', 'kimi-k2-6');
+_lookup.set('kimi-k2.7', 'kimi-k2-7');
+_lookup.set('glm-5-1', 'glm-5.1');
+_lookup.set('glm-5-2', 'glm-5.2');
 
 // Anthropic official dated names — Cursor / Claude Code / Anthropic SDK
 // all send these verbatim. Map each to our short key so the same client

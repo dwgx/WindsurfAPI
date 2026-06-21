@@ -28,6 +28,18 @@ describe('v2.0.29 model catalog correctness', () => {
     assert.equal(getModelInfo('glm-4.7-fast')?.modelUid, 'MODEL_GLM_4_7_FAST');
   });
 
+  it('exposes newer cloud-only Kimi and GLM catalog entries with aliases', () => {
+    assert.equal(getModelInfo('kimi-k2-7')?.provider, 'moonshot');
+    assert.equal(getModelInfo('kimi-k2-7')?.modelUid, 'kimi-k2-7');
+    assert.equal(resolveModel('kimi-k2.7'), 'kimi-k2-7');
+    assert.equal(resolveModel('kimi-k2-7'), 'kimi-k2-7');
+
+    assert.equal(getModelInfo('glm-5.2')?.provider, 'zhipu');
+    assert.equal(getModelInfo('glm-5.2')?.modelUid, 'glm-5-2');
+    assert.equal(resolveModel('glm-5-2'), 'glm-5.2');
+    assert.equal(resolveModel('glm-5.2'), 'glm-5.2');
+  });
+
   it('validates swe and minimax enum updates from release payload', () => {
     assert.equal(getModelInfo('swe-1.5-thinking')?.enumValue, 369);
     assert.equal(getModelInfo('swe-1.5')?.enumValue, 377);
