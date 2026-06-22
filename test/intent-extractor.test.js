@@ -68,6 +68,16 @@ describe('Layer 2 — backtick-quoted name + value', () => {
     assert.deepEqual(JSON.parse(r[0].argumentsJson), { command: 'echo HI' });
   });
 
+  it('does not promote a backtick-quoted tool inventory into tool calls (#196)', () => {
+    const tools = ['read', 'write', 'edit', 'grep', 'bash'].map(name => fnTool(name));
+    const r = extractIntentFromNarrative(
+      '我有以下这些工具：**文件操作** - `read` — 读取文件或目录 - `write` — 写入文件 - `edit` — 精确替换文件内容 - `grep` — 内容搜索 - `bash` — 执行命令',
+      tools,
+      { lastUserText: '你有啥工具' },
+    );
+    assert.equal(r.length, 0);
+  });
+
   it('extracts use the `Read` function with file_path `/etc/hosts`', () => {
     const r = extractIntentFromNarrative(
       'use the `Read` function with file_path `/etc/hosts`',

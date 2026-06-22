@@ -182,8 +182,11 @@ function extractLayer2(text, names, primaryParam) {
     while ((m = fnRe.exec(text)) !== null) {
       // Look for next backtick-quoted token within 200 chars
       const tail = text.slice(m.index + m[0].length, m.index + m[0].length + 200);
-      // Capture optional "with PARAM `value`" or just "`value`"
-      const argRe = /(?:with\s+)?(?:the\s+)?(?:argument|param|parameter|input|command|file[_-]?path|path|query)?\s*[:=]?\s*`([^`]{1,1000})`/i;
+      // Capture "with PARAM `value`" / "PARAM: `value`".
+      // Do not accept a bare next backtick as the value: answers like
+      // "available tools: `read`, `write`, `edit`" are capability lists,
+      // not tool calls (#196).
+      const argRe = /(?:with\s+)?(?:the\s+)?(?:argument|param|parameter|input|command|file[_-]?path|path|query)\s*[:=]?\s*`([^`]{1,1000})`/i;
       const a = tail.match(argRe);
       if (!a) continue;
       const value = a[1];
