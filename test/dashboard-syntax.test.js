@@ -69,3 +69,22 @@ test('dashboard OAuth origin-blocked errors point users to token fallback', () =
   }
   assert.match(html, /oauth\.status\.originBlocked/);
 });
+
+test('recent merged PR contributors are represented in dashboard and README credits', () => {
+  const contributorData = JSON.parse(readFileSync(join(root, 'src/dashboard/data/contributors.json'), 'utf8'));
+  const readme = readFileSync(join(root, 'README.md'), 'utf8');
+  const readmeEn = readFileSync(join(root, 'README.en.md'), 'utf8');
+  const required = [
+    { login: 'MatrixNeoKozak', pr: 195 },
+    { login: 'brandonedley', pr: 201 },
+  ];
+
+  for (const { login, pr } of required) {
+    assert.ok(
+      contributorData.contributors.some(entry => entry.login === login && entry.pr === pr),
+      `contributors.json should include @${login} PR #${pr}`,
+    );
+    assert.match(readme, new RegExp(`@${login}[\\s\\S]*PR #${pr}`));
+    assert.match(readmeEn, new RegExp(`@${login}[\\s\\S]*PR #${pr}`));
+  }
+});

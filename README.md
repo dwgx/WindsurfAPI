@@ -448,6 +448,10 @@ A: 不能。长 thinking / 长输出在约 236-243 秒断流，是 Windsurf prov
   Sticky session 流式路径修复 + body.user 多用户隔离机制 + stickyNoFallback / stickyBindByUserOnly 双开关。
 - [@andya1lan](https://github.com/andya1lan) — [PR #192](https://github.com/dwgx/WindsurfAPI/pull/192)
   `update.sh` 通过 `install-ls.sh` 更新 LS binary，统一 WindsurfAPI / Windsurf 桌面 LS / Exafunction 下载链，并修复 macOS `grep -P` 兼容性。
+- [@MatrixNeoKozak](https://github.com/MatrixNeoKozak) — [PR #195](https://github.com/dwgx/WindsurfAPI/pull/195)
+  Dashboard API malformed JSON 现在返回 HTTP 400，不再用 200 包着 `ok:false`，让前端和自动化调用方能按状态码正确处理请求体格式错误。
+- [@brandonedley](https://github.com/brandonedley) — [PR #201](https://github.com/dwgx/WindsurfAPI/pull/201)
+  新增 GLM 5.2 和 Kimi K2.7 模型目录项，并同步 README / 英文 README / package 描述 / 模型 catalog 测试，给后续模型新增留下了代码、文档、测试一起更新的样板。
 
 想加入这份名单？欢迎提 [issue](https://github.com/dwgx/WindsurfAPI/issues) 或 [pull request](https://github.com/dwgx/WindsurfAPI/pulls)。Dashboard 左侧有"致谢"面板 能看到同样的信息。
 

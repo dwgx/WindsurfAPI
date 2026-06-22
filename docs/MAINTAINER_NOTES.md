@@ -16,6 +16,43 @@ resets. They are not release notes.
 - When an issue is broad, keep it as a reproduction bucket and require logs.
   Do not close it because a related bug was fixed elsewhere.
 
+## Issue Reply Style
+
+- Lead with status: fixed in a specific commit/version, waiting for reporter
+  reproduction, upstream-limited, duplicate, or tracked elsewhere.
+- Name the affected path precisely: client, route, model, native bridge mode,
+  WebSearch/WebFetch path, LS binary source, dashboard API, or release script.
+- For tool and degraded-model reports, ask for this fixed evidence set:
+  version/commit, client name/version, route, exact model, tool names/schema
+  count, redacted `Probe[...]`, `ToolRoute[...]`, `BridgeResult[...]`, and the
+  nearby stream/error lines.
+- For LS install/update reports, ask for OS/arch, `install-ls.sh` output, asset
+  URL selected, `WINDSURFAPI_LS_RELEASE` if set, file size/hash when available,
+  and whether the target binary was live/in use.
+- If the reporter writes in Chinese, Vietnamese, or another language already
+  used in the issue, reply in that language when practical. Keep technical
+  identifiers unchanged.
+- Avoid declaring a broad issue fixed from a narrow patch. Say which subpath was
+  fixed and leave the bucket open until the original client flow is retested.
+
+## Label Rules
+
+- Type labels describe the work surface: `bug`, `enhancement`,
+  `documentation`, `maintenance`, `release`, `security`, `privacy`.
+- State labels describe workflow outcome: `needs-triage`, `question`, `fixed`,
+  `duplicate`, `invalid`, `wontfix`, `not a bug`.
+- Source labels describe ownership: `upstream` for Windsurf, Devin, provider,
+  LS binary source, or third-party release behavior outside this repo.
+- Community labels (`help wanted`, `good first issue`) require concrete scope
+  and acceptance criteria first.
+- Use `question` when the next action is reporter data or maintainer smoke in a
+  specific environment. Do not leave broad evidence-free bugs as plain `bug`.
+- Use `fixed` only when a patch/release exists. For partial fixes, state the
+  fixed subcase in the issue comment and keep other labels such as `question`
+  if reporter confirmation is still needed.
+- Avoid using undefined catch-all labels. If a label has no repeatable triage
+  meaning, document it or retire it.
+
 ## Native Bridge Rules
 
 - Production default native bridge scope is the Bash family only:
@@ -85,3 +122,8 @@ resets. They are not release notes.
 - Dashboard interactions should use existing app confirmation/prompt patterns,
   not native browser alerts.
 - Do not revert unrelated user or generated changes in the worktree.
+- After merging an external PR, update contributor surfaces in the same
+  maintenance pass: `src/dashboard/data/contributors.json`, `README.md`, and
+  `README.en.md`. The static `docs/index.html` contributor section is a separate
+  curated homepage surface; update it only when intentionally refreshing that
+  page layout.

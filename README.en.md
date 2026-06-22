@@ -445,6 +445,10 @@ Huge thanks to the following folks who sent pull requests or systematically audi
   Sticky session streaming-path fix + body.user multi-user isolation + stickyNoFallback / stickyBindByUserOnly toggles.
 - [@andya1lan](https://github.com/andya1lan) — [PR #192](https://github.com/dwgx/WindsurfAPI/pull/192)
   Routed `update.sh` LS binary updates through `install-ls.sh`, aligned the WindsurfAPI / Windsurf desktop LS / Exafunction source chain, and fixed macOS `grep -P` compatibility.
+- [@MatrixNeoKozak](https://github.com/MatrixNeoKozak) — [PR #195](https://github.com/dwgx/WindsurfAPI/pull/195)
+  Made malformed JSON sent to the dashboard API return HTTP 400 instead of a 200 response with `ok:false`, so UI and automation callers can rely on status-code semantics for bad request bodies.
+- [@brandonedley](https://github.com/brandonedley) — [PR #201](https://github.com/dwgx/WindsurfAPI/pull/201)
+  Added GLM 5.2 and Kimi K2.7 catalog entries while keeping README, README.en, package metadata, generated model docs checks, and catalog tests in sync.
 
 Want to be on this list? Open an [issue](https://github.com/dwgx/WindsurfAPI/issues) or a [pull request](https://github.com/dwgx/WindsurfAPI/pulls). The dashboard has a Credits panel on the left that shows the same info.
 

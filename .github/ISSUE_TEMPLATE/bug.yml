@@ -1,7 +1,7 @@
 name: Bug 报告 / Bug Report
 description: 报告一个 bug / Report a bug
 title: "[Bug] "
-labels: ["bug"]
+labels: ["bug", "needs-triage"]
 body:
   - type: markdown
     attributes:
@@ -49,13 +49,47 @@ body:
     validations:
       required: true
 
+  - type: input
+    id: client
+    attributes:
+      label: 客户端和版本 / Client and version
+      description: Cursor / Cline / Claude Code / Codex / opencode / Kilo Code / OpenWebUI / curl 等
+      placeholder: "Claude Code 1.x, Cursor, opencode, curl..."
+
+  - type: dropdown
+    id: route
+    attributes:
+      label: 请求路径 / API route
+      options:
+        - /v1/chat/completions
+        - /v1/messages
+        - /v1/responses
+        - Dashboard / dashboard API
+        - install-ls.sh / LS update
+        - 其他 / Other
+
+  - type: textarea
+    id: tools
+    attributes:
+      label: 工具信息 / Tool information
+      description: |
+        如果是工具调用问题，请列出工具名、schema 数量、tool_choice、native bridge 环境变量。
+        For tool-call issues, include tool names, schema count, tool_choice, and native bridge env flags.
+      placeholder: |
+        tools: Read, Bash, Grep
+        schema count: 12
+        tool_choice: auto
+        WINDSURFAPI_NATIVE_TOOL_BRIDGE: unset
+
   - type: textarea
     id: logs
     attributes:
       label: 日志 / Logs
       description: |
-        后端日志（dashboard 日志面板 或 PM2 logs windsurf-api） 把 token/api key 打码
+        后端日志（dashboard 日志面板 或 PM2 logs windsurf-api） 把 token/api key 打码。
+        工具/上下文问题优先贴 `Probe[...]`、`ToolRoute[...]`、`BridgeResult[...]` 和附近 stream/error 行。
         Backend logs from dashboard log panel or `pm2 logs windsurf-api`. Redact tokens/API keys.
+        For tool/context issues, include `Probe[...]`, `ToolRoute[...]`, `BridgeResult[...]`, and nearby stream/error lines.
       render: shell
 
   - type: input
@@ -69,9 +103,10 @@ body:
     attributes:
       label: 环境 / Environment
       description: |
-        Node 版本、操作系统、LS binary 来源（Exafunction release / Windsurf 桌面端 / 其他）
-        Node version, OS, LS binary source.
+        Node 版本、操作系统、CPU 架构、部署方式、LS binary 来源（WindsurfAPI release / Windsurf 桌面端 / Exafunction release / 自定义 WINDSURFAPI_LS_RELEASE / 其他）
+        Node version, OS, CPU arch, deployment mode, and LS binary source.
       placeholder: |
         Node: v20.x
         OS: Ubuntu 22.04
-        LS: from Windsurf desktop app v1.12
+        Arch: x64
+        LS: WINDSURFAPI_LS_RELEASE unset, fallback release ...

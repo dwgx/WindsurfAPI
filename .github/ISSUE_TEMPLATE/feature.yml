@@ -1,7 +1,7 @@
 name: 功能请求 / Feature Request
 description: 建议一个新功能 / Suggest a new feature
 title: "[Feature] "
-labels: ["enhancement"]
+labels: ["enhancement", "needs-triage"]
 body:
   - type: textarea
     id: idea
@@ -16,6 +16,14 @@ body:
     attributes:
       label: 替代方案 / Alternatives considered
       description: 现在有没有 workaround 为什么不够好 / Any current workaround? Why is it not enough?
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 最小验收标准 / Minimum acceptance criteria
+      description: |
+        什么行为出现后可以算完成？如果是模型/上游功能，请提供模型名、来源、截图或日志证据。
+        What observable behavior means this is done? For model/upstream features, include model names, source evidence, screenshots, or logs.
 
   - type: checkboxes
     id: willing

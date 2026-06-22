@@ -260,6 +260,24 @@
       "mergedAt": "2026-06-05",
       "title": "fix(update): install LS via install-ls sources",
       "summary": "PR #192 把 update.sh 的 LS binary 更新路径从旧的硬编码 WindsurfAPI release URL 收敛到 install-ls.sh：WindsurfAPI release → Windsurf 桌面 LS release → Exafunction fallback。这样一键更新、Dashboard LS 更新、手动 install-ls.sh 三条路径使用同一套下载链和 atomic rename 行为，避免旧 release asset 漂移和 live binary file-busy 问题。同时把 update.sh 读取 .env 里的 LS_BINARY_PATH 从 GNU-only grep -P 改成 awk，macOS BSD grep 环境也能跑。"
+    },
+    {
+      "login": "MatrixNeoKozak",
+      "pr": 195,
+      "weight": "B",
+      "weightLabel": "Dashboard API 错误语义修复",
+      "mergedAt": "2026-06-22",
+      "title": "fix: return 400 for malformed JSON in dashboard API",
+      "summary": "PR #195 修掉 dashboard API malformed JSON 仍按 200 返回的问题。改动很小，但错误语义重要：前端、脚本和自动化调用方现在能用 HTTP status 正确区分请求体格式错误，而不是从一个成功响应里猜 `ok:false`。配套跑过 dashboard API 和 cache-control 测试，适合作为小型、聚焦、可验证 bugfix 的样板。"
+    },
+    {
+      "login": "brandonedley",
+      "pr": 201,
+      "weight": "A",
+      "weightLabel": "模型目录更新 + 文档/测试同步",
+      "mergedAt": "2026-06-22",
+      "title": "feat: add GLM 5.2 and Kimi K2.7 catalog entries",
+      "summary": "PR #201 把 GLM 5.2 和 Kimi K2.7 补进模型 catalog，同时同步 README、英文 README、package description、模型文档生成检查和 catalog correctness 测试。模型新增最怕只改一处导致 dashboard、docs、测试互相漂移，这个 PR 把代码、文档和校验一起补齐，是后续普通模型 catalog 更新可以参考的提交形态。"
     }
   ]
 }
