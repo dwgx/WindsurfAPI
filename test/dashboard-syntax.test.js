@@ -57,3 +57,15 @@ test('dashboard sketch proxy and abnormal-account tables use lightweight summari
   assert.doesNotMatch(html, /pageSize=1000/);
   assert.doesNotMatch(html, /pageSize=500/);
 });
+
+test('dashboard OAuth origin-blocked errors point users to token fallback', () => {
+  const html = readFileSync(join(root, 'src/dashboard/index.html'), 'utf8');
+  const sketch = readFileSync(join(root, 'src/dashboard/index-sketch.html'), 'utf8');
+  for (const source of [html, sketch]) {
+    assert.match(source, /isFirebaseOAuthOriginBlocked/);
+    assert.match(source, /requests-from-referer-\.\*are-blocked/);
+    assert.match(source, /unauthorized-domain/);
+    assert.match(source, /windsurf\.com\/show-auth-token/);
+  }
+  assert.match(html, /oauth\.status\.originBlocked/);
+});

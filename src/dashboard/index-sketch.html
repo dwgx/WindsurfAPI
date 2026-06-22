@@ -2436,6 +2436,11 @@ const App = {
   /* ── windsurf-login ── */
   loadWindsurfLogin() { this.renderLoginHistory(); },
 
+  isFirebaseOAuthOriginBlocked(err) {
+    const msg = String(err?.message || err || '');
+    return /auth\/(?:requests-from-referer-.*are-blocked|unauthorized-domain)|requests-from-referer-.*are-blocked|unauthorized-domain/i.test(msg);
+  },
+
   async oauthLogin(provider) {
     const btn = document.getElementById(`oauth-${provider}-btn`);
     const status = document.getElementById('oauth-status');
@@ -2455,9 +2460,15 @@ const App = {
       this.loadAccounts();
       this.pushLoginHistory({ time: new Date().toISOString(), email: r.email || label, proxy: 'direct', status: 'success', method: label });
     } catch (err) {
+      const rawError = err?.message || String(err);
+      const originBlocked = this.isFirebaseOAuthOriginBlocked(err);
+      const fallback = I18n.locale === 'en'
+        ? `${label} OAuth is blocked for this dashboard origin by Firebase. Use Auth Token from windsurf.com/show-auth-token and add it in Account Management.`
+        : `${label} OAuth 被 Firebase 拒绝了当前 Dashboard 来源。请从 windsurf.com/show-auth-token 复制 Auth Token 后在账号管理里添加。`;
+      const message = originBlocked ? fallback : rawError;
       status.style.color = 'var(--error)';
-      status.innerHTML = `<svg class="ic" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> ${this.esc(err.message)}`;
-      this.toast(`${label} login failed: ${err.message}`, 'error');
+      status.innerHTML = `<svg class="ic" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg> ${this.esc(message)}`;
+      this.toast(originBlocked ? message : `${label} login failed: ${rawError}`, 'error');
     } finally { if (btn) btn.disabled = false; }
   },
 

@@ -725,7 +725,8 @@
       "loggingIn": "Logging in via {{label}}...",
       "codeiumRegistering": "{{label}} auth success, registering Codeium...",
       "loginSuccess": "Login successful {{email}} added to pool",
-      "loginFailed": "{{label}} login failed: {{error}}"
+      "loginFailed": "{{label}} login failed: {{error}}",
+      "originBlocked": "{{label}} OAuth is blocked for this dashboard origin by Firebase. Use Auth Token from windsurf.com/show-auth-token and add it in Account Management."
     }
   },
 

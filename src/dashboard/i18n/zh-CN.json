@@ -725,7 +725,8 @@
       "loggingIn": "正在通过 {{label}} 登录...",
       "codeiumRegistering": "{{label}} 认证成功 正在注册 Codeium...",
       "loginSuccess": "登录成功 {{email}} 已加入账号池",
-      "loginFailed": "{{label}} 登录失败: {{error}}"
+      "loginFailed": "{{label}} 登录失败: {{error}}",
+      "originBlocked": "{{label}} OAuth 被 Firebase 拒绝了当前 Dashboard 来源。请从 windsurf.com/show-auth-token 复制 Auth Token 后在账号管理里添加。"
     }
   },
 

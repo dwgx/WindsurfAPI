@@ -3370,6 +3370,11 @@ docker compose up -d --force-recreate</pre>
     this.checkLocalImportAvailability();
   },
 
+  isFirebaseOAuthOriginBlocked(err) {
+    const msg = String(err?.message || err || '');
+    return /auth\/(?:requests-from-referer-.*are-blocked|unauthorized-domain)|requests-from-referer-.*are-blocked|unauthorized-domain/i.test(msg);
+  },
+
   async oauthLogin(provider) {
     const btn = document.getElementById(`oauth-${provider}-btn`);
     const status = document.getElementById('oauth-status');
@@ -3396,10 +3401,16 @@ docker compose up -d --force-recreate</pre>
       const entry = { time: new Date().toISOString(), email: r.email || label, proxy: I18n.t('proxy.direct'), status: 'success', method: label };
       this.pushLoginHistory(entry);
     } catch (err) {
+      const rawError = err?.message || String(err);
+      const originBlocked = this.isFirebaseOAuthOriginBlocked(err);
       status.style.color = '#ef4444';
-      status.textContent = I18n.t('oauth.status.loginFailed', { label, error: err.message });
-      const errKey = err.message ? `error.${err.message}` : null;
-      const translatedErr = (errKey && I18n.t(errKey) !== errKey) ? I18n.t(errKey) : err.message;
+      const errKey = rawError ? `error.${rawError}` : null;
+      const translatedErr = originBlocked
+        ? I18n.t('oauth.status.originBlocked', { label })
+        : ((errKey && I18n.t(errKey) !== errKey) ? I18n.t(errKey) : rawError);
+      status.textContent = originBlocked
+        ? translatedErr
+        : I18n.t('oauth.status.loginFailed', { label, error: translatedErr });
       this.toast(I18n.t('toast.loginFailed', { label, error: translatedErr }), 'error');
     } finally {
       if (btn) btn.disabled = false;
