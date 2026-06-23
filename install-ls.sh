@@ -44,7 +44,7 @@ verify_release_asset_checksum() {
   fi
 
   local expected
-  expected="$(awk -v asset="$asset" '$2 == asset && $1 ~ /^[0-9a-fA-F]{64}$/ { print tolower($1); exit }' "$checksums_file")"
+  expected="$(awk -v asset="$asset" '$2 == asset && length($1) == 64 && $1 ~ /^[0-9a-fA-F]+$/ { print tolower($1); exit }' "$checksums_file")"
   rm -f "$checksums_file"
   if [[ -z "$expected" ]]; then
     err "SHA256SUMS from $release_base does not list $asset"
