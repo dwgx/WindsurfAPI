@@ -62,5 +62,15 @@ describe('update.sh language-server source selection', () => {
       /Trying maintained Windsurf LS mirror: \$ws_url/,
       'install-ls.sh should print the fallback URL so large macOS downloads do not look hung'
     );
+    assert.match(
+      INSTALL_LS,
+      /verify_release_asset_checksum "\$WINDSURF_LS_RELEASE" "\$ASSET" "\$TMP_TARGET"/,
+      'downloads from the maintained mirror should be checked against SHA256SUMS when available'
+    );
+    assert.match(
+      INSTALL_LS,
+      /SHA256SUMS not available; skipping mirror checksum verification/,
+      'custom or older mirrors without SHA256SUMS should remain usable'
+    );
   });
 });

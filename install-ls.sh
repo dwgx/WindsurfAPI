@@ -19,6 +19,54 @@ WINDSURF_LS_RELEASE="${WINDSURFAPI_LS_RELEASE:-https://github.com/dwgx/windsurf-
 log() { echo -e "\033[1;34m==>\033[0m $*"; }
 err() { echo -e "\033[1;31m!!\033[0m  $*" >&2; }
 
+sha256_file() {
+  if command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  elif command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | awk '{print $1}'
+  else
+    return 127
+  fi
+}
+
+verify_release_asset_checksum() {
+  local release_base="$1"
+  local asset="$2"
+  local file="$3"
+  local checksums_file="${TMP_CHECKSUMS:-${file}.SHA256SUMS}"
+  local checksums_url="${release_base}/SHA256SUMS"
+
+  log "Trying checksum file: $checksums_url"
+  if ! curl -fsL -o "$checksums_file" "$checksums_url"; then
+    rm -f "$checksums_file"
+    log "SHA256SUMS not available; skipping mirror checksum verification"
+    return 0
+  fi
+
+  local expected
+  expected="$(awk -v asset="$asset" '$2 == asset && $1 ~ /^[0-9a-fA-F]{64}$/ { print tolower($1); exit }' "$checksums_file")"
+  rm -f "$checksums_file"
+  if [[ -z "$expected" ]]; then
+    err "SHA256SUMS from $release_base does not list $asset"
+    return 1
+  fi
+
+  local actual
+  if ! actual="$(sha256_file "$file")"; then
+    log "No sha256 tool available; skipping mirror checksum verification"
+    return 0
+  fi
+
+  if [[ "$actual" != "$expected" ]]; then
+    err "Checksum mismatch for $asset"
+    err "Expected: $expected"
+    err "Actual:   $actual"
+    return 1
+  fi
+
+  log "Verified $asset against SHA256SUMS"
+}
+
 # ─── Platform detection ────────────────────────────────
 os="$(uname -s)"
 arch="$(uname -m)"
@@ -59,7 +107,8 @@ mkdir -p "$(dirname "$TARGET")"
 # pointer to a new inode — running processes keep their old inode and
 # we get a fresh binary in place for the next exec.
 TMP_TARGET="${TARGET}.new.$$"
-trap 'rm -f "$TMP_TARGET"' EXIT
+TMP_CHECKSUMS="${TMP_TARGET}.SHA256SUMS"
+trap 'rm -f "$TMP_TARGET" "$TMP_CHECKSUMS"' EXIT
 
 if [[ $# -gt 0 && "$1" == "--file" && -n "${2:-}" ]]; then
   log "Installing from local file: $2"
@@ -84,6 +133,7 @@ else
     log "Trying maintained Windsurf LS mirror: $ws_url"
     if curl -fL --progress-bar -o "$TMP_TARGET" "$ws_url"; then
       log "Downloaded from maintained Windsurf LS mirror"
+      verify_release_asset_checksum "$WINDSURF_LS_RELEASE" "$ASSET" "$TMP_TARGET"
     else
       log "Not found in maintained Windsurf LS mirror, falling back to Exafunction..."
       if command -v jq >/dev/null 2>&1; then
@@ -110,10 +160,8 @@ chmod +x "$TMP_TARGET"
 mv -f "$TMP_TARGET" "$TARGET"
 trap - EXIT
 size="$(du -h "$TARGET" | cut -f1)"
-if command -v sha256sum >/dev/null 2>&1; then
-  sha="$(sha256sum "$TARGET" | cut -c1-16)"
-elif command -v shasum >/dev/null 2>&1; then
-  sha="$(shasum -a 256 "$TARGET" | cut -c1-16)"
+if full_sha="$(sha256_file "$TARGET")"; then
+  sha="$(printf '%s' "$full_sha" | cut -c1-16)"
 else
   sha="(no sha256 tool)"
 fi

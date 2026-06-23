@@ -27,12 +27,14 @@ describe('install-ls.sh atomic rename (LS file-busy fix)', () => {
     assert.match(SCRIPT, /TMP_TARGET="\$\{TARGET\}\.new\.\$\$"/,
       'must define TMP_TARGET as $TARGET.new.$$');
     // Every curl -o invocation should target $TMP_TARGET, not $TARGET.
-    const curlMatches = SCRIPT.match(/curl [^\n]*-o "([^"]+)"/g) || [];
+    const curlMatches = SCRIPT.match(/curl [^\n]*--progress-bar[^\n]*-o "([^"]+)"/g) || [];
     assert.ok(curlMatches.length > 0, 'expected at least one curl -o call');
     for (const c of curlMatches) {
       assert.match(c, /\$TMP_TARGET/,
         `curl invocation must write to $TMP_TARGET, not $TARGET — found: ${c}`);
     }
+    assert.match(SCRIPT, /curl -fsL -o "\$checksums_file" "\$checksums_url"/,
+      'checksum downloads should write to the separate checksum tmp file');
     // cp -f branches likewise.
     const cpMatches = SCRIPT.match(/cp -f "[^"]+" "([^"]+)"/g) || [];
     for (const c of cpMatches) {
@@ -55,8 +57,8 @@ describe('install-ls.sh atomic rename (LS file-busy fix)', () => {
     // disable the trap after the successful mv so we don't try to
     // delete a path that's now $TARGET (different inode but same name
     // would have surprising side effects if the trap chain fires later).
-    assert.match(SCRIPT, /trap 'rm -f "\$TMP_TARGET"' EXIT/,
-      'must register a trap to clean up tmp on abort');
+    assert.match(SCRIPT, /trap 'rm -f "\$TMP_TARGET" "\$TMP_CHECKSUMS"' EXIT/,
+      'must register a trap to clean up tmp files on abort');
     assert.match(SCRIPT, /trap - EXIT/,
       'must clear the trap after the successful mv');
   });
