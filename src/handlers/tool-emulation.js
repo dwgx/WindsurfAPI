@@ -219,9 +219,18 @@ Rules:
 }
 
 export function pickToolDialect(modelKey, provider, route = null) {
+  const forced = process.env.WINDSURFAPI_FORCE_TOOL_DIALECT;
+  if (forced && /^(glm47|openai_json_xml|kimi_k2|gpt_native)$/.test(forced)) return forced;
   const normalizedProvider = String(provider || '').toLowerCase();
   const normalizedModelKey = String(modelKey || '').toLowerCase();
-  if (normalizedProvider === 'zhipu' || normalizedModelKey.startsWith('glm')) return 'glm47';
+  if (normalizedProvider === 'zhipu' || normalizedModelKey.startsWith('glm')) {
+    // v2.0.72 — glm-5.2 probe: the glm47 XML markup dialect is ignored and
+    // the model answers in plain text. The gpt_native function_call JSON
+    // dialect is emitted reliably and parsed correctly. Keep older GLM on
+    // glm47 until proven otherwise; env override still available for tests.
+    if (normalizedModelKey === 'glm-5.2' || normalizedModelKey.startsWith('glm-5-2-')) return 'gpt_native';
+    return 'glm47';
+  }
   if (normalizedProvider === 'moonshot' || normalizedModelKey.startsWith('kimi')) {
     // The Kimi K2 vLLM dialect is verified working only against the original
     // `kimi-k2` and `kimi-k2-thinking` SKUs. Newer Moonshot SKUs
