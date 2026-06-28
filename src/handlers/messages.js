@@ -176,7 +176,7 @@ function anthropicToOpenAI(body) {
           toolCalls.push({
             id,
             type: 'function',
-            function: { name: block.name, arguments: JSON.stringify(block.input || {}) },
+            function: { name: block.name, arguments: JSON.stringify(block.input ?? {}) },
           });
         } else if (block.type === 'tool_result') {
           let content = typeof block.content === 'string'

@@ -284,7 +284,7 @@ export function responsesToChat(body) {
           type: 'function',
           function: {
             name: item.name || item.function?.name || 'unknown',
-            arguments: stringifyMaybe(item.arguments || item.function?.arguments || ''),
+            arguments: stringifyMaybe(item.arguments ?? item.function?.arguments ?? ''),
           },
         });
       },
@@ -318,7 +318,7 @@ export function responsesToChat(body) {
         messages.push({
           role: 'tool',
           tool_call_id: item.call_id || item.id,
-          content: stringifyMaybe(item.output),
+          content: stringifyMaybe(item.output ?? ''),
         });
       } else if (item.type === 'custom_tool_call') {
         flushToolCalls.add({
@@ -331,7 +331,7 @@ export function responsesToChat(body) {
         messages.push({
           role: 'tool',
           tool_call_id: item.call_id || item.id,
-          content: stringifyMaybe(item.output),
+          content: stringifyMaybe(item.output ?? ''),
         });
       }
     }
@@ -666,8 +666,8 @@ class ResponsesStreamTranslator {
       if (existing.responseTool?.namespace) existing.item.namespace = existing.responseTool.namespace;
     }
 
-    const argsChunk = toolCall.function?.arguments || '';
-    if (argsChunk) existing.argChunks.push(argsChunk);
+    const argsChunk = toolCall.function?.arguments ?? '';
+    if (argsChunk !== '') existing.argChunks.push(stringifyMaybe(argsChunk));
     if (!existing.item && !existing.toolName) return;
     ensureItem(existing.toolName || 'unknown', existing.responseTool);
 
@@ -696,6 +696,17 @@ class ResponsesStreamTranslator {
     for (const tc of sorted) {
       if (tc.done) continue;
       tc.done = true;
+      if (!tc.item) {
+        tc.item = {
+          type: 'function_call',
+          id: genFunctionCallId(),
+          call_id: tc.callId || `call_${randomUUID().slice(0, 8)}`,
+          name: tc.toolName || 'unknown',
+          arguments: '',
+          status: 'in_progress',
+        };
+        this.send('response.output_item.added', { output_index: tc.outputIndex, item: tc.item });
+      }
       const args = tc.argChunks.join('');
       if (tc.custom) {
         const parsed = safeJsonParse(args);

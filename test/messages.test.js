@@ -155,6 +155,37 @@ describe('Anthropic messages request translation', () => {
     assert.match(toolMsg.content, /offset\/limit/);
   });
 
+  it('preserves falsy Anthropic tool_use input values', async () => {
+    let capturedBody = null;
+    await handleMessages({
+      model: 'claude-sonnet-4.6',
+      messages: [
+        { role: 'assistant', content: [
+          { type: 'tool_use', id: 'toolu_false', name: 'flag', input: false },
+          { type: 'tool_use', id: 'toolu_zero', name: 'count', input: 0 },
+          { type: 'tool_use', id: 'toolu_empty', name: 'empty', input: '' },
+        ] },
+      ],
+    }, {
+      async handleChatCompletions(body) {
+        capturedBody = body;
+        return {
+          status: 200,
+          body: {
+            model: body.model,
+            choices: [{ index: 0, message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
+            usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+          },
+        };
+      },
+    });
+
+    const toolCalls = capturedBody.messages[0].tool_calls;
+    assert.equal(toolCalls[0].function.arguments, 'false');
+    assert.equal(toolCalls[1].function.arguments, '0');
+    assert.equal(toolCalls[2].function.arguments, '""');
+  });
+
   it('does not annotate normal Read output or non-Read tool results', () => {
     const normal = '1\t# README\n2\tActual content';
     assert.equal(

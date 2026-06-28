@@ -153,6 +153,25 @@ describe('responsesToChat', () => {
     ]);
     assert.deepEqual(out.messages[2], { role: 'tool', tool_call_id: 'call_1', content: 'README.md' });
   });
+
+  it('preserves falsy Responses tool arguments and outputs', () => {
+    const out = responsesToChat({
+      input: [
+        { type: 'function_call', call_id: 'call_empty', name: 'noop', arguments: '' },
+        { type: 'function_call_output', call_id: 'call_empty', output: false },
+        { type: 'function_call', call_id: 'call_zero', name: 'count', function: { arguments: 0 } },
+        { type: 'function_call_output', call_id: 'call_zero', output: 0 },
+      ],
+    });
+    assert.deepEqual(out.messages[0].tool_calls, [
+      { id: 'call_empty', type: 'function', function: { name: 'noop', arguments: '' } },
+    ]);
+    assert.deepEqual(out.messages[1], { role: 'tool', tool_call_id: 'call_empty', content: 'false' });
+    assert.deepEqual(out.messages[2].tool_calls, [
+      { id: 'call_zero', type: 'function', function: { name: 'count', arguments: '0' } },
+    ]);
+    assert.deepEqual(out.messages[3], { role: 'tool', tool_call_id: 'call_zero', content: '0' });
+  });
 });
 
 describe('chatToResponse', () => {
@@ -536,6 +555,31 @@ describe('handleResponses streaming', () => {
     assert.equal(doneItem.type, 'custom_tool_call');
     assert.equal(doneItem.name, 'runner');
     assert.equal(doneItem.input, 'echo hi');
+  });
+
+  it('does not crash when a streaming tool delta never includes a name', async () => {
+    const result = await handleResponses({ model: 'claude-sonnet-4.6', input: 'Use a tool', stream: true }, {
+      async handleChatCompletions(body) {
+        return {
+          status: 200,
+          stream: true,
+          async handler(res) {
+            res.write(chatChunk({ id: 'chat_1', created: 123, model: body.model, choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'call_args_only', type: 'function', function: { arguments: '{"value":0}' } }] }, finish_reason: null }] }));
+            res.end('data: [DONE]\n\n');
+          },
+        };
+      },
+    });
+    const res = fakeRes();
+    await result.handler(res);
+    const events = parseEvents(res.body);
+    assertSequenceNumbers(events);
+    assert.equal(events.at(-1).event, 'response.completed');
+    const doneItem = events.filter(e => e.event === 'response.output_item.done').map(e => e.data.item)[0];
+    assert.equal(doneItem.type, 'function_call');
+    assert.equal(doneItem.call_id, 'call_args_only');
+    assert.equal(doneItem.name, 'unknown');
+    assert.equal(doneItem.arguments, '{"value":0}');
   });
 
   it('emits error event and closes when the upstream stream throws', async () => {
