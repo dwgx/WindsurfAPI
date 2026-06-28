@@ -30,7 +30,7 @@ import { getLogs, subscribeToLogs, unsubscribeFromLogs } from './logger.js';
 import { getProxyConfig, getProxyConfigMasked, setGlobalProxy, setAccountProxy, removeProxy, getEffectiveProxy } from './proxy-config.js';
 import { MODELS, MODEL_TIER_ACCESS as _TIER_TABLE, getTierModels as _getTierModels } from '../models.js';
 import { windsurfLogin, refreshFirebaseToken, reRegisterWithCodeium } from './windsurf-login.js';
-import { getModelAccessConfig, setModelAccessMode, setModelAccessList, addModelToList, removeModelFromList } from './model-access.js';
+import { getModelAccessConfig, setModelAccessMode, setModelAccessList, addModelToList, removeModelFromList, setDefaultModel } from './model-access.js';
 import { checkMessageRateLimit } from '../windsurf-api.js';
 import { getNativeBridgeConfigStatus } from '../cascade-native-bridge.js';
 import { getNativeBridgeStats } from '../native-bridge-stats.js';
@@ -1257,6 +1257,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
   if (subpath === '/model-access' && method === 'PUT') {
     if (body.mode) setModelAccessMode(body.mode);
     if (body.list) setModelAccessList(body.list);
+    if (body.defaultModel !== undefined) setDefaultModel(body.defaultModel);
     return json(res, 200, { success: true, config: getModelAccessConfig() });
   }
 

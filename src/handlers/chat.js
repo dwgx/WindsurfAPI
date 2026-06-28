@@ -1715,8 +1715,8 @@ async function _handleChatCompletionsInner(body, context = {}) {
   } else if (wantThinking && isOpus47ModelKey(modelKey) && getModelInfo(modelKey + '-thinking') && !isOpus47ThinkingAutoRouteEnabled()) {
     log.warn(`Chat[${reqId}]: Opus 4.7 thinking auto-route disabled; using base model ${modelKey}. Upstream LS rejects ${modelKey}-thinking as model not found. Set WINDSURFAPI_OPUS47_THINKING_UIDS=1 only after upstream registers it.`);
   }
-  const routingModelKey = effectiveModelKey;
-  const modelInfo = getModelInfo(effectiveModelKey) || getModelInfo(modelKey);
+  let routingModelKey = effectiveModelKey;
+  let modelInfo = getModelInfo(effectiveModelKey) || getModelInfo(modelKey);
   // Reject unknown models. Without this, chat.js used to fall through to
   // legacy rawGetChatMessage with modelEnum=0 and modelUid=null, which
   // upstream silently routed to a default model. Callers saw "I'm Claude 4.5"
@@ -1745,9 +1745,30 @@ async function _handleChatCompletionsInner(body, context = {}) {
   // Global model access control (allowlist / blocklist from dashboard).
   // This must run before special-agent routing as well as Cascade routing;
   // otherwise SWE/adaptive models would bypass operator policy.
-  const access = isModelAllowed(routingModelKey);
+  let access = isModelAllowed(routingModelKey);
   if (!access.allowed) {
-    return { status: 403, body: { error: { message: access.reason, type: 'model_blocked' } } };
+    // Optional fallback: if the operator configured a default model, retarget
+    // a blocked/unlisted request to it instead of rejecting outright (#198).
+    // The fallback target is re-validated against the catalog AND the access
+    // policy, so it can neither resolve to an unknown model nor smuggle a
+    // model the operator hasn't themselves allowed.
+    const fallbackRaw = access.defaultModel;
+    if (fallbackRaw) {
+      const fallbackKey = resolveEffectiveModelKey(resolveModel(fallbackRaw), wantThinking);
+      const fallbackInfo = getModelInfo(fallbackKey);
+      const fallbackAccess = fallbackInfo ? isModelAllowed(fallbackKey) : { allowed: false };
+      if (fallbackInfo && fallbackAccess.allowed) {
+        log.info(`Chat[${reqId}]: ${routingModelKey} blocked (${access.reason}); falling back to default model ${fallbackKey}`);
+        routingModelKey = fallbackKey;
+        modelInfo = fallbackInfo;
+        access = fallbackAccess;
+      } else {
+        log.warn(`Chat[${reqId}]: ${routingModelKey} blocked and default model "${fallbackRaw}" is unusable (info=${!!fallbackInfo}, allowed=${fallbackAccess.allowed}); rejecting`);
+        return { status: 403, body: { error: { message: access.reason, type: 'model_blocked' } } };
+      }
+    } else {
+      return { status: 403, body: { error: { message: access.reason, type: 'model_blocked' } } };
+    }
   }
 
   if (isSpecialAgentModelInfo(modelInfo)) {

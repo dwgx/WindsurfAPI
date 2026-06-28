@@ -417,6 +417,11 @@
       "label": "搜索模型",
       "placeholder": "输入模型名称筛选..."
     },
+    "defaultModel": {
+      "label": "默认模型",
+      "placeholder": "留空则拒绝清单外请求",
+      "hint": "清单外的模型请求会改用此模型，而不是被拒绝。留空表示拒绝（默认）。"
+    },
     "providerFilter": {
       "label": "供应商"
     },
@@ -891,6 +896,7 @@
     "experimentalDisabled": "已关闭实验性功能",
     "toggleFailed": "切换失败：{{error}}",
     "modeUpdated": "模式已更新",
+    "defaultModelUpdated": "默认模型已更新",
     "noTierModels": "该账号层级无可用模型",
     "loginSuccess": "{{label}} 登录成功",
     "loginFailed": "{{label}} 登录失败：{{error}}",

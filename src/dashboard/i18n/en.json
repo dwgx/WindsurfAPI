@@ -364,6 +364,11 @@
       "label": "Search Model",
       "placeholder": "Enter model name to filter..."
     },
+    "defaultModel": {
+      "label": "Default Model",
+      "placeholder": "Leave blank to reject out-of-list requests",
+      "hint": "Requests for a model outside the list use this model instead of being rejected. Leave blank to reject (default)."
+    },
     "proxyUser": {
       "placeholder": "Proxy auth username"
     },
@@ -891,6 +896,7 @@
     "experimentalDisabled": "Experimental feature disabled",
     "toggleFailed": "Toggle failed: {{error}}",
     "modeUpdated": "Mode updated",
+    "defaultModelUpdated": "Default model updated",
     "noTierModels": "No models available for this account tier",
     "loginSuccess": "{{label}} login successful",
     "loginFailed": "{{label}} login failed: {{error}}",

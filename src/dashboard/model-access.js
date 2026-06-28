@@ -14,6 +14,8 @@ const ACCESS_FILE = join(config.dataDir, 'model-access.json');
 const _config = {
   mode: 'all',
   list: [],          // model IDs in the list
+  defaultModel: '',  // when set, a blocked/unlisted model falls back to this
+                     // instead of being rejected. Empty = reject (default).
 };
 
 // Load
@@ -61,6 +63,21 @@ export function removeModelFromList(modelId) {
 }
 
 /**
+ * Fallback model for requests whose model is not on the allowlist (or is on
+ * the blocklist). When set, isModelAllowed() surfaces it so the chat handler
+ * can retarget the request instead of returning a hard rejection. Empty
+ * string means "reject", which is the safe default.
+ */
+export function setDefaultModel(modelId) {
+  _config.defaultModel = typeof modelId === 'string' ? modelId.trim() : '';
+  save();
+}
+
+export function getDefaultModel() {
+  return _config.defaultModel || '';
+}
+
+/**
  * Some models in the catalog are simply the reasoning-mode variant of a
  * base model (claude-opus-4.6 vs claude-opus-4.6-thinking). For
  * allowlist/blocklist purposes we treat the `-thinking` suffix as
@@ -103,19 +120,19 @@ export function isModelAllowed(modelId) {
     for (const sib of siblingsForAllowlist(modelId)) {
       if (_config.list.includes(sib)) return { allowed: true };
     }
-    return { allowed: false, reason: `模型 ${modelId} 不在允許清單中` };
+    return { allowed: false, reason: `模型 ${modelId} 不在允許清單中`, defaultModel: getDefaultModel() };
   }
 
   if (_config.mode === 'blocklist') {
     if (_config.list.includes(modelId)) {
-      return { allowed: false, reason: `模型 ${modelId} 已被封鎖` };
+      return { allowed: false, reason: `模型 ${modelId} 已被封鎖`, defaultModel: getDefaultModel() };
     }
     // Same inheritance for blocklist: blocking the base also blocks
     // the -thinking variant, so an operator who put `claude-opus-4.6`
     // on the blocklist isn't surprised by `-thinking` slipping past.
     for (const sib of siblingsForAllowlist(modelId)) {
       if (_config.list.includes(sib)) {
-        return { allowed: false, reason: `模型 ${modelId} 已被封鎖` };
+        return { allowed: false, reason: `模型 ${modelId} 已被封鎖`, defaultModel: getDefaultModel() };
       }
     }
     return { allowed: true };

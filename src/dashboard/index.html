@@ -2013,6 +2013,11 @@ window._firebaseOAuth = async function(provider) {
           <label><input type="radio" name="model-mode" value="allowlist" onchange="App.setModelMode(this.value)"><span data-i18n="model.mode.allowlist">白名单</span></label>
           <label><input type="radio" name="model-mode" value="blocklist" onchange="App.setModelMode(this.value)"><span data-i18n="model.mode.blocklist">黑名单</span></label>
         </div>
+        <div class="field hidden mt-4" id="model-default-field">
+          <label class="field-label" data-i18n="field.defaultModel.label">默认模型</label>
+          <input id="model-default" class="input" data-i18n-placeholder="field.defaultModel.placeholder" placeholder="留空则拒绝清单外请求" onchange="App.setDefaultModel(this.value)">
+          <div class="field-hint" data-i18n="field.defaultModel.hint">清单外的模型请求会改用此模型，而不是被拒绝。留空表示拒绝（默认）。</div>
+        </div>
       </div>
     </div>
 
@@ -4607,17 +4612,22 @@ docker compose up -d --force-recreate</pre>
       this.api('GET', '/model-access'),
     ]);
     this.allModels = modelData.models || [];
-    this.modelAccessConfig = accessData.mode ? accessData : { mode: 'all', list: [] };
+    this.modelAccessConfig = accessData.mode ? accessData : { mode: 'all', list: [], defaultModel: '' };
     document.querySelector(`input[name="model-mode"][value="${this.modelAccessConfig.mode}"]`).checked = true;
+    const defInput = document.getElementById('model-default');
+    if (defInput) defInput.value = this.modelAccessConfig.defaultModel || '';
     this.updateModelListUI();
   },
 
   updateModelListUI() {
     const sec = document.getElementById('model-list-section');
+    const defField = document.getElementById('model-default-field');
     if (this.modelAccessConfig.mode === 'all') {
       sec.classList.add('hidden');
+      if (defField) defField.classList.add('hidden');
       return;
     }
+    if (defField) defField.classList.remove('hidden');
     sec.classList.remove('hidden');
     const isAllow = this.modelAccessConfig.mode === 'allowlist';
     document.getElementById('model-list-title').textContent = I18n.t(isAllow ? 'section.modelList.titleAllow' : 'section.modelList.titleBlock');
@@ -4668,6 +4678,13 @@ docker compose up -d --force-recreate</pre>
     this.modelAccessConfig.mode = mode;
     this.updateModelListUI();
     this.toast(I18n.t('toast.modeUpdated'));
+  },
+
+  async setDefaultModel(value) {
+    const v = (value || '').trim();
+    await this.api('PUT', '/model-access', { defaultModel: v });
+    this.modelAccessConfig.defaultModel = v;
+    this.toast(I18n.t('toast.defaultModelUpdated'));
   },
 
   async toggleModelInList(modelId) {
