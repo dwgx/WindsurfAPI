@@ -191,6 +191,32 @@ describe('ToolCallStreamParser', () => {
     assert.equal(pickToolDialect('kimi-k2-6', 'moonshot'), 'openai_json_xml');
   });
 
+  it('routes glm-5.2 to gpt_native while older GLM stays on glm47 (#204)', () => {
+    // glm-5.2 ignores the glm47 XML markup and answers in plain text; the
+    // gpt_native bare-JSON function_call dialect is emitted and parsed
+    // reliably. Older GLM SKUs keep the glm47 dialect.
+    assert.equal(pickToolDialect('glm-5.2'), 'gpt_native');
+    assert.equal(pickToolDialect('glm-5.2', 'zhipu'), 'gpt_native');
+    assert.equal(pickToolDialect('glm-5-2-thinking'), 'gpt_native');
+    assert.equal(pickToolDialect('glm-5'), 'glm47');
+    assert.equal(pickToolDialect('glm-5.1'), 'glm47');
+  });
+
+  it('honors WINDSURFAPI_FORCE_TOOL_DIALECT override (#204)', () => {
+    const prev = process.env.WINDSURFAPI_FORCE_TOOL_DIALECT;
+    try {
+      process.env.WINDSURFAPI_FORCE_TOOL_DIALECT = 'kimi_k2';
+      assert.equal(pickToolDialect('glm-5.1', 'zhipu'), 'kimi_k2');
+      assert.equal(pickToolDialect('gpt-4o', 'openai'), 'kimi_k2');
+      // An unrecognized value is ignored and normal routing applies.
+      process.env.WINDSURFAPI_FORCE_TOOL_DIALECT = 'bogus';
+      assert.equal(pickToolDialect('glm-5.1'), 'glm47');
+    } finally {
+      if (prev === undefined) delete process.env.WINDSURFAPI_FORCE_TOOL_DIALECT;
+      else process.env.WINDSURFAPI_FORCE_TOOL_DIALECT = prev;
+    }
+  });
+
   it('emits text before and after tool calls', () => {
     const parser = new ToolCallStreamParser();
     const r = parser.feed(
