@@ -4,7 +4,9 @@ import { config } from '../src/config.js';
 import {
   addAccountByKey,
   configureBindHost,
+  getAccountInternal,
   getAccountList,
+  getAccountListStats,
   removeAccount,
   shouldEmitNoAuthWarning,
   validateApiKey,
@@ -69,5 +71,24 @@ describe('shouldEmitNoAuthWarning', () => {
     assert.equal(listed.apiKey, undefined);
     assert.equal(listed.apiKey_masked, `${key.slice(0, 8)}...${key.slice(-4)}`);
     assert.equal(listed.keyPrefix, 'abcd1234...');
+  });
+
+  it('counts flagged, rate-limited, and disabled accounts in one stats view', () => {
+    const suffix = `${Date.now()}-${Math.random()}`;
+    const active = addAccountByKey(`active-${suffix}`, 'active');
+    const errored = addAccountByKey(`errored-${suffix}`, 'errored');
+    const limited = addAccountByKey(`limited-${suffix}`, 'limited');
+    const disabled = addAccountByKey(`disabled-${suffix}`, 'disabled');
+    createdAccountIds.push(active.id, errored.id, limited.id, disabled.id);
+
+    getAccountInternal(errored.id).errorCount = 1;
+    getAccountInternal(limited.id).rateLimitedUntil = Date.now() + 60_000;
+    getAccountInternal(disabled.id).status = 'disabled';
+
+    const stats = getAccountListStats();
+    assert.ok(stats.total >= 4);
+    assert.ok(stats.flagged >= 2);
+    assert.ok(stats.rateLimited >= 1);
+    assert.ok(stats.disabled >= 1);
   });
 });

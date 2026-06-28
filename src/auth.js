@@ -1401,11 +1401,20 @@ export function getAccountPublic(id, { view = 'full' } = {}) {
 
 export function getAccountListStats() {
   const now = Date.now();
+  let flagged = 0;
+  let rateLimited = 0;
+  let disabled = 0;
+  for (const account of accounts) {
+    const isRateLimited = !!(account.rateLimitedUntil && account.rateLimitedUntil > now);
+    if (isRateLimited) rateLimited++;
+    if (account.status !== 'active') disabled++;
+    if (account.status === 'error' || (account.errorCount || 0) > 0 || isRateLimited) flagged++;
+  }
   return {
     ...getAccountCount(),
-    flagged: accounts.filter(a => a.status === 'error' || (a.errorCount || 0) > 0 || (a.rateLimitedUntil && a.rateLimitedUntil > now)).length,
-    rateLimited: accounts.filter(a => a.rateLimitedUntil && a.rateLimitedUntil > now).length,
-    disabled: accounts.filter(a => a.status !== 'active').length,
+    flagged,
+    rateLimited,
+    disabled,
   };
 }
 
