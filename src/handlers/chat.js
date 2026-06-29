@@ -35,8 +35,8 @@ import {
 } from '../cascade-native-bridge.js';
 import {
   handleSpecialAgentChatCompletion,
-  isSpecialAgentModelInfo,
 } from '../special-agent.js';
+import { selectBackend, usesCascadeFlow } from '../backend-router.js';
 import { sanitizeText, sanitizeToolCall, PathSanitizeStream } from '../sanitize.js';
 import { registerSseController } from '../sse-registry.js';
 import {
@@ -1786,8 +1786,13 @@ async function _handleChatCompletionsInner(body, context = {}) {
     }
   }
 
-  if (isSpecialAgentModelInfo(modelInfo)) {
-    log.info(`Chat[${reqId}]: routing ${routingModelKey} through special-agent backend`);
+  // Backend selection is centralized in backend-router.selectBackend(). This
+  // is behaviour-preserving: special_agent → special-agent handler; otherwise
+  // useCascade mirrors the legacy `!!(modelUid || modelEnum)`. The router gives
+  // P2/P3 a single seam to add Devin REST + entitlement routing.
+  const backendSel = selectBackend({ modelInfo });
+  if (backendSel.flow === 'special_agent') {
+    log.info(`Chat[${reqId}]: routing ${routingModelKey} through special-agent backend (${backendSel.backend})`);
     return handleSpecialAgentChatCompletion(body, {
       id: genId(),
       created: Math.floor(Date.now() / 1000),
@@ -1803,7 +1808,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
   // Legacy RawGetChatMessage is deprecated (returns empty on current LS).
   // Models with only an old enum and no UID may fail with "neither PlanModel
   // nor RequestedModel" — those models were removed from Windsurf upstream.
-  const useCascade = !!(modelUid || modelEnum);
+  const useCascade = usesCascadeFlow(backendSel);
 
   // Tool-call emulation: if the client passed OpenAI-style tools[], we rewrite
   // tool-result turns into synthetic user text and inject the tool protocol
