@@ -195,8 +195,22 @@ function makeAcpClient({ command, args, env, signal, timeoutMs, outputLimit, onC
       status: 502,
       type: 'backend_error',
     });
-    if (code !== 0) failAll(err);
-    else cleanup();
+    if (code !== 0) {
+      failAll(err);
+    } else if (pending.size > 0) {
+      // GAP-ACP-01: a clean exit (code 0) that still has in-flight requests
+      // means the CLI closed before answering — e.g. it exited without
+      // emitting the session/prompt result. cleanup() alone would clear the
+      // pending map WITHOUT settling those promises, hanging the awaiting
+      // caller forever and permanently leaking its concurrency slot (fatal
+      // under DEVIN_MAX_PROCS=1). Reject them so the slot releases.
+      failAll(Object.assign(new Error('Devin ACP exited (code 0) before responding'), {
+        status: 502,
+        type: 'backend_error',
+      }));
+    } else {
+      cleanup();
+    }
   });
 
   const onAbort = () => {
@@ -310,6 +324,7 @@ export async function runDevinAcpProcess(prompt, { modelKey = '', apiKey = '', a
       reasoning: client.getReasoning(),
       stderr: client.getStderr(),
       usage: result?.result?.usage || null,
+      stopReason: result?.result?.stopReason || result?.result?.stop_reason || null,
     };
   } finally {
     client.close();

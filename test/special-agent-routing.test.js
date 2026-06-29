@@ -31,6 +31,8 @@ const ENV_KEYS = [
   'DEVIN_CLI_MODE',
   'DEVIN_ACP_EXPOSE_REASONING',
   'WINDSURFAPI_SHOW_DISABLED_SPECIAL_AGENT_MODELS',
+  'DEVIN_TIMEOUT_MS',
+  'DEVIN_ACP_PING_MS',
 ];
 const originalEnv = Object.fromEntries(ENV_KEYS.map(k => [k, process.env[k]]));
 const originalModelAccess = getModelAccessConfig();
@@ -794,5 +796,306 @@ rl.on('line', line => {
       else process.env.DEVIN_TIMEOUT_MS = savedTimeout;
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+});
+
+// Survival trio: SURV-02 (abort wiring), AP-GAP-2 (pool health feedback),
+// P0-3 (SSE ping). These are the post-Cascade "don't die" fixes.
+describe('special-agent survival hardening', () => {
+  // An http.ServerResponse-like mock that supports res.on('close') so abort
+  // wiring can be exercised by emitting 'close'.
+  function makeRes() {
+    const writes = [];
+    const listeners = {};
+    return {
+      writes,
+      writableEnded: false,
+      write(c) { writes.push(String(c)); return true; },
+      end() { this.writableEnded = true; },
+      on(ev, fn) { (listeners[ev] ||= []).push(fn); return this; },
+      emit(ev) { (listeners[ev] || []).forEach(fn => fn()); },
+      joined() { return writes.join(''); },
+    };
+  }
+
+  it('SURV-02: client disconnect aborts the ACP runner signal', async () => {
+    process.env.WINDSURFAPI_SPECIAL_AGENT_BACKEND = 'devin-cli';
+    process.env.DEVIN_CLI_MODE = 'acp';
+    process.env.DEVIN_CLI_USE_ACCOUNT_POOL = '0';
+
+    let seenSignal = null;
+    let abortedDuringRun = false;
+    const result = await handleChatCompletions({
+      model: 'swe-1.6',
+      stream: true,
+      messages: [user('long run')],
+    }, {
+      specialAgent: {
+        runDevinAcp: async (_prompt, opts) => {
+          seenSignal = opts.signal;
+          // Simulate a long run: resolve only after the abort fires.
+          await new Promise((resolve) => {
+            if (opts.signal.aborted) { abortedDuringRun = true; return resolve(); }
+            opts.signal.addEventListener('abort', () => { abortedDuringRun = true; resolve(); }, { once: true });
+          });
+          return { text: 'late' };
+        },
+      },
+    });
+
+    const res = makeRes();
+    const handlerPromise = result.handler(res);
+    // Let the handler start the runner, then simulate a client hangup.
+    await new Promise(r => setImmediate(r));
+    res.emit('close');
+    await handlerPromise;
+
+    assert.ok(seenSignal, 'runner received an AbortSignal');
+    assert.equal(abortedDuringRun, true, 'client close aborted the runner');
+  });
+
+  it('AP-GAP-2: a 429 failure reports the account rate-limited', async () => {
+    process.env.WINDSURFAPI_SPECIAL_AGENT_BACKEND = 'devin-cli';
+    process.env.DEVIN_CLI_MODE = 'print';
+
+    const calls = [];
+    const acct = { apiKey: 'k-429', id: 'acct-1', apiServerUrl: '' };
+    const result = await handleChatCompletions({
+      model: 'swe-1.6',
+      messages: [user('rate me')],
+    }, {
+      specialAgent: {
+        checkoutAccount: async () => acct,
+        releaseAccount: () => calls.push(['release']),
+        runDevinPrint: async () => { throw Object.assign(new Error('rate limit exceeded'), { status: 429 }); },
+        // Spy hooks injected via the same deps object the handler reads.
+        markRateLimited: (key, ms) => calls.push(['markRateLimited', key, ms]),
+        reportError: (key) => calls.push(['reportError', key]),
+        reportSuccess: (key) => calls.push(['reportSuccess', key]),
+      },
+    });
+
+    assert.equal(result.status, 429);
+    // The handler must have classified the 429 onto the pool.
+    assert.ok(calls.some(c => c[0] === 'markRateLimited' && c[1] === 'k-429'),
+      `expected markRateLimited for k-429, got ${JSON.stringify(calls)}`);
+    assert.ok(!calls.some(c => c[0] === 'reportError'), 'a 429 is not a generic error');
+  });
+
+  it('AP-GAP-2: a clean run reports the account healthy', async () => {
+    process.env.WINDSURFAPI_SPECIAL_AGENT_BACKEND = 'devin-cli';
+    process.env.DEVIN_CLI_MODE = 'print';
+
+    const calls = [];
+    const acct = { apiKey: 'k-ok', id: 'acct-2', apiServerUrl: '' };
+    const result = await handleChatCompletions({
+      model: 'swe-1.6',
+      messages: [user('hi')],
+    }, {
+      specialAgent: {
+        checkoutAccount: async () => acct,
+        releaseAccount: () => {},
+        runDevinPrint: async () => ({ text: 'OK' }),
+        reportSuccess: (key) => calls.push(['reportSuccess', key]),
+        reportError: (key) => calls.push(['reportError', key]),
+      },
+    });
+
+    assert.equal(result.status, 200);
+    assert.ok(calls.some(c => c[0] === 'reportSuccess' && c[1] === 'k-ok'),
+      `expected reportSuccess for k-ok, got ${JSON.stringify(calls)}`);
+  });
+
+  it('AP-GAP-2: a ban-shaped failure reports a ban signal', async () => {
+    process.env.WINDSURFAPI_SPECIAL_AGENT_BACKEND = 'devin-cli';
+    process.env.DEVIN_CLI_MODE = 'print';
+
+    const calls = [];
+    const acct = { apiKey: 'k-ban', id: 'acct-3', apiServerUrl: '' };
+    const result = await handleChatCompletions({
+      model: 'swe-1.6',
+      messages: [user('ban me')],
+    }, {
+      specialAgent: {
+        checkoutAccount: async () => acct,
+        releaseAccount: () => {},
+        runDevinPrint: async () => { throw Object.assign(new Error('Your account has been suspended'), { status: 403 }); },
+        reportBanSignal: (key, msg) => calls.push(['reportBanSignal', key, msg]),
+        reportError: (key) => calls.push(['reportError', key]),
+      },
+    });
+
+    assert.equal(result.status, 403);
+    assert.ok(calls.some(c => c[0] === 'reportBanSignal' && c[1] === 'k-ban'),
+      `expected reportBanSignal for k-ban, got ${JSON.stringify(calls)}`);
+  });
+
+  it('P0-3: streamLiveAcp emits an SSE ping comment during a silent run', async () => {
+    process.env.WINDSURFAPI_SPECIAL_AGENT_BACKEND = 'devin-cli';
+    process.env.DEVIN_CLI_MODE = 'acp';
+    process.env.DEVIN_CLI_USE_ACCOUNT_POOL = '0';
+    process.env.DEVIN_ACP_PING_MS = '10'; // fire fast for the test
+
+    const result = await handleChatCompletions({
+      model: 'swe-1.6',
+      stream: true,
+      messages: [user('think silently')],
+    }, {
+      specialAgent: {
+        runDevinAcp: async () => {
+          // Silent for long enough that at least one ping fires.
+          await new Promise(r => setTimeout(r, 40));
+          return { text: 'done' };
+        },
+      },
+    });
+
+    const res = makeRes();
+    await result.handler(res);
+    assert.match(res.joined(), /: ping/, 'expected at least one SSE ping comment');
+    assert.match(res.joined(), /"content":"done"/);
+  });
+});
+
+// Batch 2 — streaming correctness: GAP-ACP-05 (onChunk reaches the runner),
+// H3 (real ACP usage beats chars/4 estimate), H7 (stop_reason → finish_reason).
+describe('special-agent streaming correctness', () => {
+  function streamRes() {
+    const writes = [];
+    return {
+      writes,
+      writableEnded: false,
+      write(c) { writes.push(String(c)); return true; },
+      end() { this.writableEnded = true; },
+      on() {},
+      joined() { return writes.join(''); },
+    };
+  }
+
+  it('GAP-ACP-05: the live streamer passes onChunk through to the runner', async () => {
+    process.env.WINDSURFAPI_SPECIAL_AGENT_BACKEND = 'devin-cli';
+    process.env.DEVIN_CLI_MODE = 'acp';
+    process.env.DEVIN_CLI_USE_ACCOUNT_POOL = '0';
+
+    let sawOnChunk = false;
+    const result = await handleChatCompletions({
+      model: 'swe-1.6', stream: true, messages: [user('stream incrementally')],
+    }, {
+      specialAgent: {
+        runDevinAcp: async (_prompt, opts) => {
+          // The bug (GAP-ACP-05) was the wrapper dropping onChunk; assert it
+          // arrives and that emitting through it lands as a content delta.
+          assert.equal(typeof opts.onChunk, 'function', 'runner received onChunk');
+          sawOnChunk = true;
+          opts.onChunk({ kind: 'message', text: 'piece-1 ' });
+          opts.onChunk({ kind: 'message', text: 'piece-2' });
+          return { text: 'piece-1 piece-2' };
+        },
+      },
+    });
+
+    const res = streamRes();
+    await result.handler(res);
+    assert.equal(sawOnChunk, true);
+    const joined = res.joined();
+    // The two onChunk pieces stream as separate content deltas, before any
+    // buffered fallback would have fired.
+    assert.match(joined, /"content":"piece-1 "/);
+    assert.match(joined, /"content":"piece-2"/);
+  });
+
+  it('H3: a live ACP stream bills the runner real usage, not chars/4', async () => {
+    process.env.WINDSURFAPI_SPECIAL_AGENT_BACKEND = 'devin-cli';
+    process.env.DEVIN_CLI_MODE = 'acp';
+    process.env.DEVIN_CLI_USE_ACCOUNT_POOL = '0';
+
+    const result = await handleChatCompletions({
+      model: 'swe-1.6', stream: true, messages: [user('hi')],
+    }, {
+      specialAgent: {
+        runDevinAcp: async (_p, opts) => {
+          opts.onChunk({ kind: 'message', text: 'ok' });
+          return { text: 'ok', usage: { inputTokens: 123, outputTokens: 456, totalTokens: 579 } };
+        },
+      },
+    });
+
+    const res = streamRes();
+    await result.handler(res);
+    const usageFrame = res.writes
+      .map(w => { try { return JSON.parse(w.replace(/^data: /, '')); } catch { return null; } })
+      .find(o => o && o.usage);
+    assert.ok(usageFrame, 'a usage frame was emitted');
+    assert.equal(usageFrame.usage.prompt_tokens, 123, 'real input tokens, not chars/4');
+    assert.equal(usageFrame.usage.completion_tokens, 456, 'real output tokens, not chars/4');
+    assert.equal(usageFrame.usage.total_tokens, 579);
+  });
+
+  it('H3: usage falls back to estimation when the runner omits it', async () => {
+    process.env.WINDSURFAPI_SPECIAL_AGENT_BACKEND = 'devin-cli';
+    process.env.DEVIN_CLI_MODE = 'acp';
+    process.env.DEVIN_CLI_USE_ACCOUNT_POOL = '0';
+
+    const result = await handleChatCompletions({
+      model: 'swe-1.6', stream: true, messages: [user('hi')],
+    }, {
+      specialAgent: { runDevinAcp: async (_p, opts) => { opts.onChunk({ kind: 'message', text: 'hello world' }); return { text: 'hello world' }; } },
+    });
+    const res = streamRes();
+    await result.handler(res);
+    const usageFrame = res.writes
+      .map(w => { try { return JSON.parse(w.replace(/^data: /, '')); } catch { return null; } })
+      .find(o => o && o.usage);
+    assert.ok(usageFrame.usage.completion_tokens > 0, 'estimated completion tokens are non-zero');
+  });
+
+  it('H7: stop_reason=max_tokens maps to finish_reason=length', async () => {
+    process.env.WINDSURFAPI_SPECIAL_AGENT_BACKEND = 'devin-cli';
+    process.env.DEVIN_CLI_MODE = 'acp';
+    process.env.DEVIN_CLI_USE_ACCOUNT_POOL = '0';
+
+    const result = await handleChatCompletions({
+      model: 'swe-1.6', stream: true, messages: [user('truncate me')],
+    }, {
+      specialAgent: { runDevinAcp: async (_p, opts) => { opts.onChunk({ kind: 'message', text: 'cut' }); return { text: 'cut', stopReason: 'max_tokens' }; } },
+    });
+    const res = streamRes();
+    await result.handler(res);
+    assert.match(res.joined(), /"finish_reason":"length"/);
+    assert.doesNotMatch(res.joined(), /"finish_reason":"stop"/);
+  });
+
+  it('H7: tool stop_reason maps to finish_reason=tool_calls', async () => {
+    process.env.WINDSURFAPI_SPECIAL_AGENT_BACKEND = 'devin-cli';
+    process.env.DEVIN_CLI_MODE = 'acp';
+    process.env.DEVIN_CLI_USE_ACCOUNT_POOL = '0';
+
+    const result = await handleChatCompletions({
+      model: 'swe-1.6', stream: true, messages: [user('call a tool')],
+    }, {
+      specialAgent: { runDevinAcp: async (_p, opts) => { opts.onChunk({ kind: 'message', text: 'x' }); return { text: 'x', stopReason: 'tool_use' }; } },
+    });
+    const res = streamRes();
+    await result.handler(res);
+    assert.match(res.joined(), /"finish_reason":"tool_calls"/);
+  });
+
+  it('H3/H7: non-stream response carries real usage and mapped finish_reason', async () => {
+    process.env.WINDSURFAPI_SPECIAL_AGENT_BACKEND = 'devin-cli';
+    process.env.DEVIN_CLI_MODE = 'acp';
+    process.env.DEVIN_CLI_USE_ACCOUNT_POOL = '0';
+
+    const result = await handleChatCompletions({
+      model: 'swe-1.6', messages: [user('no stream')],
+    }, {
+      specialAgent: {
+        runDevinAcp: async () => ({ text: 'done', usage: { input_tokens: 10, output_tokens: 20 }, stopReason: 'end_turn' }),
+      },
+    });
+
+    assert.equal(result.status, 200);
+    assert.equal(result.body.usage.prompt_tokens, 10);
+    assert.equal(result.body.usage.completion_tokens, 20);
+    assert.equal(result.body.choices[0].finish_reason, 'stop');
   });
 });
