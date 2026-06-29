@@ -99,6 +99,28 @@ describe('native bridge runtime stats', () => {
     assert.equal(JSON.stringify(stats).includes('secret-hash'), false);
   });
 
+  it('caps distinct keys in client-controlled tool maps to prevent unbounded growth', () => {
+    const prev = process.env.WINDSURFAPI_NATIVE_BRIDGE_STATS_KEY_LIMIT;
+    process.env.WINDSURFAPI_NATIVE_BRIDGE_STATS_KEY_LIMIT = '10';
+    try {
+      // 50 unique client-supplied tool names, far past the cap of 10.
+      for (let i = 0; i < 50; i++) {
+        recordNativeBridgeRequest({ mappedTools: [`tool_${i}`] });
+      }
+      const stats = getNativeBridgeStats();
+      const keys = Object.keys(stats.requestedByTool);
+      // 10 real keys + the (other) overflow bucket, never 50.
+      assert.ok(keys.length <= 11, `expected <=11 keys, got ${keys.length}`);
+      assert.ok(keys.includes('(other)'), 'overflow folds into (other) bucket');
+      // No counts lost: 50 requests recorded across the capped key space.
+      const total = keys.reduce((s, k) => s + stats.requestedByTool[k], 0);
+      assert.equal(total, 50);
+    } finally {
+      if (prev === undefined) delete process.env.WINDSURFAPI_NATIVE_BRIDGE_STATS_KEY_LIMIT;
+      else process.env.WINDSURFAPI_NATIVE_BRIDGE_STATS_KEY_LIMIT = prev;
+    }
+  });
+
   it('returns copies so callers cannot mutate counters', () => {
     recordNativeBridgeRequest({ mappedTools: ['Glob'] });
     recordNativeBridgeDecision({

@@ -23,8 +23,23 @@ const stats = {
   recentDecisions: [],
 };
 
+// Cap distinct keys in client-controlled accumulator maps (requestedByTool,
+// emittedByTool, etc.). Tool/kind names come from caller requests, so a client
+// sending a unique tool name per request would otherwise grow these objects
+// without bound for the process lifetime. Once the cap is hit, new keys fold
+// into an "(other)" bucket — mirroring the ring-buffer discipline already used
+// for recentDecisions. Existing keys keep accumulating exactly.
+function statsMapKeyLimit() {
+  const n = Number(process.env.WINDSURFAPI_NATIVE_BRIDGE_STATS_KEY_LIMIT);
+  if (!Number.isFinite(n) || n <= 0) return 200;
+  return Math.min(2000, Math.floor(n));
+}
+
 function bump(obj, key, n = 1) {
-  const k = String(key || '(unknown)');
+  let k = String(key || '(unknown)');
+  if (obj[k] === undefined && k !== '(other)' && Object.keys(obj).length >= statsMapKeyLimit()) {
+    k = '(other)';
+  }
   obj[k] = (obj[k] || 0) + n;
 }
 
