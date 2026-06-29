@@ -1622,6 +1622,18 @@ const PROBE_CANARIES = [
   'gemini-3.0-flash',
 ];
 
+// Billable-canary gate. Steps 2 & 3 of the probe send REAL cascadeChat('hi')
+// calls — each one spends the account's prompt credits. GetUserStatus (Step 1)
+// is free and authoritative for every enum-keyed model, so the canary is only
+// needed to classify UID-only models and discover free-tier extras. A live
+// incident (2026-06-29) showed a force-probe canary sweep flipping a working
+// free account to "expired" by exhausting its allowance. Default OFF: probing
+// never spends credit unless the operator explicitly opts in (env=1) or a
+// caller passes { canary: true } (e.g. dashboard "deep probe").
+function probeCanaryDefault() {
+  return process.env.WINDSURFAPI_PROBE_CANARY === '1';
+}
+
 /**
  * Probe an account's tier and model capabilities.
  *
@@ -1640,7 +1652,7 @@ const PROBE_CANARIES = [
 // so the caller awaits the same result without firing a second probe.
 const _probeInFlight = new Map();
 
-export async function probeAccount(id, { allowLsStart = true } = {}) {
+export async function probeAccount(id, { allowLsStart = true, canary } = {}) {
   const existing = _probeInFlight.get(id);
   if (existing) return existing;
 
@@ -1653,14 +1665,16 @@ export async function probeAccount(id, { allowLsStart = true } = {}) {
     if (skipped) return skipped;
   }
 
-  const promise = _probeAccountImpl(account, { allowLsStart }).finally(() => {
+  const useCanary = canary ?? probeCanaryDefault();
+  const promise = _probeAccountImpl(account, { allowLsStart, canary: useCanary }).finally(() => {
     _probeInFlight.delete(id);
   });
   _probeInFlight.set(id, promise);
   return promise;
 }
 
-async function _probeAccountImpl(account, { allowLsStart = true } = {}) {
+async function _probeAccountImpl(account, { allowLsStart = true, canary } = {}) {
+  const runCanary = canary ?? probeCanaryDefault();
   let accountMaintenanceToken = null;
   let lsMaintenanceToken = null;
   try {
@@ -1705,9 +1719,12 @@ async function _probeAccountImpl(account, { allowLsStart = true } = {}) {
   const csrf = ls.csrfToken;
 
   // ── Step 2: canary probe, skipping models already classified by GetUserStatus ──
+  // BILLABLE: each cascadeChat below spends prompt credits. Off unless the
+  // caller opted in (canary=true / WINDSURFAPI_PROBE_CANARY=1). GetUserStatus
+  // already classified every enum-keyed model for free above.
   // When allowlist is available we only need to probe UID-only models (no enum,
   // so server can't include them in allowlist) to get their actual status.
-  const needsProbe = PROBE_CANARIES.filter(key => {
+  const needsProbe = !runCanary ? [] : PROBE_CANARIES.filter(key => {
     const info = getModelInfo(key);
     if (!info) return false;
     // If GetUserStatus already gave us a definitive answer, skip.
@@ -1748,10 +1765,11 @@ async function _probeAccountImpl(account, { allowLsStart = true } = {}) {
   }
 
   // ── Step 3: dynamic cloud candidate probe (#42) ──
-  // Probe models from the live cloud catalog that aren't in PROBE_CANARIES
+  // BILLABLE: also gated behind the canary opt-in (see Step 2). Probe models
+  // from the live cloud catalog that aren't in PROBE_CANARIES
   // and haven't been classified yet. This discovers models available to free
   // accounts beyond the hardcoded FREE_TIER_MODELS list.
-  try {
+  if (runCanary) try {
     const allModels = Object.keys(MODELS);
     const alreadyProbed = new Set([
       ...PROBE_CANARIES,

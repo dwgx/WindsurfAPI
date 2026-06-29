@@ -675,7 +675,12 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
   if (accountProbe && method === 'POST') {
     try {
       const force = body?.force === true || body?.allowLsStart === true;
-      const result = await probeAccount(accountProbe[1], { allowLsStart: force });
+      // Billable canary sweep is opt-in: only when the caller explicitly asks
+      // for a deep probe. A plain probe runs GetUserStatus only (free) and
+      // never spends the account's prompt credits. (homecloud 2026-06-29:
+      // a default canary sweep flipped a working free account to "expired".)
+      const canary = body?.canary === true || body?.deep === true;
+      const result = await probeAccount(accountProbe[1], { allowLsStart: force, canary });
       if (!result) return json(res, 404, { error: 'Account not found' });
       return json(res, 200, { success: true, ...result });
     } catch (err) {

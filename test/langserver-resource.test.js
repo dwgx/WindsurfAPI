@@ -181,7 +181,7 @@ describe('language server resource policy', () => {
     const src = readFileSync(join(__dirname, '..', 'src/dashboard/api.js'), 'utf8');
     assert.match(src, /const force = body\?\.force === true \|\| body\?\.allowLsStart === true/);
     assert.match(src, /probeAccount\(a\.id, \{ allowLsStart: force \}\)/);
-    assert.match(src, /probeAccount\(accountProbe\[1\], \{ allowLsStart: force \}\)/);
+    assert.match(src, /probeAccount\(accountProbe\[1\], \{ allowLsStart: force, canary \}\)/);
     assert.match(src, /skipped: !!r\?\.skipped/);
   });
 
@@ -222,7 +222,7 @@ describe('language server resource policy', () => {
     assert.match(AUTH_JS, /function residentProbeSkip/);
     assert.match(AUTH_JS, /export async function fetchUserStatus\(id, \{ allowLsStart = true \} = \{\}\)/);
     assert.match(AUTH_JS, /fetchUserStatus\(account\.id, \{ allowLsStart \}\)/);
-    assert.match(AUTH_JS, /_probeAccountImpl\(account, \{ allowLsStart \}/);
+    assert.match(AUTH_JS, /_probeAccountImpl\(account, \{ allowLsStart, canary: useCanary \}/);
     assert.match(AUTH_JS, /if \(!allowLsStart\) \{/);
     assert.match(AUTH_JS, /const skipped = residentProbeSkip\(account, preAdmission\)/);
     assert.match(AUTH_JS, /const skipped = residentProbeSkip\(account, getLsAdmissionForAccount\(account\.id\)\)/);
