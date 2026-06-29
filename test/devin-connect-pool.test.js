@@ -66,4 +66,16 @@ describe('finalizeConnectAccount', () => {
       { model: 'swe-1-6-slow', startTime: Date.now(), err: Object.assign(new Error('rl'), { code: 'RATE_LIMITED' }) },
     ));
   });
+
+  it('does not penalize the account on a client abort', () => {
+    const acct = seed('abort');
+    const before = getStats().errorCount;
+    // AbortError is a client cancel, not an account fault — released, recorded
+    // as a failed request for stats, but no reportError penalty.
+    assert.doesNotThrow(() => finalizeConnectAccount(
+      { id: acct.id, apiKey: acct.apiKey },
+      { model: 'swe-1-6-slow', startTime: Date.now(), err: Object.assign(new Error('aborted'), { name: 'AbortError' }) },
+    ));
+    assert.equal(getStats().errorCount, before + 1);
+  });
 });

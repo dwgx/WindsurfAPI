@@ -1510,7 +1510,11 @@ export function finalizeConnectAccount(acct, { model, startTime, err }) {
     return;
   }
   if (err) {
-    if (err.code === 'UNAUTHORIZED') reportError(acct.apiKey);
+    // A client-side abort (caller disconnected) is not an account fault — just
+    // release without penalizing the account's error budget.
+    const aborted = err.name === 'AbortError' || err.code === 'ABORT_ERR';
+    if (aborted) { /* no penalty */ }
+    else if (err.code === 'UNAUTHORIZED') reportError(acct.apiKey);
     else if (err.code === 'RATE_LIMITED') markRateLimited(acct.apiKey, 5 * 60 * 1000, null);
     else reportError(acct.apiKey);
   } else {
@@ -1807,6 +1811,10 @@ async function _handleChatCompletionsInner(body, context = {}) {
     const ccAcct = await acquireConnectAccount(context.signal, callerKey);
     const connectParams = { messages, model: selector };
     if (ccAcct) connectParams.token = ccAcct.apiKey;
+    // Thread the client's abort signal into the upstream HTTP request so a
+    // disconnected/cancelled caller tears down the in-flight connect call
+    // instead of leaking it until the 120s timeout.
+    if (context.signal) connectParams.signal = context.signal;
     if (stream) {
       return {
         status: 200,

@@ -7,6 +7,7 @@ import {
   mapFinishReason,
   classifyUpstreamError,
   isRetryable,
+  streamChat,
   __testing,
 } from '../src/devin-connect.js';
 import {
@@ -267,6 +268,33 @@ describe('classifyUpstreamError', () => {
   it('prefers MODEL_BLOCKED even on a non-200 status', () => {
     // an /upgrade message returned with a 403 is still an entitlement issue
     assert.equal(classifyUpstreamError('/upgrade required', null, 403).code, 'MODEL_BLOCKED');
+  });
+});
+
+describe('streamChat abort / preconditions', () => {
+  it('throws AbortError when the signal is already aborted (no network leak)', async () => {
+    const ac = new AbortController();
+    ac.abort();
+    await assert.rejects(
+      (async () => {
+        for await (const _ of streamChat({
+          messages: [{ role: 'user', content: 'hi' }],
+          model: 'swe-1-6-slow',
+          token: 'devin-session-token$fake.jwt.sig',
+          signal: ac.signal,
+        })) { /* drain */ }
+      })(),
+      (err) => err.name === 'AbortError' || err.code === 'ABORT_ERR',
+    );
+  });
+
+  it('throws NO_TOKEN before any network attempt when token is missing', async () => {
+    await assert.rejects(
+      (async () => {
+        for await (const _ of streamChat({ messages: [], model: 'm', env: {} })) { /* drain */ }
+      })(),
+      (err) => err.code === 'NO_TOKEN',
+    );
   });
 });
 
