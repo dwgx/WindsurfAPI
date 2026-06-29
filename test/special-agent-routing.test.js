@@ -29,6 +29,7 @@ const ENV_KEYS = [
   'DEVIN_CLI_ALLOW_CLIENT_TOOLS',
   'DEVIN_CLI_ALLOW_MEDIA',
   'DEVIN_CLI_MODE',
+  'DEVIN_ACP_EXPOSE_REASONING',
   'WINDSURFAPI_SHOW_DISABLED_SPECIAL_AGENT_MODELS',
 ];
 const originalEnv = Object.fromEntries(ENV_KEYS.map(k => [k, process.env[k]]));
@@ -286,6 +287,110 @@ describe('special-agent model routing', () => {
     assert.match(joined, /finish_reason":"stop"/);
     assert.match(joined, /data: \[DONE\]/);
   });
+
+  it('drops ACP reasoning by default (DEVIN_ACP_EXPOSE_REASONING unset)', async () => {
+    process.env.WINDSURFAPI_SPECIAL_AGENT_BACKEND = 'devin-cli';
+    process.env.DEVIN_CLI_MODE = 'acp';
+    process.env.DEVIN_CLI_USE_ACCOUNT_POOL = '0';
+    delete process.env.DEVIN_ACP_EXPOSE_REASONING;
+
+    const result = await handleChatCompletions({
+      model: 'swe-1.6',
+      messages: [user('hi')],
+    }, {
+      specialAgent: {
+        runDevinAcp: async () => ({ text: 'VISIBLE', reasoning: 'secret-thought' }),
+      },
+    });
+
+    assert.equal(result.status, 200);
+    assert.equal(result.body.choices[0].message.content, 'VISIBLE');
+    assert.equal(result.body.choices[0].message.reasoning_content, undefined);
+    assert.doesNotMatch(JSON.stringify(result.body), /secret-thought/);
+  });
+
+  it('exposes ACP reasoning as reasoning_content when DEVIN_ACP_EXPOSE_REASONING=1', async () => {
+    process.env.WINDSURFAPI_SPECIAL_AGENT_BACKEND = 'devin-cli';
+    process.env.DEVIN_CLI_MODE = 'acp';
+    process.env.DEVIN_CLI_USE_ACCOUNT_POOL = '0';
+    process.env.DEVIN_ACP_EXPOSE_REASONING = '1';
+
+    const result = await handleChatCompletions({
+      model: 'swe-1.6',
+      messages: [user('hi')],
+    }, {
+      specialAgent: {
+        runDevinAcp: async () => ({ text: 'VISIBLE', reasoning: 'thinking-here' }),
+      },
+    });
+
+    assert.equal(result.status, 200);
+    assert.equal(result.body.choices[0].message.content, 'VISIBLE');
+    assert.equal(result.body.choices[0].message.reasoning_content, 'thinking-here');
+    // The reply text must not leak the reasoning buffer.
+    assert.doesNotMatch(result.body.choices[0].message.content, /thinking-here/);
+  });
+
+  it('streams reasoning_content before content when exposed', async () => {
+    process.env.WINDSURFAPI_SPECIAL_AGENT_BACKEND = 'devin-cli';
+    process.env.DEVIN_CLI_MODE = 'acp';
+    process.env.DEVIN_CLI_USE_ACCOUNT_POOL = '0';
+    process.env.DEVIN_ACP_EXPOSE_REASONING = '1';
+
+    const result = await handleChatCompletions({
+      model: 'swe-1.6',
+      stream: true,
+      messages: [user('stream it')],
+    }, {
+      specialAgent: {
+        runDevinAcp: async () => ({ text: 'STREAM_OK', reasoning: 'stream-thought' }),
+      },
+    });
+
+    assert.equal(result.status, 200);
+    assert.equal(result.stream, true);
+    const writes = [];
+    const res = {
+      writableEnded: false,
+      write(chunk) { writes.push(String(chunk)); },
+      end() { this.writableEnded = true; },
+    };
+    await result.handler(res);
+    const joined = writes.join('');
+    assert.match(joined, /reasoning_content":"stream-thought"/);
+    assert.match(joined, /"content":"STREAM_OK"/);
+    // reasoning_content chunk must arrive before the content chunk.
+    assert.ok(joined.indexOf('stream-thought') < joined.indexOf('STREAM_OK'));
+  });
+
+  it('does not stream reasoning_content by default', async () => {
+    process.env.WINDSURFAPI_SPECIAL_AGENT_BACKEND = 'devin-cli';
+    process.env.DEVIN_CLI_MODE = 'acp';
+    process.env.DEVIN_CLI_USE_ACCOUNT_POOL = '0';
+    delete process.env.DEVIN_ACP_EXPOSE_REASONING;
+
+    const result = await handleChatCompletions({
+      model: 'swe-1.6',
+      stream: true,
+      messages: [user('stream it')],
+    }, {
+      specialAgent: {
+        runDevinAcp: async () => ({ text: 'STREAM_OK', reasoning: 'hidden-thought' }),
+      },
+    });
+
+    const writes = [];
+    const res = {
+      writableEnded: false,
+      write(chunk) { writes.push(String(chunk)); },
+      end() { this.writableEnded = true; },
+    };
+    await result.handler(res);
+    const joined = writes.join('');
+    assert.match(joined, /STREAM_OK/);
+    assert.doesNotMatch(joined, /reasoning_content/);
+    assert.doesNotMatch(joined, /hidden-thought/);
+  });
 });
 
 describe('special-agent wrapper routes', () => {
@@ -444,7 +549,73 @@ rl.on('line', line => {
         apiServerUrl: 'https://server.self-serve.windsurf.com',
       });
       assert.equal(result.text, 'ACP_OK');
+      assert.equal(result.reasoning, 'hidden thought');
       assert.deepEqual(result.usage, { totalTokens: 12 });
+    } finally {
+      if (savedPath === undefined) delete process.env.DEVIN_CLI_PATH;
+      else process.env.DEVIN_CLI_PATH = savedPath;
+      if (savedArgs === undefined) delete process.env.DEVIN_CLI_ACP_ARGS_JSON;
+      else process.env.DEVIN_CLI_ACP_ARGS_JSON = savedArgs;
+      if (savedTimeout === undefined) delete process.env.DEVIN_TIMEOUT_MS;
+      else process.env.DEVIN_TIMEOUT_MS = savedTimeout;
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps thought chunks out of the reply and drops unknown update kinds', async () => {
+    const dir = mkdtempSync(join(tmpdir(), 'windsurfapi-acp-thought-'));
+    const script = join(dir, 'fake-devin-acp-thought.mjs');
+    writeFileSync(script, `
+import readline from 'node:readline';
+
+const rl = readline.createInterface({ input: process.stdin });
+function send(obj) {
+  process.stdout.write(JSON.stringify(obj) + '\\n');
+}
+function update(u) {
+  send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'session-1', update: u } });
+}
+rl.on('line', line => {
+  const msg = JSON.parse(line);
+  if (msg.method === 'initialize') {
+    send({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: 1, authMethods: [{ id: 'windsurf-api-key' }] } });
+    return;
+  }
+  if (msg.method === 'authenticate') {
+    send({ jsonrpc: '2.0', id: msg.id, result: {} });
+    return;
+  }
+  if (msg.method === 'session/new') {
+    send({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 'session-1' } });
+    return;
+  }
+  if (msg.method === 'session/prompt') {
+    update({ sessionUpdate: 'agent_thought_chunk', content: { text: 'think-' } });
+    update({ sessionUpdate: 'agent_thought_delta', content: { text: 'more' } });
+    update({ sessionUpdate: 'tool_call', content: { text: 'IGNORED_TOOL' } });
+    update({ sessionUpdate: 'plan', content: { text: 'IGNORED_PLAN' } });
+    update({ sessionUpdate: 'agent_message_chunk', content: { text: 'VISIBLE' } });
+    send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } });
+    return;
+  }
+});
+`, 'utf8');
+
+    const savedPath = process.env.DEVIN_CLI_PATH;
+    const savedArgs = process.env.DEVIN_CLI_ACP_ARGS_JSON;
+    const savedTimeout = process.env.DEVIN_TIMEOUT_MS;
+    process.env.DEVIN_CLI_PATH = process.execPath;
+    process.env.DEVIN_CLI_ACP_ARGS_JSON = JSON.stringify([script]);
+    process.env.DEVIN_TIMEOUT_MS = '5000';
+    try {
+      const result = await runDevinAcp('hi', {
+        modelKey: 'swe-1.6',
+        apiKey: 'upstream-key',
+      });
+      assert.equal(result.text, 'VISIBLE');
+      assert.equal(result.reasoning, 'think-more');
+      assert.doesNotMatch(result.text, /IGNORED|think/);
+      assert.doesNotMatch(result.reasoning, /IGNORED|VISIBLE/);
     } finally {
       if (savedPath === undefined) delete process.env.DEVIN_CLI_PATH;
       else process.env.DEVIN_CLI_PATH = savedPath;

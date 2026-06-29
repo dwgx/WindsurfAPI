@@ -36,6 +36,13 @@ function isEnabled() {
   return backend === 'devin-cli' || process.env.DEVIN_CLI_ENABLED === '1';
 }
 
+// Opt-in passthrough of the ACP thought stream (agent_thought_chunk) as
+// OpenAI-style reasoning_content. Default OFF preserves the prior behaviour:
+// result.reasoning is captured by the runner but discarded by the handler.
+function exposeReasoning() {
+  return process.env.DEVIN_ACP_EXPOSE_REASONING === '1';
+}
+
 export function isSpecialAgentEnabled() {
   return isEnabled();
 }
@@ -341,7 +348,9 @@ export async function runDevinPrint(prompt, { modelKey = '', apiKey = '', signal
   }
 }
 
-function chatCompletionBody({ id, created, model, messages, text }) {
+function chatCompletionBody({ id, created, model, messages, text, reasoning = '' }) {
+  const message = { role: 'assistant', content: text || null };
+  if (reasoning) message.reasoning_content = reasoning;
   return {
     id,
     object: 'chat.completion',
@@ -349,14 +358,14 @@ function chatCompletionBody({ id, created, model, messages, text }) {
     model,
     choices: [{
       index: 0,
-      message: { role: 'assistant', content: text || null },
+      message,
       finish_reason: 'stop',
     }],
     usage: estimateTokens(messages, text),
   };
 }
 
-function streamFromText({ id, created, model, messages, text }) {
+function streamFromText({ id, created, model, messages, text, reasoning = '' }) {
   return {
     status: 200,
     stream: true,
@@ -367,6 +376,10 @@ function streamFromText({ id, created, model, messages, text }) {
       };
       send({ id, object: 'chat.completion.chunk', created, model,
         choices: [{ index: 0, delta: { role: 'assistant', content: '' }, finish_reason: null }] });
+      if (reasoning) {
+        send({ id, object: 'chat.completion.chunk', created, model,
+          choices: [{ index: 0, delta: { reasoning_content: reasoning }, finish_reason: null }] });
+      }
       if (text) {
         send({ id, object: 'chat.completion.chunk', created, model,
           choices: [{ index: 0, delta: { content: text }, finish_reason: null }] });
@@ -447,10 +460,11 @@ export async function handleSpecialAgentChatCompletion(body, route, deps = {}) {
       signal: route?.signal || null,
     });
     const text = sanitizeText(result?.text || '');
+    const reasoning = exposeReasoning() ? sanitizeText(result?.reasoning || '') : '';
     if (result?.stderr) log.debug(`special-agent devin stderr: ${String(result.stderr).slice(0, 240)}`);
     recordRequest(model, true, Date.now() - started, acct?.id || null);
-    if (body?.stream) return streamFromText({ id, created, model, messages, text });
-    return { status: 200, body: chatCompletionBody({ id, created, model, messages, text }) };
+    if (body?.stream) return streamFromText({ id, created, model, messages, text, reasoning });
+    return { status: 200, body: chatCompletionBody({ id, created, model, messages, text, reasoning }) };
   } catch (err) {
     const status = err?.status || 502;
     const type = err?.type || 'backend_error';

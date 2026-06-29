@@ -69,13 +69,29 @@ function extractAcpUpdate(params) {
   return { kind: String(kind || ''), text };
 }
 
-function collectAcpTextFromNotification(obj, chunks) {
+// The assistant's user-visible reply. Only these land in the final text.
+const MESSAGE_CHUNK_KINDS = new Set([
+  'agent_message_chunk',
+  'agent_message_delta',
+  'assistant_message_chunk',
+]);
+// The agent's thinking stream (verified live 2026-06-29 with SWE-1.6 over real
+// ACP). It is intentionally kept OUT of the reply text and captured separately
+// as reasoning so callers can drop it by default or surface it explicitly.
+const THOUGHT_CHUNK_KINDS = new Set([
+  'agent_thought_chunk',
+  'agent_thought_delta',
+  'agent_reasoning_chunk',
+]);
+
+function collectAcpTextFromNotification(obj, buffers) {
   if (obj?.method !== 'session/update') return;
   const { kind, text } = extractAcpUpdate(obj.params || {});
   if (!text) return;
-  if (kind === 'agent_message_chunk' || kind === 'agent_message_delta' || kind === 'assistant_message_chunk') {
-    chunks.push(text);
-  }
+  if (MESSAGE_CHUNK_KINDS.has(kind)) buffers.message.push(text);
+  else if (THOUGHT_CHUNK_KINDS.has(kind)) buffers.thought.push(text);
+  // Any other update kind (tool calls, plans, status) is not part of the
+  // text/reasoning split and is ignored here on purpose.
 }
 
 function makeAcpClient({ command, args, env, signal, timeoutMs, outputLimit }) {
@@ -93,7 +109,7 @@ function makeAcpClient({ command, args, env, signal, timeoutMs, outputLimit }) {
   let fatalError = null;
   let stdoutBuffer = '';
   const pending = new Map();
-  const messageChunks = [];
+  const buffers = { message: [], thought: [] };
 
   const cleanup = () => {
     for (const { timer } of pending.values()) clearTimeout(timer);
@@ -133,7 +149,7 @@ function makeAcpClient({ command, args, env, signal, timeoutMs, outputLimit }) {
       if (!line.trim()) continue;
       const obj = parseJsonLine(line);
       if (!obj) continue;
-      collectAcpTextFromNotification(obj, messageChunks);
+      collectAcpTextFromNotification(obj, buffers);
       if (obj.method === 'session/request_permission' && obj.id != null) {
         writeJsonLine(child, {
           jsonrpc: '2.0',
@@ -213,7 +229,8 @@ function makeAcpClient({ command, args, env, signal, timeoutMs, outputLimit }) {
   return {
     request,
     close,
-    getText: () => messageChunks.join('').trim(),
+    getText: () => buffers.message.join('').trim(),
+    getReasoning: () => buffers.thought.join('').trim(),
     getStderr: () => stderr.trim(),
   };
 }
@@ -280,6 +297,7 @@ export async function runDevinAcpProcess(prompt, { modelKey = '', apiKey = '', a
 
     return {
       text: client.getText(),
+      reasoning: client.getReasoning(),
       stderr: client.getStderr(),
       usage: result?.result?.usage || null,
     };
