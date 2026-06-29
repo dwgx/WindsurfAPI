@@ -269,3 +269,22 @@ describe('language server resource policy', () => {
     assert.match(AUTH_JS, /shouldPrewarmDefaultLs\(\)/);
   });
 });
+
+describe('process-level resilience (audit F)', () => {
+  const INDEX_JS = readFileSync(join(__dirname, '..', 'src/index.js'), 'utf8');
+
+  test('registers global unhandledRejection / uncaughtException safety nets', () => {
+    // F-1: the long-lived process must not die on a stray async rejection.
+    assert.match(INDEX_JS, /process\.on\('unhandledRejection'/);
+    assert.match(INDEX_JS, /process\.on\('uncaughtException'/);
+    // uncaughtException should exit non-zero so the supervisor restarts clean.
+    assert.match(INDEX_JS, /uncaughtException[\s\S]*?process\.exit\(1\)/);
+  });
+
+  test('SIGTERM shutdown awaits LS children exiting (no orphan-port race)', () => {
+    // F-2: reuse stopLanguageServerAndWait so children release pool ports
+    // before process.exit, instead of the fire-and-forget stopLanguageServer.
+    assert.match(INDEX_JS, /stopLanguageServerAndWait\(\{ perProcessTimeoutMs: \d+ \}\)/);
+    assert.match(INDEX_JS, /import \{[^}]*stopLanguageServerAndWait[^}]*\} from '\.\/langserver\.js'/);
+  });
+});

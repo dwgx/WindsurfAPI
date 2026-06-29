@@ -1,7 +1,7 @@
 // Logger must be imported first to patch log functions before other modules use them
 import './dashboard/logger.js';
 import { initAuth, isAuthenticated, saveAccountsSync } from './auth.js';
-import { configureLanguageServer, startLanguageServer, waitForReady, isLanguageServerRunning, stopLanguageServer, cleanupOrphanLanguageServers, shouldPrewarmDefaultLs } from './langserver.js';
+import { configureLanguageServer, startLanguageServer, waitForReady, isLanguageServerRunning, stopLanguageServer, stopLanguageServerAndWait, cleanupOrphanLanguageServers, shouldPrewarmDefaultLs } from './langserver.js';
 import { startServer } from './server.js';
 import { config, log } from './config.js';
 import { existsSync, mkdirSync, readdirSync, rmSync } from 'fs';
@@ -13,6 +13,30 @@ import { VERSION, BRAND } from './version.js';
 import { abortActiveSse } from './sse-registry.js';
 import { startQuietWindowAutoUpdate, stopQuietWindowAutoUpdate } from './dashboard/quiet-window-updater.js';
 export { VERSION, BRAND };
+
+// v2.0.146 (audit F-1): last-resort process safety nets. This service must
+// not crash — it has fire-and-forget async paths (LS warmup, restart driver,
+// self-update timers) where a stray rejection or a throw inside an async
+// callback would otherwise terminate the process on Node >=15. A rejection is
+// logged and the process keeps serving; an uncaught exception is logged and we
+// exit non-zero so the supervisor (systemd) restarts from a clean state rather
+// than continuing in an unknown one. Registered here (after the logger import,
+// before main()) so the nets are live before any other module does async work.
+let _crashNetsInstalled = false;
+function installProcessCrashNets() {
+  if (_crashNetsInstalled) return;
+  _crashNetsInstalled = true;
+  process.on('unhandledRejection', (reason) => {
+    try { log.error('unhandledRejection:', reason instanceof Error ? (reason.stack || reason.message) : reason); }
+    catch { console.error('unhandledRejection:', reason); }
+  });
+  process.on('uncaughtException', (err) => {
+    try { log.error('uncaughtException — exiting for clean restart:', err?.stack || err); }
+    catch { console.error('uncaughtException:', err); }
+    process.exit(1);
+  });
+}
+installProcessCrashNets();
 
 function workspaceBase() {
   const tmpDir = process.env.TEMP || process.env.TMP || tmpdir();
@@ -157,22 +181,26 @@ async function main() {
     const abortedSse = abortActiveSse('server shutting down');
     if (abortedSse) log.warn(`Aborted ${abortedSse} active SSE stream(s): server shutting down`);
     if (typeof server.closeIdleConnections === 'function') server.closeIdleConnections();
-    server.close(() => {
-      log.info('HTTP server closed, flushing state + stopping language server');
-      // Persist any in-memory account updates (capability probes, error
-      // counts, rate-limit cooldowns) before PM2 restarts us. Debounced
-      // saves would otherwise be killed by the exit below.
+    // v2.0.146 (audit F-2): await LS children actually exiting before
+    // process.exit, mirroring the self-update path. A synchronous
+    // stopLanguageServer() + immediate exit reparents still-living LS
+    // children to PID 1, leaving them holding pool ports (42100, 42101…)
+    // that the freshly-restarted replica then races (the H-4 orphan race).
+    const finalize = async (reason) => {
       try { saveAccountsSync(); } catch {}
       try { stopQuietWindowAutoUpdate(); } catch {}
-      try { stopLanguageServer(); } catch {}
+      try { await stopLanguageServerAndWait({ perProcessTimeoutMs: 1500 }); }
+      catch { try { stopLanguageServer(); } catch {} }
+      log.info(`Shutdown complete (${reason})`);
       process.exit(0);
+    };
+    server.close(() => {
+      log.info('HTTP server closed, flushing state + stopping language server');
+      void finalize('drained');
     });
     setTimeout(() => {
       log.warn('Drain timeout, forcing exit');
-      try { saveAccountsSync(); } catch {}
-      try { stopQuietWindowAutoUpdate(); } catch {}
-      try { stopLanguageServer(); } catch {}
-      process.exit(0);
+      void finalize('drain-timeout');
     }, 30_000);
   };
   process.on('SIGINT', () => shutdown('SIGINT'));
