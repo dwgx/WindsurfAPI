@@ -100,7 +100,10 @@ if (requireEnabled && !specialAgent?.enabled) {
 const results = [];
 
 // ─── Stage: non-stream chat (real call) ─────────────────────────────────────
-{
+// This is the baseline real call — if it fails, the streaming/multi-turn/
+// Anthropic stages can't mean anything, so we exit. Gated on realCalls so a
+// zero-billable run (REAL_CALLS=0) issues no model requests at all.
+if (realCalls) {
   const started = Date.now();
   const chat = await fetchJson('/v1/chat/completions', {
     method: 'POST',
@@ -114,7 +117,6 @@ const results = [];
     latencyMs: Date.now() - started, specialAgent,
     content: compactText(content), error: chat.body?.error || null,
   }));
-  // The non-stream chat is the baseline — if it fails nothing else is meaningful.
   if (!ok) process.exit(1);
 }
 
