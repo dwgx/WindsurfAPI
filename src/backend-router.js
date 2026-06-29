@@ -25,6 +25,9 @@ export const BACKEND = Object.freeze({
   DEVIN_ACP: 'devin-acp',    // Devin CLI ACP over stdio (special-agent, mode=acp)
   DEVIN_PRINT: 'devin-print',// Devin CLI print mode (special-agent, mode=print)
   DEVIN_REST: 'devin-rest',  // Devin DRS REST → api.devin.ai (P2+, not yet wired)
+  DEVIN_CONNECT: 'devin-connect', // Direct cloud GetChatMessage over pure HTTP
+                                  // (no local CLI) → server.codeium.com. See
+                                  // src/devin-connect.js + devin-connect-openai.js.
 });
 
 /**
@@ -63,6 +66,24 @@ function devinOnlyEnabled(env = process.env) {
 }
 
 /**
+ * DEVIN_CONNECT kill-switch. When set, every request is served by the direct
+ * cloud GetChatMessage path (src/devin-connect.js) — pure HTTP to
+ * server.codeium.com with NO local Devin CLI subprocess. This is the deploy
+ * mode for hosts that have the Windsurf session token but can't (or shouldn't)
+ * run the CLI. Defaults OFF.
+ *
+ * Wins over DEVIN_ONLY (CLI) and all model-based routing: when an operator opts
+ * into the pure-HTTP egress they mean it for the whole process. The model name
+ * still flows through unchanged so devin-connect maps it to the upstream
+ * selector (field #21). Verified working on a free account with swe-1-6-* (see
+ * memory: devin-connect-WORKING-recipe-2026-06-30); claude-* selectors are
+ * gated on a paid-account probe.
+ */
+function devinConnectEnabled(env = process.env) {
+  return String(env.DEVIN_CONNECT || '').trim() === '1';
+}
+
+/**
  * Select the backend for a request. Pure function — no I/O, no mutation.
  *
  * @param {object} params
@@ -71,6 +92,17 @@ function devinOnlyEnabled(env = process.env) {
  * @returns {{ backend: string, reason: string, flow: 'special_agent'|'cascade'|'legacy' }}
  */
 export function selectBackend({ modelInfo = null, env = process.env } = {}) {
+  // DEVIN_CONNECT: pure-HTTP cloud egress retires both Cascade AND the local
+  // CLI. Highest precedence — an operator who flips this wants every request on
+  // the direct GetChatMessage path regardless of model or DEVIN_ONLY.
+  if (devinConnectEnabled(env)) {
+    return {
+      backend: BACKEND.DEVIN_CONNECT,
+      reason: 'devin_connect',
+      flow: 'devin_connect',
+    };
+  }
+
   // DEVIN_ONLY: Cascade is retired — force every request onto Devin. This wins
   // over all model-based routing below. The sub-mode (acp/print) still comes
   // from DEVIN_CLI_MODE so the existing runner selection is preserved.
@@ -109,4 +141,4 @@ export function usesCascadeFlow(selection) {
   return selection?.flow === 'cascade';
 }
 
-export const __testing = { isSpecialAgentInfo, devinCliMode, devinOnlyEnabled };
+export const __testing = { isSpecialAgentInfo, devinCliMode, devinOnlyEnabled, devinConnectEnabled };

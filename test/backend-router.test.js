@@ -133,3 +133,52 @@ describe('backend-router selectBackend — DEVIN_ONLY (Cascade retired)', () => 
     assert.equal(padded.flow, 'special_agent');
   });
 });
+
+// DEVIN_CONNECT: pure-HTTP cloud egress (no local CLI). Highest precedence —
+// retires both Cascade and the Devin CLI.
+describe('backend-router selectBackend — DEVIN_CONNECT (pure-HTTP egress)', () => {
+  it('routes a cascade model to DEVIN_CONNECT when DEVIN_CONNECT=1', () => {
+    const sel = selectBackend({
+      modelInfo: { modelUid: 'MODEL_CLAUDE_4_5_SONNET' },
+      env: { DEVIN_CONNECT: '1' },
+    });
+    assert.equal(sel.backend, BACKEND.DEVIN_CONNECT);
+    assert.equal(sel.flow, 'devin_connect');
+    assert.equal(sel.reason, 'devin_connect');
+  });
+
+  it('routes a legacy (no-uid-no-enum) request to DEVIN_CONNECT too', () => {
+    const sel = selectBackend({ modelInfo: { enumValue: 0 }, env: { DEVIN_CONNECT: '1' } });
+    assert.equal(sel.backend, BACKEND.DEVIN_CONNECT);
+  });
+
+  it('wins over DEVIN_ONLY when both are set', () => {
+    const sel = selectBackend({
+      modelInfo: { backend: 'special_agent' },
+      env: { DEVIN_CONNECT: '1', DEVIN_ONLY: '1' },
+    });
+    assert.equal(sel.backend, BACKEND.DEVIN_CONNECT);
+    assert.equal(sel.flow, 'devin_connect');
+  });
+
+  it('wins over a special_agent model', () => {
+    const sel = selectBackend({ modelInfo: { backend: 'special_agent' }, env: { DEVIN_CONNECT: '1' } });
+    assert.equal(sel.backend, BACKEND.DEVIN_CONNECT);
+  });
+
+  it('DEVIN_CONNECT=0 / unset leaves routing intact', () => {
+    const off = selectBackend({ modelInfo: { modelUid: 'MODEL_X' }, env: { DEVIN_CONNECT: '0' } });
+    assert.equal(off.flow, 'cascade');
+    const viaOnly = selectBackend({ modelInfo: { modelUid: 'MODEL_X' }, env: { DEVIN_ONLY: '1' } });
+    assert.equal(viaOnly.flow, 'special_agent');
+  });
+
+  it('only the exact value "1" enables DEVIN_CONNECT (truthy-string guard)', () => {
+    for (const v of ['true', 'yes', '2', 'on', ' ']) {
+      const sel = selectBackend({ modelInfo: { modelUid: 'MODEL_X' }, env: { DEVIN_CONNECT: v } });
+      assert.notEqual(sel.flow, 'devin_connect', `DEVIN_CONNECT=${JSON.stringify(v)} must NOT enable`);
+    }
+    const padded = selectBackend({ modelInfo: { modelUid: 'MODEL_X' }, env: { DEVIN_CONNECT: ' 1 ' } });
+    assert.equal(padded.flow, 'devin_connect');
+  });
+});

@@ -37,6 +37,8 @@ import {
   handleSpecialAgentChatCompletion,
 } from '../special-agent.js';
 import { selectBackend, usesCascadeFlow } from '../backend-router.js';
+import { toChatCompletion, streamChatCompletion } from '../devin-connect-openai.js';
+import { resolveConnectSelector } from '../devin-connect-models.js';
 import { sanitizeText, sanitizeToolCall, PathSanitizeStream } from '../sanitize.js';
 import { registerSseController } from '../sse-registry.js';
 import {
@@ -1732,7 +1734,54 @@ async function _handleChatCompletionsInner(body, context = {}) {
   }
   let routingModelKey = effectiveModelKey;
   let modelInfo = getModelInfo(effectiveModelKey) || getModelInfo(modelKey);
-  // Reject unknown models. Without this, chat.js used to fall through to
+
+  // DEVIN_CONNECT short-circuit: the pure-HTTP egress owns its own model
+  // dictionary (devin-connect-models.js → proto #21 selectors), which is a
+  // different namespace from the Cascade catalog. An operator who flips
+  // DEVIN_CONNECT=1 wants every request on that path, so route here BEFORE the
+  // Cascade "Unsupported model" gate — otherwise a connect-only selector like
+  // `swe-1-6-slow` (no Cascade catalog entry) would 400 before ever reaching
+  // the backend. Unmapped names degrade to the free-tier selector downstream.
+  if (selectBackend({ modelInfo }).flow === 'devin_connect') {
+    const reqModelName = reqModel || config.defaultModel;
+    const { selector, mapped } = resolveConnectSelector(reqModelName);
+    log.info(`Chat[${reqId}]: DEVIN_CONNECT ${reqModelName} -> selector=${selector}${mapped ? '' : ' [unmapped→free-tier]'} stream=${!!stream}`);
+    const ccId = genId();
+    const ccCreated = Math.floor(Date.now() / 1000);
+    const connectParams = { messages, model: selector };
+    if (stream) {
+      return {
+        status: 200,
+        stream: true,
+        headers: {
+          'Content-Type': 'text/event-stream',
+          // no-store (not no-cache) so middlebox aggregators like sub2api (#97)
+          // don't priority-cache SSE chunks and replay them for fresh requests.
+          'Cache-Control': 'no-store',
+          'Connection': 'keep-alive',
+          'X-Accel-Buffering': 'no',
+        },
+        handler: async (res) => {
+          const send = (data) => { if (!res.writableEnded) res.write(`data: ${JSON.stringify(data)}\n\n`); };
+          try {
+            await streamChatCompletion(connectParams, send, { id: ccId, created: ccCreated, displayModel: reqModelName });
+          } catch (err) {
+            log.error(`Chat[${reqId}]: DEVIN_CONNECT stream error: ${err.message}`);
+            send(chatStreamError(err.message, 'upstream_error', err.code || null));
+          } finally {
+            if (!res.writableEnded) { res.write('data: [DONE]\n\n'); res.end(); }
+          }
+        },
+      };
+    }
+    try {
+      return await toChatCompletion(connectParams, { id: ccId, created: ccCreated, displayModel: reqModelName });
+    } catch (err) {
+      log.error(`Chat[${reqId}]: DEVIN_CONNECT error: ${err.message}`);
+      return { status: 502, body: { error: { message: err.message, type: 'upstream_error', code: err.code || null } } };
+    }
+  }
+
   // legacy rawGetChatMessage with modelEnum=0 and modelUid=null, which
   // upstream silently routed to a default model. Callers saw "I'm Claude 4.5"
   // when they asked for `claude-4.6` (issue #68), or got blank responses for
@@ -1802,6 +1851,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
       callerKey,
     }, context.specialAgent || {});
   }
+
   const modelEnum = modelInfo?.enumValue || 0;
   const modelUid = modelInfo?.modelUid || null;
   // Cascade requires either a valid modelUid (string) or a recognized modelEnum.
