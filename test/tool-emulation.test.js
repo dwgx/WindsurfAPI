@@ -198,6 +198,10 @@ describe('ToolCallStreamParser', () => {
     assert.equal(pickToolDialect('glm-5.2'), 'gpt_native');
     assert.equal(pickToolDialect('glm-5.2', 'zhipu'), 'gpt_native');
     assert.equal(pickToolDialect('glm-5-2-thinking'), 'gpt_native');
+    // Future dotted SKUs (glm-5.2-fast / glm-5.2-thinking) must also stay on
+    // gpt_native, not silently fall through to the wrong glm47 dialect.
+    assert.equal(pickToolDialect('glm-5.2-fast'), 'gpt_native');
+    assert.equal(pickToolDialect('glm-5.2-thinking'), 'gpt_native');
     assert.equal(pickToolDialect('glm-5'), 'glm47');
     assert.equal(pickToolDialect('glm-5.1'), 'glm47');
   });

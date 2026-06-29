@@ -49,8 +49,11 @@ export const MODELS = {
   'claude-opus-4-7-max':            { name: 'claude-opus-4-7-max',            provider: 'anthropic', enumValue: 0,   modelUid: 'claude-opus-4-7-max', credit: 16 },
   // Claude Opus 4.8 — confirmed live in GetCascadeModelConfigs (2026-06-29 account dump).
   // Only the `medium` tier is exposed upstream so far (no low/high/xhigh siblings yet);
-  // credit 25, 1M-token context, 128k max output, supports images + parallel tools + thinking.
-  // The -thinking sibling is auto-inherited at access-check time (#103), so no separate entry.
+  // credit 25, 1M-token context, 128k max output, supports images + parallel tools.
+  // No -thinking UID in the cloud catalog yet: #103 inheritance only widens the
+  // allowlist/blocklist, it does NOT route a thinking request to a thinking UID.
+  // So a `-thinking` alias resolves here and runs the non-thinking tier until
+  // upstream publishes a claude-opus-4-8-medium-thinking UID (then add an entry).
   'claude-opus-4-8-medium':         { name: 'claude-opus-4-8-medium',         provider: 'anthropic', enumValue: 0,   modelUid: 'claude-opus-4-8-medium', credit: 25 },
 
   // ── GPT ─────────────────────────────────────────────────

@@ -228,7 +228,9 @@ export function pickToolDialect(modelKey, provider, route = null) {
     // the model answers in plain text. The gpt_native function_call JSON
     // dialect is emitted reliably and parsed correctly. Keep older GLM on
     // glm47 until proven otherwise; env override still available for tests.
-    if (normalizedModelKey === 'glm-5.2' || normalizedModelKey.startsWith('glm-5-2-')) return 'gpt_native';
+    if (normalizedModelKey === 'glm-5.2'
+      || normalizedModelKey.startsWith('glm-5.2-')
+      || normalizedModelKey.startsWith('glm-5-2-')) return 'gpt_native';
     return 'glm47';
   }
   if (normalizedProvider === 'moonshot' || normalizedModelKey.startsWith('kimi')) {
