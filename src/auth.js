@@ -507,6 +507,15 @@ export async function addAccountByEmail(email, password) {
       idToken: result.idToken || '',
     });
   }
+  // Persist the password (encrypted) so a dead session_id can be auto-recovered
+  // via re-login. No-op unless DEVIN_CONNECT_CRED_KEY is set. Best-effort: a
+  // store failure must not break the login that already succeeded.
+  try {
+    const { storeCredential, isCredStoreEnabled } = await import('./devin-connect-credentials.js');
+    if (isCredStoreEnabled()) storeCredential(email, password);
+  } catch (e) {
+    log.warn(`could not persist credential for re-login: ${e.message}`);
+  }
   saveAccounts();
   log.info(`Account added via email: ${safeAccountRef(account)}`);
   return account;
@@ -653,6 +662,100 @@ export function setAccountTokens(id, { apiKey, refreshToken, idToken } = {}) {
   if (idToken != null) account.idToken = idToken;
   saveAccounts();
   return true;
+}
+
+// Per-account re-login throttle: a dead session_id will reject EVERY in-flight
+// request at once, so without a cooldown a burst of UNAUTHORIZED would fire a
+// login storm against the upstream. We allow one re-login attempt per account
+// per cooldown window and de-dupe concurrent attempts onto a single promise.
+const RELOGIN_COOLDOWN_MS = 60 * 1000;
+const _reloginState = new Map(); // id → { lastAttempt, inflight }
+
+// Test seam: override the login impl + credential getter so re-login logic can
+// be exercised without real network / a real encrypted store. null → use the
+// real windsurfLogin + devin-connect-credentials.
+let _reloginDeps = null;
+export function __setReloginDeps(deps) { _reloginDeps = deps; }
+
+/** Test seam: clear the re-login throttle between cases. */
+export function __resetReloginState() { _reloginState.clear(); }
+
+/**
+ * Recover a dead DEVIN_CONNECT session token by performing a fresh Auth1
+ * email/password login and swapping in the new session token.
+ *
+ * The session token (account.apiKey, `devin-session-token$...`) is an opaque
+ * server-side session_id with no expiry/refresh — once the server retires it,
+ * the ONLY way back is a full re-login. This requires the account's password
+ * to be in the encrypted credential store (DEVIN_CONNECT_CRED_KEY set) and
+ * DEVIN_CONNECT_AUTO_RELOGIN=1. Without either, this is a no-op returning false.
+ *
+ * Throttled + de-duped per account so a burst of UNAUTHORIZED can't trigger a
+ * login storm. Returns the new apiKey on success, false otherwise.
+ *
+ * @param {string} id account id
+ * @param {object} [opts]
+ * @param {boolean} [opts.force] bypass the cooldown (e.g. liveness-probe driven)
+ */
+export async function reLoginAccount(id, { force = false } = {}) {
+  if (String(process.env.DEVIN_CONNECT_AUTO_RELOGIN || '') !== '1') return false;
+  const account = accounts.find(a => a.id === id);
+  if (!account) return false;
+
+  const { isCredStoreEnabled, getCredential } = _reloginDeps
+    || await import('./devin-connect-credentials.js');
+  if (!isCredStoreEnabled()) return false;
+
+  const state = _reloginState.get(id) || { lastAttempt: 0, inflight: null };
+  if (state.inflight) return state.inflight; // coalesce concurrent callers
+  const now = Date.now();
+  if (!force && now - state.lastAttempt < RELOGIN_COOLDOWN_MS) {
+    log.debug(`re-login ${safeAccountRef(account)} skipped: cooldown`);
+    return false;
+  }
+
+  const attempt = (async () => {
+    let password;
+    try {
+      password = getCredential(account.email);
+    } catch (e) {
+      // Wrong key / tampered record — credential unusable, not absent.
+      log.warn(`re-login ${safeAccountRef(account)}: credential unusable (${e.message})`);
+      return false;
+    }
+    if (!password) {
+      log.debug(`re-login ${safeAccountRef(account)} skipped: no stored credential`);
+      return false;
+    }
+    try {
+      const proxy = getEffectiveProxy(account.id) || null;
+      const { windsurfLogin } = _reloginDeps || await import('./dashboard/windsurf-login.js');
+      const result = await windsurfLogin(account.email, password, proxy);
+      if (!result?.apiKey) throw new Error('login returned no apiKey');
+      account.apiKey = result.apiKey;
+      if (result.refreshToken) account.refreshToken = result.refreshToken;
+      account.status = 'active';
+      account.errorCount = 0;
+      account._errorAt = 0;
+      account._reloginAt = Date.now();
+      saveAccounts();
+      log.info(`re-login OK: ${safeAccountRef(account)} → fresh session token`);
+      return result.apiKey;
+    } catch (e) {
+      log.warn(`re-login ${safeAccountRef(account)} failed: ${e.message}`);
+      return false;
+    }
+  })();
+
+  state.lastAttempt = now;
+  state.inflight = attempt;
+  _reloginState.set(id, state);
+  try {
+    return await attempt;
+  } finally {
+    const s = _reloginState.get(id);
+    if (s) s.inflight = null;
+  }
 }
 
 /**

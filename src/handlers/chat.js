@@ -5,7 +5,7 @@
 
 import { createHash, randomUUID } from 'crypto';
 import { WindsurfClient, contentToString, isCascadeTransportError } from '../client.js';
-import { getApiKey, acquireAccountByKey, releaseAccount, getAccountAvailability, reportError, reportSuccess, markRateLimited, reportInternalError, updateCapability, getAccountList, isAllRateLimited, isAllTemporarilyUnavailable, refundReservation, looksLikeBanSignal, reportBanSignal, clearBanSignals, isModelBlockedByDrought, getDroughtSummary } from '../auth.js';
+import { getApiKey, acquireAccountByKey, releaseAccount, getAccountAvailability, reportError, reportSuccess, markRateLimited, reportInternalError, updateCapability, getAccountList, isAllRateLimited, isAllTemporarilyUnavailable, refundReservation, looksLikeBanSignal, reportBanSignal, clearBanSignals, isModelBlockedByDrought, getDroughtSummary, reLoginAccount } from '../auth.js';
 import { isStickyEnabled, setStickyBinding } from '../account/sticky-session.js';
 import { resolveModel, getModelInfo, pickRateLimitFallback } from '../models.js';
 import { getLsFor, ensureLs } from '../langserver.js';
@@ -1519,7 +1519,15 @@ export function finalizeConnectAccount(acct, { model, startTime, err }) {
     // it would demote a perfectly good free account toward eviction every time a
     // client names claude-*/gpt-* — so release cleanly, same as a success.
     else if (err.code === 'MODEL_BLOCKED') { /* no penalty — tier wall, not a fault */ }
-    else if (err.code === 'UNAUTHORIZED') reportError(acct.apiKey);
+    else if (err.code === 'UNAUTHORIZED') {
+      reportError(acct.apiKey);
+      // The DEVIN_CONNECT session token is an opaque session_id with no refresh
+      // path — UNAUTHORIZED most likely means the server retired it. If the
+      // account has stored credentials + auto-relogin is enabled, trigger a
+      // background re-login (throttled/de-duped in auth.js) so the next request
+      // lands on a fresh token instead of a permanently-dead account.
+      reLoginAccount(acct.id).catch(() => {});
+    }
     else if (err.code === 'RATE_LIMITED') markRateLimited(acct.apiKey, 5 * 60 * 1000, null);
     else reportError(acct.apiKey);
   } else {
