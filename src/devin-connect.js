@@ -306,10 +306,15 @@ export function decodeFrame(payload) {
 
 /**
  * Classify an upstream error body/code into a stable, caller-mappable shape.
- * Two cases matter for routing decisions in chat.js:
+ * Cases that matter for routing decisions in chat.js:
  *   - a free-tier account asking for a paid selector → "/upgrade to access..."
- *     surfaces as code MODEL_BLOCKED so the handler returns 402, not a bare 502.
- *   - auth failures (permission_denied / 401) → code UNAUTHORIZED.
+ *     surfaces as MODEL_BLOCKED so the handler returns 402 and does NOT penalize
+ *     the account (it's a tier wall, the account itself is healthy).
+ *   - a PAID account that has run out of credit/quota → QUOTA_EXHAUSTED. This is
+ *     account-specific and must be cooled down (otherwise getApiKey keeps
+ *     re-selecting a dry account that 402s every client). Distinct from the tier
+ *     wall above, which would wrongly demote a healthy free account.
+ *   - auth failures (permission_denied / 401) → UNAUTHORIZED.
  * Everything else keeps its upstream code (or UPSTREAM_ERROR).
  *
  * @param {string} text   raw body or trailer message
@@ -319,7 +324,14 @@ export function decodeFrame(payload) {
  */
 export function classifyUpstreamError(text, code = null, status = null) {
   const body = String(text || '').trim();
-  if (/\/upgrade|upgrade to access|insufficient.*(credit|quota|entitlement)/i.test(body)) {
+  // Out-of-credit/quota is an ACCOUNT state (cool it down), checked before the
+  // tier-wall pattern so "insufficient credit" never reads as a free-tier
+  // /upgrade prompt. "entitlement" stays a tier wall (you lack the plan, not
+  // the balance), matching the /upgrade semantics.
+  if (/insufficient.*(credit|quota|balance|funds)|out of (credit|quota)|quota.*exceeded|credit.*exhausted/i.test(body)) {
+    return { code: 'QUOTA_EXHAUSTED', message: body || 'DEVIN_CONNECT: account out of credit/quota' };
+  }
+  if (/\/upgrade|upgrade to access|insufficient.*entitlement|requires? .*(paid|pro|team|enterprise)/i.test(body)) {
     return { code: 'MODEL_BLOCKED', message: body || 'model requires a paid Devin entitlement' };
   }
   if (status === 401 || status === 403 || /permission_denied|unauthenticated|invalid.*token/i.test(body) || code === 'permission_denied') {
@@ -331,8 +343,15 @@ export function classifyUpstreamError(text, code = null, status = null) {
   return { code: code || 'UPSTREAM_ERROR', message: body || `DEVIN_CONNECT upstream error${status ? ` (HTTP ${status})` : ''}` };
 }
 
-/** Transient codes worth a retry (network blips / server-side internal). */
-const RETRYABLE_CODES = new Set(['ECONNRESET', 'ETIMEDOUT', 'ECONNREFUSED', 'EPIPE', 'TIMEOUT', 'unavailable', 'internal', 'RATE_LIMITED']);
+// Transient codes worth an in-process retry: network blips + server "unavailable"
+// only. Deliberately EXCLUDES:
+//   - RATE_LIMITED: retrying the same token 2x before the pool-level cooldown
+//     applies just triples the load on an already-throttled upstream. Let the
+//     cooldown + cross-account failover handle it.
+//   - internal: per this file's header the server returns `internal` for
+//     PERMANENT client mistakes (short fingerprint, gzipped request body) — those
+//     fail identically every retry, so retrying burns attempts for nothing.
+const RETRYABLE_CODES = new Set(['ECONNRESET', 'ETIMEDOUT', 'ECONNREFUSED', 'EPIPE', 'TIMEOUT', 'unavailable']);
 
 /** True when an error should be retried (vs surfaced immediately). */
 export function isRetryable(err) {

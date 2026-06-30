@@ -337,6 +337,7 @@ export function chatStreamError(message, type = 'upstream_error', code = null) {
 export function connectErrorToHttp(code) {
   switch (code) {
     case 'MODEL_BLOCKED': return { status: 402, type: 'model_blocked' };
+    case 'QUOTA_EXHAUSTED': return { status: 402, type: 'insufficient_quota' };
     case 'UNAUTHORIZED': return { status: 401, type: 'authentication_error' };
     case 'RATE_LIMITED': return { status: 429, type: 'rate_limit_error' };
     case 'NO_TOKEN': return { status: 401, type: 'authentication_error' };
@@ -1563,6 +1564,14 @@ export function finalizeConnectAccount(acct, { model, startTime, err }) {
     // it would demote a perfectly good free account toward eviction every time a
     // client names claude-*/gpt-* — so release cleanly, same as a success.
     else if (err.code === 'MODEL_BLOCKED') { /* no penalty — tier wall, not a fault */ }
+    else if (err.code === 'QUOTA_EXHAUSTED') {
+      // The account ran out of credit/quota — unlike a tier wall this IS an
+      // account-specific dry-well. Cool it down so getApiKey stops re-selecting
+      // it and serving 402 to every client; failover moves to a funded account.
+      // Reuse the rate-limit cooldown (longer: quota refills on a billing cycle,
+      // but a 30-min cooldown bounds the re-probe rate without hard-disabling).
+      markRateLimited(acct.apiKey, 30 * 60 * 1000, null);
+    }
     else if (err.code === 'UNAUTHORIZED') {
       reportError(acct.apiKey);
       // The DEVIN_CONNECT session token is an opaque session_id with no refresh

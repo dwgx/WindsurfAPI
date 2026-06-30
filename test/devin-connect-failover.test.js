@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   addAccountByKey, removeAccount, getAccountList, getApiKey, releaseAccount,
-  markRateLimited,
+  markRateLimited, getAccountAvailability,
   __setReloginDeps, __resetReloginState,
 } from '../src/auth.js';
 import {
@@ -241,6 +241,50 @@ describe('DEVIN_CONNECT cross-account failover — stream', () => {
     assert.equal(seen.length, 1, 'no failover after a byte is on the wire');
     assert.ok(frames.some(f => f !== '[DONE]' && f.choices?.[0]?.delta?.content === 'partial'), 'emitted the partial chunk');
     assert.ok(frames.some(f => f !== '[DONE]' && f.error), 'surfaced an error frame');
+  });
+});
+
+describe('DEVIN_CONNECT quota vs tier wall (P1 #33)', () => {
+  it('QUOTA_EXHAUSTED cools the account down AND surfaces 402 insufficient_quota', async () => {
+    const a = seed('quota-1');
+    process.env.DEVIN_CONNECT_FAILOVER_MAX = '0'; // isolate this account
+    __setConnectDeps({
+      toChatCompletion: async () => {
+        throw Object.assign(new Error('insufficient credits remaining'), { code: 'QUOTA_EXHAUSTED' });
+      },
+    });
+    const result = await handleChatCompletions(
+      { model: 'swe-1-6-slow', stream: false, messages: [{ role: 'user', content: 'hi' }] },
+      { callerKey: '' },
+    );
+    assert.equal(result.status, 402);
+    assert.equal(result.body.error.type, 'insufficient_quota');
+    // The dry account must now carry a rate-limit cooldown so getApiKey stops
+    // re-selecting it (the distinguishing penalty vs a tier wall).
+    const avail = getAccountAvailability(a.apiKey, 'swe-1-6-slow');
+    assert.equal(avail.reason, 'rate_limited', 'dry account is cooled down');
+    assert.ok(avail.retryAfterMs > 0, 'cooldown carries a retry hint');
+  });
+
+  it('MODEL_BLOCKED (tier wall) returns 402 but does NOT cool the account down', async () => {
+    const a = seed('tier-1');
+    process.env.DEVIN_CONNECT_FAILOVER_MAX = '0';
+    __setConnectDeps({
+      toChatCompletion: async () => {
+        throw Object.assign(new Error('please /upgrade to access this model'), { code: 'MODEL_BLOCKED' });
+      },
+    });
+    const result = await handleChatCompletions(
+      { model: 'swe-1-6-slow', stream: false, messages: [{ role: 'user', content: 'hi' }] },
+      { callerKey: '' },
+    );
+    assert.equal(result.status, 402);
+    assert.equal(result.body.error.type, 'model_blocked');
+    // No rate-limit cooldown was added — a healthy account hitting a paid wall
+    // must not be demoted. (Fresh token accounts read as model_not_available by
+    // default; the point is the reason is NOT a rate_limit penalty.)
+    const avail = getAccountAvailability(a.apiKey, 'swe-1-6-slow');
+    assert.notEqual(avail.reason, 'rate_limited', 'tier wall must not cool the account down');
   });
 });
 

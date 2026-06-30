@@ -248,8 +248,16 @@ describe('classifyUpstreamError', () => {
   it('maps "upgrade to access" prose to MODEL_BLOCKED', () => {
     assert.equal(classifyUpstreamError('You must upgrade to access this model').code, 'MODEL_BLOCKED');
   });
-  it('maps insufficient credit/quota to MODEL_BLOCKED', () => {
-    assert.equal(classifyUpstreamError('insufficient credits remaining').code, 'MODEL_BLOCKED');
+  it('maps insufficient credit/quota to QUOTA_EXHAUSTED (account dry-well, not a tier wall)', () => {
+    // Distinct from MODEL_BLOCKED: this account ran out of balance and must be
+    // cooled down, not treated as a healthy free account hitting a paid model.
+    assert.equal(classifyUpstreamError('insufficient credits remaining').code, 'QUOTA_EXHAUSTED');
+    assert.equal(classifyUpstreamError('Your account quota has been exceeded').code, 'QUOTA_EXHAUSTED');
+    assert.equal(classifyUpstreamError('credit exhausted for this billing cycle').code, 'QUOTA_EXHAUSTED');
+  });
+  it('still maps a paid-entitlement /upgrade wall to MODEL_BLOCKED (no penalty)', () => {
+    assert.equal(classifyUpstreamError('insufficient entitlement for this model').code, 'MODEL_BLOCKED');
+    assert.equal(classifyUpstreamError('this model requires a paid plan').code, 'MODEL_BLOCKED');
   });
   it('maps HTTP 401 to UNAUTHORIZED', () => {
     assert.equal(classifyUpstreamError('', null, 401).code, 'UNAUTHORIZED');
@@ -306,10 +314,14 @@ describe('isRetryable', () => {
       assert.equal(isRetryable({ code }), true, code);
     }
   });
-  it('retries RATE_LIMITED and upstream internal/unavailable', () => {
-    assert.equal(isRetryable({ code: 'RATE_LIMITED' }), true);
-    assert.equal(isRetryable({ code: 'internal' }), true);
+  it('retries server "unavailable" but NOT RATE_LIMITED or internal', () => {
     assert.equal(isRetryable({ code: 'unavailable' }), true);
+    // RATE_LIMITED: in-process retry would triple load on a throttled upstream
+    // before the pool cooldown applies — let cooldown + failover handle it.
+    assert.equal(isRetryable({ code: 'RATE_LIMITED' }), false);
+    // internal: upstream returns it for PERMANENT client mistakes (bad
+    // fingerprint / gzipped body) — retrying just burns attempts.
+    assert.equal(isRetryable({ code: 'internal' }), false);
   });
   it('retries HTTP 5xx (except 501) and not 4xx', () => {
     assert.equal(isRetryable({ status: 500 }), true);
@@ -320,6 +332,7 @@ describe('isRetryable', () => {
   });
   it('does not retry terminal codes', () => {
     assert.equal(isRetryable({ code: 'MODEL_BLOCKED' }), false);
+    assert.equal(isRetryable({ code: 'QUOTA_EXHAUSTED' }), false);
     assert.equal(isRetryable({ code: 'UNAUTHORIZED' }), false);
     assert.equal(isRetryable(null), false);
   });
