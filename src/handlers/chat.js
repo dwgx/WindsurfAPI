@@ -37,7 +37,7 @@ import {
   handleSpecialAgentChatCompletion,
 } from '../special-agent.js';
 import { selectBackend, usesCascadeFlow } from '../backend-router.js';
-import { toChatCompletion, streamChatCompletion } from '../devin-connect-openai.js';
+import { toChatCompletion as _toChatCompletion, streamChatCompletion as _streamChatCompletion } from '../devin-connect-openai.js';
 import { resolveConnectSelector } from '../devin-connect-models.js';
 import { sanitizeText, sanitizeToolCall, PathSanitizeStream } from '../sanitize.js';
 import { registerSseController } from '../sse-registry.js';
@@ -1485,6 +1485,20 @@ export function buildUsageBody(serverUsage, messages, completionText, thinkingTe
 }
 
 // ── DEVIN_CONNECT account lifecycle ──────────────────────────────────
+// Indirection layer for the connect network calls + re-login, so the failover
+// loop below can be exercised offline. Production wires the real modules;
+// __setConnectDeps swaps in fakes for tests, __resetConnectDeps restores.
+let _connectDeps = {
+  toChatCompletion: _toChatCompletion,
+  streamChatCompletion: _streamChatCompletion,
+};
+function toChatCompletion(...args) { return _connectDeps.toChatCompletion(...args); }
+function streamChatCompletion(...args) { return _connectDeps.streamChatCompletion(...args); }
+export function __setConnectDeps(overrides = {}) { _connectDeps = { ..._connectDeps, ...overrides }; }
+export function __resetConnectDeps() {
+  _connectDeps = { toChatCompletion: _toChatCompletion, streamChatCompletion: _streamChatCompletion };
+}
+
 // The connect path is token-based: it needs a Windsurf session key, which the
 // account pool already manages (rotation, RPM budget, rate-limit cooldowns).
 // We acquire from the pool so connect requests rotate and count toward quota
@@ -1499,6 +1513,32 @@ async function acquireConnectAccount(signal, callerKey) {
   const tried = [];
   const acct = await waitForAccount(tried, signal, QUEUE_MAX_WAIT_MS, null, callerKey);
   return acct; // may be null → env-token fallback
+}
+
+// Cross-account failover for DEVIN_CONNECT. When the current account's token is
+// dead (UNAUTHORIZED) and same-account re-login couldn't mint a fresh one — the
+// account was added by raw token (no stored password), or the re-login itself
+// failed — we fall through to the NEXT healthy pooled account instead of failing
+// the request. `triedKeys` carries every key already burned this request so
+// getApiKey never re-picks a known-dead account. Returns the next account or
+// null when no untried account is available.
+//
+// Unlike the initial acquire this does NOT block on the queue: a dead account
+// never re-enters the pool as "untried", so waiting on the queue deadline would
+// just stall the request for QUEUE_MAX_WAIT_MS before failing. We take whatever
+// untried account is selectable right now, or give up immediately.
+function acquireConnectFailover(triedKeys, signal, callerKey) {
+  if (signal?.aborted) return null;
+  return getApiKey(triedKeys, null, callerKey);
+}
+
+// How many times a single DEVIN_CONNECT request may hop to a fresh pooled
+// account after a dead-token failure. 0 disables failover (same-account
+// re-login still applies). Default 2 so a request survives a couple of stale
+// session tokens without fanning out across the whole pool.
+function connectFailoverMax(env = process.env) {
+  const raw = Number(env.DEVIN_CONNECT_FAILOVER_MAX);
+  return Number.isFinite(raw) && raw >= 0 ? raw : 2;
 }
 
 // Pair with acquireConnectAccount on every exit path. Records billing/stats and
@@ -1839,6 +1879,12 @@ async function _handleChatCompletionsInner(body, context = {}) {
     // disconnected/cancelled caller tears down the in-flight connect call
     // instead of leaking it until the 120s timeout.
     if (context.signal) connectParams.signal = context.signal;
+    const connectMeta = { id: ccId, created: ccCreated, displayModel: reqModelName, emulateTools };
+    // Shared failover bookkeeping for both stream + non-stream paths. triedKeys
+    // accumulates every session token burned this request so getApiKey never
+    // re-picks a known-dead account when we hop to the next pool member.
+    const triedKeys = [];
+    const maxHops = connectFailoverMax();
     if (stream) {
       return {
         status: 200,
@@ -1856,73 +1902,115 @@ async function _handleChatCompletionsInner(body, context = {}) {
           const send = (data) => {
             if (!res.writableEnded) { emitted = true; res.write(`data: ${JSON.stringify(data)}\n\n`); }
           };
-          let streamErr = null;
-          try {
-            await streamChatCompletion(connectParams, send, { id: ccId, created: ccCreated, displayModel: reqModelName, emulateTools });
-          } catch (err) {
-            // UNAUTHORIZED before any chunk reached the client → the session_id
-            // is likely dead. Re-login and replay the stream once on the fresh
-            // token. Only safe while emitted===false; once bytes are on the wire
-            // a retry would duplicate content, so we surface the error instead.
-            if (err.code === 'UNAUTHORIZED' && ccAcct && !emitted) {
-              const freshKey = await reLoginAccount(ccAcct.id, { force: true }).catch(() => false);
-              if (freshKey && !emitted) {
-                log.info(`Chat[${reqId}]: DEVIN_CONNECT re-login recovered token, replaying stream once`);
-                try {
-                  await streamChatCompletion({ ...connectParams, token: freshKey }, send, { id: ccId, created: ccCreated, displayModel: reqModelName, emulateTools });
-                } catch (retryErr) {
-                  streamErr = retryErr;
-                  log.error(`Chat[${reqId}]: DEVIN_CONNECT stream retry error: ${retryErr.message}`);
-                  send(chatStreamError(retryErr.message, 'upstream_error', retryErr.code || null));
+          // Run one account through the stream, with same-account re-login as the
+          // first recovery step. Returns 'ok', 'dead' (token unrecoverable on this
+          // account → caller may fail over), or 'error' (non-recoverable). Every
+          // recovery is gated on !emitted: once bytes are on the wire a replay
+          // would duplicate content, so we surface the error instead.
+          const attemptStream = async (a) => {
+            const params = a ? { ...connectParams, token: a.apiKey } : connectParams;
+            try {
+              await streamChatCompletion(params, send, connectMeta);
+              finalizeConnectAccount(a, { model: reqModelName, startTime: ccStart, err: null });
+              return { kind: 'ok' };
+            } catch (err) {
+              if (err.code === 'UNAUTHORIZED' && a && !emitted) {
+                const freshKey = await reLoginAccount(a.id, { force: true }).catch(() => false);
+                if (freshKey && !emitted) {
+                  log.info(`Chat[${reqId}]: DEVIN_CONNECT re-login recovered token, replaying stream once`);
+                  try {
+                    await streamChatCompletion({ ...connectParams, token: freshKey }, send, connectMeta);
+                    finalizeConnectAccount(a, { model: reqModelName, startTime: ccStart, err: null });
+                    return { kind: 'ok' };
+                  } catch (retryErr) {
+                    finalizeConnectAccount(a, { model: reqModelName, startTime: ccStart, err: retryErr });
+                    log.error(`Chat[${reqId}]: DEVIN_CONNECT stream retry error: ${retryErr.message}`);
+                    return (retryErr.code === 'UNAUTHORIZED' && !emitted) ? { kind: 'dead' } : { kind: 'error', err: retryErr };
+                  }
                 }
-              } else {
-                streamErr = err;
-                send(chatStreamError(err.message, 'upstream_error', err.code || null));
+                finalizeConnectAccount(a, { model: reqModelName, startTime: ccStart, err });
+                return !emitted ? { kind: 'dead' } : { kind: 'error', err };
               }
-            } else {
-              streamErr = err;
+              finalizeConnectAccount(a, { model: reqModelName, startTime: ccStart, err });
               log.error(`Chat[${reqId}]: DEVIN_CONNECT stream error: ${err.message}`);
-              send(chatStreamError(err.message, 'upstream_error', err.code || null));
+              return { kind: 'error', err };
             }
-          } finally {
-            finalizeConnectAccount(ccAcct, { model: reqModelName, startTime: ccStart, err: streamErr });
-            if (!res.writableEnded) { res.write('data: [DONE]\n\n'); res.end(); }
+          };
+          let acct = ccAcct;
+          for (let hops = 0; ; hops++) {
+            if (acct) triedKeys.push(acct.apiKey);
+            const r = await attemptStream(acct);
+            if (r.kind === 'ok') break;
+            if (r.kind === 'error') { send(chatStreamError(r.err.message, 'upstream_error', r.err.code || null)); break; }
+            // r.kind === 'dead' — guaranteed !emitted, so a fresh account is safe.
+            if (hops >= maxHops || emitted) { send(chatStreamError('all DEVIN_CONNECT accounts exhausted (dead session tokens)', 'upstream_error', 'UNAUTHORIZED')); break; }
+            const next = await acquireConnectFailover(triedKeys, context.signal, callerKey);
+            if (!next) { send(chatStreamError('all DEVIN_CONNECT accounts exhausted (dead session tokens)', 'upstream_error', 'UNAUTHORIZED')); break; }
+            log.info(`Chat[${reqId}]: DEVIN_CONNECT failover hop ${hops + 1} → next pooled account`);
+            acct = next;
           }
+          if (!res.writableEnded) { res.write('data: [DONE]\n\n'); res.end(); }
         },
       };
     }
-    try {
-      const out = await toChatCompletion(connectParams, { id: ccId, created: ccCreated, displayModel: reqModelName, emulateTools });
-      finalizeConnectAccount(ccAcct, { model: reqModelName, startTime: ccStart, err: null });
-      return out;
-    } catch (err) {
-      // A dead session_id surfaces as UNAUTHORIZED. Since nothing has been sent
-      // to the client yet (non-streaming), we can recover transparently: force a
-      // re-login, and if it mints a fresh token, retry the request once on it.
-      if (err.code === 'UNAUTHORIZED' && ccAcct) {
-        const freshKey = await reLoginAccount(ccAcct.id, { force: true }).catch(() => false);
-        if (freshKey) {
-          log.info(`Chat[${reqId}]: DEVIN_CONNECT re-login recovered token, retrying once`);
-          try {
-            const retryParams = { ...connectParams, token: freshKey };
-            const out = await toChatCompletion(retryParams, { id: ccId, created: ccCreated, displayModel: reqModelName, emulateTools });
-            finalizeConnectAccount(ccAcct, { model: reqModelName, startTime: ccStart, err: null });
-            return out;
-          } catch (retryErr) {
-            finalizeConnectAccount(ccAcct, { model: reqModelName, startTime: ccStart, err: retryErr });
-            const { status, type } = connectErrorToHttp(retryErr.code);
-            log.error(`Chat[${reqId}]: DEVIN_CONNECT retry-after-relogin error (${retryErr.code || 'UPSTREAM_ERROR'} -> ${status}): ${retryErr.message}`);
-            return { status, body: { error: { message: retryErr.message, type, code: retryErr.code || null } } };
+    // Non-streaming: nothing reaches the client until we return, so recovery is
+    // always safe. Same two-step escalation — same-account re-login, then
+    // cross-account failover — wrapped in attempt() per account.
+    const attempt = async (a) => {
+      const params = a ? { ...connectParams, token: a.apiKey } : connectParams;
+      try {
+        const out = await toChatCompletion(params, connectMeta);
+        finalizeConnectAccount(a, { model: reqModelName, startTime: ccStart, err: null });
+        return { kind: 'ok', out };
+      } catch (err) {
+        if (err.code === 'UNAUTHORIZED' && a) {
+          const freshKey = await reLoginAccount(a.id, { force: true }).catch(() => false);
+          if (freshKey) {
+            log.info(`Chat[${reqId}]: DEVIN_CONNECT re-login recovered token, retrying once`);
+            try {
+              const out = await toChatCompletion({ ...connectParams, token: freshKey }, connectMeta);
+              finalizeConnectAccount(a, { model: reqModelName, startTime: ccStart, err: null });
+              return { kind: 'ok', out };
+            } catch (retryErr) {
+              finalizeConnectAccount(a, { model: reqModelName, startTime: ccStart, err: retryErr });
+              log.error(`Chat[${reqId}]: DEVIN_CONNECT retry-after-relogin error (${retryErr.code || 'UPSTREAM_ERROR'}): ${retryErr.message}`);
+              return retryErr.code === 'UNAUTHORIZED' ? { kind: 'dead' } : { kind: 'error', err: retryErr };
+            }
           }
+          finalizeConnectAccount(a, { model: reqModelName, startTime: ccStart, err });
+          return { kind: 'dead' };
         }
+        finalizeConnectAccount(a, { model: reqModelName, startTime: ccStart, err });
+        return { kind: 'error', err };
       }
-      finalizeConnectAccount(ccAcct, { model: reqModelName, startTime: ccStart, err });
-      // Map the classified upstream code to the right HTTP status/type so a
-      // free-tier /upgrade rejection reads as 402 model_blocked, an auth failure
-      // as 401, and a rate limit as 429 — not a blanket 502.
-      const { status, type } = connectErrorToHttp(err.code);
-      log.error(`Chat[${reqId}]: DEVIN_CONNECT error (${err.code || 'UPSTREAM_ERROR'} -> ${status}): ${err.message}`);
-      return { status, body: { error: { message: err.message, type, code: err.code || null } } };
+    };
+    let acct = ccAcct;
+    for (let hops = 0; ; hops++) {
+      if (acct) triedKeys.push(acct.apiKey);
+      const r = await attempt(acct);
+      if (r.kind === 'ok') return r.out;
+      if (r.kind === 'error') {
+        // Map the classified upstream code to the right HTTP status/type so a
+        // free-tier /upgrade rejection reads as 402 model_blocked, an auth failure
+        // as 401, and a rate limit as 429 — not a blanket 502.
+        const { status, type } = connectErrorToHttp(r.err.code);
+        log.error(`Chat[${reqId}]: DEVIN_CONNECT error (${r.err.code || 'UPSTREAM_ERROR'} -> ${status}): ${r.err.message}`);
+        return { status, body: { error: { message: r.err.message, type, code: r.err.code || null } } };
+      }
+      // r.kind === 'dead' — the session token couldn't be revived on this account.
+      if (hops >= maxHops) {
+        const { status, type } = connectErrorToHttp('UNAUTHORIZED');
+        log.error(`Chat[${reqId}]: DEVIN_CONNECT failover exhausted after ${hops} hop(s)`);
+        return { status, body: { error: { message: 'all DEVIN_CONNECT accounts exhausted (dead session tokens)', type, code: 'UNAUTHORIZED' } } };
+      }
+      const next = await acquireConnectFailover(triedKeys, context.signal, callerKey);
+      if (!next) {
+        const { status, type } = connectErrorToHttp('UNAUTHORIZED');
+        log.error(`Chat[${reqId}]: DEVIN_CONNECT no more pooled accounts for failover`);
+        return { status, body: { error: { message: 'all DEVIN_CONNECT accounts exhausted (dead session tokens)', type, code: 'UNAUTHORIZED' } } };
+      }
+      log.info(`Chat[${reqId}]: DEVIN_CONNECT failover hop ${hops + 1} → next pooled account`);
+      acct = next;
     }
   }
 
