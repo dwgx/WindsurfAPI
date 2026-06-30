@@ -7,6 +7,10 @@
  *   0. Entitlement preflight (zero-billable): GetUserStatus + GetCliModelConfigs
  *      via the direct catalog probe. Prints the account tier and the selectors
  *      it can name. No chat turn, so no allowance is spent.
+ *   0c. Recovery-chain preflight (zero-billable): liveness probe agrees with
+ *      preflight; encrypted credential store roundtrips with no plaintext on
+ *      disk; auto-relogin/liveness-sweep config is reported (and the half-armed
+ *      "relogin on, no key" case is flagged).
  *   1. /v1/chat/completions non-stream on the free selector (swe-1-6-slow).
  *   2. /v1/chat/completions streaming — SSE deltas + [DONE].
  *   3. Multi-turn — prior assistant turn is honored.
@@ -29,8 +33,11 @@
  *   CONNECT_SMOKE_TIMEOUT_MS       per-request timeout (default 120000)
  */
 
-import { readFileSync } from 'fs';
-import { fetchCatalog, fetchUserStatus } from '../src/devin-connect-catalog.js';
+import { readFileSync, mkdtempSync, rmSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import { fetchCatalog, fetchUserStatus, checkSessionLiveness } from '../src/devin-connect-catalog.js';
+import { storeCredential, getCredential } from '../src/devin-connect-credentials.js';
 import { resolveConnectSelector } from '../src/devin-connect-models.js';
 
 const baseUrl = (process.env.BASE_URL || process.env.WINDSURFAPI_BASE_URL || 'http://127.0.0.1:3003').replace(/\/+$/, '');
@@ -171,6 +178,58 @@ if (liveCatalog) {
   } catch (err) {
     record('catalog-drift', false, { note: `diff failed: ${err.message}` });
   }
+}
+
+// ─── Stage 0c: recovery-chain preflight (zero-billable) ─────────────────────
+// Exercises the dead-session_id recovery wiring WITHOUT spending allowance:
+//   - checkSessionLiveness on the live token (the same GetUserStatus probe the
+//     scheduled liveness sweep uses) must agree with the preflight.
+//   - the encrypted credential store roundtrips under an ephemeral key.
+//   - the auto-relogin + liveness-probe env flags are reported so an operator
+//     can see at a glance whether hands-off recovery is actually armed.
+if (token) {
+  try {
+    const live = await checkSessionLiveness({ token });
+    record('liveness', live.alive === true, {
+      note: live.alive ? `session alive (plan=${live.plan || '?'})` : `session DEAD (${live.code})`,
+      code: live.code,
+    });
+  } catch (err) {
+    record('liveness', false, { note: `probe threw: ${err.message}` });
+  }
+}
+try {
+  // Ephemeral key in a temp store so we never touch the real accounts.creds.json.
+  const tmp = mkdtempSync(join(tmpdir(), 'connect-smoke-cred-'));
+  const prevKey = process.env.DEVIN_CONNECT_CRED_KEY;
+  const prevFile = process.env.DEVIN_CONNECT_CRED_FILE;
+  process.env.DEVIN_CONNECT_CRED_KEY = 'smoke-ephemeral-key-' + Math.random().toString(36).slice(2);
+  process.env.DEVIN_CONNECT_CRED_FILE = join(tmp, 'creds.json');
+  storeCredential('smoke@example.com', 's3cret-pw');
+  const ok = getCredential('smoke@example.com') === 's3cret-pw';
+  const onDisk = readFileSync(process.env.DEVIN_CONNECT_CRED_FILE, 'utf8');
+  const leaks = onDisk.includes('s3cret-pw');
+  record('cred-store', ok && !leaks, {
+    note: ok && !leaks ? 'roundtrip OK, plaintext absent from disk' : `roundtrip=${ok} leaked=${leaks}`,
+  });
+  rmSync(tmp, { recursive: true, force: true });
+  if (prevKey === undefined) delete process.env.DEVIN_CONNECT_CRED_KEY; else process.env.DEVIN_CONNECT_CRED_KEY = prevKey;
+  if (prevFile === undefined) delete process.env.DEVIN_CONNECT_CRED_FILE; else process.env.DEVIN_CONNECT_CRED_FILE = prevFile;
+} catch (err) {
+  record('cred-store', false, { note: `store failed: ${err.message}` });
+}
+{
+  const autoRelogin = process.env.DEVIN_CONNECT_AUTO_RELOGIN === '1';
+  const livenessSweep = process.env.DEVIN_CONNECT_LIVENESS_PROBE === '1';
+  const credKeySet = !!process.env.DEVIN_CONNECT_CRED_KEY;
+  const armed = autoRelogin && credKeySet;
+  // Informational, not a hard fail: recovery is opt-in. We only flag the
+  // half-configured case (relogin on, no key) since that silently can't work.
+  record('recovery-config', !(autoRelogin && !credKeySet), {
+    note: armed
+      ? 'hands-off recovery ARMED (auto-relogin + cred key + ' + (livenessSweep ? 'liveness sweep on)' : 'sweep OFF)')
+      : `auto-relogin=${autoRelogin} cred-key=${credKeySet} liveness-sweep=${livenessSweep}`,
+  });
 }
 
 // ─── Billable chat stages ───────────────────────────────────────────────────
