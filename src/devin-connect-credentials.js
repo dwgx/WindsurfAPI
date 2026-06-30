@@ -38,6 +38,19 @@ const SCRYPT_PARAMS = { N: 16384, r: 8, p: 1 };
 const ALGO = 'aes-256-gcm';
 const FILE_VERSION = 1;
 
+// Decrypt-failure signal. A GCM auth-tag mismatch means the master key is wrong
+// (rotated/typo'd) or the record is tampered — and because every record is
+// keyed off the SAME master key, a wrong key fails IDENTICALLY for the whole
+// fleet, silently disabling all auto-relogin. We surface that as a counter +
+// last-error so ops/observability can alarm on it instead of it hiding in a
+// per-account warn. Distinct from "credential absent", which is normal.
+let _decryptFailures = 0;
+let _lastDecryptError = null;
+export function getCredHealth() {
+  return { decryptFailures: _decryptFailures, lastDecryptError: _lastDecryptError };
+}
+export function resetCredHealth() { _decryptFailures = 0; _lastDecryptError = null; }
+
 /** Resolve the master key material from env. Empty → store disabled. */
 export function getCredKey(env = process.env) {
   return String(env.DEVIN_CONNECT_CRED_KEY || '').trim();
@@ -124,11 +137,24 @@ export function getCredential(email, env = process.env) {
   const rec = readStore(env).records[normalizeEmail(email)];
   if (!rec) return null;
 
-  const aesKey = deriveKey(masterKey, Buffer.from(rec.salt, 'hex'));
-  const decipher = createDecipheriv(ALGO, aesKey, Buffer.from(rec.iv, 'hex'));
-  decipher.setAuthTag(Buffer.from(rec.tag, 'hex'));
-  const pt = Buffer.concat([decipher.update(Buffer.from(rec.ct, 'hex')), decipher.final()]);
-  return pt.toString('utf8');
+  try {
+    const aesKey = deriveKey(masterKey, Buffer.from(rec.salt, 'hex'));
+    const decipher = createDecipheriv(ALGO, aesKey, Buffer.from(rec.iv, 'hex'));
+    decipher.setAuthTag(Buffer.from(rec.tag, 'hex'));
+    const pt = Buffer.concat([decipher.update(Buffer.from(rec.ct, 'hex')), decipher.final()]);
+    // A successful decrypt proves the key is right — clear any stale alarm.
+    if (_decryptFailures > 0) { _decryptFailures = 0; _lastDecryptError = null; }
+    return pt.toString('utf8');
+  } catch (e) {
+    // Wrong/rotated master key or tampered record — fleet-wide self-heal is now
+    // broken. Track it loudly (counter + a single error-level line) so it can be
+    // alarmed on, instead of vanishing into a per-account debug warn. Re-throw so
+    // the caller still treats this as "credential unusable", not "absent".
+    _decryptFailures += 1;
+    _lastDecryptError = e.message;
+    log.error(`DEVIN_CONNECT credential decrypt FAILED (wrong/rotated DEVIN_CONNECT_CRED_KEY or tampered store?) — auto-relogin is DISABLED until fixed. failures=${_decryptFailures}`);
+    throw e;
+  }
 }
 
 /** Remove a stored credential. Returns true if a record was deleted. */
@@ -149,3 +175,9 @@ export function listCredentialEmails(env = process.env) {
 }
 
 export const __testing = { credFilePath, deriveKey, normalizeEmail };
+
+// Surface decrypt health through the central connect-metrics endpoint without a
+// static import cycle (metrics → credentials → config → ...). Registered at
+// import time; the metrics module calls back into getCredHealth on demand.
+import { __registerCredHealth } from './devin-connect-metrics.js';
+__registerCredHealth(getCredHealth);

@@ -40,6 +40,7 @@ import { selectBackend, usesCascadeFlow } from '../backend-router.js';
 import { toChatCompletion as _toChatCompletion, streamChatCompletion as _streamChatCompletion } from '../devin-connect-openai.js';
 import { resolveConnectSelector } from '../devin-connect-models.js';
 import { isRetryable as isConnectRetryable } from '../devin-connect.js';
+import { bumpConnect } from '../devin-connect-metrics.js';
 import { sanitizeText, sanitizeToolCall, PathSanitizeStream } from '../sanitize.js';
 import { registerSseController } from '../sse-registry.js';
 import {
@@ -1572,6 +1573,7 @@ export function finalizeConnectAccount(acct, { model, startTime, err }) {
       // Reuse the rate-limit cooldown (longer: quota refills on a billing cycle,
       // but a 30-min cooldown bounds the re-probe rate without hard-disabling).
       markRateLimited(acct.apiKey, 30 * 60 * 1000, null);
+      bumpConnect('quota_exhausted');
     }
     else if (err.code === 'UNAUTHORIZED') {
       reportError(acct.apiKey);
@@ -1903,6 +1905,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
       if (rl.allLimited || tu.allUnavailable) {
         const retryAfterMs = rl.retryAfterMs || tu.retryAfterMs || 60000;
         log.info(`Chat[${reqId}]: DEVIN_CONNECT pool exhausted (all accounts rate-limited/unavailable) → 429 retry_after=${retryAfterMs}ms`);
+        bumpConnect('pool_exhausted');
         return {
           status: 429,
           headers: { 'Retry-After': String(Math.ceil(retryAfterMs / 1000)) },
@@ -1960,6 +1963,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
               // after bytes are out would duplicate content, so it's gated.
               if (isConnectRetryable(err) && a && !emitted) {
                 log.info(`Chat[${reqId}]: DEVIN_CONNECT stream transient error (${err.code || err.status}); replaying once on same token`);
+                bumpConnect('transient_replays');
                 try {
                   await streamChatCompletion(params, send, connectMeta);
                   finalizeConnectAccount(a, { model: reqModelName, startTime: ccStart, err: null });
@@ -2006,10 +2010,12 @@ async function _handleChatCompletionsInner(body, context = {}) {
             if (r.kind === 'ok') break;
             if (r.kind === 'error') { send(chatStreamError(r.err.message, 'upstream_error', r.err.code || null)); break; }
             // r.kind === 'dead' — guaranteed !emitted, so a fresh account is safe.
-            if (hops >= maxHops || emitted) { send(chatStreamError('all DEVIN_CONNECT accounts exhausted (dead session tokens)', 'upstream_error', 'UNAUTHORIZED')); break; }
+            bumpConnect('dead_tokens');
+            if (hops >= maxHops || emitted) { bumpConnect('failover_exhausted'); send(chatStreamError('all DEVIN_CONNECT accounts exhausted (dead session tokens)', 'upstream_error', 'UNAUTHORIZED')); break; }
             const next = await acquireConnectFailover(triedKeys, context.signal, callerKey);
-            if (!next) { send(chatStreamError('all DEVIN_CONNECT accounts exhausted (dead session tokens)', 'upstream_error', 'UNAUTHORIZED')); break; }
+            if (!next) { bumpConnect('failover_exhausted'); send(chatStreamError('all DEVIN_CONNECT accounts exhausted (dead session tokens)', 'upstream_error', 'UNAUTHORIZED')); break; }
             log.info(`Chat[${reqId}]: DEVIN_CONNECT failover hop ${hops + 1} → next pooled account`);
+            bumpConnect('failover_hops');
             acct = next;
           }
           if (!res.writableEnded) { res.write('data: [DONE]\n\n'); res.end(); }
@@ -2064,18 +2070,22 @@ async function _handleChatCompletionsInner(body, context = {}) {
         return { status, body: { error: { message: r.err.message, type, code: r.err.code || null } } };
       }
       // r.kind === 'dead' — the session token couldn't be revived on this account.
+      bumpConnect('dead_tokens');
       if (hops >= maxHops) {
         const { status, type } = connectErrorToHttp('UNAUTHORIZED');
         log.error(`Chat[${reqId}]: DEVIN_CONNECT failover exhausted after ${hops} hop(s)`);
+        bumpConnect('failover_exhausted');
         return { status, body: { error: { message: 'all DEVIN_CONNECT accounts exhausted (dead session tokens)', type, code: 'UNAUTHORIZED' } } };
       }
       const next = await acquireConnectFailover(triedKeys, context.signal, callerKey);
       if (!next) {
         const { status, type } = connectErrorToHttp('UNAUTHORIZED');
         log.error(`Chat[${reqId}]: DEVIN_CONNECT no more pooled accounts for failover`);
+        bumpConnect('failover_exhausted');
         return { status, body: { error: { message: 'all DEVIN_CONNECT accounts exhausted (dead session tokens)', type, code: 'UNAUTHORIZED' } } };
       }
       log.info(`Chat[${reqId}]: DEVIN_CONNECT failover hop ${hops + 1} → next pooled account`);
+      bumpConnect('failover_hops');
       acct = next;
     }
   }

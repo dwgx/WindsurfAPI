@@ -20,6 +20,7 @@ import { renameSyncWithRetry } from './fs-atomic.js';
 import { getEffectiveProxy } from './dashboard/proxy-config.js';
 import { getTierModels, getModelKeysByEnum, MODELS, registerDiscoveredFreeModel } from './models.js';
 import { getLsAdmissionStatus, getLsMaintenanceRequests } from './langserver.js';
+import { bumpConnect } from './devin-connect-metrics.js';
 
 import { join } from 'path';
 // accounts.json lives in the cluster-shared dir so add-account writes from
@@ -740,9 +741,11 @@ export async function reLoginAccount(id, { force = false } = {}) {
       account._reloginAt = Date.now();
       saveAccounts();
       log.info(`re-login OK: ${safeAccountRef(account)} → fresh session token`);
+      bumpConnect('relogin_ok');
       return result.apiKey;
     } catch (e) {
       log.warn(`re-login ${safeAccountRef(account)} failed: ${e.message}`);
+      bumpConnect('relogin_fail');
       return false;
     }
   })();
@@ -797,6 +800,7 @@ export async function probeAndRecoverConnectAccount(id, { signal } = {}) {
     log.warn(`liveness probe: ${safeAccountRef(account)} session token DEAD (${result.code})`);
     reportError(account.apiKey);
     const fresh = await reLoginAccount(id, { force: true }).catch(() => false);
+    if (fresh) bumpConnect('liveness_recovered');
     return { alive: false, recovered: Boolean(fresh), code: result.code };
   }
   return { alive: false, code: result.code };

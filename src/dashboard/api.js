@@ -19,6 +19,7 @@ import {
 import { restartLsForProxy } from '../langserver.js';
 import { getLsStatus, stopLanguageServerAndWait, startLanguageServer, isLanguageServerRunning, getLsAdmissionStatus } from '../langserver.js';
 import { getStats, resetStats, recordRequest } from './stats.js';
+import { getConnectMetrics, resetConnectMetrics } from '../devin-connect-metrics.js';
 import { cacheStats, cacheClear } from '../cache.js';
 import {
   getExperimental, setExperimental, getSystemPrompts, setSystemPrompts, resetSystemPrompt,
@@ -747,6 +748,17 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
 
   if (subpath === '/stats' && method === 'DELETE') {
     resetStats();
+    return json(res, 200, { success: true });
+  }
+
+  // DEVIN_CONNECT recovery health: re-login / failover / dead-token / cooldown
+  // counters + credential-store decrypt health, so an operator can watch the
+  // self-heal machinery instead of grepping logs (#36, #37).
+  if (subpath === '/connect-metrics' && method === 'GET') {
+    return json(res, 200, getConnectMetrics());
+  }
+  if (subpath === '/connect-metrics' && method === 'DELETE') {
+    resetConnectMetrics();
     return json(res, 200, { success: true });
   }
 

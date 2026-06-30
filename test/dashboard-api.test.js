@@ -135,6 +135,34 @@ describe('dashboard batch import proxy binding', () => {
     assert.equal(raw.includes('secret-caller'), false);
   });
 
+  it('exposes DEVIN_CONNECT recovery counters at /connect-metrics and resets on DELETE', async () => {
+    _resetRuntimeConfigForTests();
+    config.dashboardPassword = '';
+    config.apiKey = '';
+    configureBindHost('127.0.0.1');
+
+    const { bumpConnect, resetConnectMetrics } = await import('../src/devin-connect-metrics.js');
+    resetConnectMetrics();
+    bumpConnect('failover_hops', 2);
+    bumpConnect('dead_tokens');
+
+    const res = fakeRes();
+    await handleDashboardApi('GET', '/connect-metrics', {}, localReq('/connect-metrics'), res);
+    assert.equal(res.statusCode, 200);
+    const body = res.json();
+    assert.equal(body.failover_hops, 2);
+    assert.equal(body.dead_tokens, 1);
+    assert.equal(typeof body.credDecryptFailures, 'number');
+    assert.ok(body.uptimeMs >= 0);
+
+    const del = fakeRes();
+    await handleDashboardApi('DELETE', '/connect-metrics', {}, localReq('/connect-metrics'), del);
+    assert.equal(del.statusCode, 200);
+    const after = fakeRes();
+    await handleDashboardApi('GET', '/connect-metrics', {}, localReq('/connect-metrics'), after);
+    assert.equal(after.json().failover_hops, 0);
+  });
+
   it('supports paged lightweight account summaries without breaking the legacy full list', async () => {
     _resetRuntimeConfigForTests();
     config.dashboardPassword = '';
