@@ -759,6 +759,50 @@ export async function reLoginAccount(id, { force = false } = {}) {
 }
 
 /**
+ * Liveness-probe a DEVIN_CONNECT account's session token (zero-billable
+ * GetUserStatus) and recover it pre-emptively if it's dead.
+ *
+ * The point is to catch a retired session_id BEFORE a user request lands on it:
+ * a dead token marks the account 'error' and, if auto-relogin is configured,
+ * triggers a re-login so the next request lands on a fresh token.
+ *
+ * @param {string} id account id
+ * @param {object} [opts]
+ * @param {AbortSignal} [opts.signal]
+ * @returns {Promise<{alive:boolean, recovered?:boolean, code?:string}>}
+ */
+export async function probeAndRecoverConnectAccount(id, { signal } = {}) {
+  const account = accounts.find(a => a.id === id);
+  if (!account) return { alive: false, code: 'NO_ACCOUNT' };
+
+  const { checkSessionLiveness } = (_reloginDeps && _reloginDeps.checkSessionLiveness)
+    ? _reloginDeps
+    : await import('./devin-connect-catalog.js');
+  const result = await checkSessionLiveness({ token: account.apiKey, signal });
+  if (result.alive) {
+    // A previously-errored account that now probes alive is healthy again.
+    if (account.status === 'error') {
+      account.status = 'active';
+      account.errorCount = 0;
+      account._errorAt = 0;
+      saveAccounts();
+      log.info(`liveness probe: ${safeAccountRef(account)} recovered to active`);
+    }
+    return { alive: true };
+  }
+
+  // Only a genuine auth death warrants pre-emptive recovery; a transient
+  // rate-limit or 5xx is not the session_id dying.
+  if (result.code === 'UNAUTHORIZED') {
+    log.warn(`liveness probe: ${safeAccountRef(account)} session token DEAD (${result.code})`);
+    reportError(account.apiKey);
+    const fresh = await reLoginAccount(id, { force: true }).catch(() => false);
+    return { alive: false, recovered: Boolean(fresh), code: result.code };
+  }
+  return { alive: false, code: result.code };
+}
+
+/**
  * Remove an account by ID.
  */
 export function removeAccount(id) {
@@ -2280,6 +2324,24 @@ export async function initAuth() {
   setInterval(() => {
     refreshAllFirebaseTokens({ skipBusy: skipBusyMaintenance }).catch(e => log.warn(`Scheduled token refresh: ${e.message}`));
   }, TOKEN_REFRESH_INTERVAL).unref?.();
+
+  // Periodic DEVIN_CONNECT session-token liveness sweep. The session_id has no
+  // refresh path, so a zero-billable GetUserStatus probe is the only way to spot
+  // a retired token before a user request hits it. Opt-in via
+  // DEVIN_CONNECT_LIVENESS_PROBE=1 since it adds a periodic upstream call per
+  // session-token account; pairs with DEVIN_CONNECT_AUTO_RELOGIN for recovery.
+  if (String(process.env.DEVIN_CONNECT_LIVENESS_PROBE || '') === '1') {
+    const LIVENESS_INTERVAL = Number(process.env.DEVIN_CONNECT_LIVENESS_INTERVAL_MS) || 10 * 60 * 1000;
+    const sweep = async () => {
+      for (const a of accounts) {
+        if (!String(a.apiKey || '').startsWith('devin-session-token$')) continue;
+        try { await probeAndRecoverConnectAccount(a.id); }
+        catch (e) { log.warn(`Liveness sweep ${a.id} failed: ${e.message}`); }
+      }
+    };
+    setInterval(() => { sweep().catch(e => log.warn(`Liveness sweep: ${e.message}`)); }, LIVENESS_INTERVAL).unref?.();
+    log.info(`DEVIN_CONNECT liveness probe enabled (every ${Math.round(LIVENESS_INTERVAL / 60000)}m)`);
+  }
 
   // Warm up the default LS so first chat avoids spawn cost. Proxy-specific
   // LS instances are on-demand by default: current LS builds can consume

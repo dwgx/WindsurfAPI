@@ -200,3 +200,30 @@ export async function fetchUserStatus({ token, signal, env = process.env } = {})
 }
 
 export const __testing = { buildClientMetadata, strField, intField, PROVIDER_NAMES };
+
+/**
+ * Zero-billable liveness check for a DEVIN_CONNECT session token.
+ *
+ * Reuses GetUserStatus (a free seat-management RPC — no model inference, no
+ * token billing) purely to learn whether the session_id is still accepted
+ * upstream. A 200 means alive; UNAUTHORIZED (401/403) means the server retired
+ * the session_id and the account is dead until re-login.
+ *
+ * This is the early-warning probe: run it on a schedule (or before handing an
+ * account a real request) so a dead token is caught — and recovered via
+ * re-login — before a user request ever lands on it.
+ *
+ * @param {object} opts
+ * @param {string} opts.token  session token to probe (required for pooled accounts)
+ * @param {AbortSignal} [opts.signal]
+ * @returns {Promise<{alive:boolean, plan?:string, code?:string, error?:string}>}
+ *   Never throws — failures are returned as { alive:false, code, error }.
+ */
+export async function checkSessionLiveness({ token, signal, env = process.env } = {}) {
+  try {
+    const { plan } = await fetchUserStatus({ token, signal, env });
+    return { alive: true, plan };
+  } catch (e) {
+    return { alive: false, code: e.code || 'UPSTREAM_ERROR', error: e.message };
+  }
+}
