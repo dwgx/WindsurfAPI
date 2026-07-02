@@ -511,12 +511,21 @@ export function __maybeRecoverErrorAccount(account, now = Date.now()) {
 
 // ─── Dynamic model catalog from cloud ─────────────────────
 
+// Tracks whether the cloud model catalog has been successfully merged at
+// least once since startup. When false, trySyncModelCatalog() will fire
+// off a fetch whenever an account becomes active — covering the case where
+// the startup fetch was skipped because no active account existed yet.
+let _modelCatalogSynced = false;
+// Coalesces concurrent calls so multiple simultaneous status transitions
+// (e.g. bulk-add accounts) only trigger one fetch.
+let _modelCatalogSyncPromise = null;
+
 async function fetchAndMergeModelCatalog() {
   // Use the first active account to fetch the catalog.
   const acct = accounts.find(a => a.status === 'active' && a.apiKey);
   if (!acct) {
     log.debug('No active account for model catalog fetch');
-    return;
+    return false;
   }
   try {
     const { getCascadeModelConfigs } = await import('./windsurf-api.js');
@@ -524,10 +533,28 @@ async function fetchAndMergeModelCatalog() {
     const proxy = getEffectiveProxy(acct.id) || null;
     const { configs } = await getCascadeModelConfigs(acct.apiKey, proxy);
     const added = mergeCloudModels(configs);
+    _modelCatalogSynced = true;
     log.info(`Model catalog: ${configs.length} cloud models, ${added} new entries merged`);
+    return true;
   } catch (e) {
     log.warn(`Model catalog fetch failed: ${e.message}`);
+    return false;
   }
+}
+
+/**
+ * Fire-and-forget: trigger a cloud model catalog sync if one hasn't succeeded
+ * yet and at least one active account exists. Safe to call from any account
+ * status transition path — coalesces concurrent calls into a single fetch.
+ */
+export function trySyncModelCatalog() {
+  if (_modelCatalogSynced) return;
+  if (_modelCatalogSyncPromise) return;
+  const acct = accounts.find(a => a.status === 'active' && a.apiKey);
+  if (!acct) return;
+  _modelCatalogSyncPromise = fetchAndMergeModelCatalog()
+    .catch(e => log.warn(`trySyncModelCatalog: ${e.message}`))
+    .finally(() => { _modelCatalogSyncPromise = null; });
 }
 
 async function registerWithCodeium(idToken) {
@@ -575,6 +602,7 @@ export function addAccountByKey(apiKey, label = '', apiServerUrl = '') {
   accounts.push(account);
   saveAccounts();
   log.info(`Account added: ${safeAccountRef(account)} [api_key]`);
+  trySyncModelCatalog();
   return account;
 }
 
@@ -609,6 +637,7 @@ export async function addAccountByToken(token, label = '') {
   accounts.push(account);
   saveAccounts();
   log.info(`Account added: ${safeAccountRef(account)} [token] server=${account.apiServerUrl}`);
+  trySyncModelCatalog();
   return account;
 }
 
@@ -663,6 +692,7 @@ export async function addAccountByEmail(email, password) {
   }
   saveAccounts();
   log.info(`Account added via email: ${safeAccountRef(account)}`);
+  trySyncModelCatalog();
   return account;
 }
 
@@ -749,6 +779,7 @@ export function setAccountStatus(id, status) {
   if (status === 'active') account.errorCount = 0;
   saveAccounts();
   log.info(`Account ${id} status set to ${status}`);
+  if (status === 'active') trySyncModelCatalog();
   return true;
 }
 
@@ -762,6 +793,7 @@ export function resetAccountErrors(id) {
   account.status = 'active';
   saveAccounts();
   log.info(`Account ${id} errors reset`);
+  trySyncModelCatalog();
   return true;
 }
 
@@ -1676,6 +1708,7 @@ function maybeRecoverErrorAccount(account, now) {
   account.status = 'active';
   account.errorCount = 0;
   log.info(`Account ${safeAccountRef(account)} half-open recovery after ${Math.round((now - since) / 60000)}m in error state`);
+  trySyncModelCatalog();
 }
 
 /**
@@ -1762,6 +1795,7 @@ export function reportSuccess(apiKey) {
   if (account.errorCount > 0) {
     account.errorCount = 0;
     account.status = 'active';
+    trySyncModelCatalog();
   }
   account.internalErrorStreak = 0;
   // RB2/B1: a genuine success ends the error-episode chain → reset the
@@ -2858,7 +2892,8 @@ export async function initAuth() {
 
   // Fetch live model catalog from cloud and merge into hardcoded catalog.
   // Fire-and-forget — the hardcoded catalog is sufficient until this completes.
-  fetchAndMergeModelCatalog().catch(e => log.warn(`Model catalog fetch: ${e.message}`));
+  // trySyncModelCatalog also fires again when the first account becomes active.
+  trySyncModelCatalog();
 
   // Periodic Firebase token refresh (every 50 min). Firebase ID tokens expire
   // after 60 min; refreshing at 50 keeps a comfortable margin.
