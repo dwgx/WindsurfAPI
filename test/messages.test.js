@@ -604,6 +604,123 @@ describe('Anthropic messages request translation', () => {
     assert.ok(events.some(e => e.event === 'message_stop'), 'message_stop sent after [DONE]');
   });
 
+  // A1: message_start.usage must carry a non-zero local input estimate when the
+  // request has input — official SDKs read input_tokens from message_start and
+  // only accumulate output_tokens from message_delta, so an all-zero start made
+  // the SDK's final input read 0. message_delta must then only add output_tokens
+  // (input stays the authoritative upstream value) and never regress input to 0.
+  it('prefills message_start.usage.input_tokens (>0) and lets message_delta carry authoritative usage (A1)', async () => {
+    const result = await handleMessages({
+      model: 'claude-sonnet-4.6',
+      stream: true,
+      messages: [{ role: 'user', content: 'a reasonably long user prompt that should estimate to more than zero tokens' }],
+    }, {
+      async handleChatCompletions() {
+        return {
+          status: 200,
+          stream: true,
+          async handler(res) {
+            res.write(chatChunk({ choices: [{ index: 0, delta: { content: 'answer' }, finish_reason: null }] }));
+            res.write(chatChunk({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] }));
+            // Authoritative upstream usage lands with the terminal chunk.
+            res.write(chatChunk({ choices: [], usage: { prompt_tokens: 42, completion_tokens: 7, total_tokens: 49 } }));
+            res.end('data: [DONE]\n\n');
+          },
+        };
+      },
+    });
+
+    const res = fakeRes();
+    await result.handler(res);
+    const events = parseAnthropicEvents(res.body);
+
+    const start = events.find(e => e.event === 'message_start');
+    assert.ok(start, 'message_start emitted');
+    assert.ok(start.data.message.usage.input_tokens > 0, 'message_start.usage.input_tokens is a non-zero local estimate');
+    assert.equal(start.data.message.usage.output_tokens, 0, 'message_start.usage.output_tokens starts at 0');
+
+    const delta = events.find(e => e.event === 'message_delta');
+    assert.ok(delta, 'message_delta emitted');
+    // The delta carries the AUTHORITATIVE upstream numbers (prompt 42 → input 42,
+    // completion 7 → output 7), overriding the local start estimate.
+    assert.equal(delta.data.usage.input_tokens, 42, 'message_delta.usage.input_tokens is the authoritative upstream value');
+    assert.equal(delta.data.usage.output_tokens, 7, 'message_delta.usage.output_tokens is the accumulated output');
+  });
+
+  // A1 + cache: with a cache_control breakpoint and no upstream cache numbers,
+  // the local prefix estimate should already be visible in message_start (not
+  // only in the final delta), so SDKs budget cache from the very first event.
+  it('prefills message_start.usage.cache_creation from the local cache policy estimate (A1)', async () => {
+    // Prefix must clear the C2 minimum cacheable size (~1024 tokens) for the
+    // estimate to be emitted rather than floored to 0.
+    const cachedPrefix = 'system prompt cached prefix. '.repeat(160);
+    const result = await handleMessages({
+      model: 'claude-sonnet-4.6',
+      stream: true,
+      system: [{ type: 'text', text: cachedPrefix, cache_control: { type: 'ephemeral' } }],
+      messages: [{ role: 'user', content: 'hello there' }],
+    }, {
+      async handleChatCompletions() {
+        return {
+          status: 200,
+          stream: true,
+          async handler(res) {
+            res.write(chatChunk({ choices: [{ index: 0, delta: { content: 'hi' }, finish_reason: null }] }));
+            res.write(chatChunk({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] }));
+            // Upstream (free tier) reports NO usage at all.
+            res.end('data: [DONE]\n\n');
+          },
+        };
+      },
+    });
+
+    const res = fakeRes();
+    await result.handler(res);
+    const events = parseAnthropicEvents(res.body);
+
+    const start = events.find(e => e.event === 'message_start');
+    assert.ok(start.data.message.usage.cache_creation_input_tokens > 0, 'message_start prefills cache_creation from the local estimate');
+    assert.equal(
+      start.data.message.usage.cache_creation_input_tokens,
+      start.data.message.usage.cache_creation.ephemeral_5m_input_tokens,
+      'flat cache_creation equals the 5m bucket (default TTL) in message_start',
+    );
+  });
+
+  // G2: when the upstream never sends a usage object, output_tokens falls back to
+  // 0 (we can't invent one) while input_tokens still reflects the local estimate
+  // rather than regressing to 0 — the delta stays consistent with message_start.
+  it('falls back to the local input estimate (output_tokens 0) when upstream omits usage (A1/G2)', async () => {
+    const result = await handleMessages({
+      model: 'claude-sonnet-4.6',
+      stream: true,
+      messages: [{ role: 'user', content: 'some prompt text with a handful of tokens' }],
+    }, {
+      async handleChatCompletions() {
+        return {
+          status: 200,
+          stream: true,
+          async handler(res) {
+            res.write(chatChunk({ choices: [{ index: 0, delta: { content: 'reply' }, finish_reason: null }] }));
+            res.write(chatChunk({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] }));
+            res.end('data: [DONE]\n\n');
+          },
+        };
+      },
+    });
+
+    const res = fakeRes();
+    await result.handler(res);
+    const events = parseAnthropicEvents(res.body);
+
+    const start = events.find(e => e.event === 'message_start');
+    const delta = events.find(e => e.event === 'message_delta');
+    assert.ok(start.data.message.usage.input_tokens > 0, 'message_start has a non-zero local input estimate');
+    // No upstream usage → delta reuses the same local input estimate, output 0.
+    assert.equal(delta.data.usage.input_tokens, start.data.message.usage.input_tokens, 'message_delta input matches the local start estimate (no regression to 0)');
+    assert.equal(delta.data.usage.output_tokens, 0, 'output_tokens falls back to 0 when upstream omits usage (G2)');
+  });
+
   // BUG3: when a text delta interleaves between a tool's arg fragments, the
   // tool_use block is closed (content_block_stop). Any later arg fragment for
   // that tool must NOT be emitted as input_json_delta against the now-closed
@@ -899,6 +1016,321 @@ describe('Anthropic messages request translation', () => {
       '{"readVersion":"2.0.11","bashVersion":"2.0.11","versionsMatch":true}',
     );
   });
+
+  // Batch 2 — multimodal / document input (GATE A2, A3, B2)
+
+  async function captureBody(body) {
+    let captured = null;
+    await handleMessages(body, {
+      async handleChatCompletions(b) {
+        captured = b;
+        return {
+          status: 200,
+          body: {
+            model: b.model,
+            choices: [{ index: 0, message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
+            usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+          },
+        };
+      },
+    });
+    return captured;
+  }
+
+  it('A3: normalizes a base64 image block into an OpenAI image_url data URI', async () => {
+    const captured = await captureBody({
+      model: 'claude-sonnet-4.6',
+      messages: [{ role: 'user', content: [
+        { type: 'text', text: 'what is this' },
+        { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } },
+      ] }],
+    });
+    const userMsg = captured.messages.find(m => m.role === 'user');
+    assert.ok(Array.isArray(userMsg.content), 'content is a multipart array');
+    const img = userMsg.content.find(p => p.type === 'image_url');
+    assert.ok(img, 'an image_url part exists (not the raw Anthropic image block)');
+    assert.equal(img.image_url.url, 'data:image/png;base64,AAAA');
+    // The raw Anthropic {type:'image',source} shape must NOT survive.
+    assert.ok(!userMsg.content.some(p => p.type === 'image'), 'no raw Anthropic image block leaks through');
+  });
+
+  it('A3: forwards a url image source as an OpenAI image_url', async () => {
+    const captured = await captureBody({
+      model: 'claude-sonnet-4.6',
+      messages: [{ role: 'user', content: [
+        { type: 'image', source: { type: 'url', url: 'https://example.com/x.png' } },
+      ] }],
+    });
+    const userMsg = captured.messages.find(m => m.role === 'user');
+    const img = userMsg.content.find(p => p.type === 'image_url');
+    assert.ok(img, 'url image forwarded as image_url');
+    assert.equal(img.image_url.url, 'https://example.com/x.png');
+  });
+
+  it('A2: extracts inline text from a text-source document block instead of dropping it', async () => {
+    const captured = await captureBody({
+      model: 'claude-sonnet-4.6',
+      messages: [{ role: 'user', content: [
+        { type: 'text', text: 'summarize' },
+        { type: 'document', source: { type: 'text', media_type: 'text/plain', data: 'DOCUMENT_BODY_TEXT' } },
+      ] }],
+    });
+    const userMsg = captured.messages.find(m => m.role === 'user');
+    const text = typeof userMsg.content === 'string'
+      ? userMsg.content
+      : userMsg.content.map(p => p.text || '').join('\n');
+    assert.match(text, /DOCUMENT_BODY_TEXT/, 'document text is not silently dropped');
+  });
+
+  it('A2: emits a text placeholder (not silence) for a base64 PDF document block', async () => {
+    const captured = await captureBody({
+      model: 'claude-sonnet-4.6',
+      messages: [{ role: 'user', content: [
+        { type: 'document', title: 'report', source: { type: 'base64', media_type: 'application/pdf', data: 'JVBERi0x' } },
+      ] }],
+    });
+    const userMsg = captured.messages.find(m => m.role === 'user');
+    const text = typeof userMsg.content === 'string'
+      ? userMsg.content
+      : (userMsg.content || []).map(p => p.text || '').join('\n');
+    assert.match(text, /document: report/, 'undecoded PDF becomes a labeled placeholder, not empty');
+  });
+
+  it('B2: keeps an image sub-block in tool_result content as a placeholder, not empty', async () => {
+    const captured = await captureBody({
+      model: 'claude-sonnet-4.6',
+      messages: [
+        { role: 'assistant', content: [
+          { type: 'tool_use', id: 'toolu_1', name: 'Screenshot', input: {} },
+        ] },
+        { role: 'user', content: [
+          { type: 'tool_result', tool_use_id: 'toolu_1', content: [
+            { type: 'text', text: 'here is the screen' },
+            { type: 'image', source: { type: 'base64', media_type: 'image/png', data: 'AAAA' } },
+          ] },
+        ] },
+      ],
+    });
+    const toolMsg = captured.messages.find(m => m.role === 'tool');
+    assert.match(toolMsg.content, /here is the screen/, 'text sub-block preserved');
+    assert.match(toolMsg.content, /\[image: image\/png\]/, 'image sub-block is not flattened to empty');
+  });
+
+  it('F1: passes top_k through to the converted chat body', async () => {
+    const captured = await captureBody({
+      model: 'claude-sonnet-4.6',
+      top_k: 40,
+      messages: [{ role: 'user', content: 'hi' }],
+    });
+    assert.equal(captured.top_k, 40, 'top_k reaches the chat handler (chat.js reads it off the converted body)');
+  });
+
+  it('F1: omits top_k when the request does not set it', async () => {
+    const captured = await captureBody({
+      model: 'claude-sonnet-4.6',
+      messages: [{ role: 'user', content: 'hi' }],
+    });
+    assert.equal('top_k' in captured, false, 'no top_k key when the caller sent none');
+  });
+
+  it('F2: maps tool_choice.disable_parallel_tool_use to parallel_tool_calls:false', async () => {
+    const captured = await captureBody({
+      model: 'claude-sonnet-4.6',
+      tools: [{ name: 'Read', description: 'read files', input_schema: { type: 'object' } }],
+      tool_choice: { type: 'auto', disable_parallel_tool_use: true },
+      messages: [{ role: 'user', content: 'hi' }],
+    });
+    assert.equal(captured.parallel_tool_calls, false, 'disable_parallel_tool_use maps to parallel_tool_calls:false');
+  });
+
+  it('F2: omits parallel_tool_calls when disable_parallel_tool_use is absent', async () => {
+    const captured = await captureBody({
+      model: 'claude-sonnet-4.6',
+      tools: [{ name: 'Read', description: 'read files', input_schema: { type: 'object' } }],
+      tool_choice: { type: 'auto' },
+      messages: [{ role: 'user', content: 'hi' }],
+    });
+    assert.equal('parallel_tool_calls' in captured, false, 'no parallel_tool_calls key by default');
+  });
+});
+
+describe('Anthropic response robustness (B3/B4/B5/F3)', () => {
+  async function respond(upstreamBody, requestBody = {}) {
+    return handleMessages({
+      model: 'claude-sonnet-4.6',
+      messages: [{ role: 'user', content: 'hi' }],
+      ...requestBody,
+    }, {
+      async handleChatCompletions() {
+        return { status: 200, body: upstreamBody };
+      },
+    });
+  }
+
+  it('B3: falls back to a generated toolu_ id when the upstream tool_call omits one', async () => {
+    const result = await respond({
+      model: 'claude-sonnet-4.6',
+      choices: [{
+        index: 0,
+        message: { role: 'assistant', tool_calls: [{ type: 'function', function: { name: 'Read', arguments: '{"x":1}' } }] },
+        finish_reason: 'tool_calls',
+      }],
+      usage: { prompt_tokens: 1, completion_tokens: 1 },
+    });
+    assert.equal(result.status, 200);
+    const toolUse = result.body.content.find(c => c.type === 'tool_use');
+    assert.ok(toolUse.id && toolUse.id.startsWith('toolu_'), `tool_use id should be a generated toolu_ id, got ${toolUse.id}`);
+  });
+
+  it('B4: keeps raw arguments and does not crash when tool_use JSON fails to parse', async () => {
+    const result = await respond({
+      model: 'claude-sonnet-4.6',
+      choices: [{
+        index: 0,
+        message: { role: 'assistant', tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'Read', arguments: '{"x":' } }] },
+        finish_reason: 'tool_calls',
+      }],
+      usage: { prompt_tokens: 1, completion_tokens: 1 },
+    });
+    assert.equal(result.status, 200);
+    const toolUse = result.body.content.find(c => c.type === 'tool_use');
+    assert.equal(toolUse.input.__raw_arguments, '{"x":', 'malformed args preserved under __raw_arguments instead of silently becoming {}');
+  });
+
+  it('B5: maps content_filter finish_reason to refusal', async () => {
+    const result = await respond({
+      model: 'claude-sonnet-4.6',
+      choices: [{ index: 0, message: { role: 'assistant', content: 'no' }, finish_reason: 'content_filter' }],
+      usage: { prompt_tokens: 1, completion_tokens: 1 },
+    });
+    assert.equal(result.body.stop_reason, 'refusal', 'content_filter maps to refusal, not end_turn');
+  });
+
+  it('B5: back-fills stop_reason=stop_sequence and the matched stop_sequence (non-stream)', async () => {
+    const result = await respond({
+      model: 'claude-sonnet-4.6',
+      choices: [{ index: 0, message: { role: 'assistant', content: 'hello END' }, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 1, completion_tokens: 1 },
+    }, { stop_sequences: ['END'] });
+    assert.equal(result.body.stop_reason, 'stop_sequence', 'text ending with a stop sequence yields stop_sequence');
+    assert.equal(result.body.stop_sequence, 'END', 'the matched sequence is echoed');
+  });
+
+  it('B5: leaves stop_reason=end_turn and stop_sequence=null on a plain finish', async () => {
+    const result = await respond({
+      model: 'claude-sonnet-4.6',
+      choices: [{ index: 0, message: { role: 'assistant', content: 'hello there' }, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 1, completion_tokens: 1 },
+    }, { stop_sequences: ['END'] });
+    assert.equal(result.body.stop_reason, 'end_turn');
+    assert.equal(result.body.stop_sequence, null);
+  });
+
+  it('F3: non-stream response carries container:null and shaped usage fields', async () => {
+    const result = await respond({
+      model: 'claude-sonnet-4.6',
+      choices: [{ index: 0, message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }],
+      usage: { prompt_tokens: 5, completion_tokens: 2 },
+    });
+    assert.equal(result.body.container, null, 'top-level container:null present');
+    assert.deepEqual(result.body.usage.server_tool_use, { web_search_requests: 0 }, 'server_tool_use shape present');
+    assert.equal(result.body.usage.service_tier, 'standard', 'service_tier default present');
+  });
+
+  it('B5 (stream): back-fills stop_sequence in the final message_delta', async () => {
+    const result = await handleMessages({
+      model: 'claude-sonnet-4.6',
+      stream: true,
+      stop_sequences: ['STOP'],
+      messages: [{ role: 'user', content: 'hi' }],
+    }, {
+      async handleChatCompletions() {
+        return {
+          status: 200,
+          stream: true,
+          async handler(res) {
+            res.write(chatChunk({ choices: [{ index: 0, delta: { content: 'answer then STOP' }, finish_reason: null }] }));
+            res.write(chatChunk({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] }));
+            res.end('data: [DONE]\n\n');
+          },
+        };
+      },
+    });
+    const res = fakeRes();
+    await result.handler(res);
+    const events = parseAnthropicEvents(res.body);
+    const delta = events.find(e => e.event === 'message_delta');
+    assert.equal(delta.data.delta.stop_reason, 'stop_sequence', 'streamed stop-sequence hit maps to stop_sequence');
+    assert.equal(delta.data.delta.stop_sequence, 'STOP', 'matched sequence echoed in the stream');
+  });
+
+  it('B5 (stream): content_filter finish_reason maps to refusal in message_delta', async () => {
+    const result = await handleMessages({
+      model: 'claude-sonnet-4.6',
+      stream: true,
+      messages: [{ role: 'user', content: 'hi' }],
+    }, {
+      async handleChatCompletions() {
+        return {
+          status: 200,
+          stream: true,
+          async handler(res) {
+            res.write(chatChunk({ choices: [{ index: 0, delta: { content: 'no' }, finish_reason: null }] }));
+            res.write(chatChunk({ choices: [{ index: 0, delta: {}, finish_reason: 'content_filter' }] }));
+            res.end('data: [DONE]\n\n');
+          },
+        };
+      },
+    });
+    const res = fakeRes();
+    await result.handler(res);
+    const events = parseAnthropicEvents(res.body);
+    const delta = events.find(e => e.event === 'message_delta');
+    assert.equal(delta.data.delta.stop_reason, 'refusal');
+    assert.equal(delta.data.delta.stop_sequence, null);
+  });
+
+  it('B1: completes cleanly (no crash, still stops) when late tool-arg fragments arrive after the block closed', async () => {
+    // A tool block opens + gets a first fragment, a text delta interleaves and
+    // permanently closes it, then a late fragment for the SAME tool arrives. The
+    // late fragment can no longer be emitted (its block is closed) — the stream
+    // must still finish with a proper message_delta/message_stop, not throw.
+    const result = await handleMessages({
+      model: 'claude-sonnet-4.6',
+      stream: true,
+      tools: [{ name: 'Read', description: 'read files', input_schema: { type: 'object' } }],
+      messages: [{ role: 'user', content: 'read it' }],
+    }, {
+      async handleChatCompletions() {
+        return {
+          status: 200,
+          stream: true,
+          async handler(res) {
+            res.write(chatChunk({ choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'call_1', function: { name: 'Read', arguments: '{"path"' } }] }, finish_reason: null }] }));
+            res.write(chatChunk({ choices: [{ index: 0, delta: { content: 'interleave' }, finish_reason: null }] }));
+            res.write(chatChunk({ choices: [{ index: 0, delta: { tool_calls: [{ index: 0, function: { arguments: ':"x"}' } }] }, finish_reason: null }] }));
+            res.write(chatChunk({ choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] }));
+            res.end('data: [DONE]\n\n');
+          },
+        };
+      },
+    });
+    const res = fakeRes();
+    await result.handler(res);
+    const events = parseAnthropicEvents(res.body);
+    const delta = events.find(e => e.event === 'message_delta');
+    assert.ok(delta, 'stream still emits a final message_delta despite the dropped fragment');
+    assert.equal(delta.data.delta.stop_reason, 'tool_use');
+    assert.ok(events.some(e => e.event === 'message_stop'), 'stream ends with message_stop');
+    // The late fragment for the closed block must never target a closed index.
+    const closed = new Set();
+    for (const e of events) {
+      if (e.event === 'content_block_stop') closed.add(e.data.index);
+      if (e.event === 'content_block_delta' && e.data.delta?.type === 'input_json_delta') {
+        assert.ok(!closed.has(e.data.index), `input_json_delta sent to closed block ${e.data.index}`);
+      }
+    }
+  });
 });
 
 describe('Anthropic error mapping (valid error enum + correct retry status)', () => {
@@ -920,15 +1352,48 @@ describe('Anthropic error mapping (valid error enum + correct retry status)', ()
     assert.equal(toAnthropicError(400, 'some_validation').body.error.type, 'invalid_request_error');
     assert.equal(toAnthropicError(401, 'upstream_error').body.error.type, 'authentication_error');
     assert.equal(toAnthropicError(404, undefined).body.error.type, 'not_found_error');
-    assert.equal(toAnthropicError(413, undefined).body.error.type, 'request_too_large');
+    // D1: 413 body-too-large → request_too_large (dedicated official type).
+    const e413 = toAnthropicError(413, undefined);
+    assert.equal(e413.status, 413);
+    assert.equal(e413.body.error.type, 'request_too_large');
     assert.equal(toAnthropicError(429, 'upstream_error').body.error.type, 'rate_limit_error');
     // 502/503 upstream-unavailable → overloaded_error (retryable), not a leaked type.
     const u502 = toAnthropicError(502, 'upstream_error');
     assert.equal(u502.status, 529);
     assert.equal(u502.body.error.type, 'overloaded_error');
+    // D6: bare 402 (non-official status) → 429 rate_limit_error, not leaked.
+    const e402 = toAnthropicError(402, undefined);
+    assert.equal(e402.status, 429);
+    assert.equal(e402.body.error.type, 'rate_limit_error');
+    // D3: bare 504 (non-official status) → 529 overloaded_error, retryable.
+    const e504 = toAnthropicError(504, undefined);
+    assert.equal(e504.status, 529);
+    assert.equal(e504.body.error.type, 'overloaded_error');
     // Unknown 5xx → api_error; unknown 4xx → invalid_request_error.
     assert.equal(toAnthropicError(500, 'weird').body.error.type, 'api_error');
     assert.equal(toAnthropicError(418, 'weird').body.error.type, 'invalid_request_error');
+  });
+
+  it('D3: internal timeout_error (504) remaps to a retryable 529 overloaded_error', () => {
+    // chat.js connectErrorToHttp('TIMEOUT') → { status: 504, type: 'timeout_error' }.
+    // 504 is not in the Anthropic status set; it must join the transient bucket.
+    const t = toAnthropicError(504, 'timeout_error', 'upstream timed out');
+    assert.equal(t.status, 529);
+    assert.equal(t.body.error.type, 'overloaded_error');
+    assert.equal(t.body.type, 'error');
+  });
+
+  it('D5: generalizes leaky internal detail but keeps clean upstream messages', () => {
+    // A message carrying DEVIN_CONNECT / session-token internals must NOT reach
+    // the client verbatim — it collapses to the generic per-type message.
+    const leaky = toAnthropicError(401, 'upstream_error', 'all DEVIN_CONNECT accounts exhausted (dead session tokens)');
+    assert.equal(leaky.body.error.type, 'authentication_error');
+    assert.doesNotMatch(leaky.body.error.message, /DEVIN_CONNECT/i);
+    assert.doesNotMatch(leaky.body.error.message, /session token/i);
+    // A clean upstream message (no internal markers) passes through unchanged —
+    // e.g. Anthropic's own capacity text.
+    const clean = toAnthropicError(503, 'capacity_error', "We're currently facing high demand for this model. Please try again later.");
+    assert.match(clean.body.error.message, /high demand/);
   });
 
   it('never leaks a proxy-specific error type to an Anthropic client (non-stream)', async () => {
@@ -944,6 +1409,22 @@ describe('Anthropic error mapping (valid error enum + correct retry status)', ()
     assert.equal(result.body.type, 'error');
     assert.equal(result.body.error.type, 'overloaded_error');
     assert.match(result.body.error.message, /high demand/);
+  });
+
+  it('D5: never leaks internal failover detail through handleMessages (non-stream)', async () => {
+    const result = await handleMessages({
+      model: 'claude-sonnet-4.6',
+      messages: [{ role: 'user', content: 'hi' }],
+    }, {
+      async handleChatCompletions() {
+        // chat.js failover-exhausted body — carries provider/session internals.
+        return { status: 401, body: { error: { type: 'authentication_error', message: 'all DEVIN_CONNECT accounts exhausted (dead session tokens)', code: 'UNAUTHORIZED' } } };
+      },
+    });
+    assert.equal(result.status, 401);
+    assert.equal(result.body.error.type, 'authentication_error');
+    assert.doesNotMatch(result.body.error.message, /DEVIN_CONNECT/i, 'internal provider name is not exposed');
+    assert.doesNotMatch(result.body.error.message, /session token/i, 'session internals are not exposed');
   });
 
   it('maps a pre-stream error (handler returned non-stream) to the Anthropic enum', async () => {
@@ -1029,6 +1510,30 @@ describe('Anthropic count_tokens', () => {
     // Image contributes ~1500 tokens (≈6000 chars / 4), NOT 100000/4 = 25000.
     assert.ok(withImage.body.input_tokens < 3000, 'image base64 length is not counted verbatim');
     assert.ok(withImage.body.input_tokens > 1000, 'image still contributes a meaningful estimate');
+  });
+
+  // A2: count_tokens must match the request-conversion 口径 for documents — a
+  // text-source document is inlined as text there, so it is counted as its real
+  // text tokens here (not a flat 1500 attachment estimate).
+  it('counts a text-source document by its text, not a flat attachment estimate', () => {
+    const docText = 'a'.repeat(400); // ~100 tokens by chars/4
+    const r = handleCountTokens({
+      messages: [{ role: 'user', content: [
+        { type: 'document', source: { type: 'text', media_type: 'text/plain', data: docText } },
+      ] }],
+    });
+    assert.equal(r.status, 200);
+    assert.ok(r.body.input_tokens >= 90 && r.body.input_tokens <= 130, `text document ~chars/4 (~100), got ${r.body.input_tokens}`);
+  });
+
+  it('still uses the flat attachment estimate for a base64/PDF document', () => {
+    const r = handleCountTokens({
+      messages: [{ role: 'user', content: [
+        { type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: 'A'.repeat(100000) } },
+      ] }],
+    });
+    assert.equal(r.status, 200);
+    assert.ok(r.body.input_tokens > 1000 && r.body.input_tokens < 3000, `binary document is a flat estimate, got ${r.body.input_tokens}`);
   });
 
   // BUG2: CJK text was under-counted ~4× by the old flat chars/4 heuristic.

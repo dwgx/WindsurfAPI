@@ -39,9 +39,10 @@ describe('server body parsing', () => {
     assert.deepEqual(bodyTooLargePayload('openai'), {
       error: { message: 'Request body too large', type: 'invalid_request' },
     });
+    // D1: 413 uses the dedicated request_too_large type (not invalid_request_error).
     assert.deepEqual(bodyTooLargePayload('anthropic'), {
       type: 'error',
-      error: { type: 'invalid_request_error', message: 'Request body too large' },
+      error: { type: 'request_too_large', message: 'Request body too large' },
     });
     assert.deepEqual(bodyTooLargePayload('dashboard'), {
       ok: false,
