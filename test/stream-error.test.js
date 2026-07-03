@@ -100,7 +100,7 @@ describe('stream error protocol', () => {
     assert.equal(events[0].data.error.message, 'boom');
   });
 
-  it('preserves upstream_transient_error in Anthropic stream errors', async () => {
+  it('maps upstream_transient_error to overloaded_error in Anthropic stream errors', async () => {
     const result = await handleMessages({ model: 'claude-sonnet-4.6', stream: true, messages: [{ role: 'user', content: 'hi' }] }, {
       async handleChatCompletions() {
         return {
@@ -116,7 +116,10 @@ describe('stream error protocol', () => {
     await result.handler(res);
     const events = parseEvents(res.body);
     assert.equal(events[0].event, 'error');
-    assert.equal(events[0].data.error.type, 'upstream_transient_error');
+    // A transient upstream error is the proxy's back-off-and-retry signal; for an
+    // Anthropic client that's overloaded_error (529-class), NOT a leaked
+    // proxy-specific type the SDK can't interpret.
+    assert.equal(events[0].data.error.type, 'overloaded_error');
   });
 
   it('closes partial OpenAI streams without appending an error JSON frame', () => {
