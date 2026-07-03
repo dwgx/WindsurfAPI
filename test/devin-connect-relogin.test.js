@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   addAccountByKey, removeAccount, reLoginAccount,
-  __setReloginDeps, __resetReloginState,
+  __setReloginDeps, __resetReloginState, __reloginGateState,
 } from '../src/auth.js';
 
 const EMAIL = 'relogin-test@example.com';
@@ -182,5 +182,62 @@ describe('reLoginAccount — throttle + de-dupe', () => {
     assert.equal(a, 'devin-session-token$CONC');
     assert.equal(b, 'devin-session-token$CONC');
     assert.equal(c, 'devin-session-token$CONC');
+  });
+});
+
+describe('reLoginAccount — global concurrency gate (C4)', () => {
+  // A mass token-death event: many DIFFERENT accounts re-login at once. The
+  // per-account coalescing doesn't help across accounts, so without a global
+  // cap all of them would hammer the upstream login in parallel.
+  it('caps simultaneous logins fleet-wide and queues the rest', async () => {
+    setEnv(true);
+    process.env.DEVIN_CONNECT_RELOGIN_MAX_CONCURRENT = '2';
+    __resetReloginState(); // pick up the new cap
+
+    const ids = [];
+    for (let i = 0; i < 5; i++) {
+      const a = addAccountByKey(`devin-session-token$DEAD${i}`, `gate-${i}@example.com`);
+      a.email = `gate-${i}@example.com`;
+      a.method = 'email';
+      ids.push(a.id);
+    }
+
+    let active = 0;
+    let peak = 0;
+    const release = [];
+    __setReloginDeps({
+      isCredStoreEnabled: () => true,
+      getCredential: () => 'pw',
+      windsurfLogin: async () => {
+        active++;
+        peak = Math.max(peak, active);
+        // Block until the test lets this login finish, so all 5 pile up against
+        // the gate simultaneously and we can observe the cap.
+        await new Promise(r => release.push(r));
+        active--;
+        return { apiKey: 'devin-session-token$NEW' };
+      },
+    });
+
+    const all = Promise.all(ids.map(id => reLoginAccount(id)));
+    // Let the gate admit its first batch.
+    await new Promise(r => setTimeout(r, 20));
+    assert.equal(active, 2, 'only MAX_CONCURRENT logins run at once');
+    const gate = __reloginGateState();
+    assert.equal(gate.active, 2);
+    assert.equal(gate.waiting, 3, 'the other 3 are queued, not stampeding');
+
+    // Drain: release logins one at a time; the queue should feed through.
+    while (release.length) {
+      release.shift()();
+      await new Promise(r => setTimeout(r, 10));
+    }
+    const results = await all;
+    assert.equal(results.filter(r => r === 'devin-session-token$NEW').length, 5, 'all 5 eventually re-login');
+    assert.ok(peak <= 2, `peak concurrency ${peak} must not exceed the cap`);
+
+    for (const id of ids) removeAccount(id);
+    delete process.env.DEVIN_CONNECT_RELOGIN_MAX_CONCURRENT;
+    __resetReloginState();
   });
 });

@@ -42,6 +42,14 @@ describe('connect-metrics counters (#36)', () => {
     assert.equal(m.totally_made_up, undefined);
   });
 
+  it('tracks capacity_throttled (high-demand soft cooldown, P0 #56/#57)', () => {
+    resetConnectMetrics();
+    assert.equal(getConnectMetrics().capacity_throttled, 0);
+    bumpConnect('capacity_throttled');
+    bumpConnect('capacity_throttled');
+    assert.equal(getConnectMetrics().capacity_throttled, 2);
+  });
+
   it('folds credential decrypt health into the snapshot', () => {
     resetConnectMetrics();
     resetCredHealth();

@@ -14,7 +14,7 @@ import {
   setAccountBlockedModels, setAccountTokens, setAccountTier,
   getAccountInternal, isLocalBindHost, maskApiKey, safeEqualString,
   checkLockout, failedAuthAttempt, successfulAuthAttempt,
-  getDroughtSummary,
+  getDroughtSummary, getPoolHealthWindow,
 } from '../auth.js';
 import { restartLsForProxy } from '../langserver.js';
 import { getLsStatus, stopLanguageServerAndWait, startLanguageServer, isLanguageServerRunning, getLsAdmissionStatus } from '../langserver.js';
@@ -755,7 +755,10 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
   // counters + credential-store decrypt health, so an operator can watch the
   // self-heal machinery instead of grepping logs (#36, #37).
   if (subpath === '/connect-metrics' && method === 'GET') {
-    return json(res, 200, getConnectMetrics());
+    // C5: fold in the persisted per-account rolling-hour health window so an
+    // operator sees not just fleet-wide counters but which accounts are
+    // currently throwing throttles/errors/dead-tokens over the last hour.
+    return json(res, 200, { ...getConnectMetrics(), poolHealth: getPoolHealthWindow() });
   }
   if (subpath === '/connect-metrics' && method === 'DELETE') {
     resetConnectMetrics();

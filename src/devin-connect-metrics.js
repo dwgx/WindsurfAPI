@@ -29,8 +29,22 @@ const _counters = {
   transient_replays: 0,
   // accounts cooled down for running out of credit/quota
   quota_exhausted: 0,
+  // requests where the MODEL was temporarily at capacity ("high demand"); a
+  // transient soft cooldown, not an account fault (P0 #56/#57)
+  capacity_throttled: 0,
+  // upstream returned a transient backend fault ("an internal error occurred
+  // (trace ID/error ID: ...)"), often in a 401/403 shell, on a provably-alive
+  // token; classified UPSTREAM_INTERNAL → streak-quarantine, NOT a re-login or
+  // entitlement wall (#56/#57 shape, internal-error class)
+  upstream_internal: 0,
   // liveness probe pre-emptively recovered a dying token
   liveness_recovered: 0,
+  // router-model (adaptive/arena-*) AssignModel resolution failed → fell back
+  assign_model_failed: 0,
+  // credential store was read back through a resilience tier (JSON repair or
+  // per-record regex salvage) instead of a clean parse — a single corrupt byte
+  // would otherwise wipe the whole fleet's stored relogin credentials (C6)
+  cred_store_repaired: 0,
 };
 let _startedAt = Date.now();
 
