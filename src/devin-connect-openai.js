@@ -65,15 +65,20 @@ export async function toChatCompletion(params, { id = newId(), created = nowSeco
   let reasoning = '';
   let finishReason = 'stop';
   let usage = null;
+  // Native tool calls (DEVIN_CONNECT_TOOL_CALL_TAGS calibrated) ride the terminal
+  // finish event as ev.toolCalls (devin-connect.js:927). Null/empty on free tier
+  // and un-calibrated deployments, where prompt emulation owns tool calls.
+  let nativeToolCalls = [];
   for (let attempt = 0; ; attempt++) {
     try {
-      content = ''; reasoning = ''; finishReason = 'stop'; usage = null;
+      content = ''; reasoning = ''; finishReason = 'stop'; usage = null; nativeToolCalls = [];
       for await (const ev of streamChatImpl(params)) {
         if (ev.type === 'content') content += ev.text;
         else if (ev.type === 'reasoning') reasoning += ev.text;
         else if (ev.type === 'finish') {
           if (ev.reason) finishReason = ev.reason;
           if (ev.usage) usage = ev.usage;
+          if (ev.toolCalls && ev.toolCalls.length) nativeToolCalls = ev.toolCalls;
         }
       }
       break;
@@ -85,13 +90,24 @@ export async function toChatCompletion(params, { id = newId(), created = nowSeco
     }
   }
 
-  // Tool emulation: the connect models have no native function-calling slot, so
+  // Tool calls come from one of two sources, never both. Native decode wins:
+  // when DEVIN_CONNECT_TOOL_CALL_TAGS is calibrated, streamChat surfaces real
+  // ChatToolCall structs ({id, name, arguments}) on the finish event, so the
+  // text never carries <tool_call> markup to parse. Otherwise (free tier /
+  // un-calibrated) the connect models have no native function-calling slot, so
   // tool defs were injected into the prompt (normalizeMessagesForCascade) and
-  // the model answers with <tool_call>…</tool_call> markup. Pull those back out
-  // into OpenAI tool_calls, mirroring the Cascade non-stream path
-  // (handlers/chat.js buildToolCalls).
+  // the model answers with <tool_call>…</tool_call> markup we pull back out,
+  // mirroring the Cascade non-stream path (handlers/chat.js buildToolCalls).
   let toolCalls = [];
-  if (emulateTools) {
+  if (nativeToolCalls.length) {
+    // arguments is the raw JSON string off the wire (decodeToolCalls); map it to
+    // the same shape parseToolCallsFromText produces so the message builder below
+    // is source-agnostic.
+    toolCalls = nativeToolCalls.map((tc) => ({
+      id: tc.id, name: tc.name, argumentsJson: tc.arguments,
+    }));
+    finishReason = 'tool_calls';
+  } else if (emulateTools) {
     const parsed = parseToolCallsFromText(content, {
       modelKey: params.model, provider: null, route: 'devin_connect',
     });
@@ -156,6 +172,9 @@ export async function streamChatCompletion(params, send, { id = newId(), created
   let reasoning = '';
   let finishReason = 'stop';
   let usage = null;
+  // Native tool calls (DEVIN_CONNECT_TOOL_CALL_TAGS calibrated) ride the terminal
+  // finish event, not the content stream — captured here, emitted after the loop.
+  let nativeToolCalls = [];
 
   // Tool emulation: run content deltas through the same streaming parser the
   // Cascade path uses. It strips <tool_call> markup from the text deltas and
@@ -197,6 +216,7 @@ export async function streamChatCompletion(params, send, { id = newId(), created
     } else if (ev.type === 'finish') {
       if (ev.reason) finishReason = ev.reason;
       if (ev.usage) usage = ev.usage;
+      if (ev.toolCalls && ev.toolCalls.length) nativeToolCalls = ev.toolCalls;
     }
   }
 
@@ -206,6 +226,18 @@ export async function streamChatCompletion(params, send, { id = newId(), created
     if (text) send({ ...base, choices: [{ index: 0, delta: { content: text }, finish_reason: null }] });
     emitToolCalls(toolCalls);
     if (collectedToolCalls.length) finishReason = 'tool_calls';
+  }
+
+  // Native tool calls win over text emulation (the two are mutually exclusive:
+  // when native decode is calibrated the text carries no <tool_call> markup).
+  // Only emit native if emulation produced nothing, so a call is never counted
+  // twice. Native arrives whole on the finish event, so it's emitted here rather
+  // than inline — same wire shape as the emulated deltas above.
+  if (nativeToolCalls.length && !collectedToolCalls.length) {
+    emitToolCalls(nativeToolCalls.map((tc) => ({
+      id: tc.id, name: tc.name, argumentsJson: tc.arguments,
+    })));
+    finishReason = 'tool_calls';
   }
 
   // 4. Terminal finish chunk.

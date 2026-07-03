@@ -35,6 +35,36 @@ const WINDSURF_BACKEND_SEAT_BASE = 'https://windsurf.com/_backend/exa.seat_manag
 const WINDSURF_POST_AUTH_URL_NEW = `${WINDSURF_BACKEND_SEAT_BASE}/WindsurfPostAuth`;
 const WINDSURF_ONE_TIME_TOKEN_URL_NEW = `${WINDSURF_BACKEND_SEAT_BASE}/GetOneTimeAuthToken`;
 
+// ─── Second-host fallback: app.devin.ai (opt-in, OFF by default) ──────────
+// The OAuth feasibility study (.workflow-results/oauth-relogin-study/
+// FEASIBILITY-BLUEPRINT.md §6 + tool-github-oauth-totp.md §1.1) found the
+// leaked Windsurf account-switcher drives app.devin.ai/api/auth1/{connections,
+// password/login} as the SAME Auth1 mechanism we hit on windsurf.com/_devin-auth,
+// differing only by host. windsurf.com runs on Vercel functions that 504/503
+// intermittently and has migrated endpoints under us before; pointing a fallback
+// at a second host (app.devin.ai) spreads that single-host availability risk
+// without touching GitHub OAuth / TOTP / form-scraping.
+//
+// Gated behind DEVIN_CONNECT_LOGIN_HOST_FALLBACK=1. When the env var is unset
+// (default), windsurfLogin behaves EXACTLY as before — only the windsurf.com
+// primary path runs and this code is never reached.
+const DEVIN_HOST_BASE = 'https://app.devin.ai';
+const DEVIN_AUTH1_CONNECTIONS_URL = `${DEVIN_HOST_BASE}/api/auth1/connections`;
+const DEVIN_AUTH1_PASSWORD_LOGIN_URL = `${DEVIN_HOST_BASE}/api/auth1/password/login`;
+
+function isLoginHostFallbackEnabled() {
+  return String(process.env.DEVIN_CONNECT_LOGIN_HOST_FALLBACK || '') === '1';
+}
+
+// Test-only transport seam: when set, every httpsRequest in this module is
+// routed through the injected fn (same (url, opts, postData, proxy) signature,
+// must resolve { status, data } — data is a Buffer when opts.raw is set). Lets
+// the host-fallback tests drive the full login flow deterministically with zero
+// real network. Mirrors the __set*ForTests convention used elsewhere (auth.js
+// __setReloginDeps, _resetEmailLockoutForTests below).
+let _transportOverride = null;
+export function __setLoginTransportForTests(fn) { _transportOverride = fn; }
+
 function parsePostAuthResponseData(payload) {
   const raw = Buffer.isBuffer(payload) ? payload.toString('utf8') : String(payload || '');
   try {
@@ -238,6 +268,7 @@ function createProxyTunnel(proxy, targetHost, targetPort) {
 // ─── HTTPS request with optional proxy ────────────────────
 
 function httpsRequest(url, opts, postData, proxy) {
+  if (_transportOverride) return _transportOverride(url, opts, postData, proxy);
   return new Promise(async (resolve, reject) => {
     const parsed = new URL(url);
     const requestOpts = {
@@ -524,6 +555,85 @@ async function windsurfLoginViaAuth1(email, password, fingerprint, proxy) {
   };
 }
 
+// ─── Second-host fallback chain: app.devin.ai ─────────────────────────────
+//
+// A COMPLETE, INDEPENDENT login attempt against app.devin.ai instead of
+// windsurf.com. Only reached when DEVIN_CONNECT_LOGIN_HOST_FALLBACK=1 AND the
+// windsurf.com primary path already failed. Same email+password, no GitHub,
+// no TOTP, no form-scraping.
+//
+// Chain: app.devin.ai/api/auth1/connections (probe) →
+//        app.devin.ai/api/auth1/password/login ({email,password}) → {token} →
+//        postAuthDualPath(token) [REUSED from the primary path] → sessionToken.
+//
+// TODO(unverified): the final hop — feeding an Auth1 token minted on
+// app.devin.ai into OUR WindsurfPostAuth (windsurf.com/_backend or
+// server.self-serve.windsurf.com) and getting a usable `devin-session-token$`
+// back — has NOT been exercised against a live account. The study
+// (.workflow-results/oauth-relogin-study/FEASIBILITY-BLUEPRINT.md §1.2/§5.3,
+// tool-github-oauth-totp.md §1.1) establishes only that both hosts share the
+// SAME Auth1 family statically; "same family" does NOT prove our PostAuth
+// exchanger accepts a token sourced from the other host. This must be
+// confirmed with a real account before relying on the fallback as live-effective.
+async function windsurfLoginViaDevinHost(email, password, fingerprint, proxy) {
+  // Step 1 — connections probe (app.devin.ai uses product:"devin").
+  // Best-effort: a probe failure must NOT abort — we still try the login,
+  // exactly like the primary path tolerates a flaky connections endpoint.
+  try {
+    const connBody = JSON.stringify({ product: 'devin', email });
+    const connHeaders = buildJsonHeaders(fingerprint, connBody);
+    await httpsRequestRetrying(
+      DEVIN_AUTH1_CONNECTIONS_URL, { method: 'POST', headers: connHeaders }, connBody, proxy,
+      'Devin-host Auth1 connections'
+    );
+  } catch (err) {
+    log.warn(`Devin-host connections probe failed for ${safeEmailRef(email)}: ${err.message}`);
+  }
+
+  // Step 2 — Auth1 password/login on app.devin.ai → auth1 bearer token.
+  const loginBody = JSON.stringify({ email, password });
+  const loginHeaders = buildJsonHeaders(fingerprint, loginBody);
+  const loginRes = await httpsRequestRetrying(
+    DEVIN_AUTH1_PASSWORD_LOGIN_URL, { method: 'POST', headers: loginHeaders }, loginBody, proxy,
+    'Devin-host Auth1 password/login'
+  );
+
+  const rawDetail = loginRes.data?.detail;
+  const detailMsg = Array.isArray(rawDetail)
+    ? rawDetail.map(d => d?.msg || d?.type || JSON.stringify(d)).join('; ')
+    : (typeof rawDetail === 'string' ? rawDetail : '');
+  if (loginRes.status >= 400 || detailMsg) {
+    throw createFriendlyAuthError('DevinHost', detailMsg, 'ERR_LOGIN_FAILED');
+  }
+
+  const auth1Token = loginRes.data?.token;
+  if (!auth1Token) {
+    throw new Error(`ERR_AUTH1_TOKEN_MISSING:${JSON.stringify(loginRes.data).slice(0, 200)}`);
+  }
+  log.info(`Devin-host Auth1 login OK: ${safeEmailRef(email)}`);
+
+  // Step 3 — REUSE the existing PostAuth dual-path exchanger. See the
+  // TODO(unverified) above: this is the hop whose cross-host acceptance is
+  // not yet live-confirmed.
+  const { res: br, label: bl } = await postAuthDualPath(auth1Token, fingerprint, proxy);
+  if (br.status >= 400 || !br.data?.sessionToken) {
+    throw new Error(`ERR_POSTAUTH_FAILED:${JSON.stringify(br.data).slice(0, 200)}`);
+  }
+  const sessionToken = br.data.sessionToken;
+  const accountId = br.data.accountId || 'unknown';
+  log.info(`Devin-host PostAuth OK (${bl}): ${safeEmailRef(email)} accountHash=${logHash(accountId)} → using sessionToken as apiKey`);
+
+  return {
+    apiKey: sessionToken,
+    name: email,
+    email,
+    apiServerUrl: '',
+    sessionToken,
+    auth1Token,
+    viaHost: 'app.devin.ai',
+  };
+}
+
 async function windsurfLoginViaFirebase(email, password, fingerprint, proxy) {
   const firebaseBody = JSON.stringify({
     email,
@@ -636,6 +746,43 @@ export async function windsurfLogin(email, password, proxy = null) {
   const fingerprint = generateFingerprint();
   log.info(`Windsurf login: ${safeEmailRef(email)} fpHash=${logHash(fingerprint['User-Agent'])} proxy=${proxy?.host || 'none'}`);
 
+  try {
+    return await windsurfLoginPrimaryHost(email, password, fingerprint, proxy);
+  } catch (primaryErr) {
+    // Default (flag unset): preserve the exact pre-existing behavior — only
+    // windsurf.com runs, so re-throw and never touch app.devin.ai.
+    if (!isLoginHostFallbackEnabled()) throw primaryErr;
+
+    // Second-host fallback (app.devin.ai), opt-in. Same email+password, no
+    // GitHub/TOTP. Spreads windsurf.com (Vercel) availability / endpoint-
+    // migration risk across a second host.
+    log.warn(`Primary windsurf.com login failed for ${safeEmailRef(email)} (${primaryErr.message}); attempting app.devin.ai host fallback`);
+    try {
+      const result = await windsurfLoginViaDevinHost(email, password, fingerprint, proxy);
+      // Genuine success on the second host clears any failure the primary
+      // path recorded — the credential is provably valid.
+      recordEmailSuccess(email);
+      log.info(`Host fallback OK via app.devin.ai for ${safeEmailRef(email)}`);
+      return result;
+    } catch (fallbackErr) {
+      // Both hosts failed. Surface the ORIGINAL primary error so the caller
+      // (reLoginAccount) sees the real primary signal and runs its existing
+      // failure path → failover. We NEVER fake success, and we NEVER
+      // reclassify the account as dead from here — a failed re-login just
+      // means "re-login failed → false → failover", per the transient-first
+      // error model. The upstream error classifier and the re-login flow in
+      // auth.js stay untouched.
+      log.warn(`Host fallback via app.devin.ai also failed for ${safeEmailRef(email)}: ${fallbackErr.message}`);
+      throw primaryErr;
+    }
+  }
+}
+
+// The original windsurf.com login path (CheckUserLoginMethod probe →
+// Auth1 password/login → PostAuth, or legacy Firebase). Extracted verbatim
+// from windsurfLogin so the public entry can wrap it with the opt-in
+// app.devin.ai host fallback without altering this logic.
+async function windsurfLoginPrimaryHost(email, password, fingerprint, proxy) {
   // Probe sequence (per Windsurf 2026-04-26 half-migration):
   //   1. CheckUserLoginMethod (new Connect-RPC, fast + clean shape)
   //   2. _devin-auth/connections (old path, slow/flaky but still wired)

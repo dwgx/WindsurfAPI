@@ -25,8 +25,14 @@
 import https from 'https';
 import { randomBytes } from 'crypto';
 import { log } from './config.js';
-import { parseFields, writeStringField, writeMessageField } from './proto.js';
-import { getConnectToken } from './devin-connect.js';
+import { parseFields, writeStringField, writeMessageField, writeVarintField } from './proto.js';
+import { getConnectToken, classifyUpstreamError } from './devin-connect.js';
+
+// Transport seam: defaults to https.request. Swappable in tests so the non-200
+// classification path can be exercised without a real socket. Mirrors the
+// __setRequestImpl seam in devin-connect.js.
+let requestImpl = https.request;
+export function __setCatalogRequestImpl(fn) { requestImpl = fn || https.request; }
 
 const HOST = 'server.codeium.com';
 const CATALOG_PATH = '/exa.api_server_pb.ApiServerService/GetCliModelConfigs';
@@ -66,12 +72,20 @@ function buildClientMetadata(token) {
 /**
  * POST a unary Connect-RPC request (application/proto, raw body) and resolve the
  * raw response buffer. Rejects with a coded error on non-200.
+ *
+ * @param {string} path
+ * @param {string} token
+ * @param {object} [opts]
+ * @param {Buffer} [opts.extraBody]  extra proto fields appended AFTER the
+ *   client-metadata field #1 (e.g. AssignModel's model_uid). Default: none.
  */
-function unaryCall(path, token, { signal, timeoutMs = 30000 } = {}) {
-  const body = writeMessageField(1, buildClientMetadata(token));
+function unaryCall(path, token, { signal, timeoutMs = 30000, extraBody } = {}) {
+  const body = extraBody
+    ? Buffer.concat([writeMessageField(1, buildClientMetadata(token)), extraBody])
+    : writeMessageField(1, buildClientMetadata(token));
   const authHeader = `Basic ${token}-${token}`;
   return new Promise((resolve, reject) => {
-    const req = https.request({
+    const req = requestImpl({
       hostname: HOST, port: 443, path, method: 'POST',
       headers: {
         'Content-Type': 'application/proto',
@@ -89,9 +103,28 @@ function unaryCall(path, token, { signal, timeoutMs = 30000 } = {}) {
         const raw = Buffer.concat(chunks);
         if (res.statusCode !== 200) {
           const text = raw.toString('utf8').slice(0, 200);
-          const code = res.statusCode === 401 || res.statusCode === 403 ? 'UNAUTHORIZED'
-            : res.statusCode === 429 ? 'RATE_LIMITED' : 'UPSTREAM_ERROR';
-          reject(Object.assign(new Error(`${path} HTTP ${res.statusCode}: ${text}`), { code, status: res.statusCode }));
+          // Transient-first: the upstream wraps capacity ("high demand") and
+          // backend ("internal error occurred (trace ID: ...)") faults inside a
+          // 401/403 auth-shell on the unary probe path too — not just on
+          // GetChatMessage. Classifying by HTTP status alone would read such a
+          // blip as UNAUTHORIZED, and the liveness probe (probeAndRecoverConnect
+          // Account) only force-re-logins on UNAUTHORIZED → a live token gets a
+          // needless re-login on a momentary hiccup (the #56/#57 母题). Route the
+          // body+code+status through the shared classifier so CAPACITY /
+          // UPSTREAM_INTERNAL / RATE_LIMITED are surfaced as their transient
+          // codes, and only a genuine auth death stays UNAUTHORIZED. Best-effort
+          // JSON parse to recover the Connect-RPC error code when present.
+          let upstreamCode = null;
+          // Connect-RPC unary errors are top-level {"code","message"}; the
+          // GetChatMessage trailer path uses nested {"error":{"code"}}. Accept
+          // either so the transient signal (unavailable/resource_exhausted)
+          // survives regardless of which shape the upstream sends here.
+          try {
+            const parsed = JSON.parse(text);
+            upstreamCode = parsed?.error?.code || parsed?.code || null;
+          } catch { /* text body */ }
+          const { code, message } = classifyUpstreamError(text, upstreamCode, res.statusCode);
+          reject(Object.assign(new Error(`${path} HTTP ${res.statusCode}: ${message}`), { code, status: res.statusCode }));
           return;
         }
         resolve(raw);
@@ -226,4 +259,118 @@ export async function checkSessionLiveness({ token, signal, env = process.env } 
   } catch (e) {
     return { alive: false, code: e.code || 'UPSTREAM_ERROR', error: e.message };
   }
+}
+
+// ─── AssignModel — router-model resolution ──────────────────────────────────
+//
+// "Router" models (adaptive, arena-*) are not real model_uids — they're a
+// router that the server resolves to a concrete model per request. The Windsurf
+// client detects is_model_router=true and makes an AssignModel unary RPC FIRST,
+// gets back a ModelAssignment{ model_uid, assignment_jwt, harness_uids }, then
+// issues GetChatMessage with the RESOLVED model_uid. WindsurfAPI never made that
+// hop, so every router model was rejected upstream (D4 §6).
+//
+// Wire calibration status (recon P2-apiserver-methods-fields.md §1):
+//   - method path + ResponseMsg shape (AssignModelResponse{ assignment },
+//     ModelAssignment{ model_uid, assignment_jwt, harness_uids }) are VERIFIED
+//     from binary strings.
+//   - all TAG NUMBERS are UNKNOWN (prost left no constants). Same situation as
+//     billing/vision: we use the most-likely tag-1-first layout as the default
+//     and let an operator override every tag via env once a real AssignModel
+//     round-trip is captured on a paid account. Defaults are isolated so a wrong
+//     guess is one env var away from fixed, never a code change.
+const ASSIGN_MODEL_PATH = '/exa.api_server_pb.ApiServerService/AssignModel';
+
+// Default tag guesses (override via DEVIN_CONNECT_ASSIGN_TAGS). Field NAMES are
+// verified; only the integer tags are guessed (sequential from 1, the prost
+// default when fields are declared in order with no explicit gaps).
+const ASSIGN_TAGS_DEFAULT = Object.freeze({
+  req_model_uid: 2,      // request: model_uid string (after client-meta #1)
+  resp_assignment: 1,    // AssignModelResponse.assignment (message)
+  asg_model_uid: 1,      // ModelAssignment.model_uid (string)
+  asg_jwt: 2,            // ModelAssignment.assignment_jwt (string)
+  asg_harness: 3,        // ModelAssignment.harness_uids (repeated string)
+});
+
+/**
+ * Parse DEVIN_CONNECT_ASSIGN_TAGS overrides, e.g.
+ *   "req_model_uid=2,resp_assignment=1,asg_model_uid=1,asg_jwt=2,asg_harness=3"
+ * Unknown keys / non-positive-int tags are ignored. Returns the default map with
+ * any valid overrides applied.
+ */
+export function parseAssignTags(env = process.env) {
+  const map = { ...ASSIGN_TAGS_DEFAULT };
+  const raw = String(env.DEVIN_CONNECT_ASSIGN_TAGS || '').trim();
+  if (!raw) return map;
+  for (const pair of raw.split(',')) {
+    const [key, tag] = pair.split('=').map((s) => s.trim());
+    const n = Number.parseInt(tag, 10);
+    if (key in ASSIGN_TAGS_DEFAULT && Number.isInteger(n) && n > 0) map[key] = n;
+  }
+  return map;
+}
+
+/**
+ * Is this model name a router that needs an AssignModel hop before chat?
+ * `adaptive` and the `arena-*` family are the known routers (D4 §6). Extendable
+ * via DEVIN_CONNECT_ROUTER_MODELS (comma-separated names/prefixes, `*` suffix
+ * for prefix match).
+ */
+export function isRouterModel(name, env = process.env) {
+  const n = String(name || '').trim().toLowerCase();
+  if (!n) return false;
+  const extra = String(env.DEVIN_CONNECT_ROUTER_MODELS || '')
+    .split(',').map((s) => s.trim().toLowerCase()).filter(Boolean);
+  const patterns = ['adaptive', 'arena-*', ...extra];
+  return patterns.some((p) =>
+    p.endsWith('*') ? n.startsWith(p.slice(0, -1)) : n === p);
+}
+
+/** Encode the AssignModel request body (the extra fields after client-meta #1). */
+export function encodeAssignModelRequest(modelUid, tags = ASSIGN_TAGS_DEFAULT) {
+  return writeStringField(tags.req_model_uid, String(modelUid));
+}
+
+/**
+ * Decode an AssignModelResponse → { model_uid, assignment_jwt, harness_uids }.
+ * Returns null if the response carries no assignment (server's documented
+ * "AssignModel returned empty assignment" case).
+ */
+export function decodeAssignModelResponse(raw, tags = ASSIGN_TAGS_DEFAULT) {
+  const top = parseFields(raw);
+  const asg = top.find((x) => x.field === tags.resp_assignment && x.wireType === 2);
+  if (!asg) return null;
+  const fields = parseFields(asg.value);
+  const model_uid = strField(fields, tags.asg_model_uid);
+  if (!model_uid) return null; // empty assignment
+  const assignment_jwt = strField(fields, tags.asg_jwt);
+  const harness_uids = fields
+    .filter((x) => x.field === tags.asg_harness && x.wireType === 2)
+    .map((x) => x.value.toString('utf8'));
+  return { model_uid, assignment_jwt, harness_uids };
+}
+
+/**
+ * Resolve a router model uid → a concrete ModelAssignment via the AssignModel
+ * unary RPC. Throws a coded error on transport failure or an empty assignment so
+ * the caller can fall back / surface a clean message instead of letting the
+ * router uid hit GetChatMessage (where it's rejected).
+ *
+ * @returns {Promise<{model_uid, assignment_jwt, harness_uids}>}
+ */
+export async function assignModel({ token, modelUid, signal, env = process.env } = {}) {
+  const sessionToken = token || getConnectToken(env);
+  if (!sessionToken) throw Object.assign(new Error('DEVIN_CONNECT: no session token configured'), { code: 'NO_TOKEN' });
+  if (!modelUid) throw Object.assign(new Error('AssignModel: modelUid required'), { code: 'BAD_REQUEST' });
+  const tags = parseAssignTags(env);
+  const raw = await unaryCall(ASSIGN_MODEL_PATH, sessionToken, {
+    signal,
+    extraBody: encodeAssignModelRequest(modelUid, tags),
+  });
+  const assignment = decodeAssignModelResponse(raw, tags);
+  if (!assignment) {
+    throw Object.assign(new Error(`AssignModel returned empty assignment for '${modelUid}'`), { code: 'ASSIGN_EMPTY' });
+  }
+  log.info(`DEVIN_CONNECT AssignModel: router '${modelUid}' → '${assignment.model_uid}'`);
+  return assignment;
 }

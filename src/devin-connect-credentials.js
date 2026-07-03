@@ -28,6 +28,12 @@ import { readFileSync, writeFileSync, existsSync, renameSync } from 'fs';
 import { join } from 'path';
 import { createCipheriv, createDecipheriv, scryptSync, randomBytes } from 'crypto';
 import { config, log } from './config.js';
+import { bumpConnect, __registerCredHealth } from './devin-connect-metrics.js';
+
+// Bump the repair counter without letting a metrics hiccup break a cred read.
+function bumpCredRepaired() {
+  try { bumpConnect('cred_store_repaired'); } catch { /* metrics are best-effort */ }
+}
 
 function credFilePath(env = process.env) {
   return env.DEVIN_CONNECT_CRED_FILE
@@ -70,18 +76,110 @@ function deriveKey(masterKey, salt) {
   return scryptSync(masterKey, salt, SCRYPT_KEYLEN, SCRYPT_PARAMS);
 }
 
+// A stored record is { salt, iv, tag, ct } with all values lowercase hex. We
+// validate shape before trusting a salvaged record so regex recovery can't
+// inject garbage that later throws deep in the cipher.
+function isValidRecord(rec) {
+  if (!rec || typeof rec !== 'object') return false;
+  for (const f of ['salt', 'iv', 'tag', 'ct']) {
+    if (typeof rec[f] !== 'string' || !/^[0-9a-fA-F]+$/.test(rec[f]) || rec[f].length === 0) return false;
+  }
+  return true;
+}
+
+// Tier 2: best-effort repair of a structurally-broken JSON wrapper before
+// giving up. Handles the common real-world corruptions: a UTF-8 BOM, a trailing
+// comma, and a half-written file truncated mid-object (crash/disk-full between
+// write and rename, or a botched manual edit) — recover the largest prefix that
+// closes cleanly at the last balanced `}`.
+function tryRepairJson(text) {
+  let s = String(text).replace(/^﻿/, '').trim();
+  // Truncate to the last closing brace so a tail-truncated file still parses
+  // its complete records.
+  const lastBrace = s.lastIndexOf('}');
+  if (lastBrace !== -1) s = s.slice(0, lastBrace + 1);
+  // Drop a dangling comma before the closing brace(s).
+  s = s.replace(/,\s*(}|])/g, '$1');
+  try {
+    const parsed = JSON.parse(s);
+    if (parsed && typeof parsed === 'object' && typeof parsed.records === 'object') return parsed;
+  } catch { /* fall through to tier 3 */ }
+  return null;
+}
+
+// Tier 3: the JSON wrapper is unsalvageable, but every record is an independent
+// encrypted blob. Scan the raw text for `"<email>": { salt, iv, tag, ct }`
+// fragments and rebuild the records map one entry at a time, keeping only those
+// that pass shape validation. One mangled record is dropped; the rest survive.
+function salvageRecordsByRegex(text) {
+  const records = {};
+  // Match an email-ish key followed by an object literal containing the four
+  // hex fields in any order. Non-greedy object body, capped to avoid runaway.
+  const entryRe = /"([^"\n]+?)"\s*:\s*\{([^{}]{0,4000}?)\}/g;
+  const fieldRe = (name) => new RegExp(`"${name}"\\s*:\\s*"([0-9a-fA-F]+)"`);
+  let m;
+  while ((m = entryRe.exec(text)) !== null) {
+    const key = m[1];
+    const body = m[2];
+    const rec = {};
+    let ok = true;
+    for (const f of ['salt', 'iv', 'tag', 'ct']) {
+      const fm = body.match(fieldRe(f));
+      if (!fm) { ok = false; break; }
+      rec[f] = fm[1];
+    }
+    if (ok && isValidRecord(rec) && key !== 'records' && key !== 'v') records[key] = rec;
+  }
+  return records;
+}
+
+// Read the credential store with three resilience tiers so a single corrupt
+// byte can't silently wipe the whole fleet's relogin credentials:
+//   1. JSON.parse (normal path)
+//   2. JSON repair (BOM / trailing comma / tail-truncation) then parse
+//   3. per-record regex salvage from the raw text
+// Any tier beyond (1) bumps cred_store_repaired + logs, and re-persists the
+// recovered store once (self-heal) so the next read is clean again.
 function readStore(env = process.env) {
   if (!existsSync(credFilePath(env))) return { v: FILE_VERSION, records: {} };
+  let raw;
   try {
-    const parsed = JSON.parse(readFileSync(credFilePath(env), 'utf8'));
-    if (!parsed || typeof parsed !== 'object' || typeof parsed.records !== 'object') {
-      return { v: FILE_VERSION, records: {} };
-    }
-    return { v: parsed.v || FILE_VERSION, records: parsed.records || {} };
+    raw = readFileSync(credFilePath(env), 'utf8');
   } catch (e) {
     log.warn(`credential store unreadable (${e.message}); treating as empty`);
     return { v: FILE_VERSION, records: {} };
   }
+
+  // Tier 1 — clean parse.
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === 'object' && typeof parsed.records === 'object') {
+      return { v: parsed.v || FILE_VERSION, records: parsed.records || {} };
+    }
+    // Parsed but wrong shape — fall through to salvage from the raw text.
+  } catch { /* fall through to repair */ }
+
+  // Tier 2 — repair the JSON wrapper.
+  const repaired = tryRepairJson(raw);
+  if (repaired) {
+    const recovered = { v: repaired.v || FILE_VERSION, records: repaired.records || {} };
+    const n = Object.keys(recovered.records).length;
+    log.error(`credential store JSON was corrupt; repaired wrapper and recovered ${n} record(s). Re-persisting clean copy.`);
+    bumpCredRepaired();
+    try { writeStore(recovered, env); } catch (e) { log.warn(`credential store self-heal write failed: ${e.message}`); }
+    return recovered;
+  }
+
+  // Tier 3 — per-record regex salvage.
+  const salvaged = salvageRecordsByRegex(raw);
+  const n = Object.keys(salvaged).length;
+  const recovered = { v: FILE_VERSION, records: salvaged };
+  log.error(`credential store JSON unrepairable; regex-salvaged ${n} intact record(s) from the raw file. Re-persisting clean copy.`);
+  bumpCredRepaired();
+  if (n > 0) {
+    try { writeStore(recovered, env); } catch (e) { log.warn(`credential store self-heal write failed: ${e.message}`); }
+  }
+  return recovered;
 }
 
 function writeStore(store, env = process.env) {
@@ -174,10 +272,9 @@ export function listCredentialEmails(env = process.env) {
   return Object.keys(readStore(env).records);
 }
 
-export const __testing = { credFilePath, deriveKey, normalizeEmail };
+export const __testing = { credFilePath, deriveKey, normalizeEmail, tryRepairJson, salvageRecordsByRegex, isValidRecord, readStore };
 
 // Surface decrypt health through the central connect-metrics endpoint without a
 // static import cycle (metrics → credentials → config → ...). Registered at
 // import time; the metrics module calls back into getCredHealth on demand.
-import { __registerCredHealth } from './devin-connect-metrics.js';
 __registerCredHealth(getCredHealth);

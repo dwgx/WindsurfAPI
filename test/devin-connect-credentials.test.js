@@ -107,3 +107,96 @@ describe('credential store — derived key', () => {
     assert.equal(k.length, 32);
   });
 });
+
+describe('credential store — corruption resilience (C6)', () => {
+  // Seed two real records, then corrupt the file in different ways and assert
+  // the resilient reader still recovers the intact credentials. A single bad
+  // byte must NOT wipe the whole fleet's relogin credentials.
+  function seedTwo(env) {
+    storeCredential('alice@example.com', 'alice-pw', env);
+    storeCredential('bob@example.com', 'bob-pw', env);
+  }
+
+  it('recovers complete records from a file truncated mid-write', () => {
+    const env = mkEnv();
+    seedTwo(env);
+    const file = join(dir, 'creds.json');
+    const raw = readFileSync(file, 'utf8');
+    // Simulate a crash mid-write: chop the file partway through the 2nd record.
+    // The truncation leaves an unterminated string + unbalanced braces, so JSON
+    // repair can't help — per-record salvage (tier 3) recovers alice intact.
+    const cut = raw.indexOf('bob@example.com') + 30;
+    writeFileSync(file, raw.slice(0, cut));
+    // alice's record is complete and must survive; bob's was truncated.
+    assert.equal(getCredential('alice@example.com', env), 'alice-pw');
+    // Self-heal: the file is now clean JSON again on re-read.
+    const healed = JSON.parse(readFileSync(file, 'utf8'));
+    assert.ok(healed.records['alice@example.com']);
+  });
+
+  it('tier 2: strips a UTF-8 BOM and a trailing comma', () => {
+    const env = mkEnv();
+    storeCredential('alice@example.com', 'alice-pw', env);
+    const file = join(dir, 'creds.json');
+    const raw = readFileSync(file, 'utf8');
+    // Prepend a BOM and inject a trailing comma before the final brace.
+    const broken = '﻿' + raw.replace(/\}\s*\}\s*$/, '},}');
+    writeFileSync(file, broken);
+    assert.equal(getCredential('alice@example.com', env), 'alice-pw');
+  });
+
+  it('tier 3: regex-salvages intact records when the JSON wrapper is unrepairable', () => {
+    const env = mkEnv();
+    seedTwo(env);
+    const file = join(dir, 'creds.json');
+    const raw = readFileSync(file, 'utf8');
+    // Mangle the wrapper beyond JSON repair (garbage prefix + broken structure)
+    // but leave both record bodies textually intact.
+    const broken = 'GARBAGE!!!{{{ not json at all \n' + raw.replace(/^\s*\{/, '');
+    writeFileSync(file, broken);
+    // Both records' { salt, iv, tag, ct } blobs are intact → both recover.
+    assert.equal(getCredential('alice@example.com', env), 'alice-pw');
+    assert.equal(getCredential('bob@example.com', env), 'bob-pw');
+  });
+
+  it('tier 3: drops only the mangled record, keeps the rest', () => {
+    const env = mkEnv();
+    seedTwo(env);
+    const file = join(dir, 'creds.json');
+    const raw = readFileSync(file, 'utf8');
+    // Corrupt bob's ct field (odd-out hex) and break the wrapper so we hit tier 3.
+    let broken = raw.replace(/("bob@example\.com"\s*:\s*\{[^}]*"ct"\s*:\s*")[0-9a-f]+/, '$1ZZZ_not_hex');
+    broken = 'noise\n' + broken.replace(/^\s*\{/, '');
+    writeFileSync(file, broken);
+    assert.equal(getCredential('alice@example.com', env), 'alice-pw', 'intact record survives');
+    assert.equal(hasCredential('bob@example.com', env), false, 'mangled record is dropped, not poisoning the store');
+  });
+
+  it('tryRepairJson fixes a trailing comma and tail garbage; returns null when hopeless', () => {
+    const good = '{ "v": 1, "records": { "a@x.com": { "salt": "aa", "iv": "bb", "tag": "cc", "ct": "dd" } }, }';
+    const repaired = __testing.tryRepairJson(good);
+    assert.ok(repaired && repaired.records['a@x.com'], 'trailing comma repaired (tier 2)');
+    // Trailing garbage after the last brace is dropped.
+    assert.ok(__testing.tryRepairJson('{ "v": 1, "records": {} } GARBAGE TAIL'), 'tail after last brace dropped');
+    // No closing brace at all → unrepairable (caller falls through to tier 3).
+    assert.equal(__testing.tryRepairJson('{ "records": { "a": '), null);
+  });
+
+  it('salvageRecordsByRegex validates hex shape and skips wrapper keys', () => {
+    const text = `{ "v": 1, "records": {
+      "good@x.com": { "salt": "aa", "iv": "bb", "tag": "cc", "ct": "dd" },
+      "bad@x.com": { "salt": "nothex", "iv": "bb", "tag": "cc", "ct": "dd" }
+    } }`;
+    const out = __testing.salvageRecordsByRegex(text);
+    assert.ok(out['good@x.com']);
+    assert.equal(out['bad@x.com'], undefined, 'non-hex field rejected');
+    assert.equal(out['records'], undefined, 'wrapper key never treated as a record');
+    assert.equal(out['v'], undefined);
+  });
+
+  it('an unrecoverable empty file reads as an empty store (no throw)', () => {
+    const env = mkEnv();
+    writeFileSync(join(dir, 'creds.json'), 'totally unparseable @@@@ no records here');
+    assert.deepEqual(listCredentialEmails(env), []);
+  });
+});

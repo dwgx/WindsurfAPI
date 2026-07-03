@@ -33,6 +33,12 @@ function transient() {
   return Object.assign(new Error('upstream hiccup'), { status: 503 });
 }
 
+function capacity() {
+  // High-demand throttle as the upstream really sends it: a transient "model
+  // busy" wrapped in a 401 auth-shell, already classified to CAPACITY.
+  return Object.assign(new Error("We're currently facing high demand for this model. Please try again later."), { code: 'CAPACITY', status: 401 });
+}
+
 function fakeRes() {
   const listeners = new Map();
   return {
@@ -106,6 +112,7 @@ describe('DEVIN_CONNECT cross-account failover — non-stream', () => {
 
   it('prefers same-account re-login over failover when credentials exist', async () => {
     const a = seed('relogin-1');
+    const originalToken = a.apiKey; // capture by value: reLoginAccount mutates a.apiKey
     seed('other-2');
     process.env.DEVIN_CONNECT_AUTO_RELOGIN = '1';
     let freshToken = null;
@@ -122,7 +129,9 @@ describe('DEVIN_CONNECT cross-account failover — non-stream', () => {
     __setConnectDeps({
       toChatCompletion: async (params) => {
         seen.push(params.token);
-        if (params.token === a.apiKey) throw unauthorized(); // original dead
+        // Only the ORIGINAL token is dead; the re-logged-in fresh token works.
+        // (Compare to the captured value, not a.apiKey — re-login mutated it.)
+        if (params.token === originalToken) throw unauthorized();
         return { status: 200, body: { id: 'x', choices: [{ message: { role: 'assistant', content: 'RELOGIN_OK' } }] } };
       },
     });
@@ -135,6 +144,43 @@ describe('DEVIN_CONNECT cross-account failover — non-stream', () => {
     assert.equal(result.body.choices[0].message.content, 'RELOGIN_OK');
     // Recovery went through the SAME account's fresh token, not a second account.
     assert.ok(freshToken && seen.includes(freshToken), 'retried on the re-logged-in token');
+  });
+
+  it('free→paid: fresh token still UNAUTHORIZED ⇒ MODEL_BLOCKED (no failover storm)', async () => {
+    // Live-fire finding (#42): a free account requesting a paid selector gets a
+    // bare `permission_denied`/"internal error" from upstream — byte-identical to
+    // a retired session token. The OLD code treated it as a dead token: re-login
+    // (mints a useless fresh token) → retry → fail over across the WHOLE pool →
+    // 401 "all accounts exhausted (dead session tokens)". That's a re-login storm
+    // against Auth1 (ban risk) plus a misleading error. The fix: a successful
+    // re-login proves the token was alive, so a 2nd UNAUTHORIZED on the fresh
+    // token is an entitlement wall → MODEL_BLOCKED (402), and NO failover.
+    const a = seed('paidwall-1');
+    const b = seed('paidwall-2');
+    const originalToken = a.apiKey;
+    process.env.DEVIN_CONNECT_AUTO_RELOGIN = '1';
+    __setReloginDeps({
+      isCredStoreEnabled: () => true,
+      getCredential: () => 'stored-password',
+      windsurfLogin: async () => ({ apiKey: `devin-session-token$fresh-${Math.random().toString(36).slice(2)}`, name: 'paidwall-1' }),
+    });
+    const seen = [];
+    __setConnectDeps({
+      // EVERY token (original, fresh, and the 2nd account) returns UNAUTHORIZED:
+      // that's what a paid model looks like to a free pool.
+      toChatCompletion: async (params) => { seen.push(params.token); throw unauthorized(); },
+    });
+
+    const result = await handleChatCompletions(
+      { model: 'claude-opus-4.8', stream: false, messages: [{ role: 'user', content: 'hi' }] },
+      { callerKey: '' },
+    );
+    assert.equal(result.status, 402, 'entitlement wall → 402, not 401');
+    assert.equal(result.body.error.code, 'MODEL_BLOCKED');
+    // Must NOT have failed over to the second account — that would multiply the
+    // re-login storm. Only the original + its one fresh-token retry were tried.
+    assert.ok(!seen.includes(b.apiKey), 'did not fail over to a second account');
+    assert.equal(seen.filter(t => t === originalToken).length, 1, 'original token tried exactly once');
   });
 
   it('returns 401 when every pooled account has a dead, unrecoverable token', async () => {
@@ -247,6 +293,37 @@ describe('DEVIN_CONNECT cross-account failover — stream', () => {
     assert.ok(frames.some(f => f !== '[DONE]' && f.error), 'surfaced an error frame');
   });
 
+  it('stream free→paid: fresh token still UNAUTHORIZED ⇒ MODEL_BLOCKED error frame, no storm (#42)', async () => {
+    // Streaming twin of the non-stream entitlement-wall test. Nothing is emitted
+    // (the wall hits before any byte), so re-login fires once as a disambiguation
+    // probe; the fresh token also 401s ⇒ MODEL_BLOCKED error frame, NOT a failover
+    // hop to the second account.
+    const a = seed('s-paidwall-1');
+    const b = seed('s-paidwall-2');
+    process.env.DEVIN_CONNECT_AUTO_RELOGIN = '1';
+    __setReloginDeps({
+      isCredStoreEnabled: () => true,
+      getCredential: () => 'stored-password',
+      windsurfLogin: async () => ({ apiKey: `devin-session-token$fresh-${Math.random().toString(36).slice(2)}`, name: 's-paidwall-1' }),
+    });
+    const seen = [];
+    __setConnectDeps({
+      streamChatCompletion: async (params) => { seen.push(params.token); throw unauthorized(); },
+    });
+
+    const result = await handleChatCompletions(
+      { model: 'claude-opus-4.8', stream: true, messages: [{ role: 'user', content: 'hi' }] },
+      { callerKey: '' },
+    );
+    const res = fakeRes();
+    await result.handler(res);
+    const frames = parseFrames(res.body);
+    const errFrame = frames.find(f => f !== '[DONE]' && f.error);
+    assert.ok(errFrame, 'surfaced an error frame');
+    assert.equal(errFrame.error.code, 'MODEL_BLOCKED', 'entitlement wall, not dead-token');
+    assert.ok(!seen.includes(b.apiKey), 'did not fail over to a second account');
+  });
+
   it('replays once on the SAME token after a pre-emit transient 5xx, then streams (P1 #34)', async () => {
     const a = seed('s-transient-1');
     let calls = 0;
@@ -272,6 +349,81 @@ describe('DEVIN_CONNECT cross-account failover — stream', () => {
     assert.equal(seen[0], seen[1], 'replay used the SAME token (no failover hop)');
     assert.ok(frames.some(f => f !== '[DONE]' && f.choices?.[0]?.delta?.content === 'RECOVERED'), 'streamed after replay');
     assert.ok(!frames.some(f => f !== '[DONE]' && f.error), 'no error frame after a successful replay');
+  });
+
+  it('CAPACITY (high-demand) replays on the SAME token, never re-logs in or fails over (P0 #56/#57)', async () => {
+    // The regression that motivated this: a momentary "high demand" on a free
+    // token was classified UNAUTHORIZED → auto re-login → still busy → mislabeled
+    // MODEL_BLOCKED → free model cooled down forever. Now it's CAPACITY: a
+    // transient, replayed once on the same token. If the replay succeeds we
+    // stream clean; re-login must NEVER fire (it would burn the account).
+    const a = seed('s-capacity-1');
+    const b = seed('s-capacity-2');
+    process.env.DEVIN_CONNECT_AUTO_RELOGIN = '1';
+    let reloginCalls = 0;
+    __setReloginDeps({
+      isCredStoreEnabled: () => true,
+      getCredential: () => 'stored-password',
+      windsurfLogin: async () => { reloginCalls++; return { apiKey: 'devin-session-token$should-never-mint', name: 's-capacity-1' }; },
+    });
+    let calls = 0;
+    const seen = [];
+    __setConnectDeps({
+      streamChatCompletion: async (params, send) => {
+        calls++;
+        seen.push(params.token);
+        if (calls === 1) throw capacity(); // first hit: model busy, before any byte
+        send({ id: 's', object: 'chat.completion.chunk', choices: [{ index: 0, delta: { content: 'AFTERBUSY' }, finish_reason: null }] });
+        send({ id: 's', object: 'chat.completion.chunk', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] });
+      },
+    });
+
+    const result = await handleChatCompletions(
+      { model: 'swe-1-6-slow', stream: true, messages: [{ role: 'user', content: 'hi' }] },
+      { callerKey: '' },
+    );
+    const res = fakeRes();
+    await result.handler(res);
+    const frames = parseFrames(res.body);
+    assert.equal(calls, 2, 'replayed once on the capacity blip');
+    assert.equal(seen[0], seen[1], 'replay used the SAME token (no failover, no fresh token)');
+    assert.equal(reloginCalls, 0, 'CAPACITY must NEVER trigger re-login');
+    assert.ok(!seen.includes(b.apiKey), 'did not fail over to the second account');
+    assert.ok(frames.some(f => f !== '[DONE]' && f.choices?.[0]?.delta?.content === 'AFTERBUSY'), 'streamed after the busy blip cleared');
+    assert.ok(!frames.some(f => f !== '[DONE]' && f.error), 'no error frame after a successful capacity replay');
+  });
+
+  it('persistent CAPACITY surfaces a clean 503-class error, NOT MODEL_BLOCKED or a re-login storm (P0 #57)', async () => {
+    // If the model stays busy through the one in-place replay, we surface the
+    // capacity error as-is. It must NOT escalate to MODEL_BLOCKED (permanent
+    // cooldown) and must NOT have stormed re-login across the pool.
+    seed('s-capacity-persist-1');
+    seed('s-capacity-persist-2');
+    process.env.DEVIN_CONNECT_AUTO_RELOGIN = '1';
+    let reloginCalls = 0;
+    __setReloginDeps({
+      isCredStoreEnabled: () => true,
+      getCredential: () => 'stored-password',
+      windsurfLogin: async () => { reloginCalls++; return { apiKey: 'devin-session-token$nope', name: 's-capacity-persist-1' }; },
+    });
+    let calls = 0;
+    __setConnectDeps({
+      streamChatCompletion: async () => { calls++; throw capacity(); }, // busy forever
+    });
+
+    const result = await handleChatCompletions(
+      { model: 'swe-1-6-slow', stream: true, messages: [{ role: 'user', content: 'hi' }] },
+      { callerKey: '' },
+    );
+    const res = fakeRes();
+    await result.handler(res);
+    const frames = parseFrames(res.body);
+    const errFrame = frames.find(f => f !== '[DONE]' && f.error);
+    assert.equal(calls, 2, 'one in-place replay then give up (no pool storm)');
+    assert.equal(reloginCalls, 0, 'CAPACITY must NEVER trigger re-login');
+    assert.ok(errFrame, 'surfaced an error frame');
+    assert.notEqual(errFrame.error.code, 'MODEL_BLOCKED', 'capacity must NOT escalate to a permanent entitlement wall');
+    assert.equal(errFrame.error.code, 'CAPACITY', 'surfaced the capacity error as-is');
   });
 
   it('does NOT replay a transient error once a byte is already emitted', async () => {
@@ -338,6 +490,32 @@ describe('DEVIN_CONNECT quota vs tier wall (P1 #33)', () => {
     // default; the point is the reason is NOT a rate_limit penalty.)
     const avail = getAccountAvailability(a.apiKey, 'swe-1-6-slow');
     assert.notEqual(avail.reason, 'rate_limited', 'tier wall must not cool the account down');
+  });
+
+  it('persistent CAPACITY applies a SHORT model-scoped soft cooldown, account stays healthy for other models (P0 #56/#57)', async () => {
+    const a = seed('cap-nonstream-1');
+    process.env.DEVIN_CONNECT_FAILOVER_MAX = '0'; // isolate this account
+    __setConnectDeps({
+      toChatCompletion: async () => {
+        throw Object.assign(new Error("We're currently facing high demand for this model. Please try again later."), { code: 'CAPACITY', status: 401 });
+      },
+    });
+    const result = await handleChatCompletions(
+      { model: 'swe-1-6-slow', stream: false, messages: [{ role: 'user', content: 'hi' }] },
+      { callerKey: '' },
+    );
+    assert.equal(result.status, 503, 'capacity surfaces as 503, not 401/402');
+    assert.equal(result.body.error.type, 'capacity_error');
+    // The model that was busy carries a short cooldown so the pool prefers
+    // another account for THIS model...
+    const availBusy = getAccountAvailability(a.apiKey, 'swe-1-6-slow');
+    assert.equal(availBusy.reason, 'model_rate_limited', 'busy model is softly cooled down');
+    assert.ok(availBusy.retryAfterMs > 0 && availBusy.retryAfterMs <= 60 * 1000, 'short (≤60s) cooldown, auto-recovering');
+    // ...but the account is NOT cooled down account-wide — every OTHER model is
+    // still fully serviceable (the cooldown is model-scoped, not a fault penalty).
+    const availOther = getAccountAvailability(a.apiKey, 'gemini-2.5-flash');
+    assert.notEqual(availOther.reason, 'rate_limited', 'account stays healthy for other models');
+    assert.notEqual(availOther.reason, 'model_rate_limited', 'other model not cooled down');
   });
 });
 
@@ -416,5 +594,45 @@ describe('DEVIN_CONNECT re-login storm guard (P0-1)', () => {
     );
     assert.ok(burst.every(r => r.status === 401), 'all requests get a clean 401 when recovery fails');
     assert.equal(loginCalls, 1, 'one Auth1 login for the whole burst — no storm');
+  });
+});
+
+describe('DEVIN_CONNECT sampling passthrough (#48)', () => {
+  it('forwards temperature/top_p/top_k/max_tokens from the request into connect params', async () => {
+    seed('sampling-1');
+    let captured = null;
+    __setConnectDeps({
+      toChatCompletion: async (params) => {
+        captured = params.completion;
+        return { status: 200, body: { id: 'x', choices: [{ message: { role: 'assistant', content: 'OK' } }] } };
+      },
+    });
+
+    const result = await handleChatCompletions(
+      {
+        model: 'swe-1-6-slow', stream: false, messages: [{ role: 'user', content: 'hi' }],
+        temperature: 0.3, top_p: 0.8, top_k: 50, max_tokens: 200,
+      },
+      { callerKey: '' },
+    );
+    assert.equal(result.status, 200);
+    assert.deepEqual(captured, { temperature: 0.3, topP: 0.8, topK: 50, maxTokens: 200 });
+  });
+
+  it('omits the completion override entirely when the caller sends no sampling params', async () => {
+    seed('sampling-2');
+    let hadCompletion = true;
+    __setConnectDeps({
+      toChatCompletion: async (params) => {
+        hadCompletion = 'completion' in params;
+        return { status: 200, body: { id: 'x', choices: [{ message: { role: 'assistant', content: 'OK' } }] } };
+      },
+    });
+
+    await handleChatCompletions(
+      { model: 'swe-1-6-slow', stream: false, messages: [{ role: 'user', content: 'hi' }] },
+      { callerKey: '' },
+    );
+    assert.equal(hadCompletion, false, 'no completion key when caller specified no sampling controls');
   });
 });

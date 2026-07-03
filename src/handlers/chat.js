@@ -5,7 +5,7 @@
 
 import { createHash, randomUUID } from 'crypto';
 import { WindsurfClient, contentToString, isCascadeTransportError } from '../client.js';
-import { getApiKey, acquireAccountByKey, releaseAccount, getAccountAvailability, reportError, reportSuccess, markRateLimited, reportInternalError, updateCapability, getAccountList, isAllRateLimited, isAllTemporarilyUnavailable, refundReservation, looksLikeBanSignal, reportBanSignal, clearBanSignals, isModelBlockedByDrought, getDroughtSummary, reLoginAccount, getAccountCount } from '../auth.js';
+import { getApiKey, acquireAccountByKey, releaseAccount, getAccountAvailability, reportError, reportSuccess, markRateLimited, reportInternalError, reportDeadToken, updateCapability, getAccountList, isAllRateLimited, isAllTemporarilyUnavailable, refundReservation, looksLikeBanSignal, reportBanSignal, clearBanSignals, isModelBlockedByDrought, getDroughtSummary, reLoginAccount, getAccountCount } from '../auth.js';
 import { isStickyEnabled, setStickyBinding } from '../account/sticky-session.js';
 import { resolveModel, getModelInfo, pickRateLimitFallback } from '../models.js';
 import { getLsFor, ensureLs } from '../langserver.js';
@@ -40,6 +40,7 @@ import { selectBackend, usesCascadeFlow } from '../backend-router.js';
 import { toChatCompletion as _toChatCompletion, streamChatCompletion as _streamChatCompletion } from '../devin-connect-openai.js';
 import { resolveConnectSelector } from '../devin-connect-models.js';
 import { isRetryable as isConnectRetryable } from '../devin-connect.js';
+import { isRouterModel, assignModel } from '../devin-connect-catalog.js';
 import { bumpConnect } from '../devin-connect-metrics.js';
 import { sanitizeText, sanitizeToolCall, PathSanitizeStream } from '../sanitize.js';
 import { registerSseController } from '../sse-registry.js';
@@ -342,6 +343,8 @@ export function connectErrorToHttp(code) {
     case 'QUOTA_EXHAUSTED': return { status: 402, type: 'insufficient_quota' };
     case 'UNAUTHORIZED': return { status: 401, type: 'authentication_error' };
     case 'RATE_LIMITED': return { status: 429, type: 'rate_limit_error' };
+    case 'CAPACITY': return { status: 503, type: 'capacity_error' };
+    case 'UPSTREAM_INTERNAL': return { status: 503, type: 'upstream_transient_error' };
     case 'NO_TOKEN': return { status: 401, type: 'authentication_error' };
     case 'TIMEOUT': return { status: 504, type: 'timeout_error' };
     default: return { status: 502, type: 'upstream_error' };
@@ -1585,6 +1588,28 @@ export function finalizeConnectAccount(acct, { model, startTime, err }) {
       reLoginAccount(acct.id).catch(() => {});
     }
     else if (err.code === 'RATE_LIMITED') markRateLimited(acct.apiKey, 5 * 60 * 1000, null);
+    else if (err.code === 'CAPACITY') {
+      // The MODEL is temporarily overloaded ("high demand, try again later") —
+      // a transient upstream condition, NOT an account fault. We already replayed
+      // it in place once; if it still failed, apply a SHORT model-scoped soft
+      // cooldown (60s, auto-recovering via _modelRateLimits) so the pool briefly
+      // prefers another account for THIS model, while the account stays fully
+      // healthy for every other model. No error-budget penalty, no re-login.
+      markRateLimited(acct.apiKey, 60 * 1000, model, 'c');
+      bumpConnect('capacity_throttled');
+    }
+    else if (err.code === 'UPSTREAM_INTERNAL') {
+      // Transient upstream BACKEND fault ("an internal error occurred (trace
+      // ID/error ID: ...)"), often wrapped in a 401/403 auth shell. NOT a dead
+      // token (liveness passes) and NOT an entitlement wall — so no re-login and
+      // no MODEL_BLOCKED escalation (#56/#57 shape, internal-error class).
+      // reportInternalError tracks a consecutive streak (quarantines 5min after
+      // 2 in a row — exactly the persistent backend-fault case) and records a
+      // health-window error so selection de-prioritizes a genuinely sick
+      // account, WITHOUT the errorCount eviction a plain reportError would cause.
+      reportInternalError(acct.apiKey);
+      bumpConnect('upstream_internal');
+    }
     else reportError(acct.apiKey);
   } else {
     reportSuccess(acct.apiKey);
@@ -1880,7 +1905,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
     // devin-connect.js's non-protocol [tool result] text wrapper.
     const emulateTools = Array.isArray(effectiveTools) && effectiveTools.length > 0;
     const connectMessages = emulateTools
-      ? normalizeMessagesForCascade(messages, effectiveTools, { modelKey: reqModelName, provider: null, route: 'devin_connect' })
+      ? normalizeMessagesForCascade(messages, effectiveTools, { modelKey: reqModelName, provider: null, route: 'devin_connect', toolChoice: tool_choice })
       : messages;
     log.info(`Chat[${reqId}]: DEVIN_CONNECT ${reqModelName} -> selector=${selector}${mapped ? '' : ' [unmapped→free-tier]'} stream=${!!stream}${emulateTools ? ` tools=${effectiveTools.length}` : ''}`);
     const ccId = genId();
@@ -1916,6 +1941,41 @@ async function _handleChatCompletionsInner(body, context = {}) {
     const ccAcct = await acquireConnectAccount(context.signal, callerKey);
     const connectParams = { messages: connectMessages, model: selector };
     if (ccAcct) connectParams.token = ccAcct.apiKey;
+    // Forward client sampling controls into the connect CompletionConfig. Without
+    // this, temperature/top_p/top_k/max_tokens from the OpenAI (or Anthropic)
+    // request were silently dropped on the DEVIN_CONNECT path — every call ran at
+    // the built-in defaults regardless of what the caller asked for. Only set
+    // keys the caller actually provided; buildCompletionConfig fills the rest with
+    // its calibrated defaults. (NB: max_tokens #3 is not an enforced output cap on
+    // the free tier — see buildCompletionConfig — but it is forwarded for paid.)
+    const completionOverrides = {};
+    if (Number.isFinite(body.temperature)) completionOverrides.temperature = body.temperature;
+    if (Number.isFinite(body.top_p)) completionOverrides.topP = body.top_p;
+    if (Number.isFinite(body.top_k)) completionOverrides.topK = body.top_k;
+    if (Number.isFinite(max_tokens)) completionOverrides.maxTokens = max_tokens;
+    if (Object.keys(completionOverrides).length) connectParams.completion = completionOverrides;
+    // Native tool definitions (groundwork, #49). The connect request builder only
+    // emits a real `tools` field when DEVIN_CONNECT_TOOL_DEF_TAGS is calibrated;
+    // until then this is inert and tools continue to ride the prompt (emulateTools).
+    // Forwarding is harmless when the tag map is unset — the encoder ignores it.
+    if (Array.isArray(effectiveTools) && effectiveTools.length) connectParams.tools = effectiveTools;
+    // Router-model hop (opt-in, default OFF). `adaptive`/`arena-*` are not real
+    // model_uids — the server resolves them per request via the AssignModel RPC,
+    // and GetChatMessage rejects the bare router uid. When DEVIN_CONNECT_ASSIGN_MODEL=1
+    // and the requested name is a router, resolve it to a concrete model_uid here
+    // before the chat call. Gated off by default because the AssignModel wire tags
+    // are inferred (not yet calibrated on a paid account); a failed/empty resolve
+    // degrades gracefully to the original selector rather than failing the request.
+    if (process.env.DEVIN_CONNECT_ASSIGN_MODEL === '1' && isRouterModel(reqModelName) && connectParams.token) {
+      try {
+        const asg = await assignModel({ token: connectParams.token, modelUid: reqModelName, signal: context.signal });
+        connectParams.model = asg.model_uid;
+        log.info(`Chat[${reqId}]: DEVIN_CONNECT router '${reqModelName}' resolved via AssignModel → ${asg.model_uid}`);
+      } catch (e) {
+        bumpConnect('assign_model_failed');
+        log.warn(`Chat[${reqId}]: DEVIN_CONNECT AssignModel for '${reqModelName}' failed (${e.code || 'ERR'}): ${e.message} — falling back to selector=${selector}`);
+      }
+    }
     // Thread the client's abort signal into the upstream HTTP request so a
     // disconnected/cancelled caller tears down the in-flight connect call
     // instead of leaking it until the 120s timeout.
@@ -1990,9 +2050,16 @@ async function _handleChatCompletionsInner(body, context = {}) {
                     finalizeConnectAccount(a, { model: reqModelName, startTime: ccStart, err: null });
                     return { kind: 'ok' };
                   } catch (retryErr) {
-                    finalizeConnectAccount(a, { model: reqModelName, startTime: ccStart, err: retryErr });
-                    log.error(`Chat[${reqId}]: DEVIN_CONNECT stream retry error: ${retryErr.message}`);
-                    return (retryErr.code === 'UNAUTHORIZED' && !emitted) ? { kind: 'dead' } : { kind: 'error', err: retryErr };
+                    // Fresh token still UNAUTHORIZED ⇒ entitlement wall, not a dead
+                    // session (see non-stream path). Reclassify as MODEL_BLOCKED so
+                    // we surface a clean error instead of storming re-login +
+                    // failover across the pool. Gated on !emitted as always.
+                    const reErr = (retryErr.code === 'UNAUTHORIZED' && !emitted)
+                      ? Object.assign(new Error('model requires a paid Devin entitlement (fresh session token still UNAUTHORIZED → not a dead token)'), { code: 'MODEL_BLOCKED' })
+                      : retryErr;
+                    finalizeConnectAccount(a, { model: reqModelName, startTime: ccStart, err: reErr });
+                    log.error(`Chat[${reqId}]: DEVIN_CONNECT stream retry error: ${reErr.message}`);
+                    return { kind: 'error', err: reErr };
                   }
                 }
                 finalizeConnectAccount(a, { model: reqModelName, startTime: ccStart, err });
@@ -2010,6 +2077,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
             if (r.kind === 'ok') break;
             if (r.kind === 'error') { send(chatStreamError(r.err.message, 'upstream_error', r.err.code || null)); break; }
             // r.kind === 'dead' — guaranteed !emitted, so a fresh account is safe.
+            if (acct) reportDeadToken(acct.apiKey);
             bumpConnect('dead_tokens');
             if (hops >= maxHops || emitted) { bumpConnect('failover_exhausted'); send(chatStreamError('all DEVIN_CONNECT accounts exhausted (dead session tokens)', 'upstream_error', 'UNAUTHORIZED')); break; }
             const next = await acquireConnectFailover(triedKeys, context.signal, callerKey);
@@ -2044,9 +2112,22 @@ async function _handleChatCompletionsInner(body, context = {}) {
               finalizeConnectAccount(a, { model: reqModelName, startTime: ccStart, err: null });
               return { kind: 'ok', out };
             } catch (retryErr) {
-              finalizeConnectAccount(a, { model: reqModelName, startTime: ccStart, err: retryErr });
-              log.error(`Chat[${reqId}]: DEVIN_CONNECT retry-after-relogin error (${retryErr.code || 'UPSTREAM_ERROR'}): ${retryErr.message}`);
-              return retryErr.code === 'UNAUTHORIZED' ? { kind: 'dead' } : { kind: 'error', err: retryErr };
+              // The re-login above minted a verifiably-fresh token (windsurfLogin
+              // succeeded), so a SECOND UNAUTHORIZED on that brand-new token cannot
+              // be a dead session — the account simply lacks entitlement for this
+              // selector (free account → paid model). Upstream returns a bare
+              // `permission_denied` with a generic "internal error" body, byte-for-
+              // byte indistinguishable from a retired token; the fresh-token retry
+              // is what disambiguates. Treat it as a tier wall (MODEL_BLOCKED → 402,
+              // no penalty) instead of `dead` — otherwise every free→paid request
+              // would storm Auth1 with a re-login per pooled account and then lie to
+              // the client with "all accounts exhausted (dead session tokens)".
+              const reErr = retryErr.code === 'UNAUTHORIZED'
+                ? Object.assign(new Error('model requires a paid Devin entitlement (fresh session token still UNAUTHORIZED → not a dead token)'), { code: 'MODEL_BLOCKED' })
+                : retryErr;
+              finalizeConnectAccount(a, { model: reqModelName, startTime: ccStart, err: reErr });
+              log.error(`Chat[${reqId}]: DEVIN_CONNECT retry-after-relogin error (${reErr.code || 'UPSTREAM_ERROR'}): ${reErr.message}`);
+              return { kind: 'error', err: reErr };
             }
           }
           finalizeConnectAccount(a, { model: reqModelName, startTime: ccStart, err });
@@ -2070,6 +2151,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
         return { status, body: { error: { message: r.err.message, type, code: r.err.code || null } } };
       }
       // r.kind === 'dead' — the session token couldn't be revived on this account.
+      if (acct) reportDeadToken(acct.apiKey);
       bumpConnect('dead_tokens');
       if (hops >= maxHops) {
         const { status, type } = connectErrorToHttp('UNAUTHORIZED');
@@ -3400,7 +3482,7 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
     // errors and transport issues shouldn't disable the key.
     const isAuthFail = /unauthenticated|invalid api key|invalid_grant|permission_denied.*account/i.test(err.message);
     const isRateLimit = /rate limit|rate_limit|too many requests|quota/i.test(err.message);
-    const isInternal = /internal error occurred.*error id/i.test(err.message);
+    const isInternal = /internal error occurred.*(error|trace)\s*id/i.test(err.message);
     const isDeadline = isUpstreamDeadlineExceeded(err);
     const isTransport = isCascadeTransportError(err);
     const isTransient = !isDeadline && isUpstreamTransientError(err, isInternal);
@@ -4291,7 +4373,7 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
             }
             const isAuthFail = /unauthenticated|invalid api key|invalid_grant|permission_denied.*account/i.test(err.message);
             const isRateLimit = /rate limit|rate_limit|too many requests|quota/i.test(err.message);
-            const isInternal = /internal error occurred.*error id/i.test(err.message);
+            const isInternal = /internal error occurred.*(error|trace)\s*id/i.test(err.message);
             const isTransport = isCascadeTransportError(err);
             const isTransient = !isDeadline && isUpstreamTransientError(err, isInternal);
             // v2.0.61 (#113) — same policy detection as nonStreamResponse.
