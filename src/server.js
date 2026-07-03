@@ -22,7 +22,8 @@ import {
   configureBindHost, emitNoAuthWarnings, getDroughtSummary, ensureLsForAccount,
 } from './auth.js';
 import { handleChatCompletions } from './handlers/chat.js';
-import { handleMessages } from './handlers/messages.js';
+import { handleMessages, handleCountTokens } from './handlers/messages.js';
+import { handleGemini, parseGeminiPath } from './handlers/gemini.js';
 import { handleResponses } from './handlers/responses.js';
 import { handleModels } from './handlers/models.js';
 import { handleDashboardApi, parseProxyUrl, validateProxyHost } from './dashboard/api.js';
@@ -480,6 +481,19 @@ async function route(req, res) {
   }
 
   // Anthropic Messages API — Claude Code compatibility
+  if (path === '/v1/messages/count_tokens' && method === 'POST') {
+    if (!isAuthenticated()) {
+      return json(res, 503, { type: 'error', error: { type: 'api_error', message: 'No active accounts' } });
+    }
+    let body;
+    try { body = JSON.parse(await readBody(req)); } catch (err) {
+      if (sendBodyTooLargeIfNeeded(res, err, 'anthropic')) return;
+      return json(res, 400, { type: 'error', error: { type: 'invalid_request_error', message: 'Invalid JSON' } });
+    }
+    const result = handleCountTokens(body);
+    return json(res, result.status, result.body);
+  }
+
   if (path === '/v1/messages' && method === 'POST') {
     if (!isAuthenticated()) {
       return json(res, 503, { type: 'error', error: { type: 'api_error', message: 'No active accounts' } });
@@ -507,6 +521,48 @@ async function route(req, res) {
       await result.handler(res);
     } else {
       for (const [k, v] of Object.entries(anthropicHeaders)) res.setHeader(k, v);
+      json(res, result.status, result.body);
+    }
+    return;
+  }
+
+  // ── Google Gemini API (generativelanguage) v1beta frontend ──
+  // POST /v1beta/models/{model}:generateContent        → non-stream
+  // POST /v1beta/models/{model}:streamGenerateContent  → stream
+  //   default wire format is a JSON array of GenerateContentResponse;
+  //   ?alt=sse switches to an SSE stream (preferred by newer SDKs).
+  // The {model} segment can carry dots/dashes; the method is the suffix
+  // after the final ':'. A v1 alias path is accepted too.
+  if (method === 'POST' && /\/models\/[^:/]+:(generateContent|streamGenerateContent)$/.test(path)) {
+    if (!isAuthenticated()) {
+      return json(res, 503, { error: { code: 503, message: 'No active accounts. POST /auth/login to add accounts.', status: 'UNAVAILABLE' } });
+    }
+    const parsed = parseGeminiPath(path);
+    if (!parsed) {
+      return json(res, 404, { error: { code: 404, message: `${method} ${path} not found`, status: 'NOT_FOUND' } });
+    }
+    let body;
+    try { body = JSON.parse(await readBody(req)); } catch (err) {
+      if (sendBodyTooLargeIfNeeded(res, err, 'openai')) return;
+      return json(res, 400, { error: { code: 400, message: 'Invalid JSON', status: 'INVALID_ARGUMENT' } });
+    }
+    if (!Array.isArray(body.contents) || body.contents.length === 0) {
+      return json(res, 400, { error: { code: 400, message: 'contents must be a non-empty array', status: 'INVALID_ARGUMENT' } });
+    }
+    const wantStream = parsed.method === 'streamGenerateContent';
+    const alt = new URL(req.url, 'http://localhost').searchParams.get('alt');
+    const token = extractToken(req);
+    const callerKey = callerKeyFromRequest(req, token, body);
+    const result = await handleGemini(parsed.model, body, {
+      callerKey,
+      nativeBridgeCallerKey: nativeBridgeCallerKeyForRequest(req, token, body, callerKey),
+    }, { stream: wantStream, alt });
+    const geminiHeaders = { 'request-id': 'req-' + randomUUID() };
+    if (result.stream) {
+      res.writeHead(result.status, { 'Access-Control-Allow-Origin': '*', ...geminiHeaders, ...result.headers });
+      await result.handler(res);
+    } else {
+      for (const [k, v] of Object.entries(geminiHeaders)) res.setHeader(k, v);
       json(res, result.status, result.body);
     }
     return;
@@ -558,6 +614,10 @@ export function startServer() {
     log.info(`Server on http://${bindHost}:${config.port}`);
     log.info('  POST /v1/chat/completions');
     log.info('  POST /v1/responses');
+    log.info('  POST /v1/messages         (Anthropic)');
+    log.info('  POST /v1/messages/count_tokens');
+    log.info('  POST /v1beta/models/{model}:generateContent       (Gemini)');
+    log.info('  POST /v1beta/models/{model}:streamGenerateContent (Gemini)');
     log.info('  GET  /v1/models');
     log.info('  POST /auth/login          (add account)');
     log.info('  GET  /auth/accounts       (list accounts)');
