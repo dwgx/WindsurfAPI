@@ -21,7 +21,7 @@ import {
   addAccountByEmail, addAccountByToken, addAccountByKey, removeAccount,
   configureBindHost, emitNoAuthWarnings, getDroughtSummary, ensureLsForAccount,
 } from './auth.js';
-import { handleChatCompletions } from './handlers/chat.js';
+import { handleChatCompletions, normalizeOpenAIErrorBody } from './handlers/chat.js';
 import { handleMessages, handleCountTokens, validateMessagesRequest, validateCountTokensRequest } from './handlers/messages.js';
 import { handleGemini, parseGeminiPath } from './handlers/gemini.js';
 import { handleResponses } from './handlers/responses.js';
@@ -40,6 +40,28 @@ const VERSION_INFO = getVersionInfo();
 // 10 MB is way above any realistic chat-completions payload while still
 // bounding worst-case memory from a malicious/broken client.
 export const MAX_BODY_SIZE = 10 * 1024 * 1024;
+
+// G1: Anthropic 官方要求客户端发 `anthropic-version` 请求头(如 2023-06-01)。
+// 作为兼容代理我们取宽容路线:缺失不返 400,而是 warn + 回退默认版本(理由见
+// SPEC-G1);未知版本也不硬失败(向前兼容),原样接受并回写。当前翻译层不因版本
+// 分叉,故解析结果仅用于回写响应头 + 诊断日志。
+const ANTHROPIC_DEFAULT_VERSION = '2023-06-01';
+const ANTHROPIC_KNOWN_VERSIONS = new Set(['2023-06-01', '2023-01-01']);
+
+// 读取并归一 anthropic-version 请求头。返回生效版本字符串(缺失→默认)。
+// Node 已把头名小写化,直接取 req.headers['anthropic-version']。
+export function resolveAnthropicVersion(req) {
+  const raw = req && req.headers ? String(req.headers['anthropic-version'] || '').trim() : '';
+  if (!raw) {
+    log.warn('anthropic-version header missing; defaulting to ' + ANTHROPIC_DEFAULT_VERSION);
+    return ANTHROPIC_DEFAULT_VERSION;
+  }
+  if (!ANTHROPIC_KNOWN_VERSIONS.has(raw)) {
+    // 向前兼容:未知/未来版本不拒绝,原样透传。
+    log.warn('anthropic-version unrecognized: ' + raw.slice(0, 40) + ' (accepting as-is)');
+  }
+  return raw;
+}
 
 export function readBody(req) {
   return new Promise((resolve, reject) => {
@@ -86,7 +108,7 @@ export function bodyTooLargePayload(style = 'openai') {
     // invalid_request_error), aligning with toAnthropicError(413).
     return { type: 'error', error: { type: 'request_too_large', message: 'Request body too large' } };
   }
-  return { error: { message: 'Request body too large', type: 'invalid_request' } };
+  return { error: { message: 'Request body too large', type: 'invalid_request_error' } };
 }
 
 function sendBodyTooLargeIfNeeded(res, err, style = 'openai') {
@@ -129,6 +151,19 @@ function json(res, status, body) {
     'Cache-Control': 'no-store',
   });
   res.end(data);
+}
+
+// F4: inject a top-level request_id into ERROR bodies only (status >= 400),
+// reusing the exact value already emitted in the x-request-id/request-id
+// header so a client can log/correlate the same id from either place. OpenAI
+// and Anthropic both carry request_id in their error envelopes; success bodies
+// stay header-only (both APIs omit it from success payloads). Non-object bodies
+// pass through untouched, and an existing request_id is never clobbered.
+export function withRequestId(status, body, requestId) {
+  if (status < 400) return body;
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return body;
+  if (body.request_id != null) return body;
+  return { ...body, request_id: requestId };
 }
 
 async function route(req, res) {
@@ -380,20 +415,20 @@ async function route(req, res) {
   if (path === '/v1/chat/completions' && method === 'POST') {
     if (!isAuthenticated()) {
       return json(res, 503, {
-        error: { message: 'No active accounts. POST /auth/login to add accounts.', type: 'auth_error' },
+        error: { message: 'No active accounts. POST /auth/login to add accounts.', type: 'api_error' },
       });
     }
 
     let body;
     try { body = JSON.parse(await readBody(req)); } catch (err) {
       if (sendBodyTooLargeIfNeeded(res, err, 'openai')) return;
-      return json(res, 400, { error: { message: 'Invalid JSON', type: 'invalid_request' } });
+      return json(res, 400, { error: { message: 'Invalid JSON', type: 'invalid_request_error' } });
     }
     if (!Array.isArray(body.messages)) {
-      return json(res, 400, { error: { message: 'messages must be an array', type: 'invalid_request' } });
+      return json(res, 400, { error: { message: 'messages must be an array', type: 'invalid_request_error' } });
     }
     if (body.messages.length === 0) {
-      return json(res, 400, { error: { message: 'messages must contain at least 1 item', type: 'invalid_request' } });
+      return json(res, 400, { error: { message: 'messages must contain at least 1 item', type: 'invalid_request_error' } });
     }
 
     const reqStartedAt = Date.now();
@@ -404,8 +439,9 @@ async function route(req, res) {
       nativeBridgeCallerKey: nativeBridgeCallerKeyForRequest(req, token, body, callerKey),
     });
     const processingMs = Date.now() - reqStartedAt;
+    const requestId = 'req_' + randomUUID();
     const modelHeaders = {
-      'x-request-id': 'req-' + randomUUID(),
+      'x-request-id': requestId,
       'openai-model': body.model || '',
       // Actual upstream processing time — hvoy.ai and similar verifiers
       // treat a flat "0" as a fingerprint of a faking proxy.
@@ -424,7 +460,11 @@ async function route(req, res) {
       if (result.headers) {
         for (const [k, v] of Object.entries(result.headers)) res.setHeader(k, v);
       }
-      json(res, result.status, result.body);
+      // O10: normalize internal error.type to the official OpenAI vocabulary at
+      // the egress boundary; no-op on success bodies. F4: inject the same
+      // request_id emitted in x-request-id into the error body (status >= 400).
+      normalizeOpenAIErrorBody(result.body, result.status);
+      json(res, result.status, withRequestId(result.status, result.body, requestId));
     }
     return;
   }
@@ -439,17 +479,17 @@ async function route(req, res) {
   if (path === '/v1/responses' && method === 'POST') {
     if (!isAuthenticated()) {
       return json(res, 503, {
-        error: { message: 'No active accounts. POST /auth/login to add accounts.', type: 'auth_error' },
+        error: { message: 'No active accounts. POST /auth/login to add accounts.', type: 'api_error' },
       });
     }
 
     let body;
     try { body = JSON.parse(await readBody(req)); } catch (err) {
       if (sendBodyTooLargeIfNeeded(res, err, 'openai')) return;
-      return json(res, 400, { error: { message: 'Invalid JSON', type: 'invalid_request' } });
+      return json(res, 400, { error: { message: 'Invalid JSON', type: 'invalid_request_error' } });
     }
     if (body.input == null) {
-      return json(res, 400, { error: { message: 'input is required', type: 'invalid_request' } });
+      return json(res, 400, { error: { message: 'input is required', type: 'invalid_request_error' } });
     }
 
     const reqStartedAt = Date.now();
@@ -462,8 +502,9 @@ async function route(req, res) {
       },
     });
     const processingMs = Date.now() - reqStartedAt;
+    const requestId = 'req_' + randomUUID();
     const modelHeaders = {
-      'x-request-id': 'req-' + randomUUID(),
+      'x-request-id': requestId,
       'openai-model': body.model || '',
       'openai-processing-ms': String(processingMs),
       'openai-version': '2020-10-01',
@@ -477,7 +518,10 @@ async function route(req, res) {
       if (result.headers) {
         for (const [k, v] of Object.entries(result.headers)) res.setHeader(k, v);
       }
-      json(res, result.status, result.body);
+      // O10 + F4: /v1/responses is OpenAI-family — same egress normalize +
+      // request_id injection as /v1/chat/completions.
+      normalizeOpenAIErrorBody(result.body, result.status);
+      json(res, result.status, withRequestId(result.status, result.body, requestId));
     }
     return;
   }
@@ -499,7 +543,11 @@ async function route(req, res) {
     // E4: model is required by the official count_tokens API.
     const invalid = validateCountTokensRequest(body);
     if (invalid) return json(res, invalid.status, invalid.body);
+    // G1: count_tokens is also an Anthropic-family endpoint — echo the version
+    // header for symmetry with /v1/messages (no stream here, so setHeader).
+    const anthropicVersion = resolveAnthropicVersion(req);
     const result = handleCountTokens(body);
+    res.setHeader('anthropic-version', anthropicVersion);
     return json(res, result.status, result.body);
   }
 
@@ -522,20 +570,31 @@ async function route(req, res) {
     if (invalid) return json(res, invalid.status, invalid.body);
     const token = extractToken(req);
     const callerKey = callerKeyFromRequest(req, token, body);
+    // G1: read the anthropic-version request header (warn+default when missing,
+    // accept-as-is when unknown). Passed into context as a seam for future
+    // version-gated behavior; the translation layer does not branch on it today.
+    const anthropicVersion = resolveAnthropicVersion(req);
     const result = await handleMessages(body, {
       callerKey,
       nativeBridgeCallerKey: nativeBridgeCallerKeyForRequest(req, token, body, callerKey),
+      anthropicVersion,
     });
+    const requestId = 'req_' + randomUUID();
     const anthropicHeaders = {
-      'request-id': 'req-' + randomUUID(),
+      'request-id': requestId,
       'anthropic-model': body.model || '',
+      // G1: echo the effective version back so clients can confirm it.
+      'anthropic-version': anthropicVersion,
     };
     if (result.stream) {
       res.writeHead(result.status, { 'Access-Control-Allow-Origin': '*', ...anthropicHeaders, ...result.headers });
       await result.handler(res);
     } else {
       for (const [k, v] of Object.entries(anthropicHeaders)) res.setHeader(k, v);
-      json(res, result.status, result.body);
+      // F4: inject request_id into Anthropic error bodies (status >= 400),
+      // matching {type:'error', error:{...}, request_id}. O10 does NOT touch
+      // Anthropic — toAnthropicError owns its own status vocabulary.
+      json(res, result.status, withRequestId(result.status, result.body, requestId));
     }
     return;
   }
@@ -571,7 +630,7 @@ async function route(req, res) {
       callerKey,
       nativeBridgeCallerKey: nativeBridgeCallerKeyForRequest(req, token, body, callerKey),
     }, { stream: wantStream, alt });
-    const geminiHeaders = { 'request-id': 'req-' + randomUUID() };
+    const geminiHeaders = { 'request-id': 'req_' + randomUUID() };
     if (result.stream) {
       res.writeHead(result.status, { 'Access-Control-Allow-Origin': '*', ...geminiHeaders, ...result.headers });
       await result.handler(res);
@@ -588,7 +647,7 @@ async function route(req, res) {
   if (isAnthropicPath(path)) {
     return json(res, 404, { type: 'error', error: { type: 'not_found_error', message: `${method} ${path} not found` } });
   }
-  json(res, 404, { error: { message: `${method} ${path} not found`, type: 'not_found' } });
+  json(res, 404, { error: { message: `${method} ${path} not found`, type: 'not_found_error' } });
 }
 
 // D4: paths under the Anthropic Messages surface. Fallback 404/500 handlers use

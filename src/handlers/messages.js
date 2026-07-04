@@ -385,6 +385,11 @@ function validateCacheControl(cc, where) {
 // an Anthropic 400 {status, body} on the first violation.
 export function validateMessagesRequest(body) {
   if (!body || typeof body !== 'object') return invalidRequest('request body must be a JSON object');
+  // V1: model is required by the official API. count_tokens already enforced this
+  // (validateCountTokensRequest) but /v1/messages did not, leaving the two entry
+  // points asymmetric — a missing model would fall through to a downstream default
+  // instead of a clean 400. Same wording as count_tokens for consistency.
+  if (body.model == null || body.model === '') return invalidRequest('model: field required');
   // C1: max_tokens is required and must be a positive integer. The old
   // `max_tokens || 8192` fallback silently accepted a missing value or 0.
   const mt = body.max_tokens;
@@ -949,6 +954,14 @@ class AnthropicStreamTranslator {
     }
   }
 
+  // F6: official Anthropic streams emit typed `event: ping` frames (with a
+  // `{"type":"ping"}` data payload), not bare SSE comments. Clients and strict
+  // proxies key off the typed event to keep long/slow streams alive. We emit one
+  // right after message_start and again on each upstream heartbeat.
+  sendPing() {
+    this.send('ping', { type: 'ping' });
+  }
+
   startMessage() {
     if (this.messageStarted) return;
     this.messageStarted = true;
@@ -968,12 +981,19 @@ class AnthropicStreamTranslator {
         type: 'message',
         role: 'assistant',
         content: [],
+        // S1: match the non-stream shape — official message_start carries the
+        // top-level `container` field too (null = no server-side tool container).
+        container: null,
         model: this.model,
         stop_reason: null,
         stop_sequence: null,
         usage: startUsage,
       },
     });
+    // F6: official streams follow message_start with a typed ping before the
+    // first content_block_start. Emit one so strict clients see the canonical
+    // event ordering and slow-to-first-token streams stay visibly alive.
+    this.sendPing();
   }
 
   startBlock(type, extra = {}) {
@@ -1266,7 +1286,11 @@ function createCaptureRes(translator, realRes) {
       // heartbeat comments straight through so Claude Code stays happy.
       const str = typeof chunk === 'string' ? chunk : chunk.toString('utf8');
       if (str.startsWith(':') && realRes && !realRes.writableEnded) {
+        // Keep forwarding the raw comment heartbeat for maximum client compat,
+        // AND (F6) emit a typed `event: ping` so strict clients/proxies that only
+        // recognize the canonical Anthropic ping event also see liveness.
         try { realRes.write(str); } catch {}
+        try { translator.sendPing(); } catch {}
       }
       translator.feed(chunk);
       return true;
@@ -1355,7 +1379,17 @@ export async function handleMessages(body, context = {}) {
   // Streaming path — ask handleChatCompletions for its streaming handler and
   // point its writes at our translator shim. This lets the upstream Cascade
   // poll loop drive the downstream SSE in real time — no buffer-then-replay.
-  const streamResult = await chatHandler({ ...openaiBody, stream: true, __route: 'messages' }, effectiveContext);
+  //
+  // O1: the internal chat stream now omits the trailing usage-only frame unless
+  // the caller opts in via stream_options.include_usage. This translator consumes
+  // chunk.usage (→ this.finalUsage → the message_delta usage block, processChunk
+  // at ~1147), so it must opt in regardless of what the downstream Anthropic
+  // client asked for — Anthropic always reports usage on message_delta, so the
+  // internal frame is required to fill it.
+  const streamResult = await chatHandler(
+    { ...openaiBody, stream: true, __route: 'messages', stream_options: { ...(openaiBody.stream_options || {}), include_usage: true } },
+    effectiveContext,
+  );
 
   if (!streamResult.stream) {
     // The OpenAI path returned a non-stream error (e.g. 403 model_not_entitled,

@@ -636,8 +636,19 @@ describe('Anthropic messages request translation', () => {
 
     const start = events.find(e => e.event === 'message_start');
     assert.ok(start, 'message_start emitted');
+    // S1: message_start must carry the top-level `container` field (null) to match
+    // the non-stream response shape and official Anthropic message_start events.
+    assert.equal(start.data.message.container, null, 'message_start.message.container is null (S1 shape alignment)');
+    assert.ok('container' in start.data.message, 'container key present, not merely undefined');
     assert.ok(start.data.message.usage.input_tokens > 0, 'message_start.usage.input_tokens is a non-zero local estimate');
     assert.equal(start.data.message.usage.output_tokens, 0, 'message_start.usage.output_tokens starts at 0');
+
+    // F6: a typed `event: ping` (data {"type":"ping"}) must follow message_start,
+    // matching the canonical Anthropic event ordering.
+    const startIdx = events.findIndex(e => e.event === 'message_start');
+    const ping = events.find((e, i) => i > startIdx && e.event === 'ping');
+    assert.ok(ping, 'a typed ping event is emitted after message_start');
+    assert.equal(ping.data.type, 'ping', 'ping data payload is {"type":"ping"}');
 
     const delta = events.find(e => e.event === 'message_delta');
     assert.ok(delta, 'message_delta emitted');

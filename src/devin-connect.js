@@ -608,6 +608,14 @@ function decodeInnerFields(buf, depth) {
       if (/^[\x20-\x7e]*$/.test(s) && s.length) bucket[sf.field] = { kind: 'string', preview: s.slice(0, 48) };
       else {
         const entry = { kind: 'message', preview: `<msg ${sf.value.length}b>` };
+        // Retain the FULL raw bytes (hex) of every non-printable sub-message. The
+        // 48-char preview above threw the tail away — that is exactly how #28.2's
+        // 40-byte counter block was lost on the last capture. With the complete
+        // hex here, a single text-only PAID capture is enough to reverse ALL inner
+        // tags OFFLINE, collapsing "one PAID probe per field" into a single closed
+        // loop. This path is only reached under dumpMeta (via decodeSubMessage), so
+        // it stays a diagnostic-only cost with zero effect on production decoding.
+        entry.raw = sf.value.toString('hex');
         if (depth < SUB_DUMP_MAX_DEPTH) {
           const nested = decodeInnerFields(sf.value, depth + 1);
           if (nested) entry.fields = nested; // one level deeper decoded

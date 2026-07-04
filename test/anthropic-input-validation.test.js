@@ -7,37 +7,59 @@ import { validateMessagesRequest, validateCountTokensRequest } from '../src/hand
 // official Anthropic Messages API. Valid inputs return null (no error).
 
 const baseMsgs = [{ role: 'user', content: 'hi' }];
+const MODEL = 'claude-sonnet-4.6'; // V1: model is now required, so isolate other checks with a valid model
+
+describe('validateMessagesRequest — V1 model required', () => {
+  it('rejects a missing model (was previously accepted, asymmetric with count_tokens)', () => {
+    const err = validateMessagesRequest({ max_tokens: 16, messages: baseMsgs });
+    assert.equal(err.status, 400);
+    assert.equal(err.body.error.type, 'invalid_request_error');
+    assert.match(err.body.error.message, /model/);
+  });
+
+  it('rejects an empty-string model', () => {
+    const err = validateMessagesRequest({ model: '', max_tokens: 16, messages: baseMsgs });
+    assert.equal(err.status, 400);
+    assert.equal(err.body.error.type, 'invalid_request_error');
+    assert.match(err.body.error.message, /model/);
+  });
+
+  it('accepts a present model', () => {
+    assert.equal(validateMessagesRequest({ model: MODEL, max_tokens: 16, messages: baseMsgs }), null);
+  });
+});
 
 describe('validateMessagesRequest — C1 max_tokens required + positive integer', () => {
   it('rejects a missing max_tokens (no silent 8192 fallback)', () => {
-    const err = validateMessagesRequest({ messages: baseMsgs });
+    const err = validateMessagesRequest({ model: MODEL, messages: baseMsgs });
     assert.equal(err.status, 400);
     assert.equal(err.body.error.type, 'invalid_request_error');
     assert.match(err.body.error.message, /max_tokens/);
   });
 
   it('rejects max_tokens = 0 (the `||` fallback used to swallow 0)', () => {
-    const err = validateMessagesRequest({ max_tokens: 0, messages: baseMsgs });
+    const err = validateMessagesRequest({ model: MODEL, max_tokens: 0, messages: baseMsgs });
     assert.equal(err.status, 400);
     assert.equal(err.body.error.type, 'invalid_request_error');
   });
 
   it('rejects negative / non-integer / non-number max_tokens', () => {
     for (const mt of [-5, 1.5, '100', NaN, Infinity, null]) {
-      const err = validateMessagesRequest({ max_tokens: mt, messages: baseMsgs });
+      const err = validateMessagesRequest({ model: MODEL, max_tokens: mt, messages: baseMsgs });
       assert.equal(err.status, 400, `max_tokens=${mt} should 400`);
       assert.equal(err.body.error.type, 'invalid_request_error');
     }
   });
 
   it('accepts a positive integer max_tokens', () => {
-    assert.equal(validateMessagesRequest({ max_tokens: 8192, messages: baseMsgs }), null);
-    assert.equal(validateMessagesRequest({ max_tokens: 1, messages: baseMsgs }), null);
+    assert.equal(validateMessagesRequest({ model: MODEL, max_tokens: 8192, messages: baseMsgs }), null);
+    assert.equal(validateMessagesRequest({ model: MODEL, max_tokens: 1, messages: baseMsgs }), null);
   });
 });
 
 describe('validateMessagesRequest — C4 cache_control type/ttl validity', () => {
   const withCc = (cc) => ({
+    model: MODEL,
     max_tokens: 16,
     messages: [{ role: 'user', content: [{ type: 'text', text: 'x', cache_control: cc }] }],
   });
@@ -64,12 +86,14 @@ describe('validateMessagesRequest — C4 cache_control type/ttl validity', () =>
 
   it('validates cache_control on tools[] and system[] too', () => {
     const onTool = validateMessagesRequest({
+      model: MODEL,
       max_tokens: 16,
       tools: [{ name: 't', cache_control: { type: 'bogus' } }],
       messages: baseMsgs,
     });
     assert.equal(onTool.status, 400);
     const onSystem = validateMessagesRequest({
+      model: MODEL,
       max_tokens: 16,
       system: [{ type: 'text', text: 's', cache_control: { type: 'ephemeral', ttl: '2h' } }],
       messages: baseMsgs,
@@ -81,6 +105,7 @@ describe('validateMessagesRequest — C4 cache_control type/ttl validity', () =>
 describe('validateMessagesRequest — C3 breakpoint count ≤ 4', () => {
   it('accepts exactly 4 breakpoints', () => {
     const body = {
+      model: MODEL,
       max_tokens: 16,
       system: [
         { type: 'text', text: 'a', cache_control: { type: 'ephemeral' } },
@@ -96,6 +121,7 @@ describe('validateMessagesRequest — C3 breakpoint count ≤ 4', () => {
 
   it('rejects a 5th cache_control breakpoint', () => {
     const body = {
+      model: MODEL,
       max_tokens: 16,
       system: [
         { type: 'text', text: 'a', cache_control: { type: 'ephemeral' } },

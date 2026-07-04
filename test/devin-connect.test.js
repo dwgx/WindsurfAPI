@@ -372,6 +372,27 @@ describe('decodeFrame', () => {
     assert.deepEqual(d.subDump[28][2].fields[4], { kind: 'varint', preview: 34 });
   });
 
+  it('subDump retains the FULL raw-hex of every inner sub-message (D1: single-capture offline tag recovery)', () => {
+    // The 48-char preview alone dropped the tail of #28.2's counter block on the
+    // last capture. Retaining complete raw-hex means one text-only PAID capture is
+    // enough to reverse ALL inner tags offline — no per-field probe loop.
+    const stats = Buffer.concat([
+      writeVarintField(3, 1200),
+      writeVarintField(4, 34),
+    ]);
+    const trailer = Buffer.concat([
+      writeStringField(1, 'Response Statistics'),
+      writeMessageField(2, stats),
+    ]);
+    const payload = Buffer.concat([writeStringField(1, 'bot-1'), writeMessageField(28, trailer)]);
+    const d = decodeFrame(payload, { dumpMeta: true });
+    // the nested #28.2 message node carries the exact bytes, losslessly
+    assert.equal(d.subDump[28][2].raw, stats.toString('hex'));
+    // and the raw round-trips back to the same fields (offline re-decode works)
+    assert.ok(d.subDump[28][2].raw.length > 0);
+    assert.equal(Buffer.from(d.subDump[28][2].raw, 'hex').toString('hex'), stats.toString('hex'));
+  });
+
   it('subDump recursion is depth-capped so a deeply nested / adversarial blob cannot recurse unbounded', () => {
     // Build 6 levels of nesting; SUB_DUMP_MAX_DEPTH (4) must stop decoding before
     // the deepest, leaving it as a presence-only "<msg Nb>" with no `.fields`.
