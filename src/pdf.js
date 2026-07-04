@@ -83,11 +83,25 @@ function extractTextOps(stream) {
   const lines = [];
   let currentLine = '';
 
-  // Match BT...ET blocks (text objects)
-  const btBlocks = stream.match(/BT[\s\S]*?ET/g);
-  if (!btBlocks) return '';
+  // Find BT...ET text-object blocks with a linear, forward-only indexOf scan.
+  // The old /BT[\s\S]*?ET/g regex degraded to O(n^2) on a "many BT, no ET"
+  // stream: each of N 'BT' starts re-scanned the entire tail looking for an 'ET'
+  // that never comes (5MB of 'BT' blocked the event loop ~26 min). indexOf pairs
+  // each BT with the next ET after it and stops the instant no ET remains, so the
+  // whole pass is O(n) regardless of how the input is crafted.
+  const blocks = [];
+  let scan = 0;
+  while (scan < stream.length) {
+    const bt = stream.indexOf('BT', scan);
+    if (bt === -1) break;
+    const et = stream.indexOf('ET', bt + 2);
+    if (et === -1) break; // no closing ET anywhere ahead -> done (forward-only)
+    blocks.push(stream.slice(bt, et + 2));
+    scan = et + 2;
+  }
+  if (blocks.length === 0) return '';
 
-  for (const block of btBlocks) {
+  for (const block of blocks) {
     // (string) Tj — show string
     const tjMatches = block.matchAll(/\(([^)]*)\)\s*Tj/g);
     for (const m of tjMatches) {

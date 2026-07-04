@@ -14,6 +14,18 @@ import zlib from 'node:zlib';
 
 const PNG_SIG = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
 
+// Decode bombs guard. A crafted IHDR can declare enormous dimensions (e.g.
+// 16000x16000) while a few KB of high-ratio IDAT inflates to gigabytes — the
+// unfilter/toRGBA allocations then push peak RSS past 1GB and OOM-abort the
+// single process. We cap the per-side dimension and the total pixel count up
+// front (both must hold), and separately cap inflate output to exactly what the
+// validated dimensions imply. Anything larger throws — src/image.js turns a
+// decode throw into a safe passthrough (original image forwarded unchanged), so
+// a monster PNG degrades gracefully instead of crashing. A 32767-per-side /
+// ~40MP budget covers any real screenshot or photo (4K is ~8MP) with headroom.
+const MAX_DIMENSION = 0x7fff;              // 32767 px per side
+const MAX_PIXELS = 40 * 1024 * 1024;       // ~40M pixels total (width * height)
+
 // Bytes-per-pixel for each PNG color type at 8-bit depth (the sample count).
 // 0=grayscale 2=RGB 3=palette 4=grayscale+alpha 6=RGBA
 const CHANNELS = { 0: 1, 2: 3, 3: 1, 4: 2, 6: 4 };
@@ -109,6 +121,13 @@ export function decodePng(buf) {
       if (bitDepth !== 8) throw new Error(`PNG: unsupported bit depth ${bitDepth} (only 8)`);
       if (interlace !== 0) throw new Error('PNG: interlaced not supported');
       if (!(colorType in CHANNELS)) throw new Error(`PNG: unsupported color type ${colorType}`);
+      // Reject decode bombs at the header, before any allocation or inflate.
+      if (width < 1 || height < 1 || width > MAX_DIMENSION || height > MAX_DIMENSION) {
+        throw new Error(`PNG: dimensions ${width}x${height} exceed limit ${MAX_DIMENSION}`);
+      }
+      if (width * height > MAX_PIXELS) {
+        throw new Error(`PNG: pixel count ${width * height} exceeds limit ${MAX_PIXELS}`);
+      }
     } else if (type === 'PLTE') {
       palette = buf.subarray(dataStart, dataStart + len);
     } else if (type === 'tRNS') {
@@ -125,11 +144,16 @@ export function decodePng(buf) {
   if (colorType === 3 && !palette) throw new Error('PNG: palette image without PLTE');
   if (idat.length === 0) throw new Error('PNG: no IDAT data');
 
-  const raw = zlib.inflateSync(Buffer.concat(idat));
   const channels = CHANNELS[colorType];
   const bytesPerRow = width * channels;
   const bpp = channels; // 8-bit -> bytes-per-pixel == channels
-  if (raw.length < height * (bytesPerRow + 1)) throw new Error('PNG: inflated data too short');
+  // A valid non-interlaced PNG inflates to exactly one filter byte + one row of
+  // pixel bytes per scanline. Cap inflate output there (dimensions already
+  // bounded above), so a high-ratio IDAT can never balloon past the pixel budget
+  // — inflateSync throws ERR_BUFFER_TOO_LARGE, which callers treat as passthrough.
+  const expectedRaw = height * (bytesPerRow + 1);
+  const raw = zlib.inflateSync(Buffer.concat(idat), { maxOutputLength: expectedRaw });
+  if (raw.length < expectedRaw) throw new Error('PNG: inflated data too short');
 
   const pixels = unfilter(raw, height, bytesPerRow, bpp);
   const data = toRGBA(pixels, width, height, colorType, palette, trns);

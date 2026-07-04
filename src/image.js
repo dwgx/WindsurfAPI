@@ -52,6 +52,14 @@ const IMAGE_JPEG_QUALITY = parseInt(process.env.WINDSURFAPI_IMAGE_JPEG_QUALITY |
 // image could not be decoded). A re-encode normally lands far below this.
 const IMAGE_MAX_BASE64_LEN = MAX_BASE64_LEN;
 
+// Pixel-count ceiling for attempting a pixel decode. A crafted PNG can declare
+// enormous IHDR dimensions with a few KB of high-ratio IDAT (a decode bomb);
+// decoding it would allocate gigabytes. The vendored png.js rejects such
+// dimensions itself, but we also predict the pixel budget here from the cheap
+// header read so we never even hand oversized dimensions to the decoder. Kept
+// aligned with png.js MAX_PIXELS (~40M pixels; 4K is ~8MP, so ample headroom).
+const IMAGE_MAX_DECODE_PIXELS = 40 * 1024 * 1024;
+
 // Decode a PNG or JPEG buffer to { width, height, data:RGBA } using the vendored
 // zero-dependency codecs. WebP / GIF / exotic variants throw here, which the
 // caller turns into a safe passthrough. Format is decided by magic bytes, not the
@@ -125,6 +133,16 @@ export async function shrinkPixels(base64, opts = {}) {
 
   try {
     const buf = Buffer.from(base64, 'base64');
+    // Pre-decode budget check: read the header dimensions (cheap, no pixel
+    // decode) and bail before allocating anything if the declared pixel count is
+    // absurd. This shields the decoders from a crafted decode bomb (tiny bytes,
+    // giant IHDR/SOF dimensions) — the vendored png.js also self-guards, but
+    // refusing here means we never even attempt the multi-hundred-MB allocation.
+    // Returning ok:false makes the caller keep the original image (passthrough).
+    const headerDims = readImageDimensions(base64);
+    if (headerDims && headerDims.width * headerDims.height > IMAGE_MAX_DECODE_PIXELS) {
+      return { ok: false, error: `image ${headerDims.width}x${headerDims.height} exceeds decode pixel budget` };
+    }
     const original = decodePixels(buf); // { width, height, data:RGBA }
     const srcW = original.width;
     const srcH = original.height;

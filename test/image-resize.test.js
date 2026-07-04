@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { deflateSync as zlibDeflate } from 'node:zlib';
 import {
   detectImageFormat,
   readImageDimensions,
@@ -298,6 +299,89 @@ describe('shrinkPixels (real vendored decode + re-encode)', () => {
     assert.ok(r.error);
   });
 });
+
+// ---------------------------------------------------------------------------
+// PNG-1 / IMG-1 decode-bomb regression. A crafted PNG can declare enormous IHDR
+// dimensions backed by a few KB of high-ratio IDAT. Before the fix, decodePng
+// ran an unbounded inflateSync and then allocated unfilter/toRGBA buffers sized
+// from the giant dimensions — peak RSS >1GB, OOM-aborting the single process.
+// The fix rejects the dimensions at the header and caps inflate output, and
+// shrinkPixels bails on the header pixel budget before ever allocating. All of
+// this must complete in milliseconds with a few KB of input (no GB allocation).
+// ---------------------------------------------------------------------------
+
+// Build a syntactically valid PNG with attacker-declared IHDR dimensions and a
+// small, highly-compressible IDAT (a few KB expanding to nothing near what the
+// dimensions imply). Deliberately does NOT match the declared size — the point
+// is that the guard fires before the size mismatch would even matter.
+function bombPng(declW, declH) {
+  const sig = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const ihdrData = Buffer.alloc(13);
+  ihdrData.writeUInt32BE(declW, 0);
+  ihdrData.writeUInt32BE(declH, 4);
+  ihdrData[8] = 8;  // bit depth
+  ihdrData[9] = 6;  // color type 6 = RGBA
+  ihdrData[10] = 0; ihdrData[11] = 0; ihdrData[12] = 0;
+  const ihdrLen = Buffer.alloc(4); ihdrLen.writeUInt32BE(13, 0);
+  // A few KB of zeros deflate to a tiny high-ratio IDAT (the "bomb" payload).
+  const idatRaw = zlibDeflate(Buffer.alloc(64 * 1024, 0));
+  const idatLen = Buffer.alloc(4); idatLen.writeUInt32BE(idatRaw.length, 0);
+  const iendLen = Buffer.alloc(4); iendLen.writeUInt32BE(0, 0);
+  return Buffer.concat([
+    sig,
+    ihdrLen, Buffer.from('IHDR'), ihdrData, Buffer.alloc(4),
+    idatLen, Buffer.from('IDAT'), idatRaw, Buffer.alloc(4),
+    iendLen, Buffer.from('IEND'), Buffer.alloc(4),
+  ]);
+}
+
+describe('PNG decode-bomb guard (PNG-1 / IMG-1)', () => {
+  it('decodePng rejects an over-dimension IHDR without unbounded inflate/alloc', () => {
+    // 16000x16000 = 256M pixels -> ~1GB RGBA before the fix. Must throw fast.
+    const png = bombPng(16000, 16000);
+    const t0 = Date.now();
+    assert.throws(() => decodePng(png), /exceed|limit/i);
+    const ms = Date.now() - t0;
+    assert.ok(ms < 2000, `decodePng took ${ms}ms — possible unbounded decode regression`);
+  });
+
+  it('decodePng rejects a single over-dimension side (per-side cap)', () => {
+    // width within the per-side cap product-wise only if height tiny; here the
+    // per-side ceiling (32767) itself is exceeded.
+    assert.throws(() => decodePng(bombPng(100000, 2)), /exceed|limit/i);
+  });
+
+  it('decodePng caps inflate output so a high-ratio IDAT cannot balloon', () => {
+    // Dimensions are within the pixel-count budget but the IDAT (64KB of zeros)
+    // inflates larger than the tiny declared frame implies -> inflateSync must
+    // hit maxOutputLength and throw rather than allocating the full expansion.
+    const png = bombPng(4, 4); // expected raw = 4*(16+1)=68 bytes, far under IDAT
+    assert.throws(() => decodePng(png), /Buffer larger|maxOutputLength|too short|ERR_BUFFER/i);
+  });
+
+  it('shrinkPixels degrades a decode-bomb PNG to ok:false in milliseconds (passthrough)', async () => {
+    const png = bombPng(20000, 20000).toString('base64'); // 400M pixels declared
+    const t0 = Date.now();
+    const r = await shrinkPixels(png);
+    const ms = Date.now() - t0;
+    assert.equal(r.ok, false);
+    assert.ok(r.error);
+    assert.ok(ms < 2000, `shrinkPixels took ${ms}ms — bomb not short-circuited`);
+  });
+
+  it('maybeShrinkImage forwards a decode-bomb PNG unchanged instead of crashing', async () => {
+    // Header declares 16000x16000 (oversizeDimensions), tiny bytes (in byte
+    // budget). Re-encode can't decode the bomb -> original forwarded as-is,
+    // never OOM. This is the end-to-end passthrough contract.
+    const png = bombPng(16000, 16000).toString('base64');
+    const r = await maybeShrinkImage({ base64_data: png, mime_type: 'image/png' });
+    assert.equal(r.dropped, false);
+    assert.equal(r.resized, false);
+    assert.equal(r.base64_data, png); // forwarded unchanged
+    assert.equal(r.oversizeDimensions, true);
+  });
+});
+
 
 describe('maybeShrinkImage real re-encode wiring', () => {
   it('re-encodes a byte-oversized real image to JPEG instead of dropping it', async () => {
