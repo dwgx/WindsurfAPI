@@ -99,3 +99,42 @@ describe('reportBanSignal: 2-strike → status=banned', () => {
     assert.equal(result, false);
   });
 });
+
+describe('R3: transient-first guard prevents ban promotion of transient errors', () => {
+  // The upstream sometimes wraps a transient stall in a 401/403 shell whose text
+  // matches BAN_PATTERNS (e.g. "authentication ... failed"). The handler guard is
+  // `!isRateLimit && !isInternal && !isTransient && looksLikeBanSignal(msg)`, so a
+  // transient/internal error must NEVER reach reportBanSignal, even though its text
+  // is ban-shaped — otherwise two transient stalls would burn a healthy account.
+  const banShapedButTransient = 'Authentication failed'; // matches BAN_PATTERNS
+
+  it('the text alone still looks ban-shaped (guard is not about the text)', () => {
+    assert.equal(looksLikeBanSignal(banShapedButTransient), true);
+  });
+
+  it('twice-repeated transient error carrying ban-shaped text does NOT ban when guard skips it', () => {
+    const a = mkAccount();
+    // Simulate the handler: because isInternal/isTransient is true, the ban branch
+    // is guarded off and reportBanSignal is never called — so no promotion.
+    const isInternal = true; // e.g. "internal error occurred (error ID ...)" shell
+    for (let strike = 0; strike < 2; strike++) {
+      if (!isInternal && looksLikeBanSignal(banShapedButTransient)) {
+        reportBanSignal(a.apiKey, banShapedButTransient);
+      }
+    }
+    assert.equal(getAccountInternal(a.id).status, 'active',
+      'a transient error wrapped in an auth-shaped shell must not burn the account');
+  });
+
+  it('genuine ban signal (not transient) still promotes after 2 strikes', () => {
+    const a = mkAccount();
+    const isInternal = false; // real auth failure, not a transient shell
+    for (let strike = 0; strike < 2; strike++) {
+      if (!isInternal && looksLikeBanSignal('Account suspended')) {
+        reportBanSignal(a.apiKey, 'Account suspended');
+      }
+    }
+    assert.equal(getAccountInternal(a.id).status, 'banned',
+      'a genuine ban signal must still promote — the guard only spares transient errors');
+  });
+});

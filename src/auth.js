@@ -1193,27 +1193,58 @@ export function releaseAccount(apiKey) {
   const a = accounts.find(x => x.apiKey === apiKey);
   if (!a) return;
   a._inflight = Math.max(0, (a._inflight || 0) - 1);
+  // R2: keep _inflightAt tracking the NEWEST activity. When a request completes
+  // while others are still in flight, refresh the timestamp so those survivors
+  // aren't judged stale off the oldest acquire. When the account goes fully idle,
+  // clear it so a future leaked slot is measured from ITS acquire, not a stale one.
+  if (a._inflight === 0) a._inflightAt = 0;
+  else a._inflightAt = Date.now();
 }
 
 // v2.0.96: safety net — auto-reset stale inflight counters that weren't
 // decremented due to connection drops, crashes, or missed finally blocks.
 // Without this a single leaked inflight permanently deprioritises an
 // account in getApiKey's sort order (fixes #165).
-const INFLIGHT_STALE_MS = 120_000;
+//
+// R2: the threshold MUST exceed the longest legitimate request lifetime, or a
+// normal long stream/ACP session gets its counter wrongly zeroed mid-flight —
+// making a busy account read as idle in getApiKey's sort and oversubscribing it.
+// The absolute upstream deadline is DEVIN_CONNECT_TIMEOUT_MS (default 600s), so a
+// leaked slot can't outlive that by much; we take max(that + 5min margin, 15min)
+// as the floor. `_inflightAt` is also refreshed on release (see releaseAccount) so
+// it tracks the NEWEST activity, not the first acquire — a steady stream of short
+// requests keeps the account "fresh" and only a genuinely abandoned slot ages out.
+const INFLIGHT_STALE_FLOOR_MS = 15 * 60_000;
+function inflightStaleMs() {
+  const deadline = Number(process.env.DEVIN_CONNECT_TIMEOUT_MS) || 600_000;
+  return Math.max(deadline + 5 * 60_000, INFLIGHT_STALE_FLOOR_MS);
+}
 let _inflightCleanupTimer = null;
+// One sweep of the stale-inflight safety net. Extracted from the interval so R2
+// is unit-testable without waiting 60s. Only resets slots older than the
+// deadline-derived threshold — a legitimately long in-flight request is spared.
+function runInflightCleanup(now = Date.now()) {
+  const staleMs = inflightStaleMs();
+  let reset = 0;
+  for (const a of accounts) {
+    if ((a._inflight || 0) > 0 && a._inflightAt && (now - a._inflightAt) > staleMs) {
+      log.warn(`Account ${safeAccountRef(a)} inflight=${a._inflight} stale >${Math.round((now - a._inflightAt) / 1000)}s (>${Math.round(staleMs / 1000)}s cap), auto-resetting`);
+      a._inflight = 0;
+      a._inflightAt = 0;
+      reset++;
+    }
+  }
+  return reset;
+}
 function startInflightCleanup() {
   if (_inflightCleanupTimer) return;
-  _inflightCleanupTimer = setInterval(() => {
-    const now = Date.now();
-    for (const a of accounts) {
-      if ((a._inflight || 0) > 0 && a._inflightAt && (now - a._inflightAt) > INFLIGHT_STALE_MS) {
-        log.warn(`Account ${safeAccountRef(a)} inflight=${a._inflight} stale >${Math.round((now - a._inflightAt) / 1000)}s, auto-resetting`);
-        a._inflight = 0;
-        a._inflightAt = 0;
-      }
-    }
-  }, 60_000).unref();
+  _inflightCleanupTimer = setInterval(() => runInflightCleanup(), 60_000).unref();
 }
+
+// Test seams: run one cleanup pass deterministically, and read the current
+// deadline-derived stale threshold, without touching the 60s interval.
+export function __runInflightCleanup(now = Date.now()) { return runInflightCleanup(now); }
+export function __inflightStaleMs() { return inflightStaleMs(); }
 
 /**
  * Try to re-check-out a specific account by apiKey, applying the same
@@ -1260,6 +1291,15 @@ export function getAccountAvailability(apiKey, modelKey = null) {
 
   if (a.rateLimitedUntil && a.rateLimitedUntil > now) {
     return { available: false, reason: 'rate_limited', retryAfterMs: Math.max(1000, a.rateLimitedUntil - now) };
+  }
+  // R6: the quota dimension (quotaResetAt) is account-wide and self-healing, kept
+  // separate from the transient rateLimitedUntil. isRateLimitedForModel already
+  // gates selection on it, so the availability VIEW must report it too — otherwise
+  // a quota-dry account (whether cooled by a live 402 or a proactive snapshot)
+  // reads as `available` here while selection quietly skips it (the inconsistency
+  // R6 closes). Reported distinctly from a transient throttle for observability.
+  if (a.quotaResetAt && a.quotaResetAt > now) {
+    return { available: false, reason: 'quota_exhausted', retryAfterMs: Math.max(1000, a.quotaResetAt - now) };
   }
   if (modelKey && a._modelRateLimits) {
     const until = a._modelRateLimits[modelKey];
@@ -1543,6 +1583,32 @@ export function applyQuotaSnapshot(account, weeklyPercent, now = Date.now()) {
     // Balance recovered → clear ONLY the quota dimension, never the transient one.
     account.quotaResetAt = 0;
     log.info(`Account ${safeAccountRef(account)} quota recovered (weekly ${w}%) — quota cooldown cleared`);
+  }
+}
+
+/**
+ * R6: cool an account that returned a live QUOTA_EXHAUSTED on the SAME quota
+ * dimension a proactive credits snapshot uses (account.quotaResetAt), not the
+ * transient rateLimitedUntil. Both a reactive 402 and a proactive snapshot now
+ * converge on one self-healing dimension, so isRateLimitedForModel's quota check
+ * (auth.js) sees them identically and a later balance-recovery snapshot clears
+ * either. Previously chat.js wrote a live 402 to rateLimitedUntil while snapshots
+ * wrote quotaResetAt — a Math.max let them coexist, but the two dimensions could
+ * silently disagree on when the account was usable again (consistency bug).
+ * Honors WINDSURFAPI_QUOTA_COOLDOWN=0 (disable) and the shared cooldown default.
+ */
+export function markQuotaExhausted(apiKey, durationMs = null, now = Date.now()) {
+  const account = accounts.find(a => a.apiKey === apiKey);
+  if (!account || !quotaCooldownEnabled()) return;
+  // 't' (throttle) not 'd' (dead): a quota dry-well is self-healing, so it should
+  // de-prioritize selection the same light amount the old markRateLimited path did
+  // — R6 changes only the cooldown DIMENSION, not the health weighting.
+  recordHealthEvent(account, 't');
+  const ms = Number.isFinite(durationMs) && durationMs >= 1000 ? durationMs : quotaCooldownMs();
+  const alreadyCooled = account.quotaResetAt && account.quotaResetAt > now;
+  account.quotaResetAt = Math.max(account.quotaResetAt || 0, now + ms);
+  if (!alreadyCooled) {
+    log.warn(`Account ${safeAccountRef(account)} QUOTA_EXHAUSTED (live 402) — quota cooldown ${Math.round(ms / 60000)}m (self-healing)`);
   }
 }
 

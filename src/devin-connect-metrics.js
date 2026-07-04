@@ -21,6 +21,10 @@ const _counters = {
   failover_hops: 0,
   // requests that exhausted all failover hops / pooled accounts
   failover_exhausted: 0,
+  // cross-account failover hops taken because THIS account hit a quota/rate
+  // dry-well (QUOTA_EXHAUSTED / RATE_LIMITED) while the pool still had a healthy
+  // account — the request moves on instead of surfacing 402/429 to the client (R1)
+  quota_failover_hops: 0,
   // session tokens observed dead (UNAUTHORIZED, not revived on same account)
   dead_tokens: 0,
   // requests rejected because the whole pool was rate-limited/unavailable
