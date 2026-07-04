@@ -1,5 +1,12 @@
 import { spawn } from 'child_process';
 import { VERSION } from './version.js';
+import { log } from './config.js';
+
+// Spawn seam: `spawn` is captured behind an indirection so a test can inject a
+// fake child (EventEmitter stdio) to exercise the stdin 'error'/EPIPE guard
+// without a real Devin CLI or network. Production always uses the real spawn.
+let _spawn = spawn;
+export function __setDevinAcpSpawnForTest(fn) { _spawn = fn || spawn; }
 
 function intEnv(name, fallback, min = 0) {
   const n = parseInt(process.env[name] || '', 10);
@@ -264,7 +271,7 @@ function collectAcpTextFromNotification(obj, buffers, onChunk) {
 }
 
 function makeAcpClient({ command, args, env, signal, timeoutMs, outputLimit, onChunk }) {
-  const child = spawn(command, args, {
+  const child = _spawn(command, args, {
     env,
     windowsHide: true,
     stdio: ['pipe', 'pipe', 'pipe'],
@@ -346,6 +353,28 @@ function makeAcpClient({ command, args, env, signal, timeoutMs, outputLimit, onC
 
   child.stdout.on('data', c => onData('stdout', c));
   child.stderr.on('data', c => onData('stderr', c));
+  // stdin 'error' guard (audit finding): every writeJsonLine already checks
+  // child.stdin?.writable, but that check races the child dying mid-write — if
+  // the CLI exits between the guard and the write, the write emits EPIPE on
+  // stdin as an async 'error' event. With no listener that becomes an
+  // uncaughtException and takes down the WHOLE proxy (every tenant), not just
+  // this request. Attach a swallow-and-log handler so a dead child only fails
+  // its own in-flight requests via the 'close'/'error' paths above. Wrapped in
+  // try/catch so the handler itself can never throw and re-trigger the crash.
+  if (child.stdin) {
+    child.stdin.on('error', err => {
+      try {
+        // EPIPE/ECONNRESET here just mean the child went away mid-write; the
+        // 'close' handler will fail all pending requests with a proper status.
+        // Log at debug for the expected teardown races, warn for anything else.
+        if (err?.code === 'EPIPE' || err?.code === 'ECONNRESET') {
+          log.debug(`Devin ACP stdin closed mid-write (${err.code}); child likely exited`);
+        } else {
+          log.warn(`Devin ACP stdin error: ${err?.code || err?.message || err}`);
+        }
+      } catch { /* a logging failure must never escalate into a crash */ }
+    });
+  }
   child.on('error', err => {
     if (err.code === 'ENOENT') {
       failAll(Object.assign(new Error(`Devin CLI not found: ${command}`), {

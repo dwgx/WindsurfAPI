@@ -17,6 +17,22 @@ import { traceGrpcPayload } from './proto-trace.js';
 const USE_CONNECT = process.env.GRPC_PROTOCOL === 'connect';
 export const _USE_CONNECT_FOR_TEST = USE_CONNECT;
 
+/**
+ * Decode a raw upstream grpc-message trailer. Per the gRPC spec the value is
+ * percent-encoded, but a misbehaving upstream can emit a malformed escape
+ * (e.g. a bare '%'), and decodeURIComponent throws URIError on those. Since
+ * this runs inside the stream 'end' listener, an unguarded throw escapes as
+ * an uncaughtException and takes the whole proxy down. Fall back to the raw
+ * value on decode failure so the status is still surfaced as an error.
+ */
+export function decodeGrpcMessage(grpcMessage) {
+  try {
+    return decodeURIComponent(grpcMessage);
+  } catch {
+    return grpcMessage;
+  }
+}
+
 // ─── HTTP/2 session pool ───────────────────────────────────
 //
 // Previously every grpcUnary / grpcStream call did its own http2.connect()
@@ -181,7 +197,7 @@ export function grpcUnary(port, csrfToken, path, body, timeout = 30000) {
     req.on('end', () => {
       clearTimeout(timer);
       if (!USE_CONNECT && grpcStatus !== '0') {
-        const msg = grpcMessage ? decodeURIComponent(grpcMessage) : `gRPC status ${grpcStatus}`;
+        const msg = grpcMessage ? decodeGrpcMessage(grpcMessage) : `gRPC status ${grpcStatus}`;
         done(reject, new Error(msg));
         return;
       }
@@ -380,7 +396,7 @@ export function grpcStream(port, csrfToken, path, body, opts = {}) {
     if (settled) return;
     settled = true;
     if (!USE_CONNECT && grpcStatus !== '0') {
-      const msg = grpcMessage ? decodeURIComponent(grpcMessage) : `gRPC status ${grpcStatus}`;
+      const msg = grpcMessage ? decodeGrpcMessage(grpcMessage) : `gRPC status ${grpcStatus}`;
       onError?.(new Error(msg));
     } else {
       onEnd?.();
