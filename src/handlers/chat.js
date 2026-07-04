@@ -1504,17 +1504,26 @@ export function mergeReasoningEffortIntoModel(reqModel, body) {
     || ''
   ).toLowerCase().trim();
   if (!effort) return reqModel;
-  const VALID = new Set(['minimal', 'none', 'low', 'medium', 'high', 'xhigh']);
+  const VALID = new Set(['minimal', 'none', 'low', 'medium', 'high', 'xhigh', 'max']);
   if (!VALID.has(effort)) return reqModel;
-  // Already has an effort suffix — don't double-stamp.
+  const normalizedEffort = effort === 'minimal' ? 'none' : effort;
+  let baseModel = reqModel;
+  // If the model already carries an effort suffix, replace it with the explicit
+  // request effort instead of treating it as final. Claude Code can send
+  // `claude-opus-4-8-medium` together with `reasoning.effort=xhigh`; the
+  // separate effort field is the caller's current selection and must win.
   for (const e of VALID) {
-    if (reqModel.toLowerCase().endsWith('-' + e)) return reqModel;
+    const suffix = '-' + (e === 'minimal' ? 'none' : e);
+    if (baseModel.toLowerCase().endsWith(suffix)) {
+      baseModel = baseModel.slice(0, -suffix.length);
+      break;
+    }
   }
   // Try the merged form. resolveModel returns the model key if it exists,
   // unchanged input otherwise; getModelInfo returns null for unknown models.
   // Both checks together guard against accidentally inventing a model that
   // doesn't exist in the catalog.
-  const merged = `${reqModel}-${effort === 'minimal' ? 'none' : effort}`;
+  const merged = `${baseModel}-${normalizedEffort}`;
   const resolved = resolveModel(merged);
   if (resolved && getModelInfo(resolved)) return merged;
   return reqModel;
@@ -2703,6 +2712,23 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
         // prompt-injection payloads emit calls for tools the caller
         // never offered, e.g. `Bash` when only `get_weather` is declared).
         toolCalls = filterToolCallsByAllowlist(parsed.toolCalls, tools);
+        // v2.0.146 fix: Opus 4.8 xhigh and other high-reasoning models
+        // sometimes emit <tool_call> blocks inside thinking (reasoning_content)
+        // rather than in the main text response. parseToolCallsFromText only
+        // ran against allText above — scan allThinking as a fallback when
+        // no tool_calls came out of the text pass. Thinking-sourced calls are
+        // always treated as emulation (never native); clear allThinking on
+        // success so the client doesn't see a response that looks like both
+        // a tool_call and a reasoning block at the same time.
+        if (toolCalls.length === 0 && allThinking && allThinking.trim()) {
+          const parsedFromThinking = parseToolCallsFromText(allThinking, { modelKey, provider, route });
+          const fromThinking = filterToolCallsByAllowlist(parsedFromThinking.toolCalls, tools);
+          if (fromThinking.length) {
+            log.info(`Chat[non-stream]: lifted ${fromThinking.length} tool_call(s) from thinking content (model=${modelKey})`);
+            toolCalls = fromThinking;
+            allThinking = '';
+          }
+        }
         bridgeDiag.emulatedToolCalls += toolCalls.length;
         bridgeDiag.emulatedNames.push(...toolCalls.map(tc => tc.name));
         // Diagnostic: emulation was active and the model returned text but no
@@ -2718,7 +2744,13 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
         // we see narrate-style tool intents either way. Promotion to
         // allText (line ~2155 below) happens after this; we use the
         // combined source proactively.
-        const narrativeSource = (allText && allText.trim()) ? allText : allThinking;
+        // v2.0.146 fix: always merge both so Opus 4.8 xhigh (and future
+        // high-reasoning models) that place <tool_call> inside thinking
+        // while producing non-empty text don't lose the markup. The old
+        // text-first guard caused markers=xml_tag to be detected (marker
+        // scan already saw combined strings) but NLU recovery ran on
+        // text-only, missing the actual <tool_call> block.
+        const narrativeSource = [allText, allThinking].filter(s => s && s.trim()).join('\n');
         if (toolCalls.length === 0 && narrativeSource) {
           const markers = [];
           if (/<tool_call/i.test(narrativeSource)) markers.push('xml_tag');
@@ -3694,6 +3726,33 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
                 bridgeDiag.emulatedNames.push(tc.name);
                 emitToolCallDelta(tc, idx);
               }
+              // v2.0.146 fix: scan accThinking for <tool_call> blocks when
+              // the text-only toolParser produced nothing. Opus 4.8 xhigh
+              // and similar high-reasoning models sometimes emit the full
+              // <tool_call>{...}</tool_call> markup inside thinking
+              // (reasoning_content) rather than in the text stream.
+              // The streaming toolParser only sees chunk.text; it never
+              // processes chunk.thinking. This fallback runs parseToolCallsFromText
+              // on the complete accumulated thinking string after flush so
+              // those calls aren't silently dropped. Emit them as tool_call
+              // deltas exactly like emulated calls; clear accThinking to
+              // avoid sending a reasoning block alongside a tool_call turn.
+              if (emulateTools && collectedToolCalls.length === 0 && accThinking && accThinking.trim()) {
+                const parsedFromThinking = parseToolCallsFromText(accThinking, { modelKey, provider, route: deps?.route || 'chat' });
+                const fromThinking = filterToolCallsByAllowlist(parsedFromThinking.toolCalls, declaredTools);
+                if (fromThinking.length) {
+                  log.info(`Chat[stream]: lifted ${fromThinking.length} tool_call(s) from thinking content (model=${modelKey})`);
+                  accThinking = '';
+                  for (const rawTc of fromThinking) {
+                    const tc = sanitizeToolCall(repairToolCallArguments(rawTc, messages));
+                    const idx = collectedToolCalls.length;
+                    collectedToolCalls.push(tc);
+                    bridgeDiag.emulatedToolCalls++;
+                    bridgeDiag.emulatedNames.push(tc.name);
+                    emitToolCallDelta(tc, idx);
+                  }
+                }
+              }
               // Diagnostic: same as nonStreamResponse but for the SSE path —
               // surface why no tool_calls came out when emulation was active.
               // See nonStreamResponse for marker rationale (#109 sub2api E2E).
@@ -3701,7 +3760,13 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
               // accThinking for marker / NLU detection so models that
               // route narrate output through reasoning_content (GLM-4.7,
               // some Claude models in thinking mode) don't slip past.
-              const accNarrative = (accText && accText.trim()) ? accText : accThinking;
+              // v2.0.146 fix: always merge both so Opus 4.8 xhigh that
+              // emits <tool_call> inside thinking while producing non-empty
+              // text doesn't lose the markup. The old text-only guard meant
+              // markers=xml_tag was detected from thinking (the marker scan
+              // ran on the combined string) but NLU/parse ran against text
+              // only — missing the actual <tool_call> block entirely.
+              const accNarrative = [accText, accThinking].filter(s => s && s.trim()).join('\n');
               if (emulateTools && collectedToolCalls.length === 0 && accNarrative) {
                 const head = accNarrative.slice(0, 240).replace(/\s+/g, ' ');
                 const markers = [];
