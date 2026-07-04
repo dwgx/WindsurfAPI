@@ -3726,33 +3726,6 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
                 bridgeDiag.emulatedNames.push(tc.name);
                 emitToolCallDelta(tc, idx);
               }
-              // v2.0.146 fix: scan accThinking for <tool_call> blocks when
-              // the text-only toolParser produced nothing. Opus 4.8 xhigh
-              // and similar high-reasoning models sometimes emit the full
-              // <tool_call>{...}</tool_call> markup inside thinking
-              // (reasoning_content) rather than in the text stream.
-              // The streaming toolParser only sees chunk.text; it never
-              // processes chunk.thinking. This fallback runs parseToolCallsFromText
-              // on the complete accumulated thinking string after flush so
-              // those calls aren't silently dropped. Emit them as tool_call
-              // deltas exactly like emulated calls; clear accThinking to
-              // avoid sending a reasoning block alongside a tool_call turn.
-              if (emulateTools && collectedToolCalls.length === 0 && accThinking && accThinking.trim()) {
-                const parsedFromThinking = parseToolCallsFromText(accThinking, { modelKey, provider, route: deps?.route || 'chat' });
-                const fromThinking = filterToolCallsByAllowlist(parsedFromThinking.toolCalls, declaredTools);
-                if (fromThinking.length) {
-                  log.info(`Chat[stream]: lifted ${fromThinking.length} tool_call(s) from thinking content (model=${modelKey})`);
-                  accThinking = '';
-                  for (const rawTc of fromThinking) {
-                    const tc = sanitizeToolCall(repairToolCallArguments(rawTc, messages));
-                    const idx = collectedToolCalls.length;
-                    collectedToolCalls.push(tc);
-                    bridgeDiag.emulatedToolCalls++;
-                    bridgeDiag.emulatedNames.push(tc.name);
-                    emitToolCallDelta(tc, idx);
-                  }
-                }
-              }
               // Diagnostic: same as nonStreamResponse but for the SSE path —
               // surface why no tool_calls came out when emulation was active.
               // See nonStreamResponse for marker rationale (#109 sub2api E2E).
@@ -3819,7 +3792,49 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
               }
             }
             emitContent(pathStreamText.flush());
-            emitThinking(pathStreamThinking.flush());
+            // v2.0.146 fix: scan accThinking for <tool_call> blocks when
+            // the text-only toolParser produced nothing. Opus 4.8 xhigh
+            // and similar high-reasoning models sometimes emit the full
+            // <tool_call>{...}</tool_call> markup inside thinking
+            // (reasoning_content) rather than in the text stream.
+            //
+            // ORDERING IS CRITICAL: this must run AFTER pathStreamText.flush()
+            // and BEFORE pathStreamThinking.flush(). If it ran before the text
+            // flush, emitToolCallDelta would be followed by emitContent/emitThinking
+            // which produce additional content_block_start events in the
+            // MessagesStreamTranslator — Claude Code then sees a tool_use block
+            // followed by a text or thinking block without proper sequencing and
+            // throws "Content block not found". Running here lets us suppress
+            // the thinking flush (below) when tool_calls were recovered,
+            // keeping the SSE block sequence clean: thinking block is already
+            // closed by pathStreamThinking.flush returning empty string.
+            {
+              const thinkingTail = pathStreamThinking.flush();
+              if (emulateTools && collectedToolCalls.length === 0 && accThinking && accThinking.trim()) {
+                const parsedFromThinking = parseToolCallsFromText(accThinking, { modelKey, provider, route: deps?.route || 'chat' });
+                const fromThinking = filterToolCallsByAllowlist(parsedFromThinking.toolCalls, declaredTools);
+                if (fromThinking.length) {
+                  log.info(`Chat[stream]: lifted ${fromThinking.length} tool_call(s) from thinking content (model=${modelKey})`);
+                  // Do NOT emit thinkingTail — emitting thinking alongside tool_calls
+                  // in the same SSE turn produces an invalid Anthropic event sequence
+                  // that Claude Code can't parse (block index mismatch → "Content block
+                  // not found"). The thinking content was already streamed earlier via
+                  // emitThinkingDelta; suppressing the tail avoids the duplicate block.
+                  for (const rawTc of fromThinking) {
+                    const tc = sanitizeToolCall(repairToolCallArguments(rawTc, messages));
+                    const idx = collectedToolCalls.length;
+                    collectedToolCalls.push(tc);
+                    bridgeDiag.emulatedToolCalls++;
+                    bridgeDiag.emulatedNames.push(tc.name);
+                    emitToolCallDelta(tc, idx);
+                  }
+                } else {
+                  emitThinking(thinkingTail);
+                }
+              } else {
+                emitThinking(thinkingTail);
+              }
+            }
 
             // v2.0.65 native bridge: cascade trajectory steps come back on
             // cascadeResult.toolCalls with cascade_native:true. Translate
