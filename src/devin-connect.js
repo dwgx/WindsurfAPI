@@ -1162,6 +1162,12 @@ export async function* streamChat({
         if (frame.isEndStream) {
           // Trailer is JSON: {} on success, {"error":{...}} on failure.
           const text = frame.payload.toString('utf8').trim();
+          // Calibration (DEBUG-gated, default OFF): surface the raw trailer bytes
+          // so a probe can check whether usage/billing ever rides the trailer
+          // rather than a frame. Pure additive; zero effect on production.
+          if (env.DEVIN_CONNECT_DUMP_RAW === '1') {
+            queue.push({ type: 'raw-frame', endStream: true, hex: frame.payload.toString('hex'), text });
+          }
           if (text && text !== '{}') {
             try {
               const parsed = JSON.parse(text);
@@ -1177,6 +1183,14 @@ export async function* streamChat({
           return;
         }
         const { content, reasoning, finish, usage, billing, metaDump, frameDump, subDump, actualModel, toolCalls, signature } = decodeFrame(frame.payload, { billingTags, dumpMeta, actualModelTag, toolCallTags, signatureTags, toolNames });
+        // Calibration (DEBUG-gated, default OFF): emit the raw frame payload hex
+        // so a probe can re-decode it WIDE — the production frameDump/metaDump
+        // only collect wireType 0/2 and miss wt1(double)/wt5(float), which is
+        // exactly where billing cost fields (likely doubles) would hide. Pure
+        // additive; only under DEVIN_CONNECT_DUMP_RAW.
+        if (env.DEVIN_CONNECT_DUMP_RAW === '1') {
+          queue.push({ type: 'raw-frame', endStream: false, hex: frame.payload.toString('hex') });
+        }
         if (frameDump) log.info(`DEVIN_CONNECT frame dump (top-level tag=value): ${JSON.stringify(frameDump)}`);
         if (metaDump) log.info(`DEVIN_CONNECT meta dump (tag=value varints): ${JSON.stringify(metaDump)}`);
         if (subDump) log.info(`DEVIN_CONNECT sub-message dump (top-tag → inner tag=value): ${JSON.stringify(subDump)}`);
