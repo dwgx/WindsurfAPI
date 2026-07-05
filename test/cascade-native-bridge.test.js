@@ -824,11 +824,19 @@ describe('mergeReasoningEffortIntoModel — v2.0.66 reasoning_effort fold-in', (
     );
   });
 
-  it('does NOT double-stamp when model already has effort suffix', async () => {
+  it('replaces an existing effort suffix when the caller sends an explicit effort field', async () => {
     const { mergeReasoningEffortIntoModel } = await import('../src/handlers/chat.js');
     assert.equal(
       mergeReasoningEffortIntoModel('gpt-5.5-xhigh', { reasoning: { effort: 'medium' } }),
-      'gpt-5.5-xhigh',
+      'gpt-5.5-medium',
+    );
+    assert.equal(
+      mergeReasoningEffortIntoModel('claude-opus-4-8-medium', { reasoning: { effort: 'xhigh' } }),
+      'claude-opus-4-8-xhigh',
+    );
+    assert.equal(
+      mergeReasoningEffortIntoModel('claude-opus-4.8', { reasoning_effort: 'max' }),
+      'claude-opus-4.8-max',
     );
   });
 

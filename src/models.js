@@ -47,14 +47,18 @@ export const MODELS = {
   // `max` reasoning tier appeared in GetCascadeModelConfigs after the 4.7 launch — sits
   // above xhigh in the effort ladder. No -thinking sibling in cloud catalog yet.
   'claude-opus-4-7-max':            { name: 'claude-opus-4-7-max',            provider: 'anthropic', enumValue: 0,   modelUid: 'claude-opus-4-7-max', credit: 16 },
-  // Claude Opus 4.8 — confirmed live in GetCascadeModelConfigs (2026-06-29 account dump).
-  // Only the `medium` tier is exposed upstream so far (no low/high/xhigh siblings yet);
-  // credit 25, 1M-token context, 128k max output, supports images + parallel tools.
-  // No -thinking UID in the cloud catalog yet: #103 inheritance only widens the
-  // allowlist/blocklist, it does NOT route a thinking request to a thinking UID.
-  // So a `-thinking` alias resolves here and runs the non-thinking tier until
-  // upstream publishes a claude-opus-4-8-medium-thinking UID (then add an entry).
+  // Claude Opus 4.8 — confirmed live in GetCascadeModelConfigs (2026-07-03).
+  // Upstream exposes normal and priority (=fast) lanes across low/medium/high/xhigh/max.
+  'claude-opus-4-8-low':            { name: 'claude-opus-4-8-low',            provider: 'anthropic', enumValue: 0,   modelUid: 'claude-opus-4-8-low', credit: 20 },
   'claude-opus-4-8-medium':         { name: 'claude-opus-4-8-medium',         provider: 'anthropic', enumValue: 0,   modelUid: 'claude-opus-4-8-medium', credit: 25 },
+  'claude-opus-4-8-high':           { name: 'claude-opus-4-8-high',           provider: 'anthropic', enumValue: 0,   modelUid: 'claude-opus-4-8-high', credit: 35 },
+  'claude-opus-4-8-xhigh':          { name: 'claude-opus-4-8-xhigh',          provider: 'anthropic', enumValue: 0,   modelUid: 'claude-opus-4-8-xhigh', credit: 40 },
+  'claude-opus-4-8-max':            { name: 'claude-opus-4-8-max',            provider: 'anthropic', enumValue: 0,   modelUid: 'claude-opus-4-8-max', credit: 50 },
+  'claude-opus-4-8-low-fast':       { name: 'claude-opus-4-8-low-fast',       provider: 'anthropic', enumValue: 0,   modelUid: 'claude-opus-4-8-low-fast', credit: 40 },
+  'claude-opus-4-8-medium-fast':    { name: 'claude-opus-4-8-medium-fast',    provider: 'anthropic', enumValue: 0,   modelUid: 'claude-opus-4-8-medium-fast', credit: 50 },
+  'claude-opus-4-8-high-fast':      { name: 'claude-opus-4-8-high-fast',      provider: 'anthropic', enumValue: 0,   modelUid: 'claude-opus-4-8-high-fast', credit: 70 },
+  'claude-opus-4-8-xhigh-fast':     { name: 'claude-opus-4-8-xhigh-fast',     provider: 'anthropic', enumValue: 0,   modelUid: 'claude-opus-4-8-xhigh-fast', credit: 80 },
+  'claude-opus-4-8-max-fast':       { name: 'claude-opus-4-8-max-fast',       provider: 'anthropic', enumValue: 0,   modelUid: 'claude-opus-4-8-max-fast', credit: 100 },
 
   // ── GPT ─────────────────────────────────────────────────
   'gpt-4o':                         { name: 'gpt-4o',                         provider: 'openai', enumValue: 109, modelUid: 'MODEL_CHAT_GPT_4O_2024_08_06', credit: 1 },
@@ -392,13 +396,20 @@ const ANTHROPIC_DATED = {
   'claude-opus-4.7-xhigh-thinking':  'claude-opus-4-7-xhigh-thinking',
   'claude-opus-4.7-max':             'claude-opus-4-7-max',
 
-  // Anthropic Opus 4.8 — confirmed live 2026-06-29. Only `medium` is exposed
-  // upstream so far, so every convenience form collapses to the one real tier.
-  // The -thinking sibling is auto-inherited at access-check time (#103).
+  // Anthropic Opus 4.8. Bare aliases default to medium; tier aliases route explicitly.
   'claude-opus-4-8':            'claude-opus-4-8-medium',
   'claude-opus-4-8-latest':     'claude-opus-4-8-medium',
   'claude-opus-4.8':            'claude-opus-4-8-medium',
+  'claude-opus-4.8-low':        'claude-opus-4-8-low',
   'claude-opus-4.8-medium':     'claude-opus-4-8-medium',
+  'claude-opus-4.8-high':       'claude-opus-4-8-high',
+  'claude-opus-4.8-xhigh':      'claude-opus-4-8-xhigh',
+  'claude-opus-4.8-max':        'claude-opus-4-8-max',
+  'claude-opus-4.8-low-fast':   'claude-opus-4-8-low-fast',
+  'claude-opus-4.8-medium-fast': 'claude-opus-4-8-medium-fast',
+  'claude-opus-4.8-high-fast':  'claude-opus-4-8-high-fast',
+  'claude-opus-4.8-xhigh-fast': 'claude-opus-4-8-xhigh-fast',
+  'claude-opus-4.8-max-fast':   'claude-opus-4-8-max-fast',
   'claude-opus-4-8-thinking':   'claude-opus-4-8-medium',
   'claude-opus-4.8-thinking':   'claude-opus-4-8-medium',
 };

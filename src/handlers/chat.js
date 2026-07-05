@@ -3379,9 +3379,9 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
         send({ id, object: 'chat.completion.chunk', created, model,
           choices: [{ index: 0, delta: { content: clean }, finish_reason: null }] });
       };
-      const emitThinking = (clean) => {
+      const emitThinking = (clean, { accumulate = true } = {}) => {
         if (!clean) return;
-        accThinking += clean;
+        if (accumulate) accThinking += clean;
         emittedClientPayload = true;
         send({ id, object: 'chat.completion.chunk', created, model,
           choices: [{ index: 0, delta: { reasoning_content: clean }, finish_reason: null }] });
@@ -3536,7 +3536,18 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
           if (safeText) emitContent(pathStreamText.feed(safeText));
         }
         if (chunk.thinking) {
-          emitThinking(pathStreamThinking.feed(chunk.thinking));
+          const cleanThinking = pathStreamThinking.feed(chunk.thinking);
+          if (emulateTools) {
+            // In tool-emulation mode, high-reasoning models may hide a
+            // <tool_call> block in reasoning_content. Buffer thinking until
+            // stream end so we can either emit a clean tool_use turn OR emit
+            // reasoning, but never stream reasoning first and append tool_use
+            // later in the same assistant turn (Claude Code reports
+            // "Content block not found" on that block-order pattern).
+            if (cleanThinking) accThinking += cleanThinking;
+          } else {
+            emitThinking(cleanThinking);
+          }
         }
       };
 
@@ -3810,26 +3821,35 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
             // closed by pathStreamThinking.flush returning empty string.
             {
               const thinkingTail = pathStreamThinking.flush();
-              if (emulateTools && collectedToolCalls.length === 0 && accThinking && accThinking.trim()) {
-                const parsedFromThinking = parseToolCallsFromText(accThinking, { modelKey, provider, route: deps?.route || 'chat' });
-                const fromThinking = filterToolCallsByAllowlist(parsedFromThinking.toolCalls, declaredTools);
-                if (fromThinking.length) {
-                  log.info(`Chat[stream]: lifted ${fromThinking.length} tool_call(s) from thinking content (model=${modelKey})`);
-                  // Do NOT emit thinkingTail — emitting thinking alongside tool_calls
-                  // in the same SSE turn produces an invalid Anthropic event sequence
-                  // that Claude Code can't parse (block index mismatch → "Content block
-                  // not found"). The thinking content was already streamed earlier via
-                  // emitThinkingDelta; suppressing the tail avoids the duplicate block.
-                  for (const rawTc of fromThinking) {
-                    const tc = sanitizeToolCall(repairToolCallArguments(rawTc, messages));
-                    const idx = collectedToolCalls.length;
-                    collectedToolCalls.push(tc);
-                    bridgeDiag.emulatedToolCalls++;
-                    bridgeDiag.emulatedNames.push(tc.name);
-                    emitToolCallDelta(tc, idx);
+              if (emulateTools) {
+                const bufferedThinking = `${accThinking || ''}${thinkingTail || ''}`;
+                if (collectedToolCalls.length === 0 && bufferedThinking.trim()) {
+                  const parsedFromThinking = parseToolCallsFromText(bufferedThinking, { modelKey, provider, route: deps?.route || 'chat' });
+                  const fromThinking = filterToolCallsByAllowlist(parsedFromThinking.toolCalls, declaredTools);
+                  if (fromThinking.length) {
+                    accThinking = bufferedThinking;
+                    log.info(`Chat[stream]: lifted ${fromThinking.length} tool_call(s) from thinking content (model=${modelKey})`);
+                    // Do NOT emit thinking when it yielded tool_calls. Emitting
+                    // a reasoning_content block before a tail tool_call in the
+                    // same assistant turn produces an invalid Anthropic event
+                    // sequence for Claude Code (block index mismatch →
+                    // "Content block not found").
+                    for (const rawTc of fromThinking) {
+                      const tc = sanitizeToolCall(repairToolCallArguments(rawTc, messages));
+                      const idx = collectedToolCalls.length;
+                      collectedToolCalls.push(tc);
+                      bridgeDiag.emulatedToolCalls++;
+                      bridgeDiag.emulatedNames.push(tc.name);
+                      emitToolCallDelta(tc, idx);
+                    }
+                  } else {
+                    accThinking = '';
+                    emitThinking(bufferedThinking);
                   }
                 } else {
-                  emitThinking(thinkingTail);
+                  // A tool_call was already emitted from text/native parsing;
+                  // keep any buffered reasoning only for accounting/cache state.
+                  accThinking = bufferedThinking;
                 }
               } else {
                 emitThinking(thinkingTail);

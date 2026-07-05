@@ -439,6 +439,40 @@ describe('Anthropic messages request translation', () => {
     assert.equal(capturedBody.tool_choice, undefined);
   });
 
+  it('streams tail tool_use without a preceding thinking block when reasoning hid the tool call', async () => {
+    const result = await handleMessages({
+      model: 'claude-opus-4-8-xhigh',
+      stream: true,
+      tools: [{ name: 'Bash', description: 'run shell', input_schema: { type: 'object' } }],
+      messages: [{ role: 'user', content: 'run echo hi' }],
+    }, {
+      async handleChatCompletions() {
+        return {
+          status: 200,
+          stream: true,
+          async handler(res) {
+            res.write(chatChunk({ choices: [{ index: 0, delta: { role: 'assistant', content: '' }, finish_reason: null }] }));
+            res.write(chatChunk({ choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: 'call_1', type: 'function', function: { name: 'Bash', arguments: '{"command":"echo hi"}' } }] }, finish_reason: null }] }));
+            res.write(chatChunk({ choices: [{ index: 0, delta: {}, finish_reason: 'tool_calls' }] }));
+            res.write(chatChunk({ choices: [], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } }));
+            res.end('data: [DONE]\n\n');
+          },
+        };
+      },
+    });
+
+    const res = fakeRes();
+    await result.handler(res);
+    const events = parseAnthropicEvents(res.body);
+    assert.equal(events.some(e => e.event === 'content_block_start' && e.data.content_block?.type === 'thinking'), false);
+    const starts = events.filter(e => e.event === 'content_block_start');
+    assert.equal(starts.length, 1);
+    assert.equal(starts[0].data.index, 0);
+    assert.equal(starts[0].data.content_block.type, 'tool_use');
+    assert.equal(starts[0].data.content_block.name, 'Bash');
+    assert.equal(events.find(e => e.event === 'message_delta')?.data.delta.stop_reason, 'tool_use');
+  });
+
   it('buffers streaming tool argument deltas until tool id and name arrive', async () => {
     const result = await handleMessages({
       model: 'claude-sonnet-4.6',

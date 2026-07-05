@@ -20,17 +20,32 @@ describe('v2.0.29 model catalog correctness', () => {
     assert.equal(resolveModel('claude-opus-4.7-high-thinking'), 'claude-opus-4-7-high-thinking');
   });
 
-  it('exposes opus-4.8 (medium-only) from real upstream evidence with all alias forms', () => {
-    // GetCascadeModelConfigs dump 2026-06-29: only the medium tier is live.
-    assert.equal(getModelInfo('claude-opus-4-8-medium')?.provider, 'anthropic');
-    assert.equal(getModelInfo('claude-opus-4-8-medium')?.modelUid, 'claude-opus-4-8-medium');
-    assert.equal(getModelInfo('claude-opus-4-8-medium')?.credit, 25);
-    // every convenience form collapses to the one real tier
+  it('exposes opus-4.8 tier ladder from live upstream evidence with aliases', () => {
+    // GetCascadeModelConfigs live fetch 2026-07-03: normal + priority lanes are live.
+    const expected = {
+      low: 20,
+      medium: 25,
+      high: 35,
+      xhigh: 40,
+      max: 50,
+      'low-fast': 40,
+      'medium-fast': 50,
+      'high-fast': 70,
+      'xhigh-fast': 80,
+      'max-fast': 100,
+    };
+    for (const [tier, credit] of Object.entries(expected)) {
+      const key = `claude-opus-4-8-${tier}`;
+      assert.equal(getModelInfo(key)?.provider, 'anthropic');
+      assert.equal(getModelInfo(key)?.modelUid, key);
+      assert.equal(getModelInfo(key)?.credit, credit);
+      assert.equal(resolveModel(`claude-opus-4.8-${tier}`), key);
+    }
     for (const alias of ['claude-opus-4-8', 'claude-opus-4.8', 'opus-4.8', 'opus-4-8', 'o4.8',
                          'claude-opus-4.8-medium', 'claude-opus-4-8-latest']) {
       assert.equal(resolveModel(alias), 'claude-opus-4-8-medium', `alias ${alias}`);
     }
-    // -thinking collapses to medium too (no separate cloud tier yet)
+    // -thinking collapses to medium because no separate thinking UID is published.
     assert.equal(resolveModel('claude-opus-4.8-thinking'), 'claude-opus-4-8-medium');
     assert.equal(resolveModel('claude-opus-4-8-thinking'), 'claude-opus-4-8-medium');
   });

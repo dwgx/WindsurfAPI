@@ -25,6 +25,7 @@ import { handleChatCompletions } from './handlers/chat.js';
 import { handleMessages } from './handlers/messages.js';
 import { handleResponses } from './handlers/responses.js';
 import { handleModels } from './handlers/models.js';
+import { resolveModel, getModelInfo } from './models.js';
 import { handleDashboardApi, parseProxyUrl, validateProxyHost } from './dashboard/api.js';
 import { setAccountProxy } from './dashboard/proxy-config.js';
 import { config, log } from './config.js';
@@ -128,9 +129,40 @@ function json(res, status, body) {
   res.end(data);
 }
 
+function estimateAnthropicInputTokens(body = {}) {
+  const chunks = [];
+  const collect = (v) => {
+    if (v == null) return;
+    if (typeof v === 'string') chunks.push(v);
+    else if (Array.isArray(v)) for (const item of v) collect(item);
+    else if (typeof v === 'object') {
+      if (typeof v.text === 'string') chunks.push(v.text);
+      else if (typeof v.content === 'string') chunks.push(v.content);
+      else if (Array.isArray(v.content)) collect(v.content);
+      else if (typeof v.input === 'object') chunks.push(JSON.stringify(v.input));
+    }
+  };
+  collect(body.system);
+  collect(body.messages);
+  collect(body.tools);
+  const chars = chunks.join('\n').length;
+  return Math.max(1, Math.ceil(chars / 4));
+}
+
+function anthropicModelPayload(id, info) {
+  return {
+    type: 'model',
+    id: info?.name || id,
+    display_name: info?.name || id,
+    created_at: '2026-01-01T00:00:00Z',
+  };
+}
+
 async function route(req, res) {
   const { method } = req;
   let path = req.url.split('?')[0];
+  if (path.startsWith('/v1/v1/')) path = path.slice(3);
+  if (path.startsWith('/v1/')) console.info('[CC-REQ]', JSON.stringify({ method, path }));
 
   if (method === 'OPTIONS') {
     res.writeHead(204, {
@@ -372,6 +404,29 @@ async function route(req, res) {
 
   if (path === '/v1/models' && method === 'GET') {
     return json(res, 200, handleModels());
+  }
+
+  if (path.startsWith('/v1/models/') && method === 'GET') {
+    const rawId = decodeURIComponent(path.slice('/v1/models/'.length));
+    const modelKey = resolveModel(rawId);
+    const info = getModelInfo(modelKey);
+    if (!info) {
+      return json(res, 404, { type: 'error', error: { type: 'not_found_error', message: `Model ${rawId} not found` } });
+    }
+    return json(res, 200, anthropicModelPayload(rawId, info));
+  }
+
+  if (path === '/v1/messages/count_tokens' && method === 'POST') {
+    let body;
+    try { body = JSON.parse(await readBody(req)); } catch (err) {
+      if (sendBodyTooLargeIfNeeded(res, err, 'anthropic')) return;
+      return json(res, 400, { type: 'error', error: { type: 'invalid_request_error', message: 'Invalid JSON' } });
+    }
+    const modelKey = resolveModel(body.model || config.defaultModel);
+    if (!getModelInfo(modelKey)) {
+      return json(res, 400, { type: 'error', error: { type: 'invalid_request_error', message: `Unsupported model: ${body.model || config.defaultModel}` } });
+    }
+    return json(res, 200, { input_tokens: estimateAnthropicInputTokens(body) });
   }
 
   if (path === '/v1/chat/completions' && method === 'POST') {
