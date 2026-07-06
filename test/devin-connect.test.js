@@ -13,6 +13,7 @@ import {
   extractInlineImages,
   __setRequestImpl,
   __testing,
+  mergeToolCallFragment,
 } from '../src/devin-connect.js';
 import {
   writeStringField, writeVarintField, writeMessageField,
@@ -301,17 +302,46 @@ describe('decodeFrame', () => {
     assert.deepEqual(d.metaDump, { 2: 386, 3: 48, 6: 6, 14: 1200 });
   });
 
-  it('decodes actual_model_uid only when its tag is pinned (router resolution signal)', () => {
-    // The concrete model behind a router (adaptive/arena-*). Tag unknown from
-    // free capture → opt-in via DEVIN_CONNECT_ACTUAL_MODEL_TAG.
+  it('decodes actual_model_uid from #7.9 (nested in metadata) only when its tag is pinned', () => {
+    // FRAME-VERIFIED 2026-07-05 (paid opus-4-8): actual_model_uid rides the #7
+    // metadata sub-message at INNER tag 9, NOT a top-level field. Opt-in via
+    // DEVIN_CONNECT_ACTUAL_MODEL_TAG (calibrated value = 9).
+    const meta = Buffer.concat([
+      writeVarintField(2, 777),                       // prompt_tokens
+      writeVarintField(3, 180),                       // completion_tokens
+      writeStringField(9, 'claude-opus-4-8-medium'),  // actual_model_uid at #7.9
+    ]);
     const payload = Buffer.concat([
       writeStringField(1, 'bot-1'),
-      writeStringField(13, 'claude-sonnet-4-6'), // actual_model_uid at #13 (example)
+      writeMessageField(7, meta),
     ]);
     assert.equal(decodeFrame(payload).actualModel, undefined); // off by default
-    assert.equal(decodeFrame(payload, { actualModelTag: 13 }).actualModel, 'claude-sonnet-4-6');
-    // wrong tag → nothing surfaced
+    assert.equal(decodeFrame(payload, { actualModelTag: 9 }).actualModel, 'claude-opus-4-8-medium');
+    // wrong inner tag → nothing surfaced
     assert.equal(decodeFrame(payload, { actualModelTag: 99 }).actualModel, undefined);
+  });
+
+  it('coalesces native tool_call arguments fragmented across frames (#6.3)', () => {
+    // FRAME-VERIFIED 2026-07-05: one logical call streams as {id,name} then
+    // id-less argument fragments. Merging must reconstruct the full JSON.
+    const acc = [];
+    mergeToolCallFragment(acc, { id: 'toolu_1', name: 'grep_repo' });
+    mergeToolCallFragment(acc, { arguments: '{"patter' });
+    mergeToolCallFragment(acc, { arguments: 'n": "DEV' });
+    mergeToolCallFragment(acc, { arguments: 'IN_CONNECT"}' });
+    assert.equal(acc.length, 1);
+    assert.deepEqual(acc[0], { id: 'toolu_1', name: 'grep_repo', arguments: '{"pattern": "DEVIN_CONNECT"}' });
+    assert.equal(JSON.parse(acc[0].arguments).pattern, 'DEVIN_CONNECT');
+  });
+
+  it('coalesce keeps distinct tool_calls separate (each new id starts a call)', () => {
+    const acc = [];
+    mergeToolCallFragment(acc, { id: 'a', name: 'read_file', arguments: '{"p":' });
+    mergeToolCallFragment(acc, { arguments: '"1"}' });
+    mergeToolCallFragment(acc, { id: 'b', name: 'grep_repo', arguments: '{"q":"x"}' });
+    assert.equal(acc.length, 2);
+    assert.deepEqual(acc[0], { id: 'a', name: 'read_file', arguments: '{"p":"1"}' });
+    assert.deepEqual(acc[1], { id: 'b', name: 'grep_repo', arguments: '{"q":"x"}' });
   });
 
   it('dumpMeta also surfaces top-level frame fields (e.g. actual_model_uid)', () => {

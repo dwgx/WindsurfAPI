@@ -610,6 +610,31 @@ function decodeOneToolCall(sub, tags) {
  * @param {Array} fields    top-level parsed frame fields
  * @param {object} tags     calibrated tag map (parseToolCallTagMap)
  * @param {string[]} [toolNames]  request-side tool names, for the name fallback */
+/** Coalesce a per-frame ChatToolCall fragment into the running accumulator.
+ *
+ * FRAME-VERIFIED 2026-07-05 (paid opus-4-8 native tool_call capture): a single
+ * logical tool call is streamed across MULTIPLE frames — the first frame carries
+ * {id, name}, then later frames carry ONLY an `arguments_json` fragment (#6.3)
+ * with no id (`{"patter` → `n": "DEV` → `IN_CONNECT"}`). The naive "push every
+ * decoded item" collapses one call into several broken half-calls and truncates
+ * the JSON. So merge by id: a fragment carrying an id (distinct from the open
+ * call) starts a new call; an id-less fragment appends its argument bytes to the
+ * currently-open call. Concatenating the raw fragments reconstructs the full,
+ * valid arguments JSON. (audit §4 P3 — per-frame non-coalescing.) */
+export function mergeToolCallFragment(acc, tc) {
+  const open = acc.length ? acc[acc.length - 1] : null;
+  const startsNew = !open || (tc.id && tc.id !== open.id);
+  if (startsNew) {
+    acc.push({ ...tc, arguments: tc.arguments ?? '' });
+    return;
+  }
+  if (tc.id && !open.id) open.id = tc.id;
+  if (tc.name && !open.name) open.name = tc.name;
+  if (tc.isCustom != null && open.isCustom == null) open.isCustom = tc.isCustom;
+  if (tc.arguments) open.arguments = (open.arguments || '') + tc.arguments;
+  if (tc.invalidJson) open.invalidJson = tc.invalidJson;
+}
+
 function decodeToolCalls(fields, tags, toolNames = null) {
   const out = [];
   // The single-tool reverse-lookup: if exactly one tool was offered this turn,
@@ -732,17 +757,12 @@ export function decodeFrame(payload, opts = {}) {
   const meta = getField(fields, FIELD.META, 2);
 
   // actual_model_uid: the concrete model that served the turn (differs from the
-  // requested selector for router models — adaptive/arena-*). Tag unknown from
-  // free-tier capture, so opt-in: pin DEVIN_CONNECT_ACTUAL_MODEL_TAG once a
-  // dump (§8.5) reveals it. Off = null, no behavioral change.
+  // requested selector for router models — adaptive/arena-*). FRAME-VERIFIED
+  // 2026-07-05 (paid teams, opus-4-8): it rides the #7 metadata sub-message at
+  // INNER tag 9 (#7.9 echoed "claude-opus-4-8-medium"), NOT a top-level field —
+  // so it is decoded inside the `if (meta)` block below from `mf`. Opt-in via
+  // DEVIN_CONNECT_ACTUAL_MODEL_TAG (calibrated value = 9). Off = null, no change.
   let actualModel = null;
-  if (opts.actualModelTag) {
-    const am = getField(fields, opts.actualModelTag, 2);
-    if (am) {
-      const s = am.value.toString('utf8');
-      if (/^[\x20-\x7e]+$/.test(s)) actualModel = s; // printable selector only
-    }
-  }
 
   // Thinking signature (delta_signature / delta_signature_type / thinking_id):
   // top-level GetChatMessageResponse fields, the SAME layer as delta_thinking
@@ -790,6 +810,14 @@ export function decodeFrame(payload, opts = {}) {
     catch (err) { log.warn(`DEVIN_CONNECT: skipping malformed frame metadata: ${err.message}`); mf = []; }
     const prompt = getField(mf, 2, 0);
     const completion = getField(mf, 3, 0);
+    // actual_model_uid at #7.9 (frame-verified) — read from the metadata block.
+    if (opts.actualModelTag) {
+      const am = getField(mf, opts.actualModelTag, 2);
+      if (am) {
+        const s = am.value.toString('utf8');
+        if (/^[\x20-\x7e]+$/.test(s)) actualModel = s; // printable selector only
+      }
+    }
     // completion_tokens only rides the final metadata frame; treat the pair as
     // usage only when the completion count is present.
     if (completion) {
@@ -1225,7 +1253,7 @@ export async function* streamChat({
         if (finish != null) lastFinish = finish;
         if (usage) lastUsage = usage;
         if (billing) lastBilling = { ...lastBilling, ...billing };
-        if (toolCalls) { for (const tc of toolCalls) nativeToolCalls.push(tc); }
+        if (toolCalls) { for (const tc of toolCalls) mergeToolCallFragment(nativeToolCalls, tc); }
         if (reasoning || content || frameDump || metaDump || signature) pump();
       }
     });
