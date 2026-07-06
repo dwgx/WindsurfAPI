@@ -1607,6 +1607,12 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
     }
   }
 
+  // ─── Email OTP Login — SEALED 2026-07-06 ────────────────────────
+  // These endpoints are intact and the Connect-RPC wiring is verified, but the
+  // flow is dormant: it needs a Cloudflare Turnstile token whose sitekey is
+  // domain-bound to windsurf.com, so a self-hosted dashboard can't produce one.
+  // The UI panel is hidden (index.html data-sealed). Endpoints remain reachable
+  // for a future upstream change / a manually-supplied turnstile token.
   // ─── Email OTP Login (Step 1: Send verification code) ────
   if (subpath === '/email-otp/send' && method === 'POST') {
     try {

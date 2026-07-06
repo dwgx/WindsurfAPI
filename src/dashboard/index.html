@@ -1763,7 +1763,13 @@ window._firebaseOAuth = async function(provider) {
       </div>
     </div>
 
-    <div class="section">
+    <!-- SEALED 2026-07-06: email-OTP login is blocked by Cloudflare Turnstile
+         whose sitekey is domain-bound to windsurf.com — a self-hosted dashboard
+         cannot render the widget, so this panel can never work here. Hidden from
+         the UI; the backend code (email-otp-login.js + /email-otp/* endpoints)
+         is kept intact behind this seal in case upstream drops turnstile.
+         See .workflow-results/otp-login-2026-07-06/VERIFIED-otp-flow.md -->
+    <div class="section hidden" data-sealed="email-otp-turnstile-blocked">
       <div class="section-header">
         <div>
           <div class="section-title" data-i18n="section.emailOtpLogin.title">邮箱验证码登录 / Email Code Login</div>
@@ -3429,8 +3435,11 @@ docker compose up -d --force-recreate</pre>
     // v2.0.60 — preflight local-windsurf availability so the import
     // button reflects the truth (disabled + hint on public bind).
     this.checkLocalImportAvailability();
-    // Initialize Turnstile widget for OTP login
-    this.initTurnstile();
+    // Email-OTP login is SEALED (Turnstile domain-bound to windsurf.com — can't
+    // render on a self-hosted page). Panel is hidden; skip widget init to avoid
+    // a doomed render loop. Re-enable by removing the .hidden on the panel and
+    // uncommenting the line below if upstream ever drops turnstile.
+    // this.initTurnstile();
   },
 
   isFirebaseOAuthOriginBlocked(err) {
