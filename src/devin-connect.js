@@ -1205,10 +1205,36 @@ export function decodeFrame(payload, opts = {}) {
  *   - auth failures (permission_denied / 401) → UNAUTHORIZED.
  * Everything else keeps its upstream code (or UPSTREAM_ERROR).
  *
+/**
+ * Parse a Go-duration reset window out of a rate-limit message into ms.
+ * The backend renders retry-after with Go's time.Duration.String() — e.g.
+ * "Resets in: 3h0m0s", "Resets in: 1m30s", "resets in 45s". Returns the total
+ * milliseconds, or null when no parseable duration is present (caller then falls
+ * back to its default cooldown). Bounded to a sane ceiling so a bogus huge value
+ * can't cool an account down for days.
+ */
+export function parseResetDuration(text) {
+  const m = /resets? in[:\s]+((?:\d+h)?(?:\d+m)?(?:\d+(?:\.\d+)?s)?)/i.exec(String(text || ''));
+  if (!m || !m[1]) return null;
+  const dur = m[1];
+  const h = /(\d+)h/.exec(dur);
+  const min = /(\d+)m(?!s)/.exec(dur); // m not followed by s (avoid matching "ms")
+  const s = /(\d+(?:\.\d+)?)s/.exec(dur);
+  if (!h && !min && !s) return null;
+  let ms = 0;
+  if (h) ms += Number(h[1]) * 3600_000;
+  if (min) ms += Number(min[1]) * 60_000;
+  if (s) ms += Number(s[1]) * 1000;
+  if (ms <= 0) return null;
+  // Ceiling at 6h — the observed window is 3h; guard against a garbage value.
+  return Math.min(ms, 6 * 3600_000);
+}
+
+/**
  * @param {string} text   raw body or trailer message
  * @param {string|null} code  upstream code if already known
  * @param {number|null} status  HTTP status if a non-200 was seen
- * @returns {{code: string, message: string}}
+ * @returns {{code: string, message: string, resetMs?: number}}
  */
 export function classifyUpstreamError(text, code = null, status = null) {
   const body = String(text || '').trim();
@@ -1227,6 +1253,23 @@ export function classifyUpstreamError(text, code = null, status = null) {
   // is NOT the transient backend fault below. Keep it non-retryable.
   if (code === 'internal') {
     return { code: 'UPSTREAM_ERROR', message: body || 'DEVIN_CONNECT: internal (client request rejected)' };
+  }
+  // HARD per-model rate limit with an explicit reset window. Observed live
+  // (paid teams, 2026-07-08): "Reached message rate limit for this model. Please
+  // try again later. Resets in: 3h0m0s". This is a real account-scoped throttle
+  // the backend hands back with a Go-duration retry-after — NOT the transient
+  // "high demand" capacity blip below. It MUST be matched BEFORE the CAPACITY
+  // branch, because that branch's `try again later` sub-pattern also matches this
+  // text and would misclassify it as CAPACITY → which is RETRYABLE + a 60s
+  // cooldown. Retrying into a 3h hard limit just amplifies load against an already
+  // throttled account (exactly how a single-account pool self-inflicts an outage).
+  // We surface it as RATE_LIMITED (non-retryable) and parse the reset window onto
+  // resetMs so the handler can cool the account for the REAL duration.
+  if (/(message |request )?rate limit(ed)?/i.test(lc) && /resets? in[:\s]/i.test(lc)) {
+    const resetMs = parseResetDuration(lc);
+    const out = { code: 'RATE_LIMITED', message: body || 'DEVIN_CONNECT: message rate limit reached' };
+    if (resetMs != null) out.resetMs = resetMs;
+    return out;
   }
   // Capacity / high-demand throttling. Observed live in a 401/403 shell:
   // "We're currently facing high demand for this model. Please try again later."

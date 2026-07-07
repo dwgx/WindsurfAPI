@@ -99,6 +99,73 @@ describe('classifyUpstreamError — transient-before-permanent ordering (audit F
   });
 });
 
+// Hard per-model rate limit with an explicit reset window. REGRESSION from the
+// 2026-07-08 incident: "Reached message rate limit for this model. Please try
+// again later. Resets in: 3h0m0s" was matched by the CAPACITY branch's
+// `try again later` sub-pattern → misclassified CAPACITY (retryable + 60s
+// cooldown), so the proxy RETRIED into a 3-hour hard limit and amplified load on
+// a single-account pool. Must classify RATE_LIMITED (non-retryable) and parse the
+// real reset window.
+describe('classifyUpstreamError — hard rate limit with reset window', () => {
+  const RL = 'Reached message rate limit for this model. Please try again later. Resets in: 3h0m0s';
+
+  it('classifies the message-rate-limit-with-reset as RATE_LIMITED, NOT CAPACITY', () => {
+    assert.equal(classifyUpstreamError(RL, null, 503).code, 'RATE_LIMITED');
+  });
+
+  it('wins over the CAPACITY branch despite containing "try again later"', () => {
+    // The exact failure mode: the CAPACITY regex also matches "try again later".
+    // Ordering must put the hard-limit check first.
+    const r = classifyUpstreamError(RL, null, 401);
+    assert.equal(r.code, 'RATE_LIMITED');
+    assert.notEqual(r.code, 'CAPACITY');
+  });
+
+  it('is NOT retryable (retrying into a hard limit amplifies load)', () => {
+    const r = classifyUpstreamError(RL, null, 503);
+    assert.equal(isRetryable(r), false);
+  });
+
+  it('parses the reset window onto resetMs (3h → 10,800,000ms)', () => {
+    const r = classifyUpstreamError(RL, null, 503);
+    assert.equal(r.resetMs, 3 * 3600 * 1000);
+  });
+
+  it('a plain high-demand blip (no reset window) still classifies CAPACITY', () => {
+    // The hard-limit path requires BOTH "rate limit" AND "resets in"; a generic
+    // capacity blip must not be swept into RATE_LIMITED.
+    assert.equal(classifyUpstreamError("We're facing high demand. Please try again later.", null, 503).code, 'CAPACITY');
+  });
+});
+
+describe('parseResetDuration — Go time.Duration windows', () => {
+  it('parses 3h0m0s', async () => {
+    const { parseResetDuration } = await import('../src/devin-connect.js');
+    assert.equal(parseResetDuration('Resets in: 3h0m0s'), 3 * 3600 * 1000);
+  });
+  it('parses 1m30s', async () => {
+    const { parseResetDuration } = await import('../src/devin-connect.js');
+    assert.equal(parseResetDuration('resets in 1m30s'), 90 * 1000);
+  });
+  it('parses bare 45s', async () => {
+    const { parseResetDuration } = await import('../src/devin-connect.js');
+    assert.equal(parseResetDuration('Resets in: 45s'), 45 * 1000);
+  });
+  it('does not mistake "ms" for minutes', async () => {
+    const { parseResetDuration } = await import('../src/devin-connect.js');
+    // "500ms" should parse the seconds token as absent, not read "m" as minutes.
+    assert.equal(parseResetDuration('Resets in: 2h'), 2 * 3600 * 1000);
+  });
+  it('returns null when no duration present', async () => {
+    const { parseResetDuration } = await import('../src/devin-connect.js');
+    assert.equal(parseResetDuration('rate limited, try later'), null);
+  });
+  it('caps a garbage huge value at 6h', async () => {
+    const { parseResetDuration } = await import('../src/devin-connect.js');
+    assert.equal(parseResetDuration('Resets in: 999h'), 6 * 3600 * 1000);
+  });
+});
+
 describe('connectErrorToHttp — UPSTREAM_INTERNAL mapping', () => {
   it('maps to 503 upstream_transient_error (client retry-after, not auth)', () => {
     assert.deepEqual(connectErrorToHttp('UPSTREAM_INTERNAL'), {

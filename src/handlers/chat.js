@@ -1717,7 +1717,19 @@ export function finalizeConnectAccount(acct, { model, startTime, err }) {
       // lands on a fresh token instead of a permanently-dead account.
       reLoginAccount(acct.id).catch(() => {});
     }
-    else if (err.code === 'RATE_LIMITED') markRateLimited(apiKey, 5 * 60 * 1000, null);
+    else if (err.code === 'RATE_LIMITED') {
+      // Honor an explicit upstream reset window when the classifier parsed one
+      // (e.g. "message rate limit ... Resets in: 3h0m0s" → err.resetMs). A hard
+      // per-model limit is model-scoped, so cool THIS model only and let the pool
+      // prefer another account/model for it, rather than benching the account for
+      // every model. Falls back to a 5-min account-wide cooldown when no window
+      // was given (generic 429 with no retry-after).
+      if (Number.isFinite(err.resetMs) && err.resetMs > 0) {
+        markRateLimited(apiKey, err.resetMs, model, 'r');
+      } else {
+        markRateLimited(apiKey, 5 * 60 * 1000, null);
+      }
+    }
     else if (err.code === 'CAPACITY') {
       // The MODEL is temporarily overloaded ("high demand, try again later") —
       // a transient upstream condition, NOT an account fault. We already replayed
