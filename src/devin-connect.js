@@ -250,17 +250,30 @@ const syntheticImagePath = (n) => `C:\\windsurfapi\\image_${n + 1}.png`;
 // serde-JSON": the ENVELOPE is protobuf, only the args VALUE is JSON. Wire wins.
 // Symmetric with the response-side ChatToolCall #6{1:id,2:name,3:arguments}
 // pinned in parseToolCallTagMap.
-function encodeAssistantToolCall({ id, name, argsJson }) {
+function encodeAssistantToolCall({ id, name, argsJson, reasoning, provider }) {
   const toolCall = Buffer.concat([
     writeStringField(1, id),
     writeStringField(2, name),
     writeStringField(3, argsJson),
   ]);
-  return Buffer.concat([
+  const parts = [
     writeStringField(1, randomUUID()),      // #1 per-message uuid
     writeVarintField(2, SOURCE.ASSISTANT),  // #2 role=2
     writeMessageField(6, toolCall),         // #6 tool_call submessage
-  ]);
+  ];
+  // #11 reasoning text — VERIFIED-FROM-WIRE (req022: every role=2 assistant turn
+  // carries #11, 59B–1470B). Our default synthetic path omits it; a paid probe
+  // can inject one via DEVIN_CONNECT_IMAGE_REASONING to isolate whether the
+  // agent-loop requires it. Emitted only when a non-empty string is supplied so
+  // the default wire stays byte-identical. ← SWITCH POINT.
+  if (reasoning) parts.push(writeStringField(11, reasoning));
+  // #18 provider marker — VERIFIED-FROM-WIRE (req022 MSG14, the DRIVING turn:
+  // #18="anthropic"). Only the final/driving assistant tool_use carried it
+  // (MSG4 did not). Env-gated, default off. A synthetic #12 thinking SIGNATURE
+  // is deliberately NOT emitted: it is server-signed and cannot be fabricated,
+  // so provider without a valid signature is itself a paid probe.
+  if (provider) parts.push(writeStringField(18, provider));
+  return Buffer.concat(parts);
 }
 
 // Encode a role=4 tool_result ChatMessage bearing image(s). Field order matches
@@ -294,10 +307,17 @@ function encodeImageToolResult({ toolCallId, text, images, imageTag, env = proce
 // wire path carried NO #12 thinking-signature, so a minimal synthetic assistant
 // message with only #6 stays faithful).
 //
-// UNVERIFIED: whether a SYNTHETIC minimal tool_result (no genuine prior turn) is
-// ACCEPTED upstream — the capture only shows a full multi-turn client. Needs one
-// paid probe. ← SWITCH POINT: if rejected, the #11 reasoning text (present on the
-// wire's assistant tool_call) may also be required here.
+// ROOT CAUSE FOUND (2026-07-07, 2 paid fires + byte-diff): a SYNTHETIC image
+// turn is REJECTED (UPSTREAM_INTERNAL) by extended-thinking models (opus-4-8),
+// even with #11 reasoning + #18 provider + the real 19KB system prompt added.
+// Byte-diff vs the real req-022 driving turn shows the ONLY remaining difference
+// is #12 — a 324-byte server-issued thinking signature that the client CANNOT
+// forge (it is minted server-side during a genuine Bedrock extended-thinking
+// turn). So faking an assistant tool_use turn to smuggle an image does NOT work
+// for thinking models. Do NOT fire more opus probes (they will reject).
+// Possible unexplored paths: (a) a vision-capable model that does NOT use
+// extended-thinking / needs no #12; (b) a real tool loop so the server signs #12
+// itself; (c) document as a known limit. See memory vision-image-tag-state.
 //
 // @param {object}   msg     OpenAI-style { role, content, tool_call_id? }
 // @param {Array}    images  pre-extracted [{ base64_data, mime_type }] (length ≥ 1)
@@ -307,12 +327,18 @@ export function expandVisionMessage(msg, images, ctx) {
   const { imageTag, source, nextReadId, env = process.env } = ctx;
   const out = [];
   const text = messageText(msg.content);
+  // Optional synthetic #11 reasoning / #18 provider on the read tool_call turn —
+  // both default OFF (unset → byte-identical to the pre-probe wire). Populated
+  // only for paid experiment fires that isolate the reasoning / provider
+  // hypotheses. See getImageReasoning / getImageProvider.
+  const reasoning = getImageReasoning(env);
+  const provider = getImageProvider(env);
 
   if (msg.role === 'tool' && msg.tool_call_id) {
     // Real tool result: one tool_call genuinely happened. Reuse its opaque id
     // verbatim for both #6.1 and #7; carry every image in ONE tool_result.
     const id = msg.tool_call_id;
-    out.push(encodeAssistantToolCall({ id, name: 'read', argsJson: JSON.stringify({ file_path: syntheticImagePath(0) }) }));
+    out.push(encodeAssistantToolCall({ id, name: 'read', argsJson: JSON.stringify({ file_path: syntheticImagePath(0) }), reasoning, provider }));
     out.push(encodeImageToolResult({ toolCallId: id, text: text || '[Image 1]', images, imageTag, env }));
     return out;
   }
@@ -328,10 +354,28 @@ export function expandVisionMessage(msg, images, ctx) {
   }
   images.forEach((img, i) => {
     const id = nextReadId();
-    out.push(encodeAssistantToolCall({ id, name: 'read', argsJson: JSON.stringify({ file_path: syntheticImagePath(i) }) }));
+    out.push(encodeAssistantToolCall({ id, name: 'read', argsJson: JSON.stringify({ file_path: syntheticImagePath(i) }), reasoning, provider }));
     out.push(encodeImageToolResult({ toolCallId: id, text: `[Image ${i + 1}]`, images: [img], imageTag, env }));
   });
   return out;
+}
+
+// Optional synthetic #11 reasoning text for the vision read tool_call turn.
+// Default OFF (unset/empty → not emitted, wire byte-identical). A paid probe
+// sets DEVIN_CONNECT_IMAGE_REASONING="..." to test whether the agent-loop
+// requires the assistant turn to carry reasoning (req022 always did).
+export function getImageReasoning(env = process.env) {
+  const raw = env.DEVIN_CONNECT_IMAGE_REASONING;
+  return typeof raw === 'string' && raw.trim() ? raw : '';
+}
+
+// Optional #18 provider marker (e.g. "anthropic"). Default OFF. In req022 only
+// the DRIVING assistant turn (MSG14) carried #18 alongside a server-signed #12
+// thinking signature we cannot fabricate; emitting #18 without a valid #12 is
+// itself a paid probe, hence gated and off by default.
+export function getImageProvider(env = process.env) {
+  const raw = env.DEVIN_CONNECT_IMAGE_PROVIDER;
+  return typeof raw === 'string' && raw.trim() ? raw.trim() : '';
 }
 
 // Native tool definitions — GROUNDWORK, gated behind DEVIN_CONNECT_TOOL_DEF_TAGS.
@@ -1608,4 +1652,5 @@ export const __testing = {
   looksLikeValidJson, parseSignatureTagMap,
   encodeAssistantToolCall, encodeImageToolResult, expandVisionMessage,
   getImageToolDefEnabled, SYNTHETIC_READ_TOOL,
+  getImageReasoning, getImageProvider,
 };

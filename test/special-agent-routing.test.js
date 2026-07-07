@@ -29,6 +29,7 @@ const ENV_KEYS = [
   'DEVIN_CLI_ALLOW_CLIENT_TOOLS',
   'DEVIN_CLI_ALLOW_MEDIA',
   'DEVIN_CLI_MODE',
+  'DEVIN_ACP_VISION',
   'DEVIN_ACP_EXPOSE_REASONING',
   'WINDSURFAPI_SHOW_DISABLED_SPECIAL_AGENT_MODELS',
   'DEVIN_TIMEOUT_MS',
@@ -167,6 +168,61 @@ describe('special-agent model routing', () => {
     assert.equal(result.body.choices[0].message.content, 'ACP_OK');
     assert.equal(seenPrompt, 'use ACP');
     assert.equal(released, true);
+  });
+
+  it('vision over ACP (DEVIN_ACP_VISION=1): forwards images as a structured prompt', async () => {
+    process.env.WINDSURFAPI_SPECIAL_AGENT_BACKEND = 'devin-cli';
+    process.env.DEVIN_CLI_MODE = 'acp';
+    process.env.DEVIN_ACP_VISION = '1';
+    const RED_DOT = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+
+    let seenPrompt = null;
+    const result = await handleChatCompletions({
+      model: 'swe-1.6-fast',
+      messages: [user([
+        { type: 'text', text: 'what color?' },
+        { type: 'image_url', image_url: { url: `data:image/png;base64,${RED_DOT}` } },
+      ])],
+    }, {
+      specialAgent: {
+        checkoutAccount: () => ({ id: 'a1', apiKey: 'k', apiServerUrl: 'https://x' }),
+        runDevinAcp: async (prompt) => { seenPrompt = prompt; return { text: 'red' }; },
+        releaseAccount: () => {},
+      },
+    });
+
+    assert.equal(result.status, 200);
+    assert.equal(result.body.choices[0].message.content, 'red');
+    // The runner received a STRUCTURED prompt carrying the image, not a string.
+    assert.equal(typeof seenPrompt, 'object', 'prompt is structured when vision is on');
+    assert.match(seenPrompt.text, /what color/);
+    assert.equal(seenPrompt.images.length, 1);
+    assert.equal(seenPrompt.images[0].base64_data, RED_DOT);
+    assert.equal(seenPrompt.images[0].mime_type, 'image/png');
+  });
+
+  it('vision gate OFF: an image request is still rejected as unsupported media', async () => {
+    process.env.WINDSURFAPI_SPECIAL_AGENT_BACKEND = 'devin-cli';
+    process.env.DEVIN_CLI_MODE = 'acp';
+    // DEVIN_ACP_VISION unset → images not allowed through
+    const RED_DOT = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
+    let runnerCalled = false;
+    const result = await handleChatCompletions({
+      model: 'swe-1.6-fast',
+      messages: [user([
+        { type: 'text', text: 'what color?' },
+        { type: 'image_url', image_url: { url: `data:image/png;base64,${RED_DOT}` } },
+      ])],
+    }, {
+      specialAgent: {
+        checkoutAccount: () => ({ id: 'a1', apiKey: 'k', apiServerUrl: 'https://x' }),
+        runDevinAcp: async () => { runnerCalled = true; return { text: 'x' }; },
+        releaseAccount: () => {},
+      },
+    });
+    assert.equal(result.status, 400);
+    assert.equal(result.body.error.type, 'unsupported_media');
+    assert.equal(runnerCalled, false, 'runner not reached when vision gate is off');
   });
 
   it('rejects caller-local tools on print backend by default', async () => {

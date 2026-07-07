@@ -477,6 +477,43 @@ function makeAcpClient({ command, args, env, signal, timeoutMs, outputLimit, onC
   };
 }
 
+// Build the ACP `session/prompt` content-block array. VISION (gated by
+// DEVIN_ACP_VISION): the ACP path is the CLEAN vision route — the real devin CLI
+// builds the downstream GetChatMessage wire and the server signs its own thinking
+// turns, so we NEVER forge the un-forgeable #12 signature that blocks the
+// DEVIN_CONNECT synthetic-tool_result path. Devin's own `initialize` advertises
+// promptCapabilities.image=true, and the ACP ContentBlock union has a first-class
+// image variant { type:'image', data:<base64>, mimeType }.
+//
+// `prompt` may be a plain string (text-only, unchanged behavior) or a structured
+// { text, images:[{base64_data, mime_type}] } object. Images are only emitted
+// when DEVIN_ACP_VISION is on; otherwise they are dropped and we degrade to text
+// (identical to prior behavior — no silent behavior change when the gate is off).
+export function acpVisionEnabled(env = process.env) {
+  const raw = String(env.DEVIN_ACP_VISION ?? '').trim().toLowerCase();
+  return raw === '1' || raw === 'on' || raw === 'true';
+}
+
+export function buildAcpPromptBlocks(prompt, modelHint = '', env = process.env) {
+  // String prompt → text-only block (back-compat).
+  if (typeof prompt === 'string' || prompt == null) {
+    return [{ type: 'text', text: `${modelHint}${prompt ?? ''}` }];
+  }
+  const text = typeof prompt.text === 'string' ? prompt.text : '';
+  const images = Array.isArray(prompt.images) ? prompt.images : [];
+  const blocks = [{ type: 'text', text: `${modelHint}${text}` }];
+  if (acpVisionEnabled(env)) {
+    for (const img of images) {
+      const data = img?.base64_data || img?.data;
+      if (!data) continue;
+      // ACP ContentBlock image variant (route A, inline base64). mimeType is the
+      // ACP field name (camelCase), distinct from our internal mime_type.
+      blocks.push({ type: 'image', data, mimeType: img.mime_type || img.mimeType || 'image/png' });
+    }
+  }
+  return blocks;
+}
+
 export async function runDevinAcpProcess(prompt, { modelKey = '', apiKey = '', apiServerUrl = '', signal = null, onChunk = null } = {}) {
   if (!apiKey) {
     throw Object.assign(new Error('Devin ACP mode requires an upstream Windsurf account apiKey.'), {
@@ -536,7 +573,7 @@ export async function runDevinAcpProcess(prompt, { modelKey = '', apiKey = '', a
     const modelHint = modelKey ? `Model requested by caller: ${modelKey}\n\n` : '';
     const result = await client.request('session/prompt', {
       sessionId,
-      prompt: [{ type: 'text', text: `${modelHint}${prompt}` }],
+      prompt: buildAcpPromptBlocks(prompt, modelHint, env),
     }, runTimeoutMs());
     if (result.error) throw errorFromRpcResponse(result, 'Devin ACP session/prompt failed');
 

@@ -25,7 +25,8 @@ import {
 import { config, log } from './config.js';
 import { recordRequest } from './dashboard/stats.js';
 import { sanitizeText, PathSanitizeStream } from './sanitize.js';
-import { runDevinAcpProcess, probeDevinCliAvailable } from './devin-acp.js';
+import { runDevinAcpProcess, probeDevinCliAvailable, acpVisionEnabled } from './devin-acp.js';
+import { extractInlineImages as extractImagesFromContent } from './devin-connect.js';
 import { systemFingerprint } from './system-fingerprint.js';
 
 const SPECIAL_BACKEND = 'special_agent';
@@ -164,6 +165,24 @@ export function buildSpecialAgentPrompt(messages) {
     `Latest ${label(last.role)} message:\n${last.text}`,
     instruction,
   ].filter(Boolean).join('\n\n').trim();
+}
+
+// Collect inline images across ALL message contents (devin-connect's
+// extractInlineImages works per-content; this walks the whole conversation).
+// Returns [{ base64_data, mime_type }] in message order — the ACP runner turns
+// them into image content blocks. Kiro-style hygiene: cap total images so a
+// pathological history can't blow the request body.
+const ACP_MAX_IMAGES = 20;
+function extractInlineImages(messages) {
+  const out = [];
+  for (const m of Array.isArray(messages) ? messages : []) {
+    if (!Array.isArray(m?.content)) continue;
+    for (const img of extractImagesFromContent(m.content)) {
+      out.push(img);
+      if (out.length >= ACP_MAX_IMAGES) return out;
+    }
+  }
+  return out;
 }
 
 function hasUnsupportedMedia(messages) {
@@ -735,17 +754,30 @@ export async function handleSpecialAgentChatCompletion(body, route, deps = {}) {
       { backend: 'devin-cli', tool_count: tools.length },
     );
   }
-  if (hasUnsupportedMedia(messages) && process.env.DEVIN_CLI_ALLOW_MEDIA !== '1') {
+  // Vision over ACP (gated by DEVIN_ACP_VISION): the ACP path forwards images as
+  // first-class content blocks and the real CLI + server produce genuinely
+  // signed turns — the clean route that works even for extended-thinking models
+  // (opus-4-8), which the DEVIN_CONNECT synthetic-tool_result path CANNOT serve
+  // (un-forgeable #12 signature). Verified end-to-end: opus saw a red/blue image.
+  const acpMode = String(process.env.DEVIN_CLI_MODE || 'print').trim().toLowerCase() === 'acp';
+  const visionOverAcp = acpMode && acpVisionEnabled() && hasUnsupportedMedia(messages);
+  if (hasUnsupportedMedia(messages) && !visionOverAcp && process.env.DEVIN_CLI_ALLOW_MEDIA !== '1') {
     return errorResponse(
       400,
       'unsupported_media',
-      'Devin CLI print backend currently accepts text-only requests. Media/vision requires ACP or an explicit media adapter.',
+      'Devin CLI print backend currently accepts text-only requests. Media/vision requires ACP (set DEVIN_CLI_MODE=acp + DEVIN_ACP_VISION=1) or an explicit media adapter.',
       { backend: 'devin-cli' },
     );
   }
 
-  const prompt = buildSpecialAgentPrompt(messages);
-  if (!prompt) {
+  const promptText = buildSpecialAgentPrompt(messages);
+  // When vision-over-ACP is active, carry the extracted images alongside the text
+  // as a structured prompt the ACP runner turns into image content blocks. Text
+  // prompt alone must still be non-empty (an image with no text is allowed — the
+  // images are the payload), so accept the request if EITHER text or images exist.
+  const visionImages = visionOverAcp ? extractInlineImages(messages) : [];
+  const prompt = visionImages.length ? { text: promptText, images: visionImages } : promptText;
+  if (!promptText && !visionImages.length) {
     return errorResponse(400, 'invalid_request_error', 'Special-agent request has no text prompt.', { param: 'messages' });
   }
 
