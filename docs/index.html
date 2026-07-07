@@ -3,11 +3,11 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Windsurf API · 把 Windsurf 變成 OpenAI + Anthropic 相容端點</title>
-<meta name="description" content="無頭運行 Windsurf 的 AI 模型，同時支援 /v1/chat/completions 與 /v1/messages 雙協定。Claude Code、Cursor、Cline 直接連。零 npm 依賴。">
+<title>DevinAPI · 把 Devin 雲端的 AI 模型變成 OpenAI + Anthropic + Gemini 端點</title>
+<meta name="description" content="WindsurfAPI 已進化為 DevinAPI：無頭直連 Devin 雲端的百餘個 AI 模型，同時相容 /v1/chat/completions、/v1/messages 與 Gemini 三套協定。Claude Code、Cursor、Cline 直接連。零 npm 依賴，無需二進位。">
 <meta name="theme-color" content="#FAF9F5">
-<meta property="og:title" content="Windsurf API">
-<meta property="og:description" content="雙協定 · 零依賴 · Docker 就緒">
+<meta property="og:title" content="DevinAPI">
+<meta property="og:description" content="從 Windsurf 代理進化成 Devin 雲端代理 · 三協定 · 零依賴 · 無需二進位">
 <meta property="og:type" content="website">
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext y='26' font-size='26'%3E%E3%80%B0%EF%B8%8F%3C/text%3E%3C/svg%3E">
 <style>
@@ -321,9 +321,9 @@ footer{border-top:1px solid var(--rule);padding:3rem 0 2.5rem;margin-top:2rem}
 <!-- ── Nav ── -->
 <nav>
   <div class="nav-inner">
-    <a href="#" class="logo">Windsurf API</a>
+    <a href="#" class="logo">DevinAPI</a>
     <div class="nav-links">
-      <a href="#protocols">雙協定</a>
+      <a href="#protocols">三協定</a>
       <a href="#models">模型</a>
       <a href="#architecture">架構</a>
       <a href="review.html">審閱</a>
@@ -342,13 +342,13 @@ footer{border-top:1px solid var(--rule);padding:3rem 0 2.5rem;margin-top:2rem}
 <section class="hero">
   <div class="container">
     <div class="hero-inner reveal">
-      <div class="hero-badge">v1.5.0 — Docker + SOCKS5 + 工具調用修復</div>
+      <div class="hero-badge">v2.0 — Devin 雲端直連 · 零二進位 · 三協定</div>
       <h1>
-        把 <em>Windsurf</em> 的 AI 模型<br>
+        把 <em>Devin</em> 雲端的 AI 模型<br>
         變成你熟悉的 <span class="hl">API</span>。
       </h1>
       <p class="lede">
-        同時支援 <code>/v1/chat/completions</code> 與 <code>/v1/messages</code> 雙協定。Claude Code、Cursor、Cline 直接連。零 npm 依賴，Docker 一鍵部署。
+        WindsurfAPI 長成了 DevinAPI：同一個服務同時說 <code>/v1/chat/completions</code>、<code>/v1/messages</code> 與 Gemini 三套協定，直連 Devin 雲端的百餘個模型。Claude Code、Cursor、Cline 直接連。零 npm 依賴，預設路徑無需任何二進位。
       </p>
       <div class="hero-cta">
         <a href="#deploy" class="btn btn-primary">
@@ -375,8 +375,8 @@ footer{border-top:1px solid var(--rule);padding:3rem 0 2.5rem;margin-top:2rem}
   <div class="container">
     <div class="stats-grid">
       <div class="stat reveal"><div class="num" id="stat-models">0</div><div class="label">AI 模型</div></div>
-      <div class="stat reveal"><div class="num">9</div><div class="label">供應商</div></div>
-      <div class="stat reveal"><div class="num">2</div><div class="label">相容協定</div></div>
+      <div class="stat reveal"><div class="num">10+</div><div class="label">供應商</div></div>
+      <div class="stat reveal"><div class="num">3</div><div class="label">相容協定</div></div>
       <div class="stat reveal"><div class="num">0</div><div class="label">npm 依賴</div></div>
     </div>
   </div>
@@ -386,9 +386,9 @@ footer{border-top:1px solid var(--rule);padding:3rem 0 2.5rem;margin-top:2rem}
 <section class="dual-protocol" id="protocols">
   <div class="container">
     <div class="reveal">
-      <div class="kicker">雙協定 · Dual Protocol</div>
-      <h2 class="section-title">同一個伺服器，<em>兩套標準</em>。</h2>
-      <p class="section-sub">不管你手上的客戶端走 OpenAI 還是 Anthropic 協定，指向同一個 Windsurf API 實例就能用。</p>
+      <div class="kicker">三協定 · Tri-Protocol</div>
+      <h2 class="section-title">同一個伺服器，<em>三套標準</em>。</h2>
+      <p class="section-sub">不管你的客戶端走 OpenAI、Anthropic 還是 Gemini 協定，指向同一個 DevinAPI 實例就能用。三條前端最終匯進同一個 chat 處理器，再送往 Devin 雲端。</p>
     </div>
 
     <div class="proto-grid reveal">
@@ -398,7 +398,7 @@ footer{border-top:1px solid var(--rule);padding:3rem 0 2.5rem;margin-top:2rem}
           <span class="proto-meta">POST /v1/chat/completions</span>
         </div>
 <pre class="proto-body"><span class="c-prompt">$</span> <span class="c-cmd">curl</span> http://localhost:3003<span class="c-str">/v1/chat/completions</span> \
-  <span class="c-flag">-H</span> <span class="c-str">"Authorization: Bearer sk-ws-demo"</span> \
+  <span class="c-flag">-H</span> <span class="c-str">"Authorization: Bearer sk-dv-demo"</span> \
   <span class="c-flag">-d</span> <span class="c-str">'{
     <span class="c-key">"model"</span>: "gpt-5.2",
     <span class="c-key">"messages"</span>: [
@@ -415,7 +415,7 @@ footer{border-top:1px solid var(--rule);padding:3rem 0 2.5rem;margin-top:2rem}
           <span class="proto-meta">POST /v1/messages</span>
         </div>
 <pre class="proto-body"><span class="c-prompt">$</span> <span class="c-cmd">curl</span> http://localhost:3003<span class="c-str">/v1/messages</span> \
-  <span class="c-flag">-H</span> <span class="c-str">"x-api-key: sk-ws-demo"</span> \
+  <span class="c-flag">-H</span> <span class="c-str">"x-api-key: sk-dv-demo"</span> \
   <span class="c-flag">-d</span> <span class="c-str">'{
     <span class="c-key">"model"</span>: "claude-opus-4.6",
     <span class="c-key">"messages"</span>: [
@@ -428,7 +428,7 @@ footer{border-top:1px solid var(--rule);padding:3rem 0 2.5rem;margin-top:2rem}
     </div>
 
     <div class="note reveal">
-      <strong>同一個請求體格式、同一個帳號池、同一個速率限制器</strong>——切換協定只是換路由前綴。Claude Code、Cline 吃 <code>/v1/messages</code>，Cursor/OpenAI SDK 吃 <code>/v1/chat/completions</code>，互不干擾。
+      <strong>同一個請求體、同一個帳號池、同一個速率限制器</strong>——切換協定只是換路由前綴。Claude Code、Cline 吃 <code>/v1/messages</code>，Cursor/OpenAI SDK 吃 <code>/v1/chat/completions</code>，Gemini 客戶端吃 <code>generateContent</code> / <code>streamGenerateContent</code>，三者互不干擾。
     </div>
   </div>
 </section>
@@ -439,7 +439,7 @@ footer{border-top:1px solid var(--rule);padding:3rem 0 2.5rem;margin-top:2rem}
     <div class="reveal">
       <div class="kicker">模型 · Models</div>
       <h2 class="section-title">一個 API 背後，<em>多個供應商</em>。</h2>
-      <p class="section-sub">從 Claude Opus 到 GPT-5、從 Gemini 3 到 DeepSeek R1，9 個供應商的模型統一接入。</p>
+      <p class="section-sub">從 Claude Opus 到 GPT-5、從 Gemini 3 到 DeepSeek R1，超過 10 個供應商的百餘個模型統一接入。清單由後端雲端目錄自動發現。</p>
     </div>
 
     <div class="model-filters reveal" id="model-filters">
@@ -460,9 +460,9 @@ footer{border-top:1px solid var(--rule);padding:3rem 0 2.5rem;margin-top:2rem}
     <div class="model-grid reveal" id="model-grid"></div>
 
     <div class="note reveal">
-      <strong>免費帳號：</strong>僅支援 <code>gemini-2.5-flash</code>（<code>gpt-4o-mini</code> 已被 Windsurf 下架）。其餘模型需 Windsurf Pro 訂閱。<br>
-      <strong>看不到最新模型？</strong>你的 Language Server binary 可能落後 Windsurf 雲端，從桌面端拷貝最新版 LS 覆蓋即可——<code>/v1/models</code> 會自動從雲端發現新模型。<br>
-      <strong>模型清單怎麼更新？</strong>本頁面上的清單由 <code>scripts/gen-docs-models.js</code> 從 <code>src/models.js</code> 自動生成，不會與後端漂移。
+      <strong>免費帳號：</strong>可用模型依帳號 tier 而定，免費層通常僅開放輕量模型；Claude、GPT-5 全系等需要對應的 Devin 付費 tier，後台會自動偵測並標記。<br>
+      <strong>看不到最新模型？</strong>Devin 雲端路徑（<code>DEVIN_CONNECT=1</code>）透過 GetChatMessage 自動發現雲端目錄，<code>/v1/models</code> 即時反映，無需拷貝任何二進位。<br>
+      <strong>模型清單怎麼更新？</strong>本頁清單由 <code>scripts/gen-docs-models.js</code> 從 <code>src/models.js</code> 自動生成。
     </div>
   </div>
 </section>
@@ -473,7 +473,7 @@ footer{border-top:1px solid var(--rule);padding:3rem 0 2.5rem;margin-top:2rem}
     <div class="reveal">
       <div class="kicker">架構 · Architecture</div>
       <h2 class="section-title">中間多一層，<em>全都接住</em>。</h2>
-      <p class="section-sub">請求從客戶端出發，經過協定翻譯、帳號池選號、工具仿真、路徑淨化，再由語言伺服器轉成 Protobuf 送到 Windsurf 雲端。回應原路返回，流式解析後交付。</p>
+      <p class="section-sub">請求從客戶端出發，經過協定翻譯、帳號池選號、工具仿真、路徑淨化，再以手寫 Protobuf 透過 Connect-RPC 直送 Devin 雲端的 GetChatMessage——預設路徑不需要任何二進位。回應原路返回，流式解析後交付。傳統的 Windsurf 語言伺服器（本地 gRPC）仍保留為第二條傳輸鏈。</p>
     </div>
 
     <div class="arch-canvas reveal">
@@ -498,7 +498,7 @@ footer{border-top:1px solid var(--rule);padding:3rem 0 2.5rem;margin-top:2rem}
           <div class="arch-conn-proto">HTTP · SSE</div>
         </div>
 
-        <!-- Node 2: Windsurf API (HERO) -->
+        <!-- Node 2: DevinAPI (HERO) -->
         <div class="arch-nd hero-node">
           <div class="arch-hero-glow"></div>
           <div class="arch-nd-box">
@@ -506,7 +506,7 @@ footer{border-top:1px solid var(--rule);padding:3rem 0 2.5rem;margin-top:2rem}
               <svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
             </div>
             <div class="arch-nd-label">Node.js Proxy</div>
-            <div class="arch-nd-title">Windsurf API</div>
+            <div class="arch-nd-title">DevinAPI</div>
             <div class="arch-nd-sub">協定翻譯 · 帳號池輪詢<br>工具仿真 · 上下文複用<br>速率限制 · 故障轉移</div>
           </div>
         </div>
@@ -516,18 +516,18 @@ footer{border-top:1px solid var(--rule);padding:3rem 0 2.5rem;margin-top:2rem}
           <div class="arch-conn-line"></div>
           <div class="arch-conn-dot"></div>
           <div class="arch-conn-dot ret"></div>
-          <div class="arch-conn-proto">Protobuf · gRPC</div>
+          <div class="arch-conn-proto">Connect-RPC · HTTP</div>
         </div>
 
-        <!-- Node 3: Language Server -->
+        <!-- Node 3: Devin Connect -->
         <div class="arch-nd">
           <div class="arch-nd-box">
             <div class="arch-nd-icon" style="background:rgba(232,226,212,.06);color:#A09888">
               <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M6 10h.01M10 10h.01M6 14h12"/></svg>
             </div>
-            <div class="arch-nd-label">Binary · gRPC</div>
-            <div class="arch-nd-title">Language Server</div>
-            <div class="arch-nd-sub">Windsurf LS 二進位<br>Proto 序列化 / 反序列化</div>
+            <div class="arch-nd-label">Connect-RPC · 帳號池</div>
+            <div class="arch-nd-title">Devin Connect</div>
+            <div class="arch-nd-sub">手寫 Protobuf 編解碼<br>語言伺服器為選用第二鏈</div>
           </div>
         </div>
 
@@ -546,8 +546,8 @@ footer{border-top:1px solid var(--rule);padding:3rem 0 2.5rem;margin-top:2rem}
               <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M18 10a6 6 0 00-11.3-2A4.5 4.5 0 005 17h13a4 4 0 100-7z"/></svg>
             </div>
             <div class="arch-nd-label">Upstream</div>
-            <div class="arch-nd-title">Windsurf Cloud</div>
-            <div class="arch-nd-sub">Cascade AI 引擎<br>100+ 模型推理</div>
+            <div class="arch-nd-title">Devin Cloud</div>
+            <div class="arch-nd-sub">GetChatMessage 推理引擎<br>100+ 模型</div>
           </div>
         </div>
       </div>
@@ -556,7 +556,7 @@ footer{border-top:1px solid var(--rule);padding:3rem 0 2.5rem;margin-top:2rem}
       <div class="arch-features reveal">
         <div class="arch-ft">
           <span class="arch-ft-dot"></span>
-          <div><div class="arch-ft-text">雙協定翻譯</div><div class="arch-ft-desc">OpenAI ↔ Anthropic ↔ Cascade</div></div>
+          <div><div class="arch-ft-text">三協定翻譯</div><div class="arch-ft-desc">OpenAI ↔ Anthropic ↔ Gemini</div></div>
         </div>
         <div class="arch-ft">
           <span class="arch-ft-dot"></span>
@@ -568,7 +568,7 @@ footer{border-top:1px solid var(--rule);padding:3rem 0 2.5rem;margin-top:2rem}
         </div>
         <div class="arch-ft">
           <span class="arch-ft-dot"></span>
-          <div><div class="arch-ft-text">上下文複用</div><div class="arch-ft-desc">Fingerprint 池 · Cascade 會話快取</div></div>
+          <div><div class="arch-ft-text">上下文複用</div><div class="arch-ft-desc">Fingerprint 池 · Devin 會話快取</div></div>
         </div>
         <div class="arch-ft">
           <span class="arch-ft-dot"></span>
@@ -589,6 +589,26 @@ footer{border-top:1px solid var(--rule);padding:3rem 0 2.5rem;margin-top:2rem}
   </div>
 </section>
 
+<!-- ── Under the Hood ── -->
+<section class="dashboard-section" id="under-the-hood">
+  <div class="container">
+    <div class="reveal">
+      <div class="kicker">工程內幕 · Under the Hood</div>
+      <h2 class="section-title">從 Windsurf 代理到 Devin 雲端，<em>底層做了什麼</em>。</h2>
+      <p class="section-sub">遷移不只是換個上游位址。為了純 HTTP 直連 Devin 雲端，我們手寫了整條協定棧——沒有 protobuf 執行庫，沒有 npm 依賴。</p>
+    </div>
+
+    <div class="panel-grid reveal">
+      <div class="panel-card"><div class="panel-head"><div class="panel-icon">1</div><h4>手寫 Protobuf 編解碼</h4></div><p>零依賴、免 schema 的 wire-format codec，varint 全手寫，透過 Connect-RPC 對話 Devin 雲端。</p></div>
+      <div class="panel-card"><div class="panel-head"><div class="panel-icon">2</div><h4>三協定翻譯</h4></div><p>OpenAI、Anthropic、Gemini 三套前端匯進同一個 chat 處理器再扇出。</p></div>
+      <div class="panel-card"><div class="panel-head"><div class="panel-icon">3</div><h4>雙傳輸鏈共用底座</h4></div><p>Devin 雲端（純 HTTP，新預設）與傳統 Windsurf 語言伺服器（本地 gRPC）共用同一套 proto + connect 底層。</p></div>
+      <div class="panel-card"><div class="panel-head"><div class="panel-icon">4</div><h4>精準計費解碼</h4></div><p>解析 Devin 免費的 GetUserStatus 帳本，還原真實餘額、計費週期與各模型 credit 費率，零成本查詢。</p></div>
+      <div class="panel-card"><div class="panel-head"><div class="panel-icon">5</div><h4>視覺圖像支援</h4></div><p>忠實重建圖像 tool_result 的 wire 結構，讓圖片輸入與文字走同一個 protobuf 封包。</p></div>
+      <div class="panel-card"><div class="panel-head"><div class="panel-icon">6</div><h4>零依賴影像編解碼</h4></div><p>內建 jpeg-js（BSD-3）與自寫的純 Node PNG 解碼器（node:zlib）負責縮圖，不引入原生或 npm 影像庫。</p></div>
+    </div>
+  </div>
+</section>
+
 <!-- ── Dashboard ── -->
 <section class="dashboard-section" id="dashboard">
   <div class="container">
@@ -601,7 +621,7 @@ footer{border-top:1px solid var(--rule);padding:3rem 0 2.5rem;margin-top:2rem}
     <div class="panel-grid reveal">
       <div class="panel-card"><div class="panel-head"><div class="panel-icon">1</div><h4>總覽</h4></div><p>運行時間、帳號池狀態、分模型成功率</p></div>
       <div class="panel-card"><div class="panel-head"><div class="panel-icon">2</div><h4>登入取號</h4></div><p>Email/密碼直接註冊，自動取得 Token</p></div>
-      <div class="panel-card"><div class="panel-head"><div class="panel-icon">3</div><h4>帳號管理</h4></div><p>新增、刪除、停用、餘額 Credits 查詢</p></div>
+      <div class="panel-card"><div class="panel-head"><div class="panel-icon">3</div><h4>帳號管理</h4></div><p>新增、刪除、停用、真實餘額 / credit 查詢</p></div>
       <div class="panel-card"><div class="panel-head"><div class="panel-icon">4</div><h4>模型控制</h4></div><p>全域與帳號層的模型白/黑名單</p></div>
       <div class="panel-card"><div class="panel-head"><div class="panel-icon">5</div><h4>代理配置</h4></div><p>全域及個別帳號 HTTP/SOCKS5 代理</p></div>
       <div class="panel-card"><div class="panel-head"><div class="panel-icon">6</div><h4>日誌檢視</h4></div><p>即時 SSE 串流，級別篩選，關鍵字高亮</p></div>
@@ -639,30 +659,32 @@ footer{border-top:1px solid var(--rule);padding:3rem 0 2.5rem;margin-top:2rem}
           </div></div>
 
           <div class="step"><div class="step-num"></div><div class="step-body">
-            <h3>Clone + 安裝 Language Server</h3>
+            <h3>Clone + 直接啟動</h3>
             <div class="code-box"><div class="code-box-head"><span class="lang">bash</span><button class="copy-btn" data-copy>複製</button></div>
 <pre><span class="c-prompt">$</span> <span class="c-cmd">git clone</span> https://github.com/dwgx/WindsurfAPI.git
 <span class="c-prompt">$</span> <span class="c-cmd">cd</span> WindsurfAPI
-<span class="c-prompt">$</span> <span class="c-cmd">bash</span> install-ls.sh</pre>
+<span class="c-prompt">$</span> <span class="c-cmd">cp</span> .env.example .env
+<span class="c-prompt">$</span> <span class="c-cmd">node</span> src/index.js   <span class="c-com"># 零依賴，免安裝直接跑</span></pre>
             </div>
           </div></div>
 
           <div class="step"><div class="step-num"></div><div class="step-body">
             <h3>設定 <code>.env</code></h3>
             <div class="code-box"><div class="code-box-head"><span class="lang">.env</span><button class="copy-btn" data-copy>複製</button></div>
-<pre><span class="c-key">PORT</span>=<span class="c-str">3003</span>
+<pre><span class="c-key">DEVIN_CONNECT</span>=<span class="c-str">1</span>              <span class="c-com"># 走 Devin 雲端 GetChatMessage，無需二進位</span>
+<span class="c-key">PORT</span>=<span class="c-str">3003</span>
 <span class="c-key">API_KEY</span>=                   <span class="c-com"># 留空 = 不驗證</span>
 <span class="c-key">DEFAULT_MODEL</span>=<span class="c-str">claude-4.5-sonnet-thinking</span>
-<span class="c-key">LS_BINARY_PATH</span>=<span class="c-str">/opt/windsurf/language_server_linux_x64</span>
 <span class="c-key">DASHBOARD_PASSWORD</span>=         <span class="c-com"># 留空 = 後台免密碼</span></pre>
             </div>
+            <div class="note"><strong>帳號池：</strong>把 Devin session token 放進 <code>accounts.json</code> 即可，其餘免配置。傳統語言伺服器路徑仍可用，設 <code>LS_BINARY_PATH</code> 即回退到本地 gRPC。</div>
           </div></div>
 
           <div class="step"><div class="step-num"></div><div class="step-body">
             <h3>啟動</h3>
             <div class="code-box"><div class="code-box-head"><span class="lang">bash</span><button class="copy-btn" data-copy>複製</button></div>
 <pre><span class="c-prompt">$</span> <span class="c-cmd">npm install</span> -g pm2
-<span class="c-prompt">$</span> <span class="c-cmd">pm2 start</span> src/index.js --name windsurf-api
+<span class="c-prompt">$</span> <span class="c-cmd">pm2 start</span> src/index.js --name devin-api
 <span class="c-prompt">$</span> <span class="c-cmd">pm2 save</span> && <span class="c-cmd">pm2 startup</span></pre>
             </div>
             <div class="note"><strong>一鍵更新：</strong><code>bash update.sh</code></div>
@@ -688,7 +710,7 @@ footer{border-top:1px solid var(--rule);padding:3rem 0 2.5rem;margin-top:2rem}
 <span class="c-prompt">$</span> <span class="c-cmd">docker compose</span> logs -f</pre>
             </div>
             <div class="note">
-              <strong>預設掛載：</strong><code>.docker-data/data</code> 持久化帳號/配置，<code>.docker-data/opt/windsurf</code> 放 LS binary。容器首次啟動會自動下載。
+              <strong>預設掛載：</strong><code>.docker-data/data</code> 持久化帳號 / 配置。Devin 雲端路徑無需下載任何二進位，設好 <code>accounts.json</code> 即可啟動。
             </div>
           </div></div>
         </div>
@@ -711,7 +733,7 @@ footer{border-top:1px solid var(--rule);padding:3rem 0 2.5rem;margin-top:2rem}
         <h4><span class="logo-chip" style="background:#CC785C">C</span>Claude Code</h4>
         <p class="endpoint-tag">→ <strong>/v1/messages</strong> · Anthropic 協定</p>
 <pre><span class="c-key">export</span> ANTHROPIC_BASE_URL=<span class="c-str">"http://YOUR_IP:3003"</span>
-<span class="c-key">export</span> ANTHROPIC_API_KEY=<span class="c-str">"sk-ws-your-key"</span>
+<span class="c-key">export</span> ANTHROPIC_API_KEY=<span class="c-str">"sk-dv-your-key"</span>
 claude</pre>
       </div>
       <div class="usage-card">
@@ -719,7 +741,7 @@ claude</pre>
         <p class="endpoint-tag">→ <strong>/v1/chat/completions</strong> · OpenAI 協定</p>
 <pre><span class="c-com"># Settings → Models → Custom OpenAI</span>
 Base URL: <span class="c-str">http://YOUR_IP:3003/v1</span>
-API Key:  <span class="c-str">sk-ws-your-key</span>
+API Key:  <span class="c-str">sk-dv-your-key</span>
 Model:    <span class="c-str">claude-opus-4.6</span></pre>
       </div>
       <div class="usage-card">
@@ -727,7 +749,7 @@ Model:    <span class="c-str">claude-opus-4.6</span></pre>
         <p class="endpoint-tag">→ <strong>Anthropic</strong> 或 <strong>OpenAI</strong> provider 皆可</p>
 <pre><span class="c-com"># Provider: OpenAI Compatible</span>
 Base URL: <span class="c-str">http://YOUR_IP:3003/v1</span>
-API Key:  <span class="c-str">sk-ws-your-key</span></pre>
+API Key:  <span class="c-str">sk-dv-your-key</span></pre>
       </div>
       <div class="usage-card">
         <h4><span class="logo-chip" style="background:#10A37F">O</span>OpenAI SDK</h4>
@@ -735,7 +757,7 @@ API Key:  <span class="c-str">sk-ws-your-key</span></pre>
 <pre><span class="c-key">from</span> openai <span class="c-key">import</span> OpenAI
 client = OpenAI(
     base_url=<span class="c-str">"http://YOUR_IP:3003/v1"</span>,
-    api_key=<span class="c-str">"sk-ws-your-key"</span>,
+    api_key=<span class="c-str">"sk-dv-your-key"</span>,
 )</pre>
       </div>
     </div>
@@ -752,19 +774,16 @@ client = OpenAI(
 
     <div class="faq-list reveal">
       <details class="faq-item">
-        <summary>需要 Windsurf 付費帳號嗎？</summary>
-        <div class="a">免費帳號可以跑，但僅限 <code>gemini-2.5-flash</code>（<code>gpt-4o-mini</code> 已下架）。Claude、GPT-5 全系、Gemini 3、GLM 5.x、Kimi K2.x 等都需要 Windsurf Pro 訂閱。後台會自動偵測並標記每個帳號的 tier。</div>
+        <summary>需要 Devin 付費帳號嗎？</summary>
+        <div class="a">免費帳號可以跑，但可用模型依 tier 而定，免費層通常只開放輕量模型。Claude、GPT-5 全系、Gemini 3、GLM、Kimi 等需要對應的 Devin 付費 tier，後台會自動偵測並標記。</div>
       </details>
       <details class="faq-item">
-        <summary>可以 Windows 上跑嗎？</summary>
-        <div class="a">HTTP 伺服器和管理後台能跑，但 Language Server binary 只有 Linux 版本（<code>language_server_linux_x64</code>），所以聊天功能僅限 Linux。Windows 建議放 WSL2 或純 Linux VM。</div>
+        <summary>可以在 Windows 上跑嗎？</summary>
+        <div class="a">可以。預設的 Devin 雲端路徑（<code>DEVIN_CONNECT=1</code>）是純 HTTP，不依賴平台專屬二進位，Windows / macOS / Linux 都能直接跑。只有選用的傳統語言伺服器路徑仍限 Linux。</div>
       </details>
       <details class="faq-item">
-        <summary>看不到最新模型（opus-4.7、gpt-5.3 之類）怎麼辦？</summary>
-        <div class="a">預設下載鏈已接入 <code>dwgx/windsurf-ls-release</code> 公開 mirror；若 mirror 暫未覆蓋你的平台，再從 Windsurf 桌面端 App 裡把 LS binary 拷出來：<br>
-        &bull; macOS：<code>~/Library/Application Support/Windsurf/.../language_server_macos_arm</code><br>
-        &bull; Linux：<code>~/.windsurf/bin/language_server_linux_x64</code><br>
-        拷過去後 <code>/v1/models</code> 會自動從雲端 discover 最新目錄。</div>
+        <summary>看不到最新模型怎麼辦？</summary>
+        <div class="a">走 Devin 雲端路徑時，<code>/v1/models</code> 透過 GetChatMessage 自動發現雲端目錄，新模型上線即可見，無需拷貝或更新任何二進位；清單看似落後就重啟服務重新拉取。</div>
       </details>
       <details class="faq-item">
         <summary>帳號會被封嗎？</summary>
@@ -773,9 +792,9 @@ client = OpenAI(
       <details class="faq-item">
         <summary>和其他類似專案的區別？</summary>
         <div class="a">三點核心差異：<br>
-        (1) <strong>雙協定</strong>——同時有 <code>/v1/messages</code> 和 <code>/v1/chat/completions</code>。<br>
-        (2) <strong>planner_mode=NO_TOOL</strong>——關掉 Cascade 內建工具循環，消除路徑洩露。<br>
-        (3) <strong>完整管理後台 + 帳號池</strong>——多號輪詢 + 故障轉移 + Docker 一鍵部署。</div>
+        (1) <strong>三協定</strong>——<code>/v1/messages</code>、<code>/v1/chat/completions</code> 與 Gemini 端點。<br>
+        (2) <strong>planner_mode=NO_TOOL</strong>——關掉 Devin 內建工具循環，消除路徑洩露。<br>
+        (3) <strong>手寫零依賴協定棧 + 帳號池</strong>——純 HTTP 直連 Devin 雲端，多號輪詢 + 故障轉移 + Docker 一鍵部署。</div>
       </details>
       <details class="faq-item">
         <summary>MIT License，可以商用嗎？</summary>
@@ -809,8 +828,8 @@ client = OpenAI(
   <div class="container">
     <div class="footer-inner">
       <div class="footer-brand">
-        <div class="logo">Windsurf API</div>
-        <p>Windsurf 反向代理 · 純 Node.js 零依賴 · MIT License · <a href="https://github.com/dwgx" target="_blank" rel="noopener">@dwgx</a></p>
+        <div class="logo">DevinAPI</div>
+        <p>Windsurf / Devin 雲端反向代理 · 純 Node.js 零依賴 · MIT License · <a href="https://github.com/dwgx" target="_blank" rel="noopener">@dwgx</a></p>
       </div>
       <div class="footer-col">
         <h5>專案</h5>
