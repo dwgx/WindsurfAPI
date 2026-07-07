@@ -30,6 +30,93 @@ export function __setStreamChatForTest(fn) {
   streamChatImpl = typeof fn === 'function' ? fn : realStreamChat;
 }
 
+// ── retry-on-empty (fable capacity-jitter self-heal) ────────────────────────
+// fable (and other capacity-jittered upstream models) occasionally return a
+// COMPLETED turn that carries no answer at all: finish_reason 'stop',
+// completion_tokens ≤ 2, and zero content / reasoning / tool_call deltas. This
+// is PROBABILISTIC upstream capacity jitter — NOT a deterministic tool-count
+// threshold (that theory was disproven; the code never trims tools) and NOT an
+// outage (kimi's 502 path is a different fault). The correct heal is to simply
+// re-issue the identical request a bounded number of times, since a fresh
+// attempt usually lands a real answer.
+//
+// Because an empty reply yields ONLY a terminal finish event (no content), the
+// wrapper below forwards every delta LIVE — zero buffering, zero added latency
+// on the overwhelmingly common non-empty path — and merely holds the single
+// finish event to decide, once the stream has drained, whether anything real
+// was produced. It retries ONLY when the turn emitted literally nothing, so it
+// is safe for both the streaming and non-stream callers (which each just
+// iterate this wrapper instead of the raw primitive). It deliberately does NOT
+// merge into isRetryable() (UPSTREAM_INTERNAL stays non-retryable by design) and
+// never trims tools.
+function retryOnEmptyEnabled(env = process.env) {
+  // Default ON: an empty completion is always a degenerate result and the retry
+  // is bounded + only fires when the turn yielded nothing. Only an explicit
+  // off-switch disables it.
+  const v = String(env.DEVIN_CONNECT_RETRY_ON_EMPTY ?? '').trim().toLowerCase();
+  return v !== '0' && v !== 'off' && v !== 'false' && v !== 'no';
+}
+function retryOnEmptyMax(env = process.env) {
+  const raw = Number(env.DEVIN_CONNECT_RETRY_ON_EMPTY_MAX);
+  return Number.isFinite(raw) && raw >= 0 ? raw : 2;
+}
+function retryOnEmptyBaseMs(env = process.env) {
+  const raw = Number(env.DEVIN_CONNECT_RETRY_ON_EMPTY_MS);
+  return Number.isFinite(raw) && raw >= 0 ? raw : 350;
+}
+
+/**
+ * Decide whether a drained stream was the pathological empty completion.
+ * @param {object} finishEv  the terminal finish event (may be null if none seen)
+ * @param {boolean} sawContent  true if any non-empty content/reasoning delta arrived
+ */
+function isEmptyCompletion(finishEv, sawContent) {
+  if (sawContent || !finishEv) return false;
+  // A native/emulated tool call is a real answer even with no visible text.
+  if (finishEv.toolCalls && finishEv.toolCalls.length) return false;
+  // Only a clean 'stop' (or an absent finish reason — a clean drain with no
+  // signal) counts. 'length' / 'tool_calls' / 'content_filter' are real
+  // terminal states we must not paper over with a retry.
+  if (finishEv.reason != null && finishEv.reason !== 'stop') return false;
+  // completion_tokens ≤ 2 is the observed footprint. It is absent on the free
+  // tier / un-calibrated usage — in that case "no content seen" alone qualifies.
+  const ct = finishEv.usage?.completion_tokens;
+  if (ct != null && ct > 2) return false;
+  return true;
+}
+
+/**
+ * Transparent wrapper around streamChatImpl that heals probabilistic empty
+ * completions by re-issuing the identical request. Yields the same event stream
+ * as streamChat; on a non-empty turn it is a pass-through (only the terminal
+ * finish event is briefly held to end-of-stream, which it already is).
+ */
+async function* streamChatWithEmptyRetry(params, { env = process.env } = {}) {
+  const max = retryOnEmptyEnabled(env) ? retryOnEmptyMax(env) : 0;
+  for (let attempt = 0; ; attempt++) {
+    let sawContent = false;
+    let finishEv = null;
+    for await (const ev of streamChatImpl(params)) {
+      if (ev.type === 'content' || ev.type === 'reasoning') {
+        if (ev.text) sawContent = true;
+        yield ev;
+      } else if (ev.type === 'finish') {
+        finishEv = ev; // hold: decide retry after the stream drains
+      } else {
+        yield ev;
+      }
+    }
+    if (attempt < max && isEmptyCompletion(finishEv, sawContent)) {
+      log.warn(`DEVIN_CONNECT: empty completion (finish=${finishEv.reason ?? 'null'}, completion_tokens=${finishEv.usage?.completion_tokens ?? 'n/a'}) — retry ${attempt + 1}/${max}`);
+      const backoff = retryOnEmptyBaseMs(env) * (attempt + 1);
+      if (backoff) await new Promise((r) => setTimeout(r, backoff));
+      continue;
+    }
+    if (finishEv) yield finishEv;
+    return;
+  }
+}
+
 const OBJECT_COMPLETION = 'chat.completion';
 const OBJECT_CHUNK = 'chat.completion.chunk';
 
@@ -73,7 +160,7 @@ export async function toChatCompletion(params, { id = newId(), created = nowSeco
   for (let attempt = 0; ; attempt++) {
     try {
       content = ''; reasoning = ''; finishReason = 'stop'; usage = null; nativeToolCalls = [];
-      for await (const ev of streamChatImpl(params)) {
+      for await (const ev of streamChatWithEmptyRetry(params)) {
         if (ev.type === 'content') content += ev.text;
         else if (ev.type === 'reasoning') reasoning += ev.text;
         else if (ev.type === 'finish') {
@@ -221,7 +308,7 @@ export async function streamChatCompletion(params, send, { id = newId(), created
     }
   };
 
-  for await (const ev of streamChatImpl(params)) {
+  for await (const ev of streamChatWithEmptyRetry(params)) {
     if (ev.type === 'reasoning') {
       prime(); // first real delta: emit the deferred role chunk first
       reasoning += ev.text;
@@ -282,4 +369,8 @@ export async function streamChatCompletion(params, send, { id = newId(), created
   return { content, reasoning, finish_reason: finishReason, usage, toolCalls: collectedToolCalls };
 }
 
-export const __testing = { newId, nowSeconds, OBJECT_COMPLETION, OBJECT_CHUNK };
+export const __testing = {
+  newId, nowSeconds, OBJECT_COMPLETION, OBJECT_CHUNK,
+  isEmptyCompletion, streamChatWithEmptyRetry,
+  retryOnEmptyEnabled, retryOnEmptyMax,
+};

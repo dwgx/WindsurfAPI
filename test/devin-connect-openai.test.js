@@ -463,3 +463,149 @@ describe('streamChatCompletion native tool calls', () => {
     assert.equal(result.toolCalls.length, 2);
   });
 });
+
+// retry-on-empty: fable (and other capacity-jittered models) occasionally return
+// a COMPLETED turn (finish=stop, completion_tokens<=2) with zero content. This is
+// probabilistic upstream capacity jitter, not a deterministic tool-count
+// threshold and not an outage. The adapter transparently re-issues the identical
+// request a bounded number of times. It must (a) heal a subsequent real answer,
+// (b) never trim tools, (c) not retry a genuine terminal state (length /
+// tool_calls / non-empty answer), (d) be a no-op on the hot path.
+describe('retry-on-empty (fable capacity-jitter self-heal)', () => {
+  const RETRY_ENV = ['DEVIN_CONNECT_RETRY_ON_EMPTY', 'DEVIN_CONNECT_RETRY_ON_EMPTY_MAX', 'DEVIN_CONNECT_RETRY_ON_EMPTY_MS'];
+  afterEach(() => { for (const k of RETRY_ENV) delete process.env[k]; });
+
+  const EMPTY = [{ type: 'finish', reason: 'stop', usage: { prompt_tokens: 8, completion_tokens: 1, total_tokens: 9 } }];
+  const REAL = [
+    { type: 'content', text: 'real answer' },
+    { type: 'finish', reason: 'stop', usage: { prompt_tokens: 8, completion_tokens: 3, total_tokens: 11 } },
+  ];
+
+  function collectSend() {
+    const frames = [];
+    return { send: (d) => frames.push(d), frames };
+  }
+
+  it('non-stream: retries an empty completion then returns the real answer', async () => {
+    process.env.DEVIN_CONNECT_RETRY_ON_EMPTY_MS = '0';
+    let calls = 0;
+    __setStreamChatForTest(async function* () {
+      calls++;
+      for (const ev of (calls === 1 ? EMPTY : REAL)) yield ev;
+    });
+    const { body } = await toChatCompletion({ model: 'claude-5-fable-medium', messages: [] });
+    assert.equal(calls, 2, 'one empty + one heal');
+    assert.equal(body.choices[0].message.content, 'real answer');
+  });
+
+  it('stream: retries an empty completion without emitting a premature role/finish frame', async () => {
+    process.env.DEVIN_CONNECT_RETRY_ON_EMPTY_MS = '0';
+    let calls = 0;
+    __setStreamChatForTest(async function* () {
+      calls++;
+      for (const ev of (calls === 1 ? EMPTY : REAL)) yield ev;
+    });
+    const { send, frames } = collectSend();
+    const result = await streamChatCompletion({ model: 'claude-5-fable-medium', messages: [] }, send);
+    assert.equal(calls, 2);
+    assert.equal(result.content, 'real answer');
+    // Exactly ONE role-prime frame (the empty attempt must not have primed/emitted).
+    const roleFrames = frames.filter(f => 'role' in (f.choices[0]?.delta || {}));
+    assert.equal(roleFrames.length, 1, 'no premature role frame from the discarded empty attempt');
+    // Exactly ONE terminal finish frame.
+    const finishFrames = frames.filter(f => f.choices[0]?.finish_reason);
+    assert.equal(finishFrames.length, 1);
+    const text = frames.map(f => f.choices[0]?.delta?.content || '').join('');
+    assert.equal(text, 'real answer');
+  });
+
+  it('gives up after RETRY_ON_EMPTY_MAX and returns the empty completion (never errors)', async () => {
+    process.env.DEVIN_CONNECT_RETRY_ON_EMPTY_MS = '0';
+    process.env.DEVIN_CONNECT_RETRY_ON_EMPTY_MAX = '2';
+    let calls = 0;
+    __setStreamChatForTest(async function* () {
+      calls++;
+      for (const ev of EMPTY) yield ev;
+    });
+    const { body } = await toChatCompletion({ model: 'claude-5-fable-medium', messages: [] });
+    assert.equal(calls, 3, 'initial + 2 retries');
+    assert.equal(body.choices[0].message.content, ''); // degrades to empty, no throw
+    assert.equal(body.choices[0].finish_reason, 'stop');
+  });
+
+  it('is disabled by DEVIN_CONNECT_RETRY_ON_EMPTY=0 (single attempt)', async () => {
+    process.env.DEVIN_CONNECT_RETRY_ON_EMPTY = '0';
+    let calls = 0;
+    __setStreamChatForTest(async function* () {
+      calls++;
+      for (const ev of EMPTY) yield ev;
+    });
+    const { body } = await toChatCompletion({ model: 'claude-5-fable-medium', messages: [] });
+    assert.equal(calls, 1, 'no retry when disabled');
+    assert.equal(body.choices[0].message.content, '');
+  });
+
+  it('does NOT retry a real answer (completion_tokens>2 with content) — hot path is a no-op', async () => {
+    let calls = 0;
+    __setStreamChatForTest(async function* () {
+      calls++;
+      for (const ev of REAL) yield ev;
+    });
+    const { body } = await toChatCompletion({ model: 'claude-5-fable-medium', messages: [] });
+    assert.equal(calls, 1);
+    assert.equal(body.choices[0].message.content, 'real answer');
+  });
+
+  it('does NOT retry a finish_reason=length truncation (real terminal state)', async () => {
+    process.env.DEVIN_CONNECT_RETRY_ON_EMPTY_MS = '0';
+    let calls = 0;
+    __setStreamChatForTest(async function* () {
+      calls++;
+      yield { type: 'finish', reason: 'length', usage: { prompt_tokens: 8, completion_tokens: 1, total_tokens: 9 } };
+    });
+    const { body } = await toChatCompletion({ model: 'claude-5-fable-medium', messages: [] });
+    assert.equal(calls, 1, 'length is a genuine terminal state, not empty-jitter');
+    assert.equal(body.choices[0].finish_reason, 'length');
+  });
+
+  it('does NOT retry an empty-text turn that carries native tool calls', async () => {
+    process.env.DEVIN_CONNECT_RETRY_ON_EMPTY_MS = '0';
+    let calls = 0;
+    __setStreamChatForTest(async function* () {
+      calls++;
+      yield {
+        type: 'finish', reason: 'stop', usage: { prompt_tokens: 8, completion_tokens: 1, total_tokens: 9 },
+        toolCalls: [{ id: 'c1', name: 'do_thing', arguments: '{}' }],
+      };
+    });
+    const { body } = await toChatCompletion({ model: 'claude-5-fable-medium', messages: [] });
+    assert.equal(calls, 1, 'a tool call is a real answer even with no visible text');
+    assert.equal(body.choices[0].finish_reason, 'tool_calls');
+  });
+
+  it('does NOT retry when reasoning-only content arrived (thinking counts as real)', async () => {
+    process.env.DEVIN_CONNECT_RETRY_ON_EMPTY_MS = '0';
+    let calls = 0;
+    __setStreamChatForTest(async function* () {
+      calls++;
+      yield { type: 'reasoning', text: 'thinking…' };
+      yield { type: 'finish', reason: 'stop', usage: { prompt_tokens: 8, completion_tokens: 1, total_tokens: 9 } };
+    });
+    const { body } = await toChatCompletion({ model: 'claude-5-fable-medium', messages: [] });
+    assert.equal(calls, 1);
+    assert.equal(body.choices[0].message.reasoning_content, 'thinking…');
+  });
+
+  it('treats a stop with no usage (free tier) + no content as empty and heals it', async () => {
+    process.env.DEVIN_CONNECT_RETRY_ON_EMPTY_MS = '0';
+    let calls = 0;
+    __setStreamChatForTest(async function* () {
+      calls++;
+      if (calls === 1) yield { type: 'finish', reason: 'stop', usage: null };
+      else for (const ev of REAL) yield ev;
+    });
+    const { body } = await toChatCompletion({ model: 'claude-5-fable-medium', messages: [] });
+    assert.equal(calls, 2, 'no usage + no content still qualifies as empty');
+    assert.equal(body.choices[0].message.content, 'real answer');
+  });
+});
