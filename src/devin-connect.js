@@ -571,6 +571,10 @@ export function buildGetChatMessageRequest({ token, messages, model, sessionId, 
     writeStringField(16, sessionId || randomUUID()),
     writeVarintField(20, 1),
     writeStringField(21, model),
+    // #22 request_id — VERIFIED-FROM-WIRE (req022: #22 = a UUID string right after
+    // #21 model). The real devin.exe CLI always sends it; we previously omitted it.
+    // Zero-risk parity/idempotency/trace add — a fresh uuid per request.
+    writeStringField(22, randomUUID()),
   );
   // Native tool definitions (repeated #10) — only when the inner ToolDef tags are
   // calibrated (DEVIN_CONNECT_TOOL_DEF_TAGS). Default: tag map is null → nothing

@@ -108,8 +108,12 @@ describe('buildGetChatMessageRequest', () => {
     assert.ok(getField(fields, 16, 2), 'has session id #16');
     assert.equal(getField(fields, 20, 0).value, 1);
     assert.equal(getField(fields, 21, 2).value.toString('utf8'), 'swe-1-6-slow');
-    // #22 is intentionally absent (matches the live capture).
-    assert.equal(getField(fields, 22, 2), null);
+    // #22 request_id — VERIFIED-FROM-WIRE (req022 carries #22 = a UUID string
+    // after #21). The earlier "intentionally absent" note was wrong; the real
+    // devin.exe CLI always sends it, so we now emit a fresh uuid per request.
+    const rid = getField(fields, 22, 2);
+    assert.ok(rid, 'has request_id #22');
+    assert.match(rid.value.toString('utf8'), /^[0-9a-f-]{36}$/, '#22 is a uuid');
   });
 
   it('embeds the SINGLE token in ClientMetadata #3 (header doubling is separate)', () => {
