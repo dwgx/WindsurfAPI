@@ -11,7 +11,9 @@
       "overview": "概览",
       "account": "账号",
       "system": "系统",
-      "about": "关于"
+      "about": "关于",
+      "usage": "用量",
+      "settings": "设置 · 高级"
     },
     "overview": "仪表盘",
     "stats": "统计分析",

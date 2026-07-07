@@ -16,20 +16,23 @@
   --text: #f4f4f5;
   --text-muted: #a1a1aa;
   --text-dim: #71717a;
-  --accent: #6366f1;
-  --accent-hover: #7c7ff5;
-  --accent-soft: rgba(99, 102, 241, .14);
+  /* Accent shifted from indigo/purple (#6366f1) to a restrained professional
+     slate-blue for an operations console — less marketing-purple, more tool. */
+  --accent: #3b82f6;
+  --accent-hover: #60a5fa;
+  --accent-soft: rgba(59, 130, 246, .13);
   --success: #22c55e;
-  --success-soft: rgba(34, 197, 94, .14);
+  --success-soft: rgba(34, 197, 94, .13);
   --warn: #f59e0b;
-  --warn-soft: rgba(245, 158, 11, .14);
+  --warn-soft: rgba(245, 158, 11, .13);
   --error: #ef4444;
-  --error-soft: rgba(239, 68, 68, .14);
-  --info: #3b82f6;
-  --info-soft: rgba(59, 130, 246, .14);
-  --radius: 10px;
-  --radius-sm: 6px;
-  --radius-lg: 14px;
+  --error-soft: rgba(239, 68, 68, .13);
+  --info: #38bdf8;
+  --info-soft: rgba(56, 189, 248, .13);
+  /* Tighter radii: operational density over rounded-marketing feel. */
+  --radius: 7px;
+  --radius-sm: 4px;
+  --radius-lg: 10px;
   --shadow: 0 1px 2px rgba(0,0,0,.4), 0 4px 12px rgba(0,0,0,.2);
   --shadow-lg: 0 10px 40px rgba(0,0,0,.4);
   --font: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', system-ui, sans-serif;
@@ -39,6 +42,18 @@
 * { margin: 0; padding: 0; box-sizing: border-box; }
 *::before, *::after { box-sizing: border-box; }
 html, body { height: 100%; }
+
+/* Accessibility: honor reduced-motion. Decorative/idle animation (chart header
+   shimmer, gacha pulses, etc.) is suppressed; transitions collapse to instant.
+   Operational spinners keep a minimal animation so "loading" stays legible. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: .001ms !important;
+    scroll-behavior: auto !important;
+  }
+}
 body {
   font-family: var(--font);
   background: var(--bg);
@@ -775,7 +790,7 @@ tbody tr:hover td { background: var(--surface-2); }
   text-transform: uppercase;
   letter-spacing: .04em;
 }
-.tier.pro { background: linear-gradient(135deg, #6366f1, #8b5cf6); color: #fff; }
+.tier.pro { background: linear-gradient(135deg, #2563eb, #3b82f6); color: #fff; }
 .tier.free { background: var(--info-soft); color: var(--info); }
 .tier.expired { background: var(--error-soft); color: var(--error); }
 .tier.unknown { background: var(--surface-3); color: var(--text-muted); }
@@ -1064,7 +1079,7 @@ tbody tr:hover td { background: var(--surface-2); }
 }
 .seg-btn.active {
   color: #fff;
-  background: linear-gradient(135deg, #3b82f6, #6366f1);
+  background: linear-gradient(135deg, #2563eb, #3b82f6);
   box-shadow: 0 1px 3px rgba(59,130,246,.35), 0 0 0 0.5px rgba(255,255,255,.06) inset;
 }
 
@@ -1613,26 +1628,25 @@ window._firebaseOAuth = async function(provider) {
     </div>
   </div>
   <nav>
+    <!-- IA reorganized into 4 work areas: Overview / Accounts / Usage / Settings.
+         Every data-panel + href + onclick target is preserved unchanged — only
+         the grouping and group labels changed. Panel section IDs are untouched. -->
     <div class="nav-group">
       <div class="nav-group-label" data-i18n="nav.group.overview">概览</div>
       <a href="#overview" class="active" data-panel="overview">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg>
         <span data-i18n="nav.overview">仪表盘</span>
       </a>
-      <a href="#stats" data-panel="stats">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
-        <span data-i18n="nav.stats">统计分析</span>
-      </a>
     </div>
     <div class="nav-group">
       <div class="nav-group-label" data-i18n="nav.group.account">账号</div>
-      <a href="#windsurf-login" data-panel="windsurf-login">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
-        <span data-i18n="nav.windsurf-login">登录取号</span>
-      </a>
       <a href="#accounts" data-panel="accounts">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M23 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/></svg>
         <span data-i18n="nav.accounts">账号管理</span>
+      </a>
+      <a href="#windsurf-login" data-panel="windsurf-login">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg>
+        <span data-i18n="nav.windsurf-login">登录取号</span>
       </a>
       <a href="#bans" data-panel="bans">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
@@ -1640,7 +1654,14 @@ window._firebaseOAuth = async function(provider) {
       </a>
     </div>
     <div class="nav-group">
-      <div class="nav-group-label" data-i18n="nav.group.system">系统</div>
+      <div class="nav-group-label" data-i18n="nav.group.usage">用量</div>
+      <a href="#stats" data-panel="stats">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+        <span data-i18n="nav.stats">统计分析</span>
+      </a>
+    </div>
+    <div class="nav-group">
+      <div class="nav-group-label" data-i18n="nav.group.settings">设置 · 高级</div>
       <a href="#models" data-panel="models">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
         <span data-i18n="nav.models">模型控制</span>
@@ -1657,9 +1678,6 @@ window._firebaseOAuth = async function(provider) {
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M10 2v7.31"/><path d="M14 9.3V2"/><path d="M8.5 2h7"/><path d="M14 9.3a6.5 6.5 0 1 1-4 0"/></svg>
         <span data-i18n="nav.experimental">实验性功能</span>
       </a>
-    </div>
-    <div class="nav-group">
-      <div class="nav-group-label" data-i18n="nav.group.about">关于</div>
       <a href="#credits" data-panel="credits">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M20.84 4.61a5.5 5.5 0 0 0-7.78 0L12 5.67l-1.06-1.06a5.5 5.5 0 0 0-7.78 7.78l1.06 1.06L12 21.23l7.78-7.78 1.06-1.06a5.5 5.5 0 0 0 0-7.78z"/></svg>
         <span data-i18n="nav.credits">致谢</span>

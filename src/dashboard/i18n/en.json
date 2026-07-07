@@ -11,7 +11,9 @@
       "overview": "Overview",
       "account": "Accounts",
       "system": "System",
-      "about": "About"
+      "about": "About",
+      "usage": "Usage",
+      "settings": "Settings"
     },
     "overview": "Dashboard",
     "stats": "Statistics",
