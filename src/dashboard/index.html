@@ -1885,15 +1885,15 @@ window._firebaseOAuth = async function(provider) {
       </div>
       <div class="section-body"><div id="pool-health-summary"></div></div>
     </div>
-    <div class="grid-2" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:start;">
-      <div class="section" id="connect-metrics-overview">
+    <div class="grid-2" style="display:grid;grid-template-columns:1fr 1fr;gap:16px;align-items:stretch;">
+      <div class="section" id="connect-metrics-overview" style="display:flex;flex-direction:column;">
         <div class="section-header">
           <div>
             <div class="section-title" data-i18n="section.connectMetrics.title">Connection Self-Healing</div>
             <div class="section-desc" data-i18n="section.connectMetrics.desc">Live recovery counters</div>
           </div>
         </div>
-        <div class="section-body"><div id="connect-metrics-status"></div></div>
+        <div class="section-body" style="flex:1;display:flex;align-items:center;"><div id="connect-metrics-status" style="width:100%;"></div></div>
       </div>
       <div class="section" id="overview-trend-section">
         <div class="section-header">
@@ -3812,19 +3812,26 @@ docker compose up -d --force-recreate</pre>
     const el = document.getElementById('connect-metrics-status');
     if (!el) return;
     if (!cm) { el.innerHTML = `<div class="text-sm text-muted">${I18n.t('overview.connect.empty')}</div>`; return; }
-    const rows = [
-      ['reloginOk', cm.relogin_ok], ['reloginFail', cm.relogin_fail],
-      ['failoverHops', cm.failover_hops], ['deadTokens', cm.dead_tokens],
-      ['quotaExhausted', cm.quota_exhausted], ['capacityThrottled', cm.capacity_throttled],
-      ['upstreamInternal', cm.upstream_internal], ['transientReplays', cm.transient_replays],
+    // Core counters ALWAYS show (even at 0) so the panel has consistent substance
+    // and pairs height-wise with the trend chart beside it; the rarer ones only
+    // appear when non-zero. A non-zero value is highlighted, 0 is dimmed.
+    const core = [
+      ['reloginOk', cm.relogin_ok], ['failoverHops', cm.failover_hops],
+      ['deadTokens', cm.dead_tokens], ['quotaExhausted', cm.quota_exhausted],
+      ['capacityThrottled', cm.capacity_throttled], ['upstreamInternal', cm.upstream_internal],
+    ];
+    const extra = [
+      ['reloginFail', cm.relogin_fail], ['transientReplays', cm.transient_replays],
       ['livenessRecovered', cm.liveness_recovered], ['credDecryptFail', cm.credDecryptFailures],
     ].filter(([, v]) => Number(v) > 0);
-    if (rows.length === 0) { el.innerHTML = `<div class="text-sm text-muted">${I18n.t('overview.connect.empty')}</div>`; return; }
-    el.innerHTML = `<div style="display:grid;grid-template-columns:1fr 1fr;gap:8px 18px;">`
-      + rows.map(([k, v]) =>
-          `<div style="display:flex;justify-content:space-between;gap:10px;"><span class="text-sm text-muted">${I18n.t('overview.connect.' + k)}</span><span style="font-variant-numeric:tabular-nums;font-weight:600;">${v}</span></div>`
-        ).join('')
-      + `</div>`;
+    const rows = core.concat(extra);
+    const cell = ([k, v]) => {
+      const n = Number(v) || 0;
+      return `<div style="display:flex;justify-content:space-between;gap:10px;padding:5px 0;border-bottom:1px solid var(--border);">`
+        + `<span class="text-sm" style="color:${n > 0 ? 'var(--text-muted)' : 'var(--text-dim)'}">${I18n.t('overview.connect.' + k)}</span>`
+        + `<span style="font-variant-numeric:tabular-nums;font-weight:600;color:${n > 0 ? 'var(--text)' : 'var(--text-dim)'}">${n}</span></div>`;
+    };
+    el.innerHTML = `<div style="display:grid;grid-template-columns:1fr 1fr;gap:0 20px;">${rows.map(cell).join('')}</div>`;
   },
 
   // Top models + top accounts by request volume (local counters only — no upstream
