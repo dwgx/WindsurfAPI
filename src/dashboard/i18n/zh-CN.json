@@ -925,6 +925,8 @@
   },
   "toast": {
     "dismiss": "点击关闭",
+    "requestFailed": "请求失败 (HTTP {{status}})",
+    "applyingSkin": "正在应用皮肤…",
     "copied": "已复制",
     "saved": "已保存",
     "cleared": "已清空",
@@ -990,6 +992,7 @@
   "log": {
     "empty": "暂无日志",
     "emptyFiltered": "没有符合当前筛选的日志",
+    "streamFailed": "日志流已断开 — 重新打开面板可重试",
     "level": {
       "all": "所有级别",
       "debug": "Debug",

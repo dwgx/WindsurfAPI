@@ -925,6 +925,8 @@
   },
   "toast": {
     "dismiss": "Click to dismiss",
+    "requestFailed": "Request failed (HTTP {{status}})",
+    "applyingSkin": "Applying skin…",
     "copied": "Copied",
     "saved": "Saved",
     "cleared": "Cleared",
@@ -990,6 +992,7 @@
   "log": {
     "empty": "No logs yet",
     "emptyFiltered": "No logs match the current filter",
+    "streamFailed": "Log stream disconnected — reopen the panel to retry",
     "level": {
       "all": "All Levels",
       "debug": "Debug",

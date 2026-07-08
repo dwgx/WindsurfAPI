@@ -2788,7 +2788,7 @@ window._firebaseOAuth = async function(provider) {
 <div id="modal-container"></div>
 
 <!-- Toast Container -->
-<div class="toast-stack" id="toast-stack"></div>
+<div class="toast-stack" id="toast-stack" aria-live="polite" aria-atomic="true"></div>
 
 <script>
 // Comprehensive i18n system with locale bundles
@@ -3423,6 +3423,11 @@ docker compose up -d --force-recreate</pre>
         document.getElementById('login-overlay').classList.remove('hidden');
         return {};
       }
+      // Surface non-2xx failures instead of silently returning error-shaped data
+      // as if it were a valid result. Return contract unchanged (still `data`).
+      if (!r.ok) {
+        this.toast((data && data.error && (data.error.message || data.error)) || I18n.t('toast.requestFailed', { status: r.status }), 'error');
+      }
       return data;
     } catch (e) { this.toast(e.message, 'error'); return {}; }
   },
@@ -3443,7 +3448,8 @@ docker compose up -d --force-recreate</pre>
       setTimeout(() => t.remove(), 200);
     };
     t.addEventListener('click', dismiss);   // click to dismiss early
-    setTimeout(dismiss, 3000);
+    // Errors linger longer than successes so users can actually read them.
+    setTimeout(dismiss, type === 'error' ? 8000 : 3000);
   },
 
   // ─── Modal helpers ───────────────────────────
@@ -5664,8 +5670,19 @@ docker compose up -d --force-recreate</pre>
       })
       .catch((err) => {
         if (err?.name !== 'AbortError') {
-          // Silent — EventSource used to swallow errors too. Left as a
-          // hook in case we want to surface reconnection UI later.
+          // Surface the disconnect instead of leaving the panel silently blank
+          // forever. Does NOT change the ReadableStream consumption above — only
+          // the failure branch shows a notice + toast.
+          const c = document.getElementById('log-container');
+          if (c) {
+            const note = document.createElement('div');
+            note.className = 'log-empty';
+            note.style.cssText = 'display:flex;align-items:center;justify-content:center;height:100%;min-height:200px;color:var(--text-dim);font-size:13px;';
+            note.textContent = I18n.t('log.streamFailed');
+            c.innerHTML = '';
+            c.appendChild(note);
+          }
+          this.toast(I18n.t('log.streamFailed'), 'error');
         }
       });
   },
@@ -6961,6 +6978,7 @@ docker compose up -d --force-recreate</pre>
     // Year-long cookie, lax samesite. path=/ so /dashboard sees it.
     const oneYear = 365 * 24 * 3600;
     document.cookie = `dashboard_skin=${next}; path=/; max-age=${oneYear}; samesite=lax`;
+    this.toast(I18n.t('toast.applyingSkin'));
     location.reload();
   },
 
