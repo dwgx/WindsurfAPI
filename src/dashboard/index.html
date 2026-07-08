@@ -764,7 +764,7 @@ tbody tr:hover td { background: var(--surface-2); }
   grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
   gap: 6px;
 }
-.model-chip {
+.detail-model-chip {
   display: grid;
   grid-template-columns: 10px 1fr auto;
   align-items: center;
@@ -776,24 +776,24 @@ tbody tr:hover td { background: var(--surface-2); }
   font-size: 11.5px;
   transition: all .15s ease;
 }
-.model-chip:hover {
+.detail-model-chip:hover {
   border-color: var(--border-strong);
   background: var(--surface-3);
 }
-.model-chip.blocked {
+.detail-model-chip.blocked {
   opacity: .45;
   text-decoration: line-through;
   text-decoration-color: var(--text-dim);
   text-decoration-thickness: 1px;
 }
-.model-chip-dot {
+.detail-model-chip-dot {
   width: 8px;
   height: 8px;
   border-radius: 50%;
   background: var(--success);
 }
-.model-chip.blocked .model-chip-dot { background: var(--error); }
-.model-chip-name {
+.detail-model-chip.blocked .detail-model-chip-dot { background: var(--error); }
+.detail-model-chip-name {
   font-family: var(--mono);
   font-size: 11px;
   color: var(--text);
@@ -801,7 +801,7 @@ tbody tr:hover td { background: var(--surface-2); }
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.model-chip-cost {
+.detail-model-chip-cost {
   font-family: var(--mono);
   font-size: 10px;
   color: var(--warn);
@@ -3512,7 +3512,7 @@ docker compose up -d --force-recreate</pre>
       }));
     }
     status.innerHTML = `
-      <div style="color:var(--warning,#f59e0b);font-weight:600;margin-bottom:4px">${I18n.t('status.selfUpdateUnavailable')}</div>
+      <div style="color:var(--warn);font-weight:600;margin-bottom:4px">${I18n.t('status.selfUpdateUnavailable')}</div>
       <div class="text-sm text-muted">${I18n.t('status.selfUpdateDockerHint')}</div>
       ${dockerHintParts.join('')}`;
     if (apply) {
@@ -3537,7 +3537,7 @@ docker compose up -d --force-recreate</pre>
         }
         if (/not a git repository/i.test(r.error || '')) {
           status.innerHTML = `
-            <div style="color:var(--warning,#f59e0b);font-weight:600;margin-bottom:4px">${I18n.t('status.notGitRepo')}</div>
+            <div style="color:var(--warn);font-weight:600;margin-bottom:4px">${I18n.t('status.notGitRepo')}</div>
             <div class="text-sm text-muted">${I18n.t('status.notGitRepoHint')}</div>`;
           apply.classList.add('hidden');
           return;
@@ -3689,9 +3689,9 @@ docker compose up -d --force-recreate</pre>
     const chip = (label, n, color) => `<span style="display:inline-flex;align-items:center;gap:5px;margin-right:14px;"><span style="width:9px;height:9px;border-radius:50%;background:${color};display:inline-block;"></span><span style="font-variant-numeric:tabular-nums;font-weight:600;">${n}</span><span class="text-sm text-muted">${label}</span></span>`;
     el.innerHTML = `<div class="badge ${cls === 'success' ? 'running' : cls === 'error' ? 'stopped' : ''}" style="margin-bottom:10px;">${this.esc(verdict)}</div>`
       + `<div style="display:flex;flex-wrap:wrap;row-gap:6px;">`
-      + chip(I18n.t('overview.poolHealth.healthy'), healthy, 'var(--success, #22c55e)')
-      + chip(I18n.t('overview.poolHealth.throttled'), throttled, 'var(--warning, #f59e0b)')
-      + chip(I18n.t('overview.poolHealth.error'), errored, 'var(--error, #ef4444)')
+      + chip(I18n.t('overview.poolHealth.healthy'), healthy, 'var(--success)')
+      + chip(I18n.t('overview.poolHealth.throttled'), throttled, 'var(--warn)')
+      + chip(I18n.t('overview.poolHealth.error'), errored, 'var(--error)')
       + chip(I18n.t('overview.poolHealth.dead'), dead, 'var(--text-dim, #94a3b8)')
       + `</div>`;
   },
@@ -3733,7 +3733,7 @@ docker compose up -d --force-recreate</pre>
       const pct = max > 0 ? (n / max) * 100 : 0;
       return `<div style="margin-bottom:7px;">`
         + `<div style="display:flex;justify-content:space-between;gap:10px;margin-bottom:2px;"><span class="text-sm" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:70%;">${this.esc(label)}</span><span class="text-sm text-muted" style="font-variant-numeric:tabular-nums;">${I18n.t('overview.rankings.reqUnit', { count: n })}</span></div>`
-        + `<div style="height:6px;border-radius:3px;background:rgba(255,255,255,.05);overflow:hidden;"><div style="width:${pct.toFixed(1)}%;height:100%;background:var(--accent, #3b82f6);"></div></div>`
+        + `<div style="height:6px;border-radius:3px;background:rgba(255,255,255,.05);overflow:hidden;"><div style="width:${pct.toFixed(1)}%;height:100%;background:var(--accent);"></div></div>`
         + `</div>`;
     };
     const col = (title, entries, max) => `<div><div class="text-sm text-muted" style="margin-bottom:8px;font-weight:600;">${title}</div>`
@@ -3786,11 +3786,11 @@ docker compose up -d --force-recreate</pre>
     ctx.lineTo(reqPts[n - 1].x, pad.t + cH); ctx.closePath();
     ctx.fillStyle = 'rgba(59,130,246,.14)'; ctx.fill();
     ctx.beginPath(); this._smoothPath(ctx, reqPts, true);
-    ctx.strokeStyle = 'var(--accent, #3b82f6)'; ctx.lineWidth = 1.5; ctx.stroke();
+    ctx.strokeStyle = 'var(--accent)'; ctx.lineWidth = 1.5; ctx.stroke();
     // errors line (only if any)
     if (buckets.some(b => (b.errors || 0) > 0)) {
       ctx.beginPath(); this._smoothPath(ctx, errPts, true);
-      ctx.strokeStyle = 'var(--error, #ef4444)'; ctx.lineWidth = 1.2; ctx.stroke();
+      ctx.strokeStyle = 'var(--error)'; ctx.lineWidth = 1.2; ctx.stroke();
     }
   },
 
@@ -4292,7 +4292,7 @@ docker compose up -d --force-recreate</pre>
     this.showWindsurfLoginResult(`
         <div class="section-header">
         <div>
-          <div class="section-title" style="color:${failCount ? 'var(--warning, #f59e0b)' : 'var(--success)'}">${I18n.t('loginResult.batchComplete')}</div>
+          <div class="section-title" style="color:${failCount ? 'var(--warn)' : 'var(--success)'}">${I18n.t('loginResult.batchComplete')}</div>
           <div class="section-desc">${I18n.t('loginResult.batchDesc', {total: results.length, success: successCount, fail: failCount, skipped: skippedCount, autoAdd: autoAdd ? I18n.t('loginResult.addedToPool') : ''})}</div>
         </div>
       </div>
@@ -4661,7 +4661,7 @@ docker compose up -d --force-recreate</pre>
       if ((a.errorCount || 0) > 0) return 'watch';
       return 'ok';
     };
-    const bandColor = { ok: 'var(--success, #22c55e)', watch: 'var(--warning, #f59e0b)', high: 'var(--warning, #f59e0b)', limited: 'var(--error, #ef4444)' };
+    const bandColor = { ok: 'var(--success)', watch: 'var(--warn)', high: 'var(--warn)', limited: 'var(--error)' };
     const accounts = (d.accounts || []).map(a => (
       this._expandedAccounts?.has(a.id) && this._accountDetails?.has(a.id)
         ? { ...a, ...this._accountDetails.get(a.id) }
@@ -4707,7 +4707,7 @@ docker compose up -d --force-recreate</pre>
       const availCount = Math.max(0, tierModelCount - blockedCount);
       const capsHtml = tierModelCount
         ? `<button class="btn btn-ghost btn-xs" style="min-width:96px" onclick="App.openBlockedModal('${this.escJsAttr(a.id)}')" title="${I18n.t('account.editModels')}">
-             <span style="color:var(--success,#10b981);font-weight:600">${availCount}</span>
+             <span style="color:var(--success);font-weight:600">${availCount}</span>
              <span style="color:var(--text-dim)">/${tierModelCount}</span>
              ${blockedCount > 0 ? `<span class="badge warn" style="margin-left:4px">-${blockedCount}</span>` : ''}
            </button>`
@@ -4716,7 +4716,7 @@ docker compose up -d --force-recreate</pre>
       const rpmUsed = a.rpmUsed ?? 0;
       const rpmLimit = a.rpmLimit ?? 0;
       const rpmPct = rpmLimit > 0 ? Math.min(100, Math.round((rpmUsed / rpmLimit) * 100)) : 0;
-      const rpmColor = rpmPct >= 90 ? 'var(--error)' : rpmPct >= 60 ? 'var(--warn, #f59e0b)' : 'var(--success, #10b981)';
+      const rpmColor = rpmPct >= 90 ? 'var(--error)' : rpmPct >= 60 ? 'var(--warn)' : 'var(--success)';
       const rpmCell = rpmLimit > 0
         ? `<div style="min-width:90px">
             <div class="text-xs" style="display:flex;justify-content:space-between;margin-bottom:2px">
@@ -4739,7 +4739,7 @@ docker compose up -d --force-recreate</pre>
       } else {
         const planName = cr.planName || '-';
         const fetchedAgo = cr.fetchedAt ? Math.round((Date.now() - cr.fetchedAt) / 60000) + 'm ago' : '-';
-        const barColor = (v) => v == null ? 'var(--text-dim)' : v <= 10 ? 'var(--error)' : v <= 30 ? 'var(--warn, #f59e0b)' : 'var(--success, #10b981)';
+        const barColor = (v) => v == null ? 'var(--text-dim)' : v <= 10 ? 'var(--error)' : v <= 30 ? 'var(--warn)' : 'var(--success)';
         const bar = (label, pct, detail) => {
           const noData = pct == null;
           const v = noData ? 0 : Math.max(0, Math.min(100, pct));
@@ -4851,7 +4851,7 @@ docker compose up -d --force-recreate</pre>
     const us = a.userStatus || {};
     const catalog = this._modelsCatalog || {};
     const T = (k, v) => I18n.t('account.detail.' + k, v);
-    const barColor = (v) => v == null ? 'var(--text-dim)' : v <= 10 ? 'var(--error)' : v <= 30 ? 'var(--warn, #f59e0b)' : 'var(--success, #10b981)';
+    const barColor = (v) => v == null ? 'var(--text-dim)' : v <= 10 ? 'var(--error)' : v <= 30 ? 'var(--warn)' : 'var(--success)';
     const fmtUnix = (u) => u ? new Date(u * 1000).toLocaleString() : '—';
     const fmtDate = (v) => v ? new Date(v).toLocaleDateString() : '—';
     const fmtAgo = (ts) => {
@@ -4913,10 +4913,10 @@ docker compose up -d --force-recreate</pre>
             <span class="model-group-count">${availIn}/${models.length}</span>
           </div>
           <div class="model-chips">
-            ${models.map(m => `<div class="model-chip ${blocked.has(m.id) ? 'blocked' : ''}" title="${m.id}">
-              <span class="model-chip-dot"></span>
-              <span class="model-chip-name">${this.esc(m.id)}</span>
-              ${m.credit != null ? `<span class="model-chip-cost" title="${T('creditPerCall')}">${m.credit}${T('creditUnit')}</span>` : `<span class="model-chip-cost" style="color:var(--text-dim);background:transparent;border-color:var(--border)">—</span>`}
+            ${models.map(m => `<div class="detail-model-chip ${blocked.has(m.id) ? 'blocked' : ''}" title="${m.id}">
+              <span class="detail-model-chip-dot"></span>
+              <span class="detail-model-chip-name">${this.esc(m.id)}</span>
+              ${m.credit != null ? `<span class="detail-model-chip-cost" title="${T('creditPerCall')}">${m.credit}${T('creditUnit')}</span>` : `<span class="detail-model-chip-cost" style="color:var(--text-dim);background:transparent;border-color:var(--border)">—</span>`}
             </div>`).join('')}
           </div>
         </div>`;
@@ -5074,7 +5074,7 @@ docker compose up -d --force-recreate</pre>
         <div style="display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:10px;padding:8px 10px;background:var(--surface-2);border-radius:6px">
           <div class="text-xs text-dim">${I18n.t('modal.blockedModels.hint')}</div>
           <div style="font-size:13px">
-            ${I18n.t('modal.blockedModels.enabled')} <span id="bm-avail" style="color:var(--success,#10b981);font-weight:600">${availInit}</span>
+            ${I18n.t('modal.blockedModels.enabled')} <span id="bm-avail" style="color:var(--success);font-weight:600">${availInit}</span>
             <span style="color:var(--text-dim)"> / ${total}</span>
           </div>
         </div>
@@ -5800,7 +5800,7 @@ docker compose up -d --force-recreate</pre>
     const tbody = document.querySelector('#model-stats-table tbody');
     tbody.innerHTML = sortedModels.map(([m, s]) => {
       const rate = s.requests > 0 ? ((s.success/s.requests)*100).toFixed(1) : '0.0';
-      const rateColor = Number(rate) >= 95 ? 'var(--success)' : Number(rate) >= 80 ? 'var(--warning, #f59e0b)' : 'var(--error)';
+      const rateColor = Number(rate) >= 95 ? 'var(--success)' : Number(rate) >= 80 ? 'var(--warn)' : 'var(--error)';
       return `
       <tr>
         <td><code>${this.esc(m)}</code></td>
@@ -6301,9 +6301,9 @@ docker compose up -d --force-recreate</pre>
   // widths as % of their sum. Returns '' when there is no usage yet (no fake bar).
   _tokenBreakdownBar(tt) {
     const parts = [
-      { k: 'freshInput', v: Number(tt.fresh_input) || 0, c: 'var(--accent, #3b82f6)' },
-      { k: 'cacheRead',  v: Number(tt.cache_read) || 0,  c: 'var(--success, #22c55e)' },
-      { k: 'cacheWrite', v: Number(tt.cache_write) || 0, c: 'var(--warning, #f59e0b)' },
+      { k: 'freshInput', v: Number(tt.fresh_input) || 0, c: 'var(--accent)' },
+      { k: 'cacheRead',  v: Number(tt.cache_read) || 0,  c: 'var(--success)' },
+      { k: 'cacheWrite', v: Number(tt.cache_write) || 0, c: 'var(--warn)' },
       { k: 'output',     v: Number(tt.output) || 0,      c: 'var(--text-dim, #94a3b8)' },
     ];
     const sum = parts.reduce((a, p) => a + p.v, 0);
