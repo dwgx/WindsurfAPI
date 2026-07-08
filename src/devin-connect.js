@@ -1415,7 +1415,7 @@ export function mapFinishReason(finish, env = process.env) {
  */
 export async function* streamChat({
   messages, model, sessionId, completion, tools,
-  token, signal, timeoutMs, deadlineMs, env = process.env,
+  token, signal, timeoutMs, deadlineMs, host, env = process.env,
 } = {}) {
   // Idle timeout: socket inactivity. Absolute deadline: total wall-clock from
   // request start — this is the one that catches a stream that keeps dribbling
@@ -1462,6 +1462,20 @@ export async function* streamChat({
   // AUTH (critical): the header token is the session token doubled, dash-joined.
   const authHeader = `Basic ${sessionToken}-${sessionToken}`;
 
+  // Host resolution: default server.codeium.com, but a self-serve / teams account
+  // whose token was minted against a different API server (account.apiServerUrl,
+  // e.g. server.self-serve.windsurf.com) must send GetChatMessage to THAT host or
+  // the backend rejects the token with authentication_error (GetUserStatus is a
+  // global seat service and accepts it, which is why liveness passes but chat 401s).
+  // Opt-in via DEVIN_CONNECT_ACCOUNT_HOST=1 so the default wire is unchanged.
+  let effectiveHost = HOST;
+  if (host && String(env.DEVIN_CONNECT_ACCOUNT_HOST || '') === '1') {
+    try {
+      const h = /^https?:\/\//i.test(host) ? new URL(host).hostname : String(host).replace(/\/.*$/, '');
+      if (h) effectiveHost = h;
+    } catch { /* keep default */ }
+  }
+
   const queue = [];
   let done = false;
   let streamError = null;
@@ -1475,7 +1489,7 @@ export async function* streamChat({
   const pump = () => { if (wake) { const w = wake; wake = null; w(); } };
 
   const req = requestImpl({
-    hostname: HOST,
+    hostname: effectiveHost,
     port: 443,
     path: PATH,
     method: 'POST',

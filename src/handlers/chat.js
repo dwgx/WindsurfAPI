@@ -2189,6 +2189,11 @@ async function _handleChatCompletionsInner(body, context = {}) {
     const ccAcct = await acquireConnectAccount(context.signal, callerKey);
     const connectParams = { messages: connectMessages, model: selector };
     if (ccAcct) connectParams.token = ccAcct.apiKey;
+    // Forward the account's own API server (self-serve/teams accounts are minted
+    // against a host other than server.codeium.com; sending GetChatMessage to the
+    // wrong host yields authentication_error). streamChat only honors it when
+    // DEVIN_CONNECT_ACCOUNT_HOST=1; otherwise the default host is used.
+    if (ccAcct && ccAcct.apiServerUrl) connectParams.host = ccAcct.apiServerUrl;
     // Forward client sampling controls into the connect CompletionConfig. Without
     // this, temperature/top_p/top_k/max_tokens from the OpenAI (or Anthropic)
     // request were silently dropped on the DEVIN_CONNECT path — every call ran at
