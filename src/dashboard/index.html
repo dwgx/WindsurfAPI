@@ -1662,8 +1662,9 @@ window._firebaseOAuth = async function(provider) {
         <span data-i18n="nav.stats">统计分析</span>
       </a>
     </div>
-    <div class="nav-group">
+    <div class="nav-group" id="settings-nav-group">
       <div class="nav-group-label" data-i18n="nav.group.settings">设置 · 高级</div>
+      <input id="settings-search" class="input" type="text" data-i18n-placeholder="settings.search.placeholder" placeholder="筛选设置…" oninput="App.filterSettingsNav(this.value)" style="margin:2px 0 6px;font-size:12px;padding:5px 8px;width:100%;box-sizing:border-box;" />
       <a href="#models" data-panel="models">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
         <span data-i18n="nav.models">模型控制</span>
@@ -4340,6 +4341,18 @@ docker compose up -d --force-recreate</pre>
     const tbody = document.querySelector('#accounts-table tbody');
     this.renderAccountsPagination(d);
     const tierLabel = { pro: 'PRO', free: 'FREE', expired: I18n.t('tier.expiredLabel'), unknown: I18n.t('tier.unknown') };
+    // Derive a single health level per account for the left status band, from
+    // real fields only (status / rateLimited / errorCount / RPM saturation).
+    // ok=healthy, watch=some errors, high=RPM saturated, limited=rate-limited or
+    // disabled/error status. Purely presentational — no handler/state change.
+    const healthLevel = (a) => {
+      if (a.status === 'error' || a.status === 'disabled' || a.rateLimited) return 'limited';
+      const rl = a.rpmLimit ?? 0, ru = a.rpmUsed ?? 0;
+      if (rl > 0 && ru / rl >= 0.9) return 'high';
+      if ((a.errorCount || 0) > 0) return 'watch';
+      return 'ok';
+    };
+    const bandColor = { ok: 'var(--success, #22c55e)', watch: 'var(--warning, #f59e0b)', high: 'var(--warning, #f59e0b)', limited: 'var(--error, #ef4444)' };
     const accounts = (d.accounts || []).map(a => (
       this._expandedAccounts?.has(a.id) && this._accountDetails?.has(a.id)
         ? { ...a, ...this._accountDetails.get(a.id) }
@@ -4452,9 +4465,12 @@ docker compose up -d --force-recreate</pre>
           </div>`;
       }
       const isExpanded = this._expandedAccounts?.has(a.id);
+      const hl = healthLevel(a);
+      const hlColor = bandColor[hl];
+      const hlLabel = I18n.t('status.healthLevel.' + hl);
       return `
       <tr${isExpanded ? ' class="expanded"' : ''}>
-        <td>
+        <td style="box-shadow: inset 3px 0 0 ${hlColor};" title="${this.esc(hlLabel)}">
           <button class="expand-chevron ${isExpanded ? 'open' : ''}" onclick="App.toggleAccountDetail('${this.escJsAttr(a.id)}')" title="${I18n.t('account.detail.toggle')}">▸</button>
           <code>${a.id}</code>
         </td>
@@ -4468,9 +4484,9 @@ docker compose up -d --force-recreate</pre>
         <td>${rpmCell}</td>
         <td>${creditCell}</td>
         <td>${capsHtml}</td>
-        <td><span class="badge ${a.status}">${a.status}</span>${rateLimitBadge}</td>
-        <td style="color:${a.errorCount > 0 ? 'var(--error)' : 'inherit'}">${a.errorCount}</td>
-        <td class="text-sm nowrap">${a.lastUsed ? new Date(a.lastUsed).toLocaleString() : '-'}</td>
+        <td><span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:${hlColor};margin-right:6px;vertical-align:middle;"></span><span class="badge ${a.status}">${a.status}</span>${rateLimitBadge}</td>
+        <td style="color:${a.errorCount > 0 ? 'var(--error)' : 'inherit'};font-variant-numeric:tabular-nums;text-align:right;">${a.errorCount}</td>
+        <td class="text-sm nowrap" style="font-variant-numeric:tabular-nums;">${a.lastUsed ? new Date(a.lastUsed).toLocaleString() : '-'}</td>
         <td class="nowrap">
           <code title="${I18n.t('action.revealKey')}" style="cursor:pointer" onclick="App.revealAndCopyKey('${this.escJsAttr(a.id)}')">${this.esc(a.apiKey_masked || a.keyPrefix || '')}</code>
         </td>
@@ -5199,6 +5215,8 @@ docker compose up -d --force-recreate</pre>
   },
 
   async clearGlobalProxy() {
+    const ok = await this.confirm(I18n.t('confirm.clearProxyTitle'), I18n.t('confirm.clearProxyDesc'), { danger: true });
+    if (!ok) return;
     await this.api('DELETE', '/proxy/global');
     ['proxy-host','proxy-port','proxy-user','proxy-pass'].forEach(id => document.getElementById(id).value = '');
     this.toast(I18n.t('toast.globalProxyCleared'));
@@ -6436,6 +6454,8 @@ docker compose up -d --force-recreate</pre>
   },
 
   async runQuietWindowNow() {
+    const ok = await this.confirm(I18n.t('confirm.quietWindowRunTitle'), I18n.t('confirm.quietWindowRunDesc'), { danger: true });
+    if (!ok) return;
     try {
       const r = await this.api('POST', '/auto-update/quiet-window/run', {});
       const reason = r.result?.reason || 'unknown';
@@ -6550,9 +6570,29 @@ docker compose up -d --force-recreate</pre>
     }
   },
 
+  // Frontend-only filter for the Settings·Advanced nav group. Hides nav items
+  // whose visible label doesn't match the query. Pure DOM, no requests.
+  filterSettingsNav(q) {
+    const group = document.getElementById('settings-nav-group');
+    if (!group) return;
+    const query = String(q || '').trim().toLowerCase();
+    group.querySelectorAll('a[data-panel]').forEach(a => {
+      const label = (a.textContent || '').trim().toLowerCase();
+      a.style.display = (!query || label.includes(query)) ? '' : 'none';
+    });
+  },
+
   // ─── Console skin (default ↔ experimental sketch UI) ────────
-  switchSkin(skin) {
+  async switchSkin(skin) {
     const next = skin === 'sketch' ? 'sketch' : 'modern';
+    // Reloads the page to apply — confirm first so an accidental select change
+    // doesn't blow away unsaved panel state. On decline, revert the <select>.
+    const ok = await this.confirm(I18n.t('confirm.switchSkinTitle'), I18n.t('confirm.switchSkinDesc'));
+    if (!ok) {
+      const sel = document.getElementById('skin-select');
+      if (sel) sel.value = next === 'sketch' ? 'modern' : 'sketch';
+      return;
+    }
     // Year-long cookie, lax samesite. path=/ so /dashboard sees it.
     const oneYear = 365 * 24 * 3600;
     document.cookie = `dashboard_skin=${next}; path=/; max-age=${oneYear}; samesite=lax`;
