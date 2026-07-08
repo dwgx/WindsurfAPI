@@ -214,8 +214,6 @@ code {
 }
 /* Value block sits at the same vertical position across all cards regardless of
    whether a card has an icon or a longer title. */
-.card-value { margin-top: auto; }
-.card-header + .card-value { margin-top: auto; }
 .card-title {
   font-size: 12px;
   font-weight: 500;
@@ -232,6 +230,7 @@ code {
   font-weight: 700;
   letter-spacing: -.02em;
   line-height: 1.2;
+  margin-top: auto; /* pin the value block to a common baseline across the row */
 }
 .card-sub { font-size: 12px; color: var(--text-muted); margin-top: 4px; min-height: 15px; }
 .card.accent .card-value { color: var(--accent); }
