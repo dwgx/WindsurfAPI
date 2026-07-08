@@ -104,6 +104,12 @@
     "active": "正常",
     "disabled": "已禁用",
     "error": "错误",
+    "healthLevel": {
+      "ok": "健康",
+      "watch": "关注",
+      "high": "高负载",
+      "limited": "受限"
+    },
     "running": "运行中",
     "stopped": "已停止",
     "sending": "发送中…",
@@ -323,6 +329,24 @@
     "emailOtpLogin": {
       "title": "邮箱验证码登录",
       "desc": "无需密码，通过邮箱验证码注册新账号 — 需完成 Cloudflare 人机验证"
+    },
+    "poolHealth": {
+      "title": "账号池健康",
+      "desc": "按最坏优先汇总各账号健康信号"
+    },
+    "connectMetrics": {
+      "title": "连接自愈",
+      "desc": "实时恢复计数 — 重登、故障转移、限流、失效 token"
+    },
+    "overviewTrend": {
+      "title": "请求趋势（24 小时）",
+      "desc": "每小时请求与错误，来自本地遥测"
+    },
+    "rankings": {
+      "title": "排行",
+      "models": "热门模型",
+      "accounts": "热门账号",
+      "desc": "按请求量（仅本地计数器）"
     }
   },
   "help": {
@@ -513,6 +537,12 @@
       "title": "Token 用量分布",
       "subtitle": {
         "empty": "等首个完整请求结束才会有数据"
+      },
+      "legend": {
+        "freshInput": "新输入",
+        "cacheRead": "缓存读取",
+        "cacheWrite": "缓存写入",
+        "output": "输出"
       }
     },
     "banStats": {
@@ -558,6 +588,11 @@
     "stores": {
       "title": "存储次数",
       "subtitle": "过期 {{expired}} · 淘汰 {{evicted}}"
+    },
+    "tokenCacheRead": {
+      "title": "Token 缓存读取",
+      "subtitle": "{{pct}}% 输入命中缓存",
+      "empty": "暂无 token 用量"
     },
     "defaultInstance": "默认实例",
     "noProxy": "无代理",
@@ -660,7 +695,14 @@
     "updateLsDesc": "从 WindsurfAPI / Windsurf 桌面 LS / Exafunction GitHub release 下载最新 language_server 并重启 LS 池。期间正在进行的请求会失败一次。",
     "updateLsButton": "更新",
     "restoreDefaultDesc": "恢复到默认？",
-    "clearPoolDesc": "当前所有进行中的 Cascade 会话都将被清除，确定继续吗？"
+    "clearPoolDesc": "当前所有进行中的 Cascade 会话都将被清除，确定继续吗？",
+    "clearProxyTitle": "清除全局代理",
+    "clearProxyDesc": "在重新设置代理前，所有出站请求将直连。确定继续吗？",
+    "quietWindowRunTitle": "立即执行静默窗口更新",
+    "quietWindowRunDesc": "这会触发真实的 Docker 镜像拉取与容器重建 — 服务将重启，执行中不可逆。确定继续吗？",
+    "switchSkinTitle": "切换仪表盘皮肤",
+    "switchSkinDesc": "仪表盘将重新加载以应用新皮肤。确定继续吗？",
+    "expToggleDesc": "这会立即改变实时路由行为。确定继续吗？"
   },
   "modal": {
     "blockedModels": {
@@ -1088,5 +1130,53 @@
     "port": "端口",
     "pid": "PID",
     "restartCount": "重启次数"
+  },
+  "overview": {
+    "poolHealth": {
+      "healthy": "健康",
+      "throttled": "限流中",
+      "error": "错误",
+      "dead": "失效 token",
+      "quotaPressure": "配额压力",
+      "highRpm": "高 RPM",
+      "verdictAllHealthy": "所有账号健康",
+      "verdictDegraded": "{{count}} 个账号需关注",
+      "verdictCritical": "号池降级 — {{count}} 个不可用",
+      "empty": "暂无号池遥测"
+    },
+    "connect": {
+      "reloginOk": "重登成功",
+      "reloginFail": "重登失败",
+      "failoverHops": "故障转移次数",
+      "deadTokens": "失效 token",
+      "quotaExhausted": "配额耗尽",
+      "capacityThrottled": "容量限流",
+      "upstreamInternal": "上游内部错误",
+      "transientReplays": "瞬态重放",
+      "livenessRecovered": "存活恢复",
+      "credDecryptFail": "凭证解密失败",
+      "empty": "暂无连接指标"
+    },
+    "rankings": {
+      "reqUnit": "{{count}} 次",
+      "policyBlocked": "策略拦截：{{count}}",
+      "rateLimited": "限流：{{count}}",
+      "empty": "暂无排行数据"
+    },
+    "trend": {
+      "requests": "请求",
+      "errors": "错误",
+      "empty": "暂无趋势数据"
+    }
+  },
+  "settings": {
+    "search": {
+      "placeholder": "筛选设置…",
+      "noMatch": "无匹配设置"
+    },
+    "group": {
+      "normal": "常规",
+      "dangerous": "危险 · 请谨慎"
+    }
   }
 }

@@ -104,6 +104,12 @@
     "active": "Active",
     "disabled": "Disabled",
     "error": "Error",
+    "healthLevel": {
+      "ok": "Healthy",
+      "watch": "Watch",
+      "high": "High load",
+      "limited": "Limited"
+    },
     "running": "Running",
     "stopped": "Stopped",
     "sending": "Sending…",
@@ -323,6 +329,24 @@
     "emailOtpLogin": {
       "title": "Email Code Login",
       "desc": "No password needed — register a new account via an email verification code. Requires completing the Cloudflare human check."
+    },
+    "poolHealth": {
+      "title": "Account Pool Health",
+      "desc": "Worst-first summary of per-account health signals"
+    },
+    "connectMetrics": {
+      "title": "Connection Self-Healing",
+      "desc": "Live recovery counters — relogin, failover, throttling, dead tokens"
+    },
+    "overviewTrend": {
+      "title": "Request Trend (24h)",
+      "desc": "Requests and errors per hour, from local telemetry"
+    },
+    "rankings": {
+      "title": "Rankings",
+      "models": "Top Models",
+      "accounts": "Top Accounts",
+      "desc": "By request volume (local counters only)"
     }
   },
   "help": {
@@ -513,6 +537,12 @@
       "title": "Token usage breakdown",
       "subtitle": {
         "empty": "no usage data yet"
+      },
+      "legend": {
+        "freshInput": "Fresh input",
+        "cacheRead": "Cache read",
+        "cacheWrite": "Cache write",
+        "output": "Output"
       }
     },
     "banStats": {
@@ -558,6 +588,11 @@
     "stores": {
       "title": "Stores",
       "subtitle": "Expired {{expired}} · Evicted {{evicted}}"
+    },
+    "tokenCacheRead": {
+      "title": "Token Cache Read",
+      "subtitle": "{{pct}}% of input served from cache",
+      "empty": "no token usage yet"
     },
     "defaultInstance": "Default Instance",
     "noProxy": "No proxy",
@@ -660,7 +695,14 @@
     "updateLsDesc": "Download the latest language_server from the WindsurfAPI / Windsurf desktop LS / Exafunction GitHub release and restart the LS pool. In-flight requests will fail once.",
     "updateLsButton": "Update",
     "restoreDefaultDesc": "restore to default?",
-    "clearPoolDesc": "All active Cascade sessions will be cleared. Continue?"
+    "clearPoolDesc": "All active Cascade sessions will be cleared. Continue?",
+    "clearProxyTitle": "Clear Global Proxy",
+    "clearProxyDesc": "All outbound requests will go direct until a proxy is set again. Continue?",
+    "quietWindowRunTitle": "Run Quiet-Window Update Now",
+    "quietWindowRunDesc": "This triggers a real Docker image pull and container recreate — the service will restart. This is irreversible mid-flight. Continue?",
+    "switchSkinTitle": "Switch Dashboard Skin",
+    "switchSkinDesc": "The dashboard will reload to apply the new skin. Continue?",
+    "expToggleDesc": "This changes live routing behavior immediately. Continue?"
   },
   "modal": {
     "blockedModels": {
@@ -1088,5 +1130,53 @@
     "port": "Port",
     "pid": "PID",
     "restartCount": "Restarts"
+  },
+  "overview": {
+    "poolHealth": {
+      "healthy": "Healthy",
+      "throttled": "Throttled",
+      "error": "Error",
+      "dead": "Dead token",
+      "quotaPressure": "Quota pressure",
+      "highRpm": "High RPM",
+      "verdictAllHealthy": "All accounts healthy",
+      "verdictDegraded": "{{count}} account(s) need attention",
+      "verdictCritical": "Pool degraded — {{count}} unusable",
+      "empty": "No pool telemetry"
+    },
+    "connect": {
+      "reloginOk": "Relogin OK",
+      "reloginFail": "Relogin fail",
+      "failoverHops": "Failover hops",
+      "deadTokens": "Dead tokens",
+      "quotaExhausted": "Quota exhausted",
+      "capacityThrottled": "Capacity throttled",
+      "upstreamInternal": "Upstream internal",
+      "transientReplays": "Transient replays",
+      "livenessRecovered": "Liveness recovered",
+      "credDecryptFail": "Cred decrypt fail",
+      "empty": "No connection metrics"
+    },
+    "rankings": {
+      "reqUnit": "{{count}} req",
+      "policyBlocked": "Policy blocked: {{count}}",
+      "rateLimited": "Rate limited: {{count}}",
+      "empty": "No ranking data"
+    },
+    "trend": {
+      "requests": "Requests",
+      "errors": "Errors",
+      "empty": "No trend data"
+    }
+  },
+  "settings": {
+    "search": {
+      "placeholder": "Filter settings...",
+      "noMatch": "No matching settings"
+    },
+    "group": {
+      "normal": "General",
+      "dangerous": "Dangerous · Use with care"
+    }
   }
 }

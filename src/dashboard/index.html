@@ -1169,8 +1169,10 @@ tbody tr:hover td { background: var(--surface-2); }
   box-shadow: 0 8px 28px rgba(0,0,0,.5);
   backdrop-filter: blur(10px);
   opacity: 0;
-  transform: translate(-50%, 0);
-  transition: opacity .12s ease, left .08s ease-out;
+  /* Cursor-following tooltip: JS sets left/top to the box origin (no centering
+     translate) and tracks the pointer, so only opacity is transitioned —
+     animating left/top would lag the cursor. */
+  transition: opacity .12s ease;
   z-index: 5;
   white-space: nowrap;
 }
@@ -5243,6 +5245,7 @@ docker compose up -d --force-recreate</pre>
           <div><div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em;">cache write</div><div style="font-size:18px;font-weight:600;">${fmtTok(tt.cache_write)}</div></div>
           <div><div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em;">output</div><div style="font-size:18px;font-weight:600;">${fmtTok(tt.output)}</div></div>
         </div>
+        ${this._tokenBreakdownBar(tt)}
         <div class="card-sub" style="margin-top:8px;">${tokensCardSub}</div>
       </div>
     `;
@@ -5358,12 +5361,17 @@ docker compose up -d --force-recreate</pre>
     for (let i = 0; i < buckets.length; i += step) {
       const g = buckets.slice(i, i + step);
       const mid = g[Math.floor(g.length / 2)];
+      // AVERAGE per grouped bucket, not SUM: summing N hourly buckets into one
+      // downsampled point inflates the Y magnitude for wide ranges (30d/all) so a
+      // single busy group dwarfs the rest and exaggerates the trend. Averaging
+      // keeps each plotted point comparable in scale regardless of group width.
+      const n = g.length || 1;
       out.push({
         hour: mid.hour,
         t: mid.t,
-        requests: g.reduce((a, b) => a + b.requests, 0),
-        errors:   g.reduce((a, b) => a + b.errors,   0),
-        success:  g.reduce((a, b) => a + b.success,  0),
+        requests: Math.round(g.reduce((a, b) => a + b.requests, 0) / n),
+        errors:   Math.round(g.reduce((a, b) => a + b.errors,   0) / n),
+        success:  Math.round(g.reduce((a, b) => a + b.success,  0) / n),
       });
     }
     return out;
@@ -5743,6 +5751,30 @@ docker compose up -d --force-recreate</pre>
     });
   },
 
+  // Stacked proportion bar for the token breakdown card. Four real segments from
+  // the lifetime tokenTotals (fresh input / cache read / cache write / output),
+  // widths as % of their sum. Returns '' when there is no usage yet (no fake bar).
+  _tokenBreakdownBar(tt) {
+    const parts = [
+      { k: 'freshInput', v: Number(tt.fresh_input) || 0, c: 'var(--accent, #3b82f6)' },
+      { k: 'cacheRead',  v: Number(tt.cache_read) || 0,  c: 'var(--success, #22c55e)' },
+      { k: 'cacheWrite', v: Number(tt.cache_write) || 0, c: 'var(--warning, #f59e0b)' },
+      { k: 'output',     v: Number(tt.output) || 0,      c: 'var(--text-dim, #94a3b8)' },
+    ];
+    const sum = parts.reduce((a, p) => a + p.v, 0);
+    if (sum <= 0) return '';
+    const seg = parts.map(p => {
+      const pct = (p.v / sum) * 100;
+      if (pct <= 0) return '';
+      return `<div title="${this.esc(I18n.t('card.tokens.legend.' + p.k))}: ${pct.toFixed(1)}%" style="width:${pct.toFixed(2)}%;background:${p.c};height:100%;"></div>`;
+    }).join('');
+    const legend = parts.map(p =>
+      `<span style="display:inline-flex;align-items:center;gap:4px;margin-right:12px;font-size:11px;color:var(--text-muted);"><span style="width:8px;height:8px;border-radius:2px;background:${p.c};display:inline-block;"></span>${this.esc(I18n.t('card.tokens.legend.' + p.k))}</span>`
+    ).join('');
+    return `<div style="display:flex;height:8px;border-radius:4px;overflow:hidden;margin-top:10px;background:rgba(255,255,255,.04);">${seg}</div>`
+      + `<div style="margin-top:6px;">${legend}</div>`;
+  },
+
   _bindChartHover() {
     const canvas = document.getElementById('stats-canvas');
     const tipEl  = document.getElementById('stats-tooltip');
@@ -5786,11 +5818,24 @@ docker compose up -d --force-recreate</pre>
         <div class="tt-row"><span class="tt-label">${I18n.t('section.requestChart.tooltipRate')}</span><span class="tt-value">${rate}%</span></div>
       `;
       tipEl.classList.add('show');
-      const tipRect = tipEl.getBoundingClientRect();
-      let left = hm.xAt(best);
-      const halfW = tipRect.width / 2;
-      left = Math.min(hm.W - halfW - 6, Math.max(halfW + 6, left));
-      const top = hm.pad.t + 4;
+      // Follow the cursor toward its lower-right, clamped to the canvas-wrap box
+      // on BOTH axes (flip to the other side when it would overflow). The value
+      // still snaps to the nearest bucket above (via _chartHitMap); only the tip
+      // box position tracks the pointer. Use transform for GPU-cheap moves and
+      // drop the centering translate so left/top are the box's true origin.
+      const wrap = canvas.parentElement;
+      const boxW = wrap ? wrap.clientWidth : hm.W;
+      const boxH = wrap ? wrap.clientHeight : (hm.pad.t + hm.cH);
+      const tw = tipEl.offsetWidth;
+      const th = tipEl.offsetHeight;
+      const OFF = 14; // gap between cursor and tip
+      let left = x + OFF;
+      if (left + tw > boxW - 4) left = x - OFF - tw;      // flip to the left
+      left = Math.max(4, Math.min(left, boxW - tw - 4));   // clamp x
+      let top = y + OFF;
+      if (top + th > boxH - 4) top = y - OFF - th;         // flip above
+      top = Math.max(4, Math.min(top, boxH - th - 4));     // clamp y
+      tipEl.style.transform = 'none';
       tipEl.style.left = left + 'px';
       tipEl.style.top = top + 'px';
     });
