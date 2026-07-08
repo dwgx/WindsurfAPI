@@ -2189,10 +2189,12 @@ async function _handleChatCompletionsInner(body, context = {}) {
     const ccAcct = await acquireConnectAccount(context.signal, callerKey);
     const connectParams = { messages: connectMessages, model: selector };
     if (ccAcct) connectParams.token = ccAcct.apiKey;
-    // Forward the account's own API server (self-serve/teams accounts are minted
-    // against a host other than server.codeium.com; sending GetChatMessage to the
-    // wrong host yields authentication_error). streamChat only honors it when
-    // DEVIN_CONNECT_ACCOUNT_HOST=1; otherwise the default host is used.
+    // NOTE (2026-07-08): host-forwarding kept but DISARMED-BY-DEFAULT. Live capture
+    // disproved the "teams token needs its own apiServerUrl host" theory — real
+    // teams GetChatMessage goes to server.codeium.com (same host as the working
+    // catalog RPC). streamChat ignores this unless DEVIN_CONNECT_ACCOUNT_HOST=1,
+    // which must stay off in production (a non-codeium host breaks chat). Left
+    // wired only so an operator can force a host during RE, not as a fix.
     if (ccAcct && ccAcct.apiServerUrl) connectParams.host = ccAcct.apiServerUrl;
     // Forward client sampling controls into the connect CompletionConfig. Without
     // this, temperature/top_p/top_k/max_tokens from the OpenAI (or Anthropic)
