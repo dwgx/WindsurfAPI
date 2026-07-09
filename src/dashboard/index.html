@@ -6,7 +6,7 @@
 <title data-i18n="pageTitle.main">WindsurfAPI bydwgx1337 控制台</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,600;1,9..144,500;1,9..144,600&family=Poppins:wght@400;500;600;700&family=Shantell+Sans:wght@400..700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script>
   // Set theme before first paint to avoid a light-cream FOUC (default is dark).
   try {
@@ -69,7 +69,7 @@
 
   /* font stacks */
   --font: 'Poppins', -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', system-ui, sans-serif;
-  --serif: 'Fraunces', 'Lora', Georgia, serif;
+  --serif: var(--font);
   --hand: var(--font);
   --mono: 'JetBrains Mono', 'Cascadia Code', 'Fira Code', 'Consolas', monospace;
 }
@@ -248,10 +248,10 @@ code {
   flex-wrap: wrap;
 }
 .page-title {
-  font-family: var(--serif);
-  font-size: 25px;
-  font-weight: 600;
-  letter-spacing: -.01em;
+  font-family: var(--font);
+  font-size: 24px;
+  font-weight: 650;
+  letter-spacing: -.02em;
 }
 .page-subtitle {
   font-size: 11px;
@@ -401,10 +401,10 @@ code {
 }
 #accounts-density-btn.active { background: var(--accent-soft); color: var(--accent); }
 .section-title {
-  font-family: var(--serif);
-  font-size: 18px;
-  font-weight: 600;
-  letter-spacing: -.01em;
+  font-family: var(--font);
+  font-size: 16px;
+  font-weight: 650;
+  letter-spacing: -.02em;
 }
 .section-desc {
   font-size: 12px;
@@ -587,7 +587,10 @@ code {
 .cs-opt[aria-selected="true"] .cs-check { opacity: 1; }
 
 /* ── Custom number stepper (enhances native input[type=number]) ── */
-.ns { position: relative; display: flex; width: 100%; }
+/* inline-flex + max-content so the wrapper shrink-wraps its input — otherwise a
+   max-width-constrained input leaves the wrapper full-width and the absolutely
+   positioned .ns-btns float far to the right of the (narrow) field. */
+.ns { position: relative; display: inline-flex; width: max-content; max-width: 100%; vertical-align: middle; }
 .ns-input { flex: 1; padding-right: 30px; font-variant-numeric: tabular-nums; }
 .ns-input::-webkit-outer-spin-button,
 .ns-input::-webkit-inner-spin-button { -webkit-appearance: none; margin: 0; }
@@ -3099,6 +3102,18 @@ const I18n = {
     for (const k of keys) {
       val = val?.[k];
       if (val === undefined) break;
+    }
+    // Flat-key fallback: some keys are stored with a literal dot in the property
+    // name (e.g. settings."emailLockThreshold.hint") rather than fully nested, so
+    // the segment walk above misses them. Try progressively-shorter object paths
+    // with the remainder as one flat property before giving up.
+    if (typeof val !== 'string') {
+      for (let i = keys.length - 1; i >= 1; i--) {
+        let node = bundle;
+        for (let j = 0; j < i && node; j++) node = node?.[keys[j]];
+        const flat = node?.[keys.slice(i).join('.')];
+        if (typeof flat === 'string') { val = flat; break; }
+      }
     }
     // Fallback to key if not found
     if (typeof val !== 'string') {
