@@ -18,10 +18,20 @@ services:
     restart: unless-stopped
     init: true
     env_file:
-      - .env
+      # required:false so a fresh clone (which ships only .env.example, never
+      # .env) can `docker compose up` without aborting on a missing file. The
+      # environment: block below covers the essentials; add a .env to override.
+      - path: .env
+        required: false
     environment:
       PORT: 3003
       DATA_DIR: /data
+      # Bundled nginx LB is the only hop in front of the app in this topology,
+      # so trust its X-Forwarded-For — otherwise every caller looks like the
+      # nginx container IP and the per-caller brute-force lockout collapses to
+      # one global bucket. Exactly one trusted hop here.
+      TRUST_PROXY_X_FORWARDED_FOR: "1"
+      TRUST_PROXY_HOPS: "1"
       WINDSURFAPI_PROTO_TRACE_DIR: ${WINDSURFAPI_PROTO_TRACE_DIR:-/data/proto-trace}
       LS_BINARY_PATH: /opt/windsurf/language_server_linux_x64
       # REPLICA_ISOLATE=1 puts telemetry under per-container subdirs.

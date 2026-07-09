@@ -82,13 +82,22 @@ async function main() {
   // Auto-install if missing — users repeatedly miss the manual install step
   // and open "request crashes" issues (see #18), so we just do it ourselves.
   // Skipped on Windows (LS is Linux-only) and when install-ls.sh isn't present.
+  //
+  // DEVIN_CONNECT / DEVIN_ONLY are the binary-less pivot backends (pure HTTP to
+  // Devin cloud — no language_server needed). In those modes the whole LS block
+  // is pure friction: a fresh Docker boot would otherwise shell out to download
+  // a ~100MB+ binary the deploy never uses, delaying startup. Skip it entirely.
+  const lsBackendUnused = String(process.env.DEVIN_CONNECT || '').trim() === '1'
+    || String(process.env.DEVIN_ONLY || '').trim() === '1';
   const binaryPath = config.lsBinaryPath;
-  if (!existsSync(binaryPath) && process.platform === 'win32') {
+  if (lsBackendUnused) {
+    log.info('DEVIN_CONNECT/DEVIN_ONLY enabled — skipping language server startup (binary-less backend).');
+  } else if (!existsSync(binaryPath) && process.platform === 'win32') {
     log.warn('Windows detected: the Language Server binary is Linux/macOS only.');
     log.warn('Options: (1) Use Docker (see docker-compose.yml), (2) Use WSL2, or');
     log.warn('(3) Point LS_BINARY_PATH to a Windsurf desktop app language_server binary.');
   }
-  if (!existsSync(binaryPath) && process.platform !== 'win32') {
+  if (!lsBackendUnused && !existsSync(binaryPath) && process.platform !== 'win32') {
     const scriptPath = (() => {
       try {
         const here = dirname(fileURLToPath(import.meta.url));
@@ -99,9 +108,12 @@ async function main() {
       log.info(`Language server binary missing at ${binaryPath}`);
       log.info(`Auto-installing via ${scriptPath} — this runs once.`);
       try {
+        // Bounded so a slow/black-holed network (curl with no timeout inside the
+        // script) can't hang boot forever — the HTTP server binds after this.
         execSync(`bash "${scriptPath}"`, {
           stdio: 'inherit',
           env: { ...process.env, LS_INSTALL_PATH: binaryPath },
+          timeout: 180000,
         });
         log.info('Language server binary installed.');
       } catch (err) {
@@ -111,7 +123,7 @@ async function main() {
     }
   }
 
-  if (existsSync(binaryPath)) {
+  if (!lsBackendUnused && existsSync(binaryPath)) {
     resetWorkspace();
 
     // v2.0.85 (#127 123cek): kill any leftover language_server_linux_x64
@@ -149,7 +161,7 @@ async function main() {
     } else {
       log.info('LS default prewarm disabled (LS_PREWARM_DEFAULT=0 or LS_MAX_INSTANCES=1); LS starts lazily on first request');
     }
-  } else {
+  } else if (!lsBackendUnused) {
     log.warn(`Language server binary not found at ${binaryPath}`);
     log.warn('Install it with: download Windsurf Linux tarball and extract language_server_linux_x64');
   }

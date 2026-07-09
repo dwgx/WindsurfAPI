@@ -53,7 +53,13 @@ const dataDir = (() => {
 try {
   mkdirSync(sharedDataDir, { recursive: true });
   mkdirSync(dataDir, { recursive: true });
-} catch {}
+} catch (err) {
+  // Don't swallow this — a non-writable DATA_DIR means accounts.json / stats.json
+  // / logs all fail to persist later with a confusing downstream error. Surface
+  // the path + code now. (log isn't defined yet at module-init time; use console.)
+  console.warn(`[WARN] Could not create data dir "${dataDir}" (${err.code || err.message}). `
+    + 'accounts/stats/logs may not persist — set DATA_DIR to a writable path.');
+}
 
 export function defaultLsBinaryPath(platform = process.platform, arch = process.arch, home = process.env.HOME) {
   if (platform === 'darwin') {

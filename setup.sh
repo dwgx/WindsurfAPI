@@ -41,13 +41,25 @@ DATA_DIR=
 DEFAULT_MODEL=claude-4.5-sonnet-thinking
 MAX_TOKENS=8192
 LOG_LEVEL=info
+DASHBOARD_PASSWORD=
+ALLOW_PRIVATE_PROXY_HOSTS=
+
+# ===== Backend: DEVIN_CONNECT (recommended, binary-less) =====
+# Pure HTTP to Devin cloud — no language_server binary needed. Set to 1 and add
+# a Devin account (dashboard "登录取号" page, or scripts/devin-connect-login.mjs).
+# The LS_* lines below are only for the legacy Cascade backend; leave as-is if
+# you use DEVIN_CONNECT.
+# DEVIN_CONNECT=1
+# DEVIN_CONNECT_AUTO_RELOGIN=1
+# DEVIN_CONNECT_CRED_KEY=
+
+# ===== Legacy Cascade backend (language server) =====
 LS_BINARY_PATH=$LS_PATH
 LS_DATA_DIR=$LS_DATA_DIR
 LS_PORT=42100
-DASHBOARD_PASSWORD=
-ALLOW_PRIVATE_PROXY_HOSTS=
 ENVEOF
   echo "       Edit .env to set your API_KEY and DASHBOARD_PASSWORD"
+  echo "       For the Devin backend: uncomment DEVIN_CONNECT=1 and add an account"
 else
   echo "[3/4] .env already exists, skipping"
 fi
