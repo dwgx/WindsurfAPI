@@ -16,25 +16,25 @@
 </script>
 <style>
 :root {
-  /* ── Anthropic hand-drawn palette (cream light theme) ── */
-  --paper:      #faf9f5;   /* cream/ivory main background */
-  --paper-2:    #f3f1e9;   /* secondary surface */
-  --paper-3:    #e8e6dc;   /* faint zone base */
-  --ink:        #141413;   /* warm black, text/stroke */
-  --ink-soft:   #3a3833;
+  /* ── Warm light theme (calm, low-glare) ── */
+  --paper:      #f4f2ec;   /* soft warm grey-cream main background (was too-bright #faf9f5) */
+  --paper-2:    #eceae2;   /* secondary surface */
+  --paper-3:    #e2e0d6;   /* faint zone base */
+  --ink:        #23221f;   /* soft warm near-black (was harsh #141413) */
+  --ink-soft:   #45433d;
   --mid-gray:   #b0aea5;
 
   /* legacy var names kept (referenced site-wide), remapped to new semantics */
   --bg: var(--paper);
   --bg-elev: var(--paper);
-  --surface: #ffffff;
+  --surface: #fbfaf6;
   --surface-2: var(--paper-2);
   --surface-3: var(--paper-3);
-  --border: rgba(20,20,19,.14);
-  --border-strong: rgba(20,20,19,.28);
+  --border: rgba(20,20,19,.10);
+  --border-strong: rgba(20,20,19,.20);
   --text: var(--ink);
   --text-muted: #6b6a63;
-  --text-dim: #9a988f;
+  --text-dim: #94928a;
 
   /* Anthropic accent — signature clay orange */
   --accent: #d97757;
@@ -79,19 +79,19 @@
 
 /* ── Dark theme (toggle via [data-theme="dark"] on <html>) ── */
 [data-theme="dark"] {
-  --paper: #17171a;
-  --paper-2: #1e1e22;
-  --paper-3: #26262b;
-  --ink: #f0efe9;
-  --ink-soft: #c9c7bf;
-  --mid-gray: #908e85;
+  --paper: #16150f;
+  --paper-2: #1d1c15;
+  --paper-3: #26241c;
+  --ink: #ece9e1;
+  --ink-soft: #c4c1b8;
+  --mid-gray: #8a887e;
   --bg: var(--paper);
   --bg-elev: var(--paper-2);
-  --surface: #1e1e22;
-  --surface-2: #26262b;
-  --surface-3: #2e2e34;
-  --border: rgba(240,239,233,.12);
-  --border-strong: rgba(240,239,233,.22);
+  --surface: #1b1a13;
+  --surface-2: #232219;
+  --surface-3: #2c2a20;
+  --border: rgba(236,233,225,.10);
+  --border-strong: rgba(236,233,225,.18);
   --text: var(--ink);
   --text-muted: #9a988f;
   --text-dim: #908e85;
@@ -872,9 +872,8 @@ tbody tr:hover td { background: var(--surface-2); }
 }
 .detail-card-head .dot {
   width: 6px; height: 6px;
-  border-radius: 50%;
+  border-radius: 2px;
   background: var(--accent);
-  box-shadow: 0 0 6px var(--accent);
 }
 .detail-kv {
   display: grid;
@@ -1088,15 +1087,11 @@ tbody tr:hover td { background: var(--surface-2); }
   margin-bottom: 6px;
 }
 .ls-inst .ls-dot {
-  width: 8px; height: 8px;
-  border-radius: 50%;
+  width: 7px; height: 7px;
+  border-radius: 2px;
   background: var(--success);
-  box-shadow: 0 0 8px var(--success);
 }
-.ls-inst .ls-dot.pending { background: var(--warn); box-shadow: 0 0 8px var(--warn); }
-/* breathing glow for a live status dot (reduced-motion block halts it) */
-@keyframes dotBreath { 0%,100% { box-shadow: 0 0 0 0 currentColor; } 50% { box-shadow: 0 0 6px 1px currentColor; } }
-.ls-inst .ls-dot:not(.pending), .detail-card-head .dot:not(.pending) { animation: dotBreath 2.5s ease-in-out infinite; }
+.ls-inst .ls-dot.pending { background: var(--warn); }
 .ls-inst .ls-meta { color: var(--text-dim); font-family: var(--mono); font-size: 11px; margin-top: 2px; }
 .ls-telemetry {
   margin-top: 12px;
@@ -1481,15 +1476,15 @@ tbody tr:hover td { background: var(--surface-2); }
    icon. Placement variants dodge .section overflow:hidden clipping. */
 .help-tip {
   position: relative; display: inline-flex; align-items: center; justify-content: center;
-  width: 14px; height: 14px; margin-left: 5px; border-radius: 50%;
-  border: 1px solid var(--border-strong); color: var(--text-dim);
-  font-size: 9.5px; font-weight: 700; line-height: 1; cursor: help;
+  width: 15px; height: 15px; margin-left: 5px; border-radius: 50%;
+  border: 1px solid transparent; background: var(--accent-soft); color: var(--accent);
+  font-size: 10.5px; font-weight: 700; line-height: 1; cursor: help;
   vertical-align: middle; outline: none; user-select: none;
   transition: color .15s ease, border-color .15s ease, background .15s ease, box-shadow .15s ease, transform .15s ease;
 }
 .help-tip:hover, .help-tip:focus-visible {
-  color: var(--accent); border-color: var(--accent);
-  background: var(--accent-soft); transform: translateY(-.5px);
+  color: #fff; border-color: var(--accent);
+  background: var(--accent); transform: translateY(-.5px);
 }
 .help-tip:focus-visible { box-shadow: 0 0 0 3px var(--accent-soft); }
 .help-tip__pop {
@@ -5912,7 +5907,7 @@ docker compose up -d --force-recreate</pre>
         </div>
 
         <div class="detail-card">
-          <div class="detail-card-head"><span class="dot" style="background:var(--warn);box-shadow:0 0 6px var(--warn)"></span>${T('quota.title')}</div>
+          <div class="detail-card-head"><span class="dot" style="background:var(--warn)"></span>${T('quota.title')}</div>
           ${renderBar(T('quota.daily'), cr.dailyPercent, cr.dailyResetAt, I18n.t('creditsBar.dailyNA'))}
           ${renderBar(T('quota.weekly'), cr.weeklyPercent, cr.weeklyResetAt, I18n.t('creditsBar.weeklyNA'))}
           <div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--border)" class="detail-kv">
@@ -5924,7 +5919,7 @@ docker compose up -d --force-recreate</pre>
 
         <div class="detail-card" style="grid-column:1/-1">
           <div class="detail-card-head">
-            <span class="dot" style="background:var(--success);box-shadow:0 0 6px var(--success)"></span>
+            <span class="dot" style="background:var(--success)"></span>
             ${T('models.title')}
             <span style="color:var(--text-dim);font-weight:400;font-size:11px;margin-left:6px">${availCount} / ${tierModels.length} ${T('models.available')}${blocked.size > 0 ? ` · ${blocked.size} ${T('models.blocked')}` : ''}</span>
             <div style="margin-left:auto;display:flex;gap:4px">
@@ -5935,7 +5930,7 @@ docker compose up -d --force-recreate</pre>
         </div>
 
         <div class="detail-card" style="grid-column:1/-1">
-          <div class="detail-card-head"><span class="dot" style="background:var(--info);box-shadow:0 0 6px var(--info)"></span>${T('runtime.title')}</div>
+          <div class="detail-card-head"><span class="dot" style="background:var(--info)"></span>${T('runtime.title')}</div>
           <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:20px">
             <div class="detail-kv">
               <span class="k">${T('runtime.status')}</span><span class="v"><span class="badge ${a.status}">${a.status}</span>${a.rateLimited ? ` <span class="badge warn">${I18n.t('card.rateLimit.badge')}</span>` : ''}</span>
