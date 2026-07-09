@@ -5986,10 +5986,14 @@ docker compose up -d --force-recreate</pre>
           </div>
         </div>
         <div style="display:flex;gap:6px;margin-bottom:10px">
-          <button class="btn btn-ghost btn-xs" onclick="App.blockedModalToggleAll(true)">${I18n.t('action.selectAll')}</button>
-          <button class="btn btn-ghost btn-xs" onclick="App.blockedModalToggleAll(false)">${I18n.t('action.selectNone')}</button>
-          <button class="btn btn-ghost btn-xs" onclick="App.blockedModalInvert()">${I18n.t('action.invert')}</button>
+          <button class="btn btn-outline btn-xs" onclick="App.blockedModalToggleAll(true)">✓ ${I18n.t('action.selectAll')}</button>
+          <button class="btn btn-outline btn-xs" onclick="App.blockedModalToggleAll(false)">✕ ${I18n.t('action.selectNone')}</button>
+          <button class="btn btn-outline btn-xs" onclick="App.blockedModalInvert()">⇄ ${I18n.t('action.invert')}</button>
         </div>
+        <div style="margin-bottom:10px">
+          <input type="search" id="bm-search" class="input" placeholder="${I18n.t('modal.blockedModels.search')}" style="width:100%">
+        </div>
+        <div id="bm-no-match" class="text-sm text-dim" style="display:none;padding:8px 2px">${I18n.t('modal.blockedModels.noMatch')}</div>
         <div style="max-height:50vh;overflow:auto;padding:2px 2px 2px 0">
           ${Object.entries(groups).map(([provider, models]) => `
             <div class="bm-group" data-provider="${provider}" style="margin-bottom:12px;border:1px solid var(--border);border-radius:6px;padding:8px 10px">
@@ -6044,6 +6048,28 @@ docker compose up -d --force-recreate</pre>
     };
     root.querySelectorAll('.bm-group').forEach(g => updateGroup(g.dataset.provider));
     updateTotal();
+    // Live search: pure view filter. Select-all/none/invert + save read the
+    // .checked state (not visibility), so hiding a row never changes its choice.
+    const search = root.querySelector('#bm-search');
+    const noMatch = root.querySelector('#bm-no-match');
+    if (search) {
+      const applyFilter = () => {
+        const q = search.value.trim().toLowerCase();
+        let anyVisible = false;
+        root.querySelectorAll('.bm-group').forEach(group => {
+          let groupVisible = false;
+          group.querySelectorAll('.blocked-model-cb').forEach(cb => {
+            const hit = !q || cb.dataset.model.toLowerCase().includes(q);
+            cb.closest('label').style.display = hit ? '' : 'none';
+            if (hit) groupVisible = true;
+          });
+          group.style.display = groupVisible ? '' : 'none';
+          if (groupVisible) anyVisible = true;
+        });
+        if (noMatch) noMatch.style.display = anyVisible ? 'none' : 'block';
+      };
+      search.addEventListener('input', applyFilter);
+    }
     root.querySelectorAll('.blocked-model-cb').forEach(cb => {
       cb.addEventListener('change', () => { updateGroup(cb.dataset.provider); updateTotal(); });
     });

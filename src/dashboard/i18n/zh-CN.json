@@ -782,7 +782,9 @@
       "enabled": "已启用",
       "saved": "已保存：启用 {{enabled}} / 禁用 {{disabled}}",
       "saving": "保存中...",
-      "total": "总计"
+      "total": "总计",
+      "search": "搜索模型…",
+      "noMatch": "没有匹配的模型"
     },
     "restartLS": {
       "title": "重启 Language Server",

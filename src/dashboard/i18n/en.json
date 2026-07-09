@@ -782,7 +782,9 @@
       "enabled": "Enabled",
       "saved": "Saved: enabled {{enabled}} / disabled {{disabled}}",
       "saving": "Saving...",
-      "total": "Total"
+      "total": "Total",
+      "search": "Search models...",
+      "noMatch": "No models match your search"
     },
     "restartLS": {
       "title": "Restart Language Server",
