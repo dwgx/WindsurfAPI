@@ -570,6 +570,26 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
     return json(res, 200, { success: true, prompts });
   }
 
+  // ─── Runtime backend / env switches (READ-ONLY status) ──
+  // These are process.env deploy switches: the dashboard can't write them (they
+  // need a restart), so we only surface their current state so an operator can
+  // SEE what the running process picked up. Secrets are reported as a boolean
+  // presence flag only — never the value.
+  if (subpath === '/runtime-env-status' && method === 'GET') {
+    const on = (v) => String(v || '').trim() === '1';
+    const cliMode = String(process.env.DEVIN_CLI_MODE || 'print').trim().toLowerCase() === 'acp' ? 'acp' : 'print';
+    return json(res, 200, {
+      devinConnect: on(process.env.DEVIN_CONNECT),
+      devinOnly: on(process.env.DEVIN_ONLY),
+      devinCliMode: cliMode,
+      allowClientTools: on(process.env.DEVIN_CLI_ALLOW_CLIENT_TOOLS),
+      loginHostFallback: on(process.env.DEVIN_CONNECT_LOGIN_HOST_FALLBACK),
+      autoRelogin: on(process.env.DEVIN_CONNECT_AUTO_RELOGIN),
+      remoteCredStore: on(process.env.DEVIN_CONNECT_ALLOW_REMOTE_CRED_STORE),
+      credStoreEnabled: !!(process.env.DEVIN_CONNECT_CRED_KEY || '').trim(),
+    });
+  }
+
   // ─── Proxy test — try an HTTP CONNECT through the given proxy ──
   if (subpath === '/test-proxy' && method === 'POST') {
     const { host, port, username, password, type = 'http' } = body || {};

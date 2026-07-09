@@ -193,7 +193,8 @@
   "section": {
     "settings": {
       "ux": { "title": "Interface Preferences", "desc": "Shared across browsers / devices (stored on the server)" },
-      "security": { "title": "Security & Lockout", "desc": "Login-failure lockout thresholds and durations — adjustable or off" }
+      "security": { "title": "Security & Lockout", "desc": "Login-failure lockout thresholds and durations — adjustable or off" },
+      "runtimeEnv": { "title": "Runtime Backend", "desc": "These switches are set by deploy-time environment variables and need a process restart to change; shown here as read-only status" }
     },
     "nativeBridge": {
       "title": "Native Bridge",
@@ -1297,6 +1298,19 @@
     "ipLockThreshold.hint": "Ban an IP after this many failed dashboard logins (0 = off)",
     "ipLockMinutes": "Dashboard IP ban duration (min)",
     "ipLockMinutes.hint": "How long a banned IP stays banned",
-    "lockZeroHint": "Set a threshold to 0 to disable that lockout"
+    "lockZeroHint": "Set a threshold to 0 to disable that lockout",
+    "env": {
+      "on": "On",
+      "off": "Off",
+      "devinConnect": "DEVIN_CONNECT (direct cloud HTTP backend)",
+      "devinOnly": "DEVIN_ONLY (Devin CLI as the only backend)",
+      "devinCliMode": "Devin CLI mode (acp / print)",
+      "allowClientTools": "Client tools / vision (DEVIN_CLI_ALLOW_CLIENT_TOOLS)",
+      "loginHostFallback": "Devin direct login fallback (LOGIN_HOST_FALLBACK)",
+      "autoRelogin": "Auto re-login on dead session (AUTO_RELOGIN)",
+      "remoteCredStore": "Allow remote password storage (ALLOW_REMOTE_CRED_STORE)",
+      "credStoreEnabled": "Credential store key configured (CRED_KEY)",
+      "hint": "These are deploy-time environment switches. To change one, edit the environment and restart the process — they cannot be toggled from the dashboard."
+    }
   }
 }

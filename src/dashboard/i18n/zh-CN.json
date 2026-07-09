@@ -193,7 +193,8 @@
   "section": {
     "settings": {
       "ux": { "title": "界面偏好", "desc": "跨浏览器/设备共享（存于服务端）" },
-      "security": { "title": "安全与锁定", "desc": "登录失败锁定阈值与时长，可调整或关闭" }
+      "security": { "title": "安全与锁定", "desc": "登录失败锁定阈值与时长，可调整或关闭" },
+      "runtimeEnv": { "title": "运行时后端", "desc": "这些开关由部署时的环境变量控制，改动需重启进程生效；此处仅显示当前运行状态" }
     },
     "nativeBridge": {
       "title": "Native Bridge",
@@ -1297,6 +1298,19 @@
     "ipLockThreshold.hint": "后台登录失败达此次数即封该 IP（0 = 关闭）",
     "ipLockMinutes": "后台 IP 封禁时长（分钟）",
     "ipLockMinutes.hint": "被封 IP 保持封禁的时长",
-    "lockZeroHint": "阈值设为 0 = 关闭该锁定"
+    "lockZeroHint": "阈值设为 0 = 关闭该锁定",
+    "env": {
+      "on": "已开启",
+      "off": "未开启",
+      "devinConnect": "DEVIN_CONNECT（云端直连 HTTP 后端）",
+      "devinOnly": "DEVIN_ONLY（仅用 Devin CLI 后端）",
+      "devinCliMode": "Devin CLI 模式（acp / print）",
+      "allowClientTools": "客户端工具 / 视觉（DEVIN_CLI_ALLOW_CLIENT_TOOLS）",
+      "loginHostFallback": "Devin 直登兜底（LOGIN_HOST_FALLBACK）",
+      "autoRelogin": "会话失效自动重登（AUTO_RELOGIN）",
+      "remoteCredStore": "允许公网存储密码（ALLOW_REMOTE_CRED_STORE）",
+      "credStoreEnabled": "凭证库主密钥已配置（CRED_KEY）",
+      "hint": "这些是部署时的环境变量开关。要修改请改环境变量并重启进程，无法从面板切换。"
+    }
   }
 }

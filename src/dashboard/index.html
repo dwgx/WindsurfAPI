@@ -2472,6 +2472,18 @@ tbody tr:hover td { background: var(--surface-2); }
         <div class="text-sm text-muted" data-i18n="settings.loading">加载中…</div>
       </div>
     </div>
+
+    <div class="section">
+      <div class="section-header">
+        <div>
+          <div class="section-title" data-i18n="section.settings.runtimeEnv.title">运行时后端</div>
+          <div class="section-desc" data-i18n="section.settings.runtimeEnv.desc">这些开关由部署时的环境变量控制，改动需重启进程生效；此处仅显示当前运行状态</div>
+        </div>
+      </div>
+      <div class="section-body" id="set-runtime-env-body">
+        <div class="text-sm text-muted" data-i18n="settings.loading">加载中…</div>
+      </div>
+    </div>
   </section>
 
   <section class="panel" id="p-models">
@@ -7824,6 +7836,36 @@ docker compose up -d --force-recreate</pre>
     } catch { /* leave defaults */ }
     // Security/lockout tunables (numeric, from runtime-config tunables).
     this.renderSecuritySettings();
+    // Read-only view of the deploy-time backend/env switches.
+    this.renderRuntimeEnvStatus();
+  },
+
+  async renderRuntimeEnvStatus() {
+    const body = document.getElementById('set-runtime-env-body');
+    if (!body) return;
+    let s = {};
+    try {
+      s = await this.api('GET', '/runtime-env-status') || {};
+    } catch { /* fall through — show all as off */ }
+    // A boolean switch => green "on" / grey "off" badge. Each row also carries a
+    // "needs restart" note so nobody expects to flip it from here.
+    const badge = (on) => on
+      ? `<span class="badge success no-dot">${I18n.t('settings.env.on')}</span>`
+      : `<span class="badge no-dot" style="opacity:.6">${I18n.t('settings.env.off')}</span>`;
+    const row = (labelKey, on) => `<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px solid var(--border)">`
+      + `<span class="text-sm">${I18n.t(labelKey)}</span>${badge(on)}</div>`;
+    body.innerHTML =
+        row('settings.env.devinConnect', s.devinConnect)
+      + row('settings.env.devinOnly', s.devinOnly)
+      + `<div style="display:flex;align-items:center;justify-content:space-between;gap:12px;padding:7px 0;border-bottom:1px solid var(--border)">`
+        + `<span class="text-sm">${I18n.t('settings.env.devinCliMode')}</span>`
+        + `<span class="badge info no-dot">${this.esc(s.devinCliMode || 'print')}</span></div>`
+      + row('settings.env.allowClientTools', s.allowClientTools)
+      + row('settings.env.loginHostFallback', s.loginHostFallback)
+      + row('settings.env.autoRelogin', s.autoRelogin)
+      + row('settings.env.remoteCredStore', s.remoteCredStore)
+      + row('settings.env.credStoreEnabled', s.credStoreEnabled)
+      + `<div class="field-hint" style="margin-top:10px">${this.esc(I18n.t('settings.env.hint'))}</div>`;
   },
 
   async renderSecuritySettings() {
