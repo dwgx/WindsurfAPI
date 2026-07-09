@@ -522,6 +522,7 @@
       "tier": "Tier",
       "rpm": "RPM",
       "credits": "Credits",
+      "quota": "Quota",
       "models": "Available Models",
       "error": "Error",
       "lastUsed": "Last Used",
@@ -560,6 +561,10 @@
     "activeAccounts": {
       "title": "Active Accounts",
       "subtitle": "{{total}} total · {{error}} abnormal"
+    },
+    "poolBalance": {
+      "title": "Pool Balance",
+      "subtitle": "On-demand across {{count}} account(s) · shared teams pool may over-count"
     },
     "totalRequests": {
       "title": "Total Requests",
@@ -743,7 +748,17 @@
       "loginHostFallback": "If the primary login host fails, fall back to Devin's direct login endpoint. Improves login success on flaky networks.",
       "autoRelogin": "Automatically re-authenticate an account when its session dies mid-request, instead of failing the request.",
       "remoteCredStore": "Whether the server may store account passwords for remote self-healing login. A security boundary — read-only here.",
-      "credStoreEnabled": "Whether a credential encryption key (CRED_KEY) is configured, enabling encrypted at-rest storage of stored credentials."
+      "credStoreEnabled": "Whether a credential encryption key (CRED_KEY) is configured, enabling encrypted at-rest storage of stored credentials.",
+      "cascadeReuse": "Cascade reuse keeps one cascade_id across a multi-turn chat and sends only your latest message, so the server holds context server-side. Hits cut TTFB and upload size; a miss or an account/LS change silently falls back to a fresh session.",
+      "drought": "Drought mode: auto-detected when every active account's weekly quota drops below the threshold. While active, premium models (opus/sonnet) can be blocked with a 503 to avoid burning the last quota on upstream rate-limits; free-tier models stay available.",
+      "stickySession": "Sticky session pins a user to one upstream account so repeat requests reuse the same quota and cache. Requires STICKY_SESSION_ENABLED=1. Bind-by-user ignores the model dimension; no-fallback refuses to switch accounts on error.",
+      "tier": "Account tier drives which models are allowed, read from Windsurf's per-account allowed-models config. Free accounts often still include GLM/SWE/Kimi. Set manually to pro when a trial mis-detects to force-unlock every model.",
+      "circuitBreaker": "The circuit breaker disables an account after repeated errors within a window, then re-enables it with exponential backoff. Thresholds are hot-editable; blank fields fall back to the env var / default.",
+      "tokenCache": "Token cache read ratio: share of prompt tokens served from the upstream context cache instead of re-uploaded. Higher is cheaper and faster; reuse depends on cascade reuse and stable sessions.",
+      "promptCredits": "Prompt credits are your plan's included monthly quota for prompt-model requests, shown as remaining / limit. Once exhausted, requests either stop or spill to on-demand (overage) depending on the plan.",
+      "flowCredits": "Flow credits (a.k.a. flex credits) are the included monthly quota for agentic/flow actions, separate from prompt credits, shown as remaining / limit.",
+      "overage": "On-demand (overage) balance: usage-based spend billed beyond your included quota, in USD. Accrues only after included credits run out.",
+      "weeklyQuota": "Weekly quota %: portion of the account's rolling weekly allowance consumed. Low values across all accounts trigger drought mode."
     }
   },
   "credentials": {
@@ -924,6 +939,10 @@
   },
   "account": {
     "tierManualBadge": "manual",
+    "balance": {
+      "label": "prepaid",
+      "tip": "On-demand prepaid balance (USD). Separate from the daily/weekly included quota shown above."
+    },
     "addSuccess": "Account added",
     "deleteSuccess": "Account deleted",
     "enableSuccess": "Account enabled",

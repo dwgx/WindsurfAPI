@@ -531,6 +531,10 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
       cache: cacheStats(),
       nativeBridge: getNativeBridgeStats(),
       nativeBridgeConfig: getNativeBridgeConfigStatus(),
+      poolBalance: (() => {
+        const s = getAccountListStats();
+        return { total: s.balanceTotal, accounts: s.balanceAccounts };
+      })(),
     });
   }
 

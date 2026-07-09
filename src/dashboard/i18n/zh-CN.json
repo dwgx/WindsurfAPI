@@ -522,6 +522,7 @@
       "tier": "层级",
       "rpm": "RPM",
       "credits": "余额",
+      "quota": "配额",
       "models": "可用模型",
       "error": "错误",
       "lastUsed": "最后使用",
@@ -560,6 +561,10 @@
     "activeAccounts": {
       "title": "活跃账号",
       "subtitle": "{{total}} 个总账号 · {{error}} 异常"
+    },
+    "poolBalance": {
+      "title": "账号池余额",
+      "subtitle": "{{count}} 个账号的按量预付余额 · Teams 共享池可能重复计数"
     },
     "totalRequests": {
       "title": "总请求数",
@@ -743,7 +748,17 @@
       "loginHostFallback": "主登录 host 失败时，回退到 Devin 直连登录端点。在网络不稳定时提升登录成功率。",
       "autoRelogin": "会话在请求中途失效时自动重新登录，而不是直接让请求失败。",
       "remoteCredStore": "服务端是否可存储账号密码以支持远程自愈登录。属于安全边界——此处只读。",
-      "credStoreEnabled": "是否已配置凭据加密密钥（CRED_KEY），用于对存储的凭据做静态加密。"
+      "credStoreEnabled": "是否已配置凭据加密密钥（CRED_KEY），用于对存储的凭据做静态加密。",
+      "cascadeReuse": "Cascade 复用：多轮对话共用同一个 cascade_id，只发最新一条消息，让服务端维持上下文缓存。命中可降低 TTFB 与上传体积；未命中或账号/LS 变更会自动回退到新会话。",
+      "drought": "配额枯竭（drought）模式：当所有活跃账号本周配额都低于阈值时自动进入。此时对 premium 模型（opus/sonnet）可直接返 503，避免把最后一点配额烧在上游限流上；免费层模型仍可用。",
+      "stickySession": "粘性会话把同一 user 固定绑定到同一个上游账号，复用其配额与缓存。需 STICKY_SESSION_ENABLED=1。按用户绑定会忽略模型维度；禁止回退则出错时不切换账号。",
+      "tier": "账号层级决定可用模型，读自 Windsurf 每账号的可用模型配置。免费号常仍含 GLM/SWE/Kimi。试用误判时可手动设为 pro 强制解锁全部模型。",
+      "circuitBreaker": "熔断器在窗口内连续报错后禁用账号，再按指数退避重新启用。阈值可热调，留空则回退环境变量/默认值。",
+      "tokenCache": "Token 缓存命中率：prompt token 中由上游上下文缓存直接命中、无需重复上传的比例。越高越省越快；复用依赖 cascade 复用与稳定会话。",
+      "promptCredits": "Prompt 额度：套餐每月包含的 prompt 模型请求配额，显示为 剩余 / 上限。用尽后按套餐停止或转为按量计费（overage）。",
+      "flowCredits": "Flow 额度（即 flex 额度）：每月包含的 agentic/flow 动作配额，与 prompt 额度分开，显示为 剩余 / 上限。",
+      "overage": "按量（overage）余额：超出包含额度后的按用量计费，单位美元。仅在包含额度用尽后累计。",
+      "weeklyQuota": "本周配额 %：账号滚动周额度的已用比例。所有账号都偏低时触发 drought 模式。"
     }
   },
   "credentials": {
@@ -924,6 +939,10 @@
   },
   "account": {
     "tierManualBadge": "手动",
+    "balance": {
+      "label": "预付池",
+      "tip": "按量预付余额（美元），与上方每日/每周包含配额是两回事。"
+    },
     "addSuccess": "账号已添加",
     "deleteSuccess": "账号已删除",
     "enableSuccess": "账号已启用",

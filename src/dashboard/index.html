@@ -48,6 +48,9 @@
   --warn-soft: rgba(217,162,87,.16);
   --error: #c65d4e;
   --error-soft: rgba(198,93,78,.14);
+  --tip-bg: rgba(28,27,25,.98);
+  --tip-fg: #f4f3ee;
+  --tip-border: rgba(240,239,233,.14);
   --info: #6a9bcc;
   --info-soft: rgba(106,155,204,.16);
 
@@ -98,6 +101,9 @@
   --error-soft: rgba(198,93,78,.22);
   --info-soft: rgba(106,155,204,.22);
   --grid: rgba(240,239,233,.10);
+  --tip-bg: rgba(40,40,46,.98);
+  --tip-fg: var(--text);
+  --tip-border: rgba(240,239,233,.16);
   --shadow-sm: 0 1px 2px rgba(0,0,0,.3), 0 1px 3px rgba(0,0,0,.4);
   --shadow: 0 2px 4px rgba(0,0,0,.3), 0 4px 12px rgba(0,0,0,.4);
   --shadow-lg: 0 8px 24px rgba(0,0,0,.5), 0 2px 8px rgba(0,0,0,.4);
@@ -1470,30 +1476,54 @@ tbody tr:hover td { background: var(--surface-2); }
 .chart-tooltip .tt-value { font-weight: 600; font-variant-numeric: tabular-nums; }
 
 /* Inline help "?" with an i18n hover/focus bubble — reusable info tooltip.
-   Text is injected via App._helpTip(key). Pure-CSS show on hover/focus,
-   keyboard-focusable. Bubble anchors left (opens rightward) to survive the
-   .section overflow:hidden when the icon sits on the left of a row. */
+   Text is injected via App._helpTip(key) or a static [data-i18n-tip] span.
+   Themed bg/fg so text is legible in BOTH themes; a small arrow points at the
+   icon. Placement variants dodge .section overflow:hidden clipping. */
 .help-tip {
   position: relative; display: inline-flex; align-items: center; justify-content: center;
-  width: 15px; height: 15px; margin-left: 6px; border-radius: 50%;
+  width: 14px; height: 14px; margin-left: 5px; border-radius: 50%;
   border: 1px solid var(--border-strong); color: var(--text-dim);
-  font-size: 10px; font-weight: 700; line-height: 1; cursor: help;
+  font-size: 9.5px; font-weight: 700; line-height: 1; cursor: help;
   vertical-align: middle; outline: none; user-select: none;
+  transition: color .15s ease, border-color .15s ease, background .15s ease, box-shadow .15s ease, transform .15s ease;
 }
-.help-tip:hover, .help-tip:focus-visible { color: var(--text); border-color: var(--text-dim); }
+.help-tip:hover, .help-tip:focus-visible {
+  color: var(--accent); border-color: var(--accent);
+  background: var(--accent-soft); transform: translateY(-.5px);
+}
+.help-tip:focus-visible { box-shadow: 0 0 0 3px var(--accent-soft); }
 .help-tip__pop {
-  position: absolute; top: calc(100% + 8px); left: 0; width: max-content; max-width: 240px;
-  padding: 8px 10px; background: rgba(17,17,24,.97); color: var(--text);
-  border: 1px solid var(--border-strong); border-radius: 8px;
-  box-shadow: 0 8px 28px rgba(0,0,0,.5); backdrop-filter: blur(10px);
-  font-size: 11.5px; font-weight: 400; line-height: 1.5; white-space: normal; text-align: left;
-  opacity: 0; pointer-events: none; transform: translateY(-4px);
-  transition: opacity .14s ease, transform .14s ease; z-index: 20;
+  position: absolute; top: calc(100% + 9px); left: -2px; width: max-content;
+  max-width: min(260px, 78vw);
+  padding: 9px 11px; background: var(--tip-bg); color: var(--tip-fg);
+  border: 1px solid var(--tip-border); border-radius: 9px;
+  box-shadow: 0 10px 30px rgba(0,0,0,.28), 0 2px 6px rgba(0,0,0,.16);
+  backdrop-filter: blur(10px);
+  font-size: 11.5px; font-weight: 400; line-height: 1.55; white-space: normal; text-align: left;
+  opacity: 0; pointer-events: none; transform: translateY(-4px) scale(.97);
+  transform-origin: top left;
+  transition: opacity .16s ease, transform .16s cubic-bezier(.16,1,.3,1);
+  z-index: 30;
 }
+/* Arrow pointing back at the ? icon (border trick: outer=border color, inner=bg). */
+.help-tip__pop::before { content: ""; position: absolute; bottom: 100%; left: 9px; border: 6px solid transparent; border-bottom-color: var(--tip-border); }
+.help-tip__pop::after  { content: ""; position: absolute; bottom: 100%; left: 10px; border: 5px solid transparent; border-bottom-color: var(--tip-bg); }
 .help-tip:hover .help-tip__pop,
 .help-tip:focus-visible .help-tip__pop,
-.help-tip:focus-within .help-tip__pop { opacity: 1; transform: translateY(0); }
-@media (prefers-reduced-motion: reduce) { .help-tip__pop { transition: none; } }
+.help-tip:focus-within .help-tip__pop { opacity: 1; transform: translateY(0) scale(1); pointer-events: auto; }
+/* Placement variants dodge .section overflow:hidden clipping + right edge spill. */
+.help-tip--top .help-tip__pop { top: auto; bottom: calc(100% + 9px); transform-origin: bottom left; transform: translateY(4px) scale(.97); }
+.help-tip--top .help-tip__pop::before { bottom: auto; top: 100%; border-bottom-color: transparent; border-top-color: var(--tip-border); }
+.help-tip--top .help-tip__pop::after  { bottom: auto; top: 100%; border-bottom-color: transparent; border-top-color: var(--tip-bg); }
+.help-tip--top:hover .help-tip__pop,
+.help-tip--top:focus-visible .help-tip__pop,
+.help-tip--top:focus-within .help-tip__pop { transform: translateY(0) scale(1); }
+.help-tip--right .help-tip__pop { left: auto; right: -2px; transform-origin: top right; }
+.help-tip--right .help-tip__pop::before { left: auto; right: 9px; }
+.help-tip--right .help-tip__pop::after  { left: auto; right: 10px; }
+.help-tip--top.help-tip--right .help-tip__pop { transform-origin: bottom right; }
+@media (pointer: coarse) { .help-tip { width: 18px; height: 18px; font-size: 11px; } }
+@media (prefers-reduced-motion: reduce) { .help-tip, .help-tip__pop { transition: none; } }
 
 /* Chart legend */
 .chart-legend {
@@ -2360,7 +2390,7 @@ tbody tr:hover td { background: var(--surface-2); }
          account has weekly% < 5. Hidden by default; loadDrought() flips it. -->
     <div id="drought-banner" class="banner banner-warn" style="display:none;margin:0 0 16px;padding:14px 18px;border-radius:var(--radius);background:var(--warn-soft);border:1px solid rgba(245,158,11,.35);color:var(--warn)">
       <strong data-i18n="drought.title">配额预警：</strong>
-      <span id="drought-message" data-i18n="drought.body">所有账号本周配额都低于阈值，建议补账号或等待重置</span>
+      <span id="drought-message" data-i18n="drought.body">所有账号本周配额都低于阈值，建议补账号或等待重置</span><span data-i18n-tip="drought"></span>
       <span id="drought-detail" class="text-sm text-muted" style="margin-left:8px"></span>
     </div>
 
@@ -2440,7 +2470,7 @@ tbody tr:hover td { background: var(--surface-2); }
       <div class="section-body tight">
         <div class="table-wrap">
           <table id="accounts-table">
-            <thead><tr><th data-i18n="table.header.id">ID</th><th data-i18n="table.header.label">标签</th><th data-i18n="table.header.tier">层级</th><th data-i18n="table.header.rpm">RPM</th><th class="th-help" data-i18n="table.header.credits" data-i18n-title="creditsBar.columnTooltip" title="配额使用情况&#10;&#10;日 — 每日高级请求剩余百分比（重置频繁）&#10;周 — 每周高级请求剩余百分比（Trial 账号重点看这条）&#10;&#10;数值越高 = 剩余越多 = 越安全&#10;悬停单条进度条可查看重置时间">余额</th><th data-i18n="table.header.models">可用模型</th><th data-i18n="table.header.status">状态</th><th data-i18n="table.header.error">错误</th><th data-i18n="table.header.lastUsed">最后使用</th><th data-i18n="table.header.key">Key</th><th data-i18n="table.header.action">操作</th></tr></thead>
+            <thead><tr><th data-i18n="table.header.id">ID</th><th data-i18n="table.header.label">标签</th><th data-i18n="table.header.tier">层级</th><th data-i18n="table.header.rpm">RPM</th><th class="th-help" data-i18n="table.header.quota" data-i18n-title="creditsBar.columnTooltip" title="配额使用情况&#10;&#10;日 — 每日高级请求剩余百分比（重置频繁）&#10;周 — 每周高级请求剩余百分比（Trial 账号重点看这条）&#10;&#10;数值越高 = 剩余越多 = 越安全&#10;悬停单条进度条可查看重置时间">配额</th><th data-i18n="table.header.models">可用模型</th><th data-i18n="table.header.status">状态</th><th data-i18n="table.header.error">错误</th><th data-i18n="table.header.lastUsed">最后使用</th><th data-i18n="table.header.key">Key</th><th data-i18n="table.header.action">操作</th></tr></thead>
             <tbody></tbody>
           </table>
         </div>
@@ -2563,7 +2593,7 @@ tbody tr:hover td { background: var(--surface-2); }
 
     <div class="section" style="margin-top:24px">
       <div class="section-header"><div>
-        <div class="section-title" data-i18n="section.settings.breaker.title">熔断与限流</div>
+        <div class="section-title" data-i18n="section.settings.breaker.title">熔断与限流</div><span data-i18n-tip="circuitBreaker" data-tip-placement="right"></span>
         <div class="section-desc" data-i18n="section.settings.breaker.desc">账号错误熔断与自愈退避阈值，可热调，空则回退环境变量/默认</div>
       </div></div>
       <div class="section-body" id="set-breaker-body">
@@ -3219,6 +3249,19 @@ const I18n = {
       } else {
         el.title = el.dataset.i18nTitleOrig;
       }
+    });
+
+    // Help-tip hydration for static markup: <span data-i18n-tip="key"
+    // data-tip-placement="top"></span>. Rebuilt from the key each apply (so a
+    // language switch re-localizes); className assigned (not appended) = idempotent.
+    root.querySelectorAll('[data-i18n-tip]').forEach(el => {
+      const txt = this.t('tooltip.help.' + el.dataset.i18nTip);
+      const p = el.dataset.tipPlacement;
+      el.className = 'help-tip' + (p ? ' help-tip--' + p : '');
+      el.setAttribute('tabindex', '0'); el.setAttribute('role', 'note');
+      el.setAttribute('aria-label', txt);
+      el.innerHTML = '?<span class="help-tip__pop" role="tooltip"></span>';
+      el.querySelector('.help-tip__pop').textContent = txt; // textContent avoids escaping
     });
 
     // Update HTML lang attribute
@@ -4581,6 +4624,14 @@ docker compose up -d --force-recreate</pre>
         <div class="card-value">${d.accounts?.active || 0}</div>
         <div class="card-sub">${I18n.t('card.activeAccounts.subtitle', { total: d.accounts?.total || 0, error: d.accounts?.error || 0 })}</div>
       </div>
+      ${d.poolBalance && d.poolBalance.accounts > 0 ? `
+      <div class="card success">
+        <div class="card-header"><div class="card-title">${I18n.t('card.poolBalance.title')}${this._helpTip('overage')}</div>
+          <svg class="card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+        </div>
+        <div class="card-value">$${Number(d.poolBalance.total).toFixed(2)}</div>
+        <div class="card-sub">${I18n.t('card.poolBalance.subtitle', { count: d.poolBalance.accounts })}</div>
+      </div>` : ''}
       <div class="card info">
         <div class="card-header"><div class="card-title">${I18n.t('card.totalRequests.title')}</div>
           <svg class="card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
@@ -5689,6 +5740,7 @@ docker compose up -d --force-recreate</pre>
             <div class="text-xs" style="margin-bottom:2px"><b>${this.esc(planName.slice(0, 12))}</b> <span style="color:var(--text-dim)">${fetchedAgo}</span></div>
             ${bar(shortD, cr.dailyPercent, dailyTip)}
             ${bar(shortW, cr.weeklyPercent, weeklyTip)}
+            ${a.balance != null ? `<div class="text-xs" style="margin-top:3px;color:var(--success);font-weight:700" title="${this.esc(I18n.t('account.balance.tip'))}">$${Number(a.balance).toFixed(2)} <span style="color:var(--text-dim);font-weight:400;font-size:10px">${I18n.t('account.balance.label')}</span></div>` : ''}
           </div>`;
       }
       const isExpanded = this._expandedAccounts?.has(a.id);
@@ -8509,9 +8561,12 @@ docker compose up -d --force-recreate</pre>
 
   // Reusable inline help "?" with an i18n hover/focus bubble. key resolves
   // tooltip.help.<key>. Escaped text is used for both the bubble and aria-label.
-  _helpTip(key) {
+  _helpTip(key, opts = {}) {
     const txt = I18n.t('tooltip.help.' + key);
-    return `<span class="help-tip" tabindex="0" role="note" aria-label="${this.esc(txt)}">?`
+    const place = opts.placement === 'top' ? ' help-tip--top'
+      : opts.placement === 'right' ? ' help-tip--right'
+      : opts.placement === 'top-right' ? ' help-tip--top help-tip--right' : '';
+    return `<span class="help-tip${place}" tabindex="0" role="note" aria-label="${this.esc(txt)}">?`
       + `<span class="help-tip__pop" role="tooltip">${this.esc(txt)}</span></span>`;
   },
   systemPromptDomId(key) {

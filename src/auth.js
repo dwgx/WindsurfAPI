@@ -2169,12 +2169,19 @@ export function getAccountListStats() {
   let rateLimited = 0;
   let disabled = 0;
   const byTier = { pro: 0, free: 0, unknown: 0, expired: 0 };
+  let balanceTotal = 0;
+  let balanceAccounts = 0;
   for (const account of accounts) {
     const isRateLimited = !!(account.rateLimitedUntil && account.rateLimitedUntil > now);
     if (isRateLimited) rateLimited++;
     if (account.status !== 'active') disabled++;
     if (account.status === 'error' || (account.errorCount || 0) > 0 || isRateLimited) flagged++;
     byTier[tierBucket(account.tier)]++;
+    // On-demand prepaid balance ($) — only Teams/paid accounts carry it. Sum for
+    // a pool total. NOTE: Teams share one balance, so multiple accounts in the
+    // same team over-count; surfaced with a caveat until we have a team id to dedupe.
+    const bal = account?.credits?.balance;
+    if (typeof bal === 'number' && Number.isFinite(bal)) { balanceTotal += bal; balanceAccounts++; }
   }
   return {
     ...getAccountCount(),
@@ -2182,6 +2189,8 @@ export function getAccountListStats() {
     rateLimited,
     disabled,
     byTier,
+    balanceTotal,
+    balanceAccounts,
   };
 }
 
