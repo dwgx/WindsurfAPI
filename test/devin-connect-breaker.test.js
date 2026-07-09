@@ -142,6 +142,39 @@ describe('RB2/B2 — quota-exhaustion closed loop', () => {
       'dry account is excluded from selection during the quota cooldown');
   });
 
+  it('a dry account with a positive on-demand ($) balance is NOT cooled', () => {
+    process.env.WINDSURFAPI_QUOTA_COOLDOWN_MS = '1800000';
+    const acct = mk('b2-ondemand');
+    acct.credits = { balance: 74.39 };  // included quota dry, but prepaid $ left
+    const now = 1_500_000;
+    applyQuotaSnapshot(acct, 0, now);   // weekly 0% = dry
+    assert.ok(!acct.quotaResetAt, 'not cooled — on-demand balance can serve');
+    assert.equal(__isRateLimitedForModel(acct, null, now + 1000), false,
+      'stays selectable so the paid prepaid pool actually gets used');
+  });
+
+  it('a dry account with zero / no on-demand balance is still cooled', () => {
+    process.env.WINDSURFAPI_QUOTA_COOLDOWN_MS = '1800000';
+    const zero = mk('b2-zero'); zero.credits = { balance: 0 };
+    const none = mk('b2-none');  // no credits.balance at all
+    const now = 1_600_000;
+    applyQuotaSnapshot(zero, 0, now);
+    applyQuotaSnapshot(none, 0, now);
+    assert.equal(zero.quotaResetAt, now + 1800000, 'zero balance → cooled');
+    assert.equal(none.quotaResetAt, now + 1800000, 'no balance info → cooled');
+  });
+
+  it('an on-demand balance clears an existing quota cooldown', () => {
+    process.env.WINDSURFAPI_QUOTA_COOLDOWN_MS = '1800000';
+    const acct = mk('b2-recover-ondemand');
+    const now = 1_700_000;
+    applyQuotaSnapshot(acct, 0, now);                 // cooled (no balance yet)
+    assert.ok(acct.quotaResetAt > now);
+    acct.credits = { balance: 12.5 };                 // balance shows up next snapshot
+    applyQuotaSnapshot(acct, 0, now + 1000);          // still dry, but now has $
+    assert.equal(acct.quotaResetAt, 0, 'cooldown cleared once on-demand balance is known');
+  });
+
   it('the quota cooldown self-heals: it expires on its own (NOT permanent)', () => {
     process.env.WINDSURFAPI_QUOTA_COOLDOWN_MS = '1800000';
     const acct = mk('b2-expire');

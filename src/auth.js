@@ -1709,7 +1709,15 @@ export function applyQuotaSnapshot(account, weeklyPercent, now = Date.now()) {
   if (!account || !quotaCooldownEnabled()) return;
   const w = typeof weeklyPercent === 'number' ? weeklyPercent : null;
   if (w === null) return; // unknown balance → never cool (don't punish unprobed)
-  if (w <= quotaDryThreshold()) {
+  // On-demand override: an account whose included weekly quota is dry but that
+  // still holds a positive on-demand ($) balance can keep serving on the prepaid
+  // pool — usage just bills to that balance. Cooling it would waste the balance
+  // the operator paid for (and, on a small pool, take the model fully offline).
+  // Only the included-quota dry signal drives the cooldown; a real on-demand
+  // exhaustion surfaces separately as a live QUOTA_EXHAUSTED (markQuotaExhausted).
+  const onDemand = Number(account.credits?.balance);
+  const hasOnDemand = Number.isFinite(onDemand) && onDemand > 0;
+  if (w <= quotaDryThreshold() && !hasOnDemand) {
     const alreadyCooled = account.quotaResetAt && account.quotaResetAt > now;
     account.quotaResetAt = now + quotaCooldownMs();
     if (!alreadyCooled) {
@@ -1717,7 +1725,8 @@ export function applyQuotaSnapshot(account, weeklyPercent, now = Date.now()) {
       log.warn(`Account ${safeAccountRef(account)} quota dry (weekly ${w}%) — quota cooldown ${Math.round(quotaCooldownMs() / 60000)}m (self-healing)`);
     }
   } else if (account.quotaResetAt) {
-    // Balance recovered → clear ONLY the quota dimension, never the transient one.
+    // Recovered included quota OR a positive on-demand balance → clear ONLY the
+    // quota dimension, never the transient one.
     account.quotaResetAt = 0;
     log.info(`Account ${safeAccountRef(account)} quota recovered (weekly ${w}%) — quota cooldown cleared`);
   }
