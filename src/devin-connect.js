@@ -28,6 +28,8 @@
 
 import https from 'https';
 import { randomUUID, randomBytes } from 'crypto';
+import * as _wireFs from 'fs';
+import * as _wirePath from 'path';
 import { log } from './config.js';
 import {
   writeMessageField, writeStringField, writeVarintField, writeFixed64Field,
@@ -37,6 +39,30 @@ import { wrapRequest, wrapEnvelope, StreamingFrameParser, connectHeaders } from 
 
 const HOST = 'server.codeium.com';
 const PATH = '/exa.api_server_pb.ApiServerService/GetChatMessage';
+
+// ─── Wire capture (RE / vision analysis, gated) ─────────────────────────────
+// When DEVIN_CONNECT_WIRE_DUMP=1, drop the raw upstream GetChatMessage
+// request/response bytes to disk so the exact protobuf (thinking #12, vision,
+// tool_call tags) can be analyzed offline. Default OFF = zero overhead; the dir
+// defaults to <cwd>/.wire-dump. Filenames carry a timestamp + model + kind. This
+// is a temporary self-use debug aid, never a served endpoint.
+let _wireSeq = 0;
+function dumpWire(kind, bytes, meta = {}) {
+  if (String(process.env.DEVIN_CONNECT_WIRE_DUMP || '') !== '1') return;
+  if (!bytes || !bytes.length) return;
+  try {
+    const dir = process.env.DEVIN_CONNECT_WIRE_DUMP_DIR || _wirePath.resolve(process.cwd(), '.wire-dump');
+    _wireFs.mkdirSync(dir, { recursive: true });
+    const seq = String(++_wireSeq).padStart(4, '0');
+    const model = String(meta.model || 'model').replace(/[^\w.-]/g, '_').slice(0, 40);
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const base = `${stamp}-${seq}-${model}-${kind}`;
+    _wireFs.writeFileSync(_wirePath.join(dir, `${base}.bin`), bytes);
+    if (meta.note) _wireFs.writeFileSync(_wirePath.join(dir, `${base}.txt`), meta.note);
+  } catch (e) {
+    log.warn(`wire-dump failed: ${e.message}`);
+  }
+}
 
 // Transport seam: defaults to https.request. Swappable in tests so the timeout
 // / deadline logic can be exercised against a fake socket without a live call.
@@ -1522,6 +1548,10 @@ export async function* streamChat({
   // it still streams gzipped frames back, which the parser handles.
   const framed = wrapEnvelope(proto, { compress: false });
 
+  // Wire capture (gated): dump the exact request protobuf (pre-envelope `proto`,
+  // the clean bytes) for offline RE. No-op unless DEVIN_CONNECT_WIRE_DUMP=1.
+  dumpWire('req', proto, { model, note: `model=${model} sessionId=${sessionId || ''} tools=${Array.isArray(tools) ? tools.length : 0} nativeToolCall=${nativeToolCall}` });
+
   // AUTH (critical): the header token is the session token doubled, dash-joined.
   const authHeader = `Basic ${sessionToken}-${sessionToken}`;
 
@@ -1591,7 +1621,9 @@ export async function* streamChat({
       return;
     }
     const parser = new StreamingFrameParser();
+    const _wireResChunks = String(process.env.DEVIN_CONNECT_WIRE_DUMP || '') === '1' ? [] : null;
     res.on('data', (chunk) => {
+      if (_wireResChunks) _wireResChunks.push(chunk);
       parser.push(chunk);
       let frames;
       try { frames = parser.drain(); }
@@ -1616,6 +1648,7 @@ export async function* streamChat({
               }
             } catch { /* non-JSON trailer — leave as success */ }
           }
+          if (_wireResChunks) dumpWire('res', Buffer.concat(_wireResChunks), { model, note: `raw connect frames (gzip-as-sent), trailer=${text.slice(0, 200)}` });
           done = true;
           pump();
           return;
