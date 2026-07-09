@@ -20,6 +20,7 @@
     "windsurf-login": "Account Login",
     "accounts": "Account Pool",
     "bans": "Health Check",
+    "settings": "Settings",
     "models": "Model Control",
     "proxy": "Proxy",
     "logs": "Logs",
@@ -32,6 +33,7 @@
     "windsurf-login": "Account Login",
     "accounts": "Account Pool",
     "bans": "Health Check",
+    "settings": "Settings",
     "models": "Model Control",
     "proxy": "Proxy Config",
     "logs": "Runtime Logs",
@@ -50,6 +52,7 @@
     "logs": "Receive server logs in real-time via SSE streaming",
     "stats": "Request volume, success rate, latency percentiles and account/model dimension stats",
     "bans": "Track error accounts and abnormal status",
+    "settings": "Shared preferences and security thresholds — customizable",
     "experimental": "Unstable optimizations; disable anytime if issues occur",
     "credits": "Thanks to contributors who submitted PRs / audited code / reported issues"
   },
@@ -188,6 +191,10 @@
     "noResetTime": "reset time unknown"
   },
   "section": {
+    "settings": {
+      "ux": { "title": "Interface Preferences", "desc": "Shared across browsers / devices (stored on the server)" },
+      "security": { "title": "Security & Lockout", "desc": "Login-failure lockout thresholds and durations — adjustable or off" }
+    },
     "nativeBridge": {
       "title": "Native Bridge",
       "desc": "Routing decisions and gray-gate visibility"
@@ -486,6 +493,8 @@
     },
     "autoScroll": "Auto-scroll",
     "autoAdd": "Auto-add to pool after login",
+    "storeCredential": "Encrypt & save password for auto-renewal when the session expires",
+    "storeCredentialHint": "Requires DEVIN_CONNECT_CRED_KEY. On a public bind also requires DEVIN_CONNECT_ALLOW_REMOTE_CRED_STORE=1. The password is AES-256-GCM encrypted, never logged.",
     "firstName": {
       "label": "First Name",
       "placeholder": "John"
@@ -655,6 +664,7 @@
     "wrong": "Wrong password",
     "empty": "Password required",
     "locked": "Backend has no password configured — set DASHBOARD_PASSWORD or API_KEY env and restart",
+    "banned": "Too many failed attempts — locked out. Retry in {{secs}}s.",
     "networkError": "Cannot reach server"
   },
   "range": {
@@ -799,6 +809,7 @@
     "inlineTokenDesc": "Click the left button to open windsurf.com in a new tab → sign in with Google/GitHub → page shows Auth Token → copy and paste into the input on the right → click Add",
     "openWindsurfToken": "Open windsurf.com for Token",
     "tokenPlaceholder": "Paste Auth Token...",
+    "urlOrTokenPlaceholder": "Paste callback URL or Auth Token...",
     "addWithToken": "Add via Token",
     "step2Title": "② Paste the token Windsurf gives you",
     "step2Desc": "After signing in on the new tab, the page shows a token string — copy it here and click Add.",
@@ -814,8 +825,17 @@
       "loginFailed": "{{label}} login failed: {{error}}",
       "opened": "Opened Windsurf {{label}} sign-in in a new tab — finish there, then copy the token below",
       "popupBlocked": "Popup blocked by the browser — use the link below to open the sign-in page manually",
+      "copied": "Login URL copied — open it in a browser signed in to your {{label}} account, then paste the callback URL below",
       "adding": "Adding account...",
       "originBlocked": "{{label}} OAuth is blocked for this dashboard origin by Firebase. Use Auth Token from windsurf.com/show-auth-token and add it in Account Management."
+    },
+    "chooser": {
+      "title": "Sign in with {{label}}",
+      "desc": "Open the Windsurf login page in a new tab, or copy the login URL to open it in a browser already signed in to your account.",
+      "open": "Open login page",
+      "copy": "Copy login URL",
+      "copied": "Login URL copied",
+      "dontAsk": "Don't ask again (change in Settings)"
     }
   },
   "update": {
@@ -978,6 +998,13 @@
     "applyingSkin": "Applying skin…",
     "copied": "Copied",
     "saved": "Saved",
+    "settingSaved": "Setting saved",
+    "turnstileFailed": "Turnstile verification failed",
+    "turnstileRequired": "Please complete Turnstile verification",
+    "turnstileExpired": "Turnstile token expired. Please refresh the page.",
+    "invalidRange": "Invalid range",
+    "loadCredentialsFailed": "Failed to load credentials: {{error}}",
+    "saveFailed": "Save failed: {{error}}",
     "cleared": "Cleared",
     "refresh": "Refresh",
     "error": "Error",
@@ -1244,6 +1271,17 @@
     "group": {
       "normal": "General",
       "dangerous": "Dangerous · Use with care"
-    }
+    },
+    "loading": "Loading…",
+    "oauthSkipChooser": "Skip the \"open / copy\" chooser popup on Google/GitHub login — open the login page directly",
+    "emailLockThreshold": "Email lockout threshold",
+    "emailLockThreshold.hint": "Lock an email after this many failed logins (0 = off)",
+    "emailLockMinutes": "Email lockout duration (min)",
+    "emailLockMinutes.hint": "How long a locked email stays locked",
+    "ipLockThreshold": "Dashboard IP lockout threshold",
+    "ipLockThreshold.hint": "Ban an IP after this many failed dashboard logins (0 = off)",
+    "ipLockMinutes": "Dashboard IP ban duration (min)",
+    "ipLockMinutes.hint": "How long a banned IP stays banned",
+    "lockZeroHint": "Set a threshold to 0 to disable that lockout"
   }
 }

@@ -20,6 +20,7 @@
     "windsurf-login": "登录取号",
     "accounts": "账号管理",
     "bans": "异常监测",
+    "settings": "全局设置",
     "models": "模型控制",
     "proxy": "代理配置",
     "logs": "运行日志",
@@ -35,6 +36,7 @@
     "windsurf-login": "登录取号",
     "accounts": "账号管理",
     "bans": "异常监测",
+    "settings": "全局设置",
     "models": "模型控制",
     "proxy": "代理配置",
     "logs": "运行日志",
@@ -50,6 +52,7 @@
     "logs": "通过 SSE 实时流式接收服务端日志",
     "stats": "请求量、成功率、延迟分位数与账号/模型维度统计",
     "bans": "追踪错误账号和异常状态",
+    "settings": "跨浏览器共享的偏好与安全阈值，可自定义",
     "experimental": "尚未稳定的优化项；如果发现异常可以随时关闭",
     "credits": "感谢以下朋友为项目提交 PR / 审计代码 / 修复问题"
   },
@@ -188,6 +191,10 @@
     "noResetTime": "重置时间未知"
   },
   "section": {
+    "settings": {
+      "ux": { "title": "界面偏好", "desc": "跨浏览器/设备共享（存于服务端）" },
+      "security": { "title": "安全与锁定", "desc": "登录失败锁定阈值与时长，可调整或关闭" }
+    },
     "nativeBridge": {
       "title": "Native Bridge",
       "desc": "路由决策与灰度门可见性"
@@ -486,6 +493,8 @@
     },
     "autoScroll": "自动滚动",
     "autoAdd": "登录成功自动加入账号池",
+    "storeCredential": "加密保存密码以在会话失效时自动续期",
+    "storeCredentialHint": "需设置 DEVIN_CONNECT_CRED_KEY。公网 bind 还需 DEVIN_CONNECT_ALLOW_REMOTE_CRED_STORE=1。密码经 AES-256-GCM 加密保存，绝不写入日志。",
     "firstName": {
       "label": "名字 / First Name",
       "placeholder": "John"
@@ -655,6 +664,7 @@
     "wrong": "密码不正确",
     "empty": "请输入密码",
     "locked": "后端未配置密码：请在服务端设置 DASHBOARD_PASSWORD 或 API_KEY 环境变量并重启",
+    "banned": "失败次数过多，已被临时锁定。请在 {{secs}} 秒后重试。",
     "networkError": "无法连接服务器"
   },
   "range": {
@@ -799,6 +809,7 @@
     "inlineTokenDesc": "点左边按钮在新 tab 打开 windsurf.com → 用 Google/GitHub 登录 → 页面会显示 Auth Token → 复制粘到右边输入框 → 点添加",
     "openWindsurfToken": "打开 windsurf.com 拿 Token",
     "tokenPlaceholder": "粘贴 Auth Token...",
+    "urlOrTokenPlaceholder": "粘贴回调 URL 或 Auth Token...",
     "addWithToken": "用 Token 添加",
     "step2Title": "② 粘贴 Windsurf 返回的 Token",
     "step2Desc": "在新标签完成登录后 页面会显示一串 Token 复制粘到这里点添加",
@@ -814,8 +825,17 @@
       "loginFailed": "{{label}} 登录失败: {{error}}",
       "opened": "已在新标签打开 Windsurf {{label}} 登录页 完成登录后复制 Token 粘到下方",
       "popupBlocked": "浏览器拦截了弹窗 请用下方链接手动打开登录页",
+      "copied": "登录 URL 已复制 — 在已登录你 {{label}} 账号的浏览器里打开它 完成后把回调 URL 粘到下方",
       "adding": "正在添加账号...",
       "originBlocked": "{{label}} OAuth 被 Firebase 拒绝了当前 Dashboard 来源。请从 windsurf.com/show-auth-token 复制 Auth Token 后在账号管理里添加。"
+    },
+    "chooser": {
+      "title": "用 {{label}} 登录",
+      "desc": "在新标签打开 Windsurf 登录页，或复制登录 URL 去已登录你账号的浏览器里打开。",
+      "open": "打开登录页",
+      "copy": "复制登录 URL",
+      "copied": "登录 URL 已复制",
+      "dontAsk": "下次不要问我（可在设置里改回）"
     }
   },
   "update": {
@@ -978,6 +998,13 @@
     "applyingSkin": "正在应用皮肤…",
     "copied": "已复制",
     "saved": "已保存",
+    "settingSaved": "设置已保存",
+    "turnstileFailed": "人机验证失败",
+    "turnstileRequired": "请先完成人机验证",
+    "turnstileExpired": "人机验证令牌已过期，请刷新页面",
+    "invalidRange": "时间范围无效",
+    "loadCredentialsFailed": "加载凭据失败：{{error}}",
+    "saveFailed": "保存失败：{{error}}",
     "cleared": "已清空",
     "refresh": "已刷新",
     "error": "错误",
@@ -1244,6 +1271,17 @@
     "group": {
       "normal": "常规",
       "dangerous": "危险 · 请谨慎"
-    }
+    },
+    "loading": "加载中…",
+    "oauthSkipChooser": "Google/GitHub 登录时跳过\"打开/复制\"选择弹窗，直接打开登录页",
+    "emailLockThreshold": "邮箱锁定阈值",
+    "emailLockThreshold.hint": "邮箱登录失败达此次数即锁定（0 = 关闭）",
+    "emailLockMinutes": "邮箱锁定时长（分钟）",
+    "emailLockMinutes.hint": "被锁邮箱保持锁定的时长",
+    "ipLockThreshold": "后台 IP 锁定阈值",
+    "ipLockThreshold.hint": "后台登录失败达此次数即封该 IP（0 = 关闭）",
+    "ipLockMinutes": "后台 IP 封禁时长（分钟）",
+    "ipLockMinutes.hint": "被封 IP 保持封禁的时长",
+    "lockZeroHint": "阈值设为 0 = 关闭该锁定"
   }
 }

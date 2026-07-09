@@ -1917,6 +1917,10 @@ tbody tr:hover td { background: var(--surface-2); }
     <div class="nav-group" id="settings-nav-group">
       <div class="nav-group-label" data-i18n="nav.group.settings">设置 · 高级</div>
       <input id="settings-search" class="input" type="text" data-i18n-placeholder="settings.search.placeholder" placeholder="筛选设置…" oninput="App.filterSettingsNav(this.value)" style="margin:2px 0 6px;font-size:12px;padding:5px 8px;width:100%;box-sizing:border-box;" />
+      <a href="#settings" data-panel="settings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        <span data-i18n="nav.settings">全局设置</span>
+      </a>
       <a href="#models" data-panel="models">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 17l10 5 10-5"/><path d="M2 12l10 5 10-5"/></svg>
         <span data-i18n="nav.models">模型控制</span>
@@ -2090,9 +2094,9 @@ tbody tr:hover td { background: var(--surface-2); }
         <div id="oauth-status" style="margin-top:8px;font-size:12px;color:var(--text-muted)"></div>
         <div id="oauth-token-step" class="hidden" style="margin-top:14px;padding:14px;background:var(--surface-2);border-radius:var(--radius);border-left:3px solid var(--accent)">
           <div style="font-weight:600;margin-bottom:6px" data-i18n="oauth.step2Title">② 粘贴 Windsurf 返回的 Token</div>
-          <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px" data-i18n="oauth.step2Desc">在新标签完成登录后 页面会显示一串 Token 复制粘到这里点添加</div>
+          <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px" data-i18n="oauth.step2Desc">在新标签完成登录后 复制整条回调地址栏 URL(或页面显示的 Token)粘到这里点添加</div>
           <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-            <input id="oauth-token-input" type="text" class="input" style="flex:1;min-width:260px" data-i18n-placeholder="oauth.tokenPlaceholder" placeholder="粘贴 Auth Token...">
+            <input id="oauth-token-input" type="text" class="input" style="flex:1;min-width:260px" data-i18n-placeholder="oauth.urlOrTokenPlaceholder" placeholder="粘贴回调 URL 或 Auth Token...">
             <button class="btn btn-primary" onclick="App.submitOAuthToken()" data-i18n="oauth.addWithToken">用 Token 添加</button>
           </div>
           <a id="oauth-manual-link" href="#" class="hidden" onclick="return App.openWindsurfSignin(event)" style="display:inline-block;margin-top:8px;font-size:12px;color:var(--accent)" data-i18n="oauth.openManually">登录页没弹出来？点这里手动打开</a>
@@ -2190,6 +2194,11 @@ tbody tr:hover td { background: var(--surface-2); }
             <span data-i18n="field.autoAdd">登录成功自动加入账号池</span>
           </label>
         </div>
+        <label class="checkbox" style="margin-top:10px" data-i18n-title="field.storeCredentialHint" title="加密保存密码用于自动续期">
+          <input type="checkbox" id="wl-store-cred">
+          <span class="box"></span>
+          <span data-i18n="field.storeCredential">加密保存密码以在会话失效时自动续期</span>
+        </label>
         <div style="margin-top:16px;padding-top:16px;border-top:1px dashed var(--border)">
           <label class="field-label" data-i18n="field.batchInput.label">批量导入</label>
           <textarea
@@ -2409,6 +2418,49 @@ tbody tr:hover td { background: var(--surface-2); }
   </section>
 
   <!-- Models -->
+  <section class="panel" id="p-settings">
+    <div class="page-header">
+      <div>
+        <h1 class="page-title" data-i18n="page.settings">全局设置</h1>
+        <div class="page-subtitle" data-i18n="pageSubtitle.settings">跨浏览器共享的偏好与安全阈值，可自定义</div>
+      </div>
+      <div class="btn-group">
+        <button class="btn btn-ghost btn-sm" onclick="App.loadSettings()" data-i18n-title="action.refresh" title="刷新">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M21 12a9 9 0 0 1-9 9 9 9 0 0 1-6.24-2.52L3 21"/><path d="M3 12a9 9 0 0 1 9-9 9 9 0 0 1 6.24 2.52L21 3"/><path d="M21 3v6h-6"/><path d="M3 21v-6h6"/></svg>
+          <span data-i18n="action.refresh">刷新</span>
+        </button>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-header">
+        <div>
+          <div class="section-title" data-i18n="section.settings.ux.title">界面偏好</div>
+          <div class="section-desc" data-i18n="section.settings.ux.desc">跨浏览器/设备共享（存于服务端）</div>
+        </div>
+      </div>
+      <div class="section-body">
+        <label class="checkbox">
+          <input type="checkbox" id="set-oauth-skip-chooser" onchange="App.savePref('oauthSkipChooser', this.checked)">
+          <span class="box"></span>
+          <span data-i18n="settings.oauthSkipChooser">Google/GitHub 登录时跳过"打开/复制"选择弹窗，直接打开登录页</span>
+        </label>
+      </div>
+    </div>
+
+    <div class="section">
+      <div class="section-header">
+        <div>
+          <div class="section-title" data-i18n="section.settings.security.title">安全与锁定</div>
+          <div class="section-desc" data-i18n="section.settings.security.desc">登录失败锁定阈值与时长，可调整或关闭</div>
+        </div>
+      </div>
+      <div class="section-body" id="set-security-body">
+        <div class="text-sm text-muted" data-i18n="settings.loading">加载中…</div>
+      </div>
+    </div>
+  </section>
+
   <section class="panel" id="p-models">
     <div class="page-header">
       <div>
@@ -3298,7 +3350,7 @@ const App = {
       overview: 'loadOverview', 'windsurf-login': 'loadWindsurfLogin',
       accounts: 'loadAccounts', models: 'loadModels', proxy: 'loadProxy',
       logs: 'loadLogs', stats: 'loadStats', bans: 'loadBans',
-      experimental: 'loadExperimental', credits: 'loadCredits',
+      experimental: 'loadExperimental', credits: 'loadCredits', settings: 'loadSettings',
     };
     const loader = loaders[activePanelId];
     if (loader && typeof this[loader] === 'function') this[loader]();
@@ -3581,6 +3633,9 @@ docker compose up -d --force-recreate</pre>
     document.querySelectorAll('.sidebar nav a').forEach(a => {
       a.onclick = (e) => { e.preventDefault(); this.navigate(a.dataset.panel); };
     });
+    // Load shared UI prefs (e.g. oauthSkipChooser) once after auth so the OAuth
+    // chooser and Settings page reflect the backend-stored preference.
+    this.api('GET', '/settings/prefs').then(r => { this._prefs = r.prefs || {}; }).catch(() => { this._prefs = {}; });
     // Upgrade all static native selects / number inputs into themed controls.
     this.enhanceControls(document);
     const hash = location.hash.slice(1);
@@ -3641,7 +3696,7 @@ docker compose up -d --force-recreate</pre>
       accounts: 'loadAccounts', models: 'loadModels', proxy: 'loadProxy',
       logs: 'loadLogs', stats: 'loadStats', bans: 'loadBans',
       experimental: 'loadExperimental',
-      credits: 'loadCredits',
+      credits: 'loadCredits', settings: 'loadSettings',
     };
     if (loaders[panel]) this[loaders[panel]]();
   },
@@ -3652,8 +3707,23 @@ docker compose up -d --force-recreate</pre>
     if (body) opts.body = JSON.stringify(body);
     try {
       const r = await fetch('/dashboard/api' + path, opts);
-      const data = await r.json();
+      const data = await r.json().catch(() => ({}));
+      // 429 = IP brute-force lockout. Blindly continuing (esp. the 15s/30s poll
+      // loops + the ~dozen parallel calls each panel fires) hammers the banned
+      // endpoint and stacks a wall of identical toasts. Halt ALL polling and show
+      // one clear "banned, retry in Ns" overlay instead of spamming.
+      if (r.status === 429) {
+        this.handleLockout(data.retryAfterMs || (data.error && parseInt(String(data.error).match(/(\d+)s/)?.[1], 10) * 1000) || 0);
+        return {};
+      }
       if (r.status === 401) {
+        // Stale/wrong stored password: drop it so polls stop re-sending a bad
+        // credential (which would rack up failed attempts and trigger a ban).
+        // The password is persisted in localStorage 'dp' (see :3180) — clearing
+        // sessionStorage would miss it and the bad password would survive reload.
+        this.password = null;
+        try { localStorage.removeItem('dp'); } catch {}
+        this.stopAllPolls();
         document.getElementById('login-overlay').classList.remove('hidden');
         return {};
       }
@@ -3664,6 +3734,42 @@ docker compose up -d --force-recreate</pre>
       }
       return data;
     } catch (e) { this.toast(e.message, 'error'); return {}; }
+  },
+
+  stopAllPolls() {
+    Object.values(this.pollers || {}).forEach(clearInterval);
+    this.pollers = {};
+  },
+
+  // Show a single non-spammy lockout overlay with a live countdown. Stops all
+  // polling so we don't keep hitting the banned endpoint.
+  handleLockout(retryAfterMs) {
+    this.stopAllPolls();
+    if (this._lockoutTimer) return; // already showing — don't stack
+    const overlay = document.getElementById('login-overlay');
+    const errEl = document.getElementById('login-error');
+    const pwEl = document.getElementById('login-password');
+    const btnEl = document.getElementById('login-btn');
+    if (overlay) overlay.classList.remove('hidden');
+    if (pwEl) pwEl.style.display = 'none';
+    if (btnEl) btnEl.style.display = 'none';
+    let secs = Math.max(1, Math.ceil((retryAfterMs || 0) / 1000)) || 60;
+    const render = () => {
+      if (errEl) {
+        errEl.style.color = 'var(--warn)';
+        errEl.textContent = I18n.t('login.banned', { secs });
+      }
+    };
+    render();
+    this._lockoutTimer = setInterval(() => {
+      secs--;
+      if (secs <= 0) {
+        clearInterval(this._lockoutTimer); this._lockoutTimer = null;
+        if (pwEl) pwEl.style.display = '';
+        if (btnEl) btnEl.style.display = '';
+        if (errEl) errEl.textContent = '';
+      } else render();
+    }, 1000);
   },
 
   toast(msg, type = 'success') {
@@ -4490,17 +4596,96 @@ docker compose up -d --force-recreate</pre>
     return 'https://windsurf.com/windsurf/signin?response_type=token&client_id=3GUryQ7ldAeKEuD2obYnppsnmj58eP5u&redirect_uri=show-auth-token&state=' + state + '&prompt=login&redirect_parameters_type=query&workflow=';
   },
 
-  // Quick Login: open Windsurf's OFFICIAL sign-in page (Google/GitHub/email all
-  // live there, and it runs on windsurf.com — NOT bound by our dashboard's Firebase
-  // authorized-domain lock, which is why signInWithPopup was hopeless here). Then the
-  // user pastes the token windsurf.com shows back into step 2. This mirrors the
-  // KiroStudio "open provider page → paste result back" pattern, simplified: Windsurf
-  // returns the token directly (response_type=token), so no server code exchange.
-  oauthLogin(provider) {
+  // Quick Login entry: clicking Google/GitHub. Unless the user opted out
+  // ("don't ask again" → prefs.oauthSkipChooser), first show a small chooser:
+  // open the login page in a new tab, OR copy the login URL (to open elsewhere,
+  // e.g. a browser already signed in to that Google/GitHub account). Either way
+  // the flow ends with pasting the callback URL / token back into step 2.
+  async oauthLogin(provider) {
+    if (this._prefs?.oauthSkipChooser) return this.oauthStartAndOpen(provider);
+    this.showOAuthChooser(provider);
+  },
+
+  // Small chooser popup over the modal-overlay: left = open page, right = copy
+  // URL, plus a "don't ask again" checkbox that persists to backend prefs.
+  async showOAuthChooser(provider) {
+    const label = provider === 'google' ? 'Google' : 'GitHub';
+    // Start the session up front so "copy URL" hands back the same state-bound
+    // URL the "open page" path would use.
+    let url, state;
+    try {
+      const s = await this.api('POST', '/oauth/start', { provider: 'windsurf' });
+      url = s.url || this.buildWindsurfSigninUrl();
+      state = s.state || '';
+    } catch {
+      url = this.buildWindsurfSigninUrl();
+      state = '';
+    }
+    this._oauthProvider = label;
+    this._oauthUrl = url;
+    this._oauthState = state;
+
+    const wrap = document.createElement('div');
+    wrap.className = 'modal-overlay';
+    wrap.innerHTML = `
+      <div class="modal" style="max-width:440px">
+        <div class="modal-title">${I18n.t('oauth.chooser.title', { label })}</div>
+        <div class="modal-body" style="font-size:13px;color:var(--text-muted);margin-bottom:14px">${I18n.t('oauth.chooser.desc')}</div>
+        <div style="display:flex;gap:10px">
+          <button class="btn btn-primary" data-act="open" style="flex:1">${I18n.t('oauth.chooser.open')}</button>
+          <button class="btn btn-outline" data-act="copy" style="flex:1">${I18n.t('oauth.chooser.copy')}</button>
+        </div>
+        <label class="checkbox" style="margin-top:14px">
+          <input type="checkbox" data-act="skip"><span class="box"></span>
+          <span>${I18n.t('oauth.chooser.dontAsk')}</span>
+        </label>
+        <div style="text-align:right;margin-top:14px">
+          <button class="btn btn-ghost btn-sm" data-act="cancel">${I18n.t('action.cancel')}</button>
+        </div>
+      </div>`;
+    document.body.appendChild(wrap);
+    const close = () => wrap.remove();
+    const persistSkip = async () => {
+      if (wrap.querySelector('[data-act=skip]')?.checked) {
+        this._prefs = this._prefs || {};
+        this._prefs.oauthSkipChooser = true;
+        try { await this.api('PUT', '/settings/prefs', { oauthSkipChooser: true }); } catch {}
+      }
+    };
+    wrap.querySelector('[data-act=open]').onclick = async () => { await persistSkip(); close(); this.oauthStartAndOpen(provider, { reuse: true }); };
+    wrap.querySelector('[data-act=copy]').onclick = async () => {
+      await persistSkip();
+      try { await navigator.clipboard.writeText(this._oauthUrl); this.toast(I18n.t('oauth.chooser.copied'), 'success'); }
+      catch { this.toast(this._oauthUrl, 'info'); }
+      close();
+      // Reveal step 2 so the user can paste the callback URL back after logging in.
+      document.getElementById('oauth-token-step')?.classList.remove('hidden');
+      const status = document.getElementById('oauth-status');
+      if (status) { status.style.color = 'var(--text-muted)'; status.textContent = I18n.t('oauth.status.copied', { label }); }
+      setTimeout(() => document.getElementById('oauth-token-input')?.focus(), 120);
+    };
+    wrap.querySelector('[data-act=cancel]').onclick = close;
+    wrap.onclick = (e) => { if (e.target === wrap) close(); };
+  },
+
+  // Open Windsurf's OFFICIAL sign-in page (Google/GitHub/email all live there,
+  // on windsurf.com — NOT bound by our Firebase authorized-domain lock). Then
+  // the user pastes the callback URL / token back into step 2. With opts.reuse
+  // the session started by the chooser is reused instead of starting a new one.
+  async oauthStartAndOpen(provider, opts = {}) {
     const label = provider === 'google' ? 'Google' : 'GitHub';
     const status = document.getElementById('oauth-status');
     this._oauthProvider = label;
-    this._oauthUrl = this.buildWindsurfSigninUrl();
+    if (!opts.reuse) {
+      try {
+        const s = await this.api('POST', '/oauth/start', { provider: 'windsurf' });
+        this._oauthUrl = s.url || this.buildWindsurfSigninUrl();
+        this._oauthState = s.state || '';
+      } catch {
+        this._oauthUrl = this.buildWindsurfSigninUrl();
+        this._oauthState = '';
+      }
+    }
     document.getElementById('oauth-token-step')?.classList.remove('hidden');
     const manualLink = document.getElementById('oauth-manual-link');
     const win = window.open(this._oauthUrl, '_blank');
@@ -4527,13 +4712,19 @@ docker compose up -d --force-recreate</pre>
   async submitOAuthToken() {
     const input = document.getElementById('oauth-token-input');
     const status = document.getElementById('oauth-status');
-    const token = input?.value.trim();
+    const pasted = input?.value.trim();
     const label = this._oauthProvider || 'OAuth';
-    if (!token) return this.toast(I18n.t('toast.enterKeyOrToken'), 'error');
+    if (!pasted) return this.toast(I18n.t('toast.enterKeyOrToken'), 'error');
     status.style.color = 'var(--text-muted)';
     status.textContent = I18n.t('oauth.status.adding');
     try {
-      const r = await this.api('POST', '/accounts', { token, label: '' });
+      // Preferred path: hand the whole pasted value (full redirect URL OR a bare
+      // token) to the session callback — the server extracts the token and
+      // correlates via state. Fall back to the direct /accounts path for a bare
+      // token if no session was started (old backend).
+      const r = this._oauthState
+        ? await this.api('POST', '/oauth/callback', { state: this._oauthState, redirect_url: pasted })
+        : await this.api('POST', '/accounts', { token: pasted, label: '' });
       if (r.success) {
         const email = r.account?.email || label;
         status.style.color = '#22c55e';
@@ -4670,7 +4861,7 @@ docker compose up -d --force-recreate</pre>
       'error-callback': () => {
         this._turnstileToken = null;
         document.getElementById('otp-send-btn').disabled = true;
-        this.toast('Turnstile verification failed', 'error');
+        this.toast(I18n.t('toast.turnstileFailed'), 'error');
       },
       'expired-callback': () => {
         this._turnstileToken = null;
@@ -4686,7 +4877,7 @@ docker compose up -d --force-recreate</pre>
       return this.toast(I18n.t('toast.enterEmailFirstName') || 'Please enter email and first name', 'error');
     }
     if (!this._turnstileToken) {
-      return this.toast('Please complete Turnstile verification', 'error');
+      return this.toast(I18n.t('toast.turnstileRequired'), 'error');
     }
 
     const btn = document.getElementById('otp-send-btn');
@@ -4733,7 +4924,7 @@ docker compose up -d --force-recreate</pre>
       return this.toast(I18n.t('toast.enterOtpCode') || 'Please enter verification code', 'error');
     }
     if (!this._turnstileToken) {
-      return this.toast('Turnstile token expired. Please refresh the page.', 'error');
+      return this.toast(I18n.t('toast.turnstileExpired'), 'error');
     }
 
     const btn = document.getElementById('otp-complete-btn');
@@ -4913,6 +5104,7 @@ docker compose up -d --force-recreate</pre>
 
     const proxy = this.getWindsurfLoginProxy();
     const autoAdd = document.getElementById('wl-auto-add').checked;
+    const storeCredential = document.getElementById('wl-store-cred')?.checked || false;
 
     const btn = document.getElementById('wl-btn');
     btn.disabled = true;
@@ -4921,7 +5113,7 @@ docker compose up -d --force-recreate</pre>
     const entry = { time: new Date().toISOString(), email, proxy: this.getWindsurfProxyLabel(proxy), status: 'pending' };
 
     try {
-      const r = await this.api('POST', '/windsurf-login', { email, password, proxy, autoAdd });
+      const r = await this.api('POST', '/windsurf-login', { email, password, proxy, autoAdd, storeCredential });
       if (r.success) {
         entry.status = 'success';
         entry.apiKey = r.apiKey_masked || (r.apiKey?.slice(0, 16) + '...');
@@ -4951,6 +5143,7 @@ docker compose up -d --force-recreate</pre>
     if (!batchText.trim()) return this.toast(I18n.t('batch.pasteFirst'), 'error');
 
     const autoAdd = document.getElementById('wl-auto-add').checked;
+    const storeCredential = document.getElementById('wl-store-cred')?.checked || false;
     const btn = document.getElementById('wl-batch-btn');
     const sourceDesc = this.windsurfBatchFile
       ? I18n.t('batch.importingFile', { name: this.windsurfBatchFile.name })
@@ -4966,7 +5159,7 @@ docker compose up -d --force-recreate</pre>
       </div>`);
 
     try {
-      const r = await this.api('POST', '/batch-import', { text: batchText, autoAdd });
+      const r = await this.api('POST', '/batch-import', { text: batchText, autoAdd, storeCredential });
       if (!r.success || !Array.isArray(r.results)) {
         const errKey = r.error ? `error.${r.error}` : null;
         this.showWindsurfLoginResult(`
@@ -5798,20 +5991,22 @@ docker compose up -d --force-recreate</pre>
     if (!btn) return;
     try {
       const a = await this.api('GET', '/accounts/import-local-availability');
-      if (a.available) {
-        btn.disabled = false;
-        btn.classList.remove('disabled');
-        if (hint) hint.textContent = '';
+      // Only hide on an EXPLICIT available:false (public bind). api() swallows
+      // !ok/network errors into {} — treating that as "unavailable" would wrongly
+      // hide the button against an older backend / 404 / transient error. Default
+      // to showing it unless the backend clearly says it can't work here.
+      if (a && a.available === false) {
+        // Public bind: "local Windsurf" is on the remote server, not the user's
+        // machine — the feature can never work here, so hide the button entirely.
+        btn.classList.add('hidden');
+        if (hint) hint.classList.add('hidden');
         return;
       }
-      btn.disabled = true;
-      btn.classList.add('disabled');
-      if (hint) {
-        hint.textContent = a.hint || I18n.t('localImport.unavailable');
-        hint.style.color = 'var(--text-muted)';
-        hint.style.fontSize = '12px';
-        hint.style.lineHeight = '1.6';
-      }
+      // Loopback deploy (or unknown): show the button.
+      btn.classList.remove('hidden');
+      btn.disabled = false;
+      btn.classList.remove('disabled');
+      if (hint) { hint.textContent = ''; hint.classList.add('hidden'); }
     } catch (e) {
       // If the new endpoint isn't there, leave the button as-is so older
       // backends still work.
@@ -6341,7 +6536,7 @@ docker compose up -d --force-recreate</pre>
     if (!sEl?.value || !eEl?.value) { this.toast(I18n.t('range.customStart'), 'error'); return; }
     const start = new Date(sEl.value + 'T00:00:00');
     const end = new Date(eEl.value + 'T23:59:59');
-    if (isNaN(start) || isNaN(end) || start > end) { this.toast('Invalid range', 'error'); return; }
+    if (isNaN(start) || isNaN(end) || start > end) { this.toast(I18n.t('toast.invalidRange'), 'error'); return; }
     this.statsRange = 'custom';
     this.statsCustomRange = { start, end };
     this.closeCustomRange();
@@ -7454,6 +7649,72 @@ docker compose up -d --force-recreate</pre>
     }
   },
 
+  // ─── Global Settings ─────────────────────────
+  async loadSettings() {
+    // UI prefs (booleans, shared across browsers via backend).
+    try {
+      const p = await this.api('GET', '/settings/prefs');
+      this._prefs = p.prefs || {};
+      const cb = document.getElementById('set-oauth-skip-chooser');
+      if (cb) cb.checked = !!this._prefs.oauthSkipChooser;
+    } catch { /* leave defaults */ }
+    // Security/lockout tunables (numeric, from runtime-config tunables).
+    this.renderSecuritySettings();
+  },
+
+  async renderSecuritySettings() {
+    const body = document.getElementById('set-security-body');
+    if (!body) return;
+    let t = {};
+    try {
+      const r = await this.api('GET', '/experimental');
+      t = r.tunables || {};
+    } catch { /* fall through to defaults */ }
+    // Each row: label + numeric input (or toggle for the on/off knobs). Values
+    // fall back to the current defaults so the UI is populated even pre-load.
+    // Resolve the label/hint text NOW via I18n.t (not via empty data-i18n +
+    // I18n.apply — that captures an empty i18nOrig on first pass and renders
+    // blank under the default zh locale). This panel re-renders on open and on
+    // language toggle, so eager resolution stays correct.
+    const num = (id, key, val, min, max, step, labelKey, hintKey) => `
+      <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap">
+        <label class="field-label" style="margin:0;min-width:220px" for="${id}">${this.esc(I18n.t(labelKey))}</label>
+        <input type="number" id="${id}" class="input" min="${min}" max="${max}" step="${step}" style="max-width:120px" value="${val}"
+          onchange="App.saveTunable('${key}', this.value, ${min}, ${max})">
+        <span class="text-sm text-muted">${this.esc(I18n.t(hintKey))}</span>
+      </div>`;
+    body.innerHTML =
+      num('set-email-lock-threshold', 'emailLockThreshold', t.emailLockThreshold ?? 3, 0, 50, 1, 'settings.emailLockThreshold', 'settings.emailLockThreshold.hint')
+      + num('set-email-lock-minutes', 'emailLockMinutes', t.emailLockMinutes ?? 15, 0, 1440, 1, 'settings.emailLockMinutes', 'settings.emailLockMinutes.hint')
+      + num('set-ip-lock-threshold', 'ipLockThreshold', t.ipLockThreshold ?? 5, 0, 100, 1, 'settings.ipLockThreshold', 'settings.ipLockThreshold.hint')
+      + num('set-ip-lock-minutes', 'ipLockMinutes', t.ipLockMinutes ?? 30, 0, 1440, 1, 'settings.ipLockMinutes', 'settings.ipLockMinutes.hint')
+      + `<div class="field-hint" style="margin-top:4px">${this.esc(I18n.t('settings.lockZeroHint'))}</div>`;
+  },
+
+  async savePref(key, value) {
+    try {
+      const r = await this.api('PUT', '/settings/prefs', { [key]: !!value });
+      this._prefs = r.prefs || this._prefs || {};
+      this.toast(I18n.t('toast.settingSaved'), 'success');
+    } catch (e) {
+      this.toast(I18n.t('toast.toggleFailed', { error: e.message || '' }), 'error');
+    }
+  },
+
+  async saveTunable(key, value, min, max) {
+    const v = Math.max(min, Math.min(max, Number(value)));
+    if (!Number.isFinite(v)) return;
+    try {
+      const r = await this.api('PUT', '/experimental', { tunables: { [key]: v } });
+      const applied = r.tunables?.[key] ?? v;
+      const el = document.getElementById('set-' + key.replace(/([A-Z])/g, '-$1').toLowerCase());
+      if (el && Number(el.value) !== applied) el.value = applied;
+      this.toast(I18n.t('toast.settingSaved'), 'success');
+    } catch (e) {
+      this.toast(I18n.t('toast.toggleFailed', { error: e.message || '' }), 'error');
+    }
+  },
+
   async clearConversationPool() {
     const ok = await this.confirm(I18n.t('action.clearPool'), I18n.t('confirm.clearPoolDesc') || 'All active Cascade sessions will be cleared. Continue?', { okText: I18n.t('action.clearPool') });
     if (!ok) return;
@@ -7498,7 +7759,7 @@ docker compose up -d --force-recreate</pre>
       document.getElementById('credentials-dashboardpw-status').textContent =
         d.dashboardPasswordSet ? (I18n.t('credentials.set') || 'set') : (I18n.t('credentials.unset') || 'unset');
     } catch (e) {
-      this.toast('Failed to load credentials: ' + (e.message || ''), 'error');
+      this.toast(I18n.t('toast.loadCredentialsFailed', { error: e.message || '' }), 'error');
     }
   },
 
@@ -7532,12 +7793,14 @@ docker compose up -d --force-recreate</pre>
     try {
       const r = await this.api('PUT', '/settings/credentials', { [field]: value });
       el.value = '';
-      this.toast(r.success ? (I18n.t('credentials.saved') || 'Saved') : 'Saved', 'success');
+      this.toast(I18n.t('toast.saved'), 'success');
       // After rotating dashboard password, the current session is no longer
       // authenticated. Force a re-login flow so the user gets the right
-      // prompt rather than a misleading "session expired" later.
+      // prompt rather than a misleading "session expired" later. The password
+      // is persisted in localStorage 'dp' — clear that (not sessionStorage).
       if (field === 'dashboardPassword' && !cleared) {
-        sessionStorage.removeItem('dashboard_password');
+        this.password = null;
+        try { localStorage.removeItem('dp'); } catch {}
         setTimeout(() => location.reload(), 800);
         return;
       }
@@ -7553,7 +7816,7 @@ docker compose up -d --force-recreate</pre>
         this.loadCredentials();
       }
     } catch (e) {
-      this.toast('Save failed: ' + (e.message || ''), 'error');
+      this.toast(I18n.t('toast.saveFailed', { error: e.message || '' }), 'error');
     }
   },
 
