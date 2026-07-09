@@ -114,6 +114,45 @@ describe('dashboard batch import proxy binding', () => {
     assert.equal(res.statusCode, 200);
   });
 
+  it('does NOT lock out on empty-password preloads (page-load 401s are not brute-force)', async () => {
+    _resetRuntimeConfigForTests();
+    _resetLockoutForTests();
+    config.dashboardPassword = 'dash-secret';
+    config.apiKey = '';
+    configureBindHost('0.0.0.0');
+    const ip = '203.0.113.7';
+    const req = (hdrs) => ({ url: '/dashboard/api/overview', headers: hdrs, socket: { remoteAddress: ip } });
+
+    // Simulate the dashboard firing many authed calls with NO password on load.
+    for (let i = 0; i < 12; i++) {
+      const r = fakeRes();
+      await handleDashboardApi('GET', '/overview', {}, req({}), r);
+      assert.equal(r.statusCode, 401, 'empty-password call should 401');
+    }
+    // The IP must NOT be banned — the correct password should still work.
+    const ok = fakeRes();
+    await handleDashboardApi('GET', '/overview', {}, req({ 'x-dashboard-password': 'dash-secret' }), ok);
+    assert.equal(ok.statusCode, 200, 'correct password must still work after empty-password preloads');
+  });
+
+  it('DOES lock out after repeated WRONG-password guesses', async () => {
+    _resetRuntimeConfigForTests();
+    _resetLockoutForTests();
+    config.dashboardPassword = 'dash-secret';
+    config.apiKey = '';
+    configureBindHost('0.0.0.0');
+    const ip = '203.0.113.8';
+    const req = () => ({ url: '/dashboard/api/overview', headers: { 'x-dashboard-password': 'wrong-guess' }, socket: { remoteAddress: ip } });
+
+    let banned = false;
+    for (let i = 0; i < 10; i++) {
+      const r = fakeRes();
+      await handleDashboardApi('GET', '/overview', {}, req(), r);
+      if (r.statusCode === 429) { banned = true; break; }
+    }
+    assert.equal(banned, true, 'repeated wrong-password guesses must eventually ban the IP');
+  });
+
   it('includes sanitized native bridge telemetry in authenticated overview', async () => {
     _resetRuntimeConfigForTests();
     config.dashboardPassword = 'dash-secret';

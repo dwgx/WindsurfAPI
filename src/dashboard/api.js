@@ -22,7 +22,7 @@ import { getStats, resetStats, recordRequest, exportStats, importStats } from '.
 import { getConnectMetrics, resetConnectMetrics } from '../devin-connect-metrics.js';
 import { cacheStats, cacheClear } from '../cache.js';
 import {
-  getExperimental, setExperimental, getTunables, setTunables, getSystemPrompts, setSystemPrompts, resetSystemPrompt,
+  getExperimental, setExperimental, getTunables, setTunables, getPrefs, setPrefs, getSystemPrompts, setSystemPrompts, resetSystemPrompt,
   getCredentials, setRuntimeApiKey, setRuntimeDashboardPassword,
   verifyPassword, getEffectiveApiKey, getEffectiveDashboardPasswordStored,
 } from '../runtime-config.js';
@@ -300,7 +300,62 @@ function confirmReauth(req, body) {
   return false;
 }
 
-async function processWindsurfLogin({ email, password, loginProxy, autoAdd }) {
+// Mask an email for logs: keep first char + domain, redact the rest of the
+// local part (a@b.com -> a***@b.com). Never log the full address.
+function maskEmail(email) {
+  const s = String(email || '');
+  const at = s.indexOf('@');
+  if (at <= 0) return s ? s[0] + '***' : '';
+  return s[0] + '***' + s.slice(at);
+}
+
+// Pull the auth token out of whatever the user pasted after finishing the
+// Windsurf sign-in: a full redirect URL (token in query or #fragment), or the
+// bare token string itself. Returns '' if nothing token-shaped is found. The
+// caller must never log the raw input (it may contain a live token).
+// Exported for unit testing (also used by the /oauth/callback endpoint).
+export function extractOAuthToken(input) {
+  const raw = String(input || '').trim();
+  if (!raw) return '';
+  const pick = (params) => params.get('access_token') || params.get('token') || params.get('auth_token') || '';
+  if (/^https?:\/\//i.test(raw)) {
+    try {
+      const u = new URL(raw);
+      const fromQuery = pick(u.searchParams);
+      if (fromQuery) return fromQuery.trim();
+      // token may live in the #fragment (implicit flow): #access_token=...&...
+      const frag = u.hash.startsWith('#') ? u.hash.slice(1) : u.hash;
+      if (frag) {
+        const fromHash = pick(new URLSearchParams(frag));
+        if (fromHash) return fromHash.trim();
+      }
+    } catch { /* fall through to bare-token handling */ }
+    return '';
+  }
+  // Bare paste: accept a raw token (session/auth token), reject anything with
+  // whitespace (that's not a token).
+  if (/\s/.test(raw)) return '';
+  return raw;
+}
+
+// Decide whether to persist a login password into the encrypted cred store so a
+// dead session can auto-relogin. Storing a user's password is privacy-sensitive,
+// so on a PUBLIC bind it requires BOTH an operator opt-in env AND a per-request
+// opt-in (the dashboard checkbox). The "local" fast-path requires the request to
+// ALSO come from a loopback peer — not just a loopback BIND host. Behind a
+// reverse proxy (openresty → app on 127.0.0.1) isLocalBindHost() is always true,
+// so checking bind alone would let any authenticated REMOTE user silently
+// persist their plaintext password, defeating the DEVIN_CONNECT_ALLOW_REMOTE_CRED_STORE
+// gate. Mirror the /accounts/import-local double gate. Store is still a no-op
+// unless DEVIN_CONNECT_CRED_KEY is set.
+function credStoreGateOpen(wantStore, req) {
+  if (wantStore !== true) return false;
+  const remote = req?.socket?.remoteAddress || req?.connection?.remoteAddress || '';
+  if (isLocalBindHost() && isLoopbackAddress(remote)) return true;
+  return process.env.DEVIN_CONNECT_ALLOW_REMOTE_CRED_STORE === '1';
+}
+
+async function processWindsurfLogin({ email, password, loginProxy, autoAdd, storeCredential: wantStore, req }) {
   if (!email || !password) {
     const err = new Error('ERR_EMAIL_PASSWORD_REQUIRED');
     err.statusCode = 400;
@@ -325,6 +380,24 @@ async function processWindsurfLogin({ email, password, loginProxy, autoAdd }) {
     // also egress through the same IP, then warm up a matching LS.
     if (loginProxy?.host) setAccountProxy(account.id, loginProxy);
     scheduleAccountWarmup(account.id);
+
+    // Gap A+B: persist the password (encrypted) so a dead session_id can
+    // auto-relogin (reLoginAccount). Gated by credStoreGateOpen — on a public
+    // bind this needs both DEVIN_CONNECT_ALLOW_REMOTE_CRED_STORE=1 and the
+    // request's storeCredential:true. Best-effort: a store failure must never
+    // break the login that already succeeded. Plaintext password is never
+    // logged (only the masked email).
+    if (credStoreGateOpen(wantStore, req)) {
+      try {
+        const { storeCredential, isCredStoreEnabled } = await import('../devin-connect-credentials.js');
+        if (isCredStoreEnabled()) {
+          storeCredential(email, password);
+          log.info(`Credential stored for auto-relogin: ${maskEmail(email)}`);
+        }
+      } catch (e) {
+        log.warn(`Could not persist credential for re-login: ${e.message}`);
+      }
+    }
   }
 
   return {
@@ -372,7 +445,13 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
 
   // Auth check (except for auth verification endpoint)
   if (subpath !== '/auth' && !checkAuth(req)) {
-    failedAuthAttempt(clientIp);
+    // Only count this toward the brute-force lockout when a NON-EMPTY password
+    // was actually submitted — a wrong guess. A missing/empty header is the
+    // normal pre-login state: the dashboard fires ~a dozen authed API calls
+    // (overview/stats/accounts/…) on page load before the user has typed
+    // anything, and counting each empty-password 401 as a "failed attempt"
+    // banned the IP the instant the page opened. Mirrors the /auth probe below.
+    if (String(req.headers['x-dashboard-password'] || '')) failedAuthAttempt(clientIp);
     return json(res, 401, { error: 'Unauthorized. Set X-Dashboard-Password header.' });
   }
   if (subpath !== '/auth') successfulAuthAttempt(clientIp);
@@ -697,17 +776,24 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
       if (!text.trim()) return json(res, 400, { error: 'ERR_IMPORT_TEXT_EMPTY' });
       const parsed = parseAccountText(text);
       const results = { added: [], skipped: [], failed: [] };
+      // A devin-session-token$ is itself the apiKey (addAccountByKey); other
+      // token shapes run RegisterUser (addAccountByToken). Route by classified
+      // kind so a pasted session token doesn't fail against the Firebase-only
+      // RegisterUser path.
+      const addByKind = (tok, label) => classifyToken(tok) === 'session'
+        ? addAccountByKey(tok, label)
+        : addAccountByToken(tok, label);
       for (const raw of (parsed.tokens || [])) {
         const kind = classifyToken(raw);
         if (kind === 'unknown') { results.skipped.push({ kind, reason: 'unclassified' }); continue; }
         try {
-          const acc = await addAccountByToken(raw, '');
+          const acc = await addByKind(raw, '');
           results.added.push({ id: acc.id, email: acc.email, kind });
         } catch (e) { results.failed.push({ kind, error: e.message }); }
       }
       for (const pair of (parsed.tokenPairs || [])) {
         try {
-          const acc = await addAccountByToken(pair.token, pair.email || '');
+          const acc = await addByKind(pair.token, pair.email || '');
           results.added.push({ id: acc.id, email: acc.email || pair.email, kind: classifyToken(pair.token) });
         } catch (e) { results.failed.push({ email: pair.email, error: e.message }); }
       }
@@ -1160,6 +1246,18 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
     return json(res, 200, { success: true, ...out });
   }
 
+  // GET /settings/prefs — dashboard UI preferences (booleans, shared across
+  // browsers via runtime-config). PUT to change one or more.
+  if (subpath === '/settings/prefs' && method === 'GET') {
+    return json(res, 200, { prefs: getPrefs() });
+  }
+  if (subpath === '/settings/prefs' && method === 'PUT') {
+    if (!body || typeof body !== 'object') {
+      return json(res, 400, { error: 'Body must be a JSON object' });
+    }
+    return json(res, 200, { success: true, prefs: setPrefs(body) });
+  }
+
   if (subpath === '/proxy' && method === 'GET') {
     return json(res, 200, getProxyConfigMasked());
   }
@@ -1459,8 +1557,8 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
   // ─── Windsurf Login ────────────────────────────────────
   if (subpath === '/windsurf-login' && method === 'POST') {
     try {
-      const { email, password, proxy: loginProxy, autoAdd } = body || {};
-      return json(res, 200, await processWindsurfLogin({ email, password, loginProxy, autoAdd }));
+      const { email, password, proxy: loginProxy, autoAdd, storeCredential } = body || {};
+      return json(res, 200, await processWindsurfLogin({ email, password, loginProxy, autoAdd, storeCredential, req }));
     } catch (err) {
       return json(res, err.statusCode || 400, { error: err.message, isAuthFail: !!err.isAuthFail, firebaseCode: err.firebaseCode });
     }
@@ -1468,7 +1566,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
 
   if (subpath === '/windsurf-login/batch' && method === 'POST') {
     try {
-      const { accounts, proxy: loginProxy, autoAdd } = body || {};
+      const { accounts, proxy: loginProxy, autoAdd, storeCredential } = body || {};
       if (!Array.isArray(accounts) || !accounts.length) {
         return json(res, 400, { error: 'ERR_ACCOUNTS_REQUIRED' });
       }
@@ -1478,7 +1576,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
         const email = String(acct?.email || '').trim();
         const password = String(acct?.password || '').trim();
         try {
-          const result = await processWindsurfLogin({ email, password, loginProxy, autoAdd });
+          const result = await processWindsurfLogin({ email, password, loginProxy, autoAdd, storeCredential, req });
           results.push(result);
         } catch (err) {
           results.push({
@@ -1509,7 +1607,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
   // POST /batch-import — each line: "proxy email password" or "email password"
   if (subpath === '/batch-import' && method === 'POST') {
     try {
-      const { text, autoAdd = true } = body || {};
+      const { text, autoAdd = true, storeCredential } = body || {};
       if (!text || typeof text !== 'string') return json(res, 400, { error: 'ERR_TEXT_REQUIRED' });
       const parsed = parseBatchImportInput(text, parseProxyUrl);
       if (!parsed.items.length) return json(res, 400, { error: 'ERR_NO_VALID_LINES' });
@@ -1538,6 +1636,8 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
               password: item.password,
               loginProxy,
               autoAdd,
+              storeCredential,
+              req,
             });
             const binding = buildBatchProxyBinding(result, item.proxyRaw);
             if (binding) {
@@ -1640,6 +1740,54 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
     } catch (err) {
       return json(res, 400, { error: err.message });
     }
+  }
+
+  // ─── OAuth remote-onboarding state machine ──────────────────────
+  // Lets a PUBLIC deploy onboard via the official Windsurf sign-in page without
+  // the server ever receiving a localhost callback: start -> user logs in in
+  // their own browser -> they paste the whole redirect URL back -> server pulls
+  // the token out of it -> poll for the result. Ported (in-memory) from
+  // CLIProxyAPI's oauth_sessions/oauth_callback. All three inherit checkAuth.
+  if (subpath === '/oauth/start' && method === 'POST') {
+    const { registerSession } = await import('./oauth-sessions.js');
+    const state = registerSession('windsurf');
+    // Windsurf editor backup-token signin URL (response_type=token). state rides
+    // the OAuth state param so we can correlate the pasted callback.
+    const url = 'https://windsurf.com/windsurf/signin?response_type=token'
+      + '&client_id=3GUryQ7ldAeKEuD2obYnppsnmj58eP5u&redirect_uri=show-auth-token'
+      + '&state=' + encodeURIComponent(state)
+      + '&prompt=login&redirect_parameters_type=query&workflow=';
+    return json(res, 200, { success: true, url, state });
+  }
+  if (subpath === '/oauth/callback' && method === 'POST') {
+    const { validateState, getSession, completeSession, failSession } = await import('./oauth-sessions.js');
+    const { state, redirect_url } = body || {};
+    if (!validateState(state)) return json(res, 400, { error: 'ERR_INVALID_STATE' });
+    const session = getSession(state);
+    if (!session || session.status !== 'pending') return json(res, 409, { error: 'ERR_SESSION_NOT_PENDING' });
+    try {
+      // Extract the token from whatever the user pasted: a full redirect URL
+      // (query or #hash), or the bare token itself. NEVER log redirect_url.
+      const token = extractOAuthToken(redirect_url);
+      if (!token) throw new Error('ERR_NO_TOKEN_IN_INPUT');
+      // A devin-session-token$ IS the apiKey — it must go through addAccountByKey,
+      // NOT addAccountByToken (which runs RegisterUser and only accepts a Firebase
+      // idToken). Route by prefix so both token shapes onboard correctly.
+      const account = classifyToken(token) === 'session'
+        ? addAccountByKey(token, '')
+        : await addAccountByToken(token, '');
+      scheduleAccountWarmup(account.id);
+      completeSession(state);
+      return json(res, 200, { success: true, account: { id: account.id, email: account.email, status: account.status } });
+    } catch (err) {
+      failSession(state, err.message);
+      return json(res, 400, { error: err.message });
+    }
+  }
+  if (subpath === '/oauth/status' && method === 'GET') {
+    const { getStatus } = await import('./oauth-sessions.js');
+    const st = new URL(req.url, 'http://localhost').searchParams.get('state') || '';
+    return json(res, 200, getStatus(st));
   }
 
   // ─── Email OTP Login — SEALED 2026-07-06 ────────────────────────
