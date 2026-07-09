@@ -194,8 +194,17 @@ function normalizeUserStatus(data) {
 
   const out = {
     planName: plan.planName || 'Unknown',
-    dailyPercent: typeof ps.dailyQuotaRemainingPercent === 'number' ? ps.dailyQuotaRemainingPercent : null,
-    weeklyPercent: typeof ps.weeklyQuotaRemainingPercent === 'number' ? ps.weeklyQuotaRemainingPercent : null,
+    // proto3-JSON omits zero values, so a fully-used quota (0% remaining) comes
+    // back as an ABSENT field, not `0` — which we'd otherwise render as N/A even
+    // though the real answer is "0% left / 100% used". When the quota dimension
+    // is clearly active (its reset timestamp is present, or the sibling daily
+    // field exists), treat a missing percentage as 0 rather than null/N/A.
+    dailyPercent: typeof ps.dailyQuotaRemainingPercent === 'number'
+      ? ps.dailyQuotaRemainingPercent
+      : (ps.dailyQuotaResetAtUnix != null ? 0 : null),
+    weeklyPercent: typeof ps.weeklyQuotaRemainingPercent === 'number'
+      ? ps.weeklyQuotaRemainingPercent
+      : ((ps.weeklyQuotaResetAtUnix != null || typeof ps.dailyQuotaRemainingPercent === 'number') ? 0 : null),
     dailyResetAt: asUnix(ps.dailyQuotaResetAtUnix),
     weeklyResetAt: asUnix(ps.weeklyQuotaResetAtUnix),
     overageBalance: typeof ps.overageBalanceMicros === 'number' ? ps.overageBalanceMicros / 1_000_000 : null,

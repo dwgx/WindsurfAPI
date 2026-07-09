@@ -2220,23 +2220,28 @@ export async function refreshCredits(id) {
   if (!account) return { ok: false, error: 'Account not found' };
   try {
     const { getUserStatus } = await import('./windsurf-api.js');
-    const { decodeUserStatusFull } = await import('./devin-connect-catalog.js');
     const proxy = getEffectiveProxy(account.id) || null;
     const status = await getUserStatus(account.apiKey, proxy);
     // Drop the huge raw payload before persisting — keep it only in memory for
     // downstream callers (e.g. model catalog cache) to inspect once.
     const { raw, ...persist } = status;
     account.credits = persist;
-    // B: wire richer billing into account.credits when raw response is available
-    if (raw) {
-      try {
-        const billing = decodeUserStatusFull(raw);
+    // B: on-demand balance + billing period. The REST getUserStatus `raw` is a
+    // PARSED JSON object, not protobuf bytes — feeding it to decodeUserStatusFull
+    // (a byte parser) always returned empty, so the on-demand balance never
+    // surfaced. Decode balance from the protobuf GetUserStatus instead, whose
+    // bytes carry it at the calibrated field #1.13.16 (paid-verified 2026-07-06).
+    // fetchUserStatus is a FREE read-only RPC (no chat / no billing fire).
+    try {
+      const { fetchUserStatus } = await import('./devin-connect-catalog.js');
+      const billing = await fetchUserStatus({ token: account.apiKey });
+      if (billing) {
         if (billing.balance != null) account.credits.balance = billing.balance;
         if (billing.periodStart) account.credits.periodStart = billing.periodStart;
         if (billing.periodEnd) account.credits.periodEnd = billing.periodEnd;
-      } catch (billingErr) {
-        log.warn(`refreshCredits ${id}: billing decode failed: ${billingErr.message}`);
       }
+    } catch (billingErr) {
+      log.warn(`refreshCredits ${id}: billing decode failed: ${billingErr.message}`);
     }
     // RB2/B2+B3+B6: react to the fresh balance snapshot. A dry account is
     // pre-cooled on its own quotaResetAt dimension (so getApiKey stops handing
