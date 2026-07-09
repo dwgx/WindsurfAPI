@@ -723,7 +723,16 @@
   },
   "drought": {
     "title": "配额预警：",
-    "body": "所有账号本周配额都低于阈值，建议补账号或等待重置"
+    "body": "所有账号本周配额都低于阈值，建议补账号或等待重置",
+    "detail": "最低周额度={{weekly}}% · 最低日额度={{daily}}% · 已知 {{known}}/{{active}} 个账号"
+  },
+  "tooltip": {
+    "plan": "套餐：{{plan}}",
+    "trialEnds": "试用到期：{{date}}（剩余 {{days}} 天）",
+    "promptCredits": "Prompt 额度：{{used}}/{{total}}",
+    "flowCredits": "Flow 额度：{{used}}/{{total}}",
+    "allowedModels": "可用 cascade 模型：{{count}}",
+    "fetchedAgo": "获取于 {{mins}} 分钟前"
   },
   "credentials": {
     "apiKey": "API_KEY",
@@ -1167,7 +1176,9 @@
     "ERR_TOKEN_FETCH_FAILED": "获取一次性 Auth Token 失败",
     "ERR_FIREBASE_TOKEN_MISSING": "Firebase 回应缺少 idToken",
     "ERR_LOCAL_IMPORT_LOOPBACK_ONLY": "本地导入仅限 127.0.0.1 访问 — 请在部署服务器本机的浏览器里打开 dashboard，不要用公网域名",
-    "ERR_LOCAL_IMPORT_FAILED": "扫描本地 Windsurf 凭证失败"
+    "ERR_LOCAL_IMPORT_FAILED": "扫描本地 Windsurf 凭证失败",
+    "ERR_INTERMEDIATE_CALLBACK": "这是中间回调页，它的登录 code 无法在这里兑换。请等浏览器跳转到 show-auth-token 页面后，粘贴那上面显示的 token。",
+    "ERR_OAUTH_UPSTREAM": "登录提供方返回了错误，请重新登录。"
   },
   "footer": {
     "version": "版本",

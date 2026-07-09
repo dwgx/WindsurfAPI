@@ -313,6 +313,16 @@ function maskEmail(email) {
 // Windsurf sign-in: a full redirect URL (token in query or #fragment), or the
 // bare token string itself. Returns '' if nothing token-shaped is found. The
 // caller must never log the raw input (it may contain a live token).
+//
+// Two diagnostic cases throw an ERR_* instead of returning '' so the user gets
+// an actionable reason rather than a generic "no token found":
+//   - ERR_INTERMEDIATE_CALLBACK: the pasted URL is a federated *intermediate*
+//     callback (has ?code= on a /auth/<provider>/callback path). That code can
+//     only be exchanged by windsurf.com's backend (holds the client_secret) —
+//     the user pasted too early; they must wait for the show-auth-token page and
+//     paste the token shown there.
+//   - ERR_OAUTH_UPSTREAM:<error>[:<desc>]: the provider redirected back an
+//     ?error= (e.g. access_denied) — surface the real reason.
 // Exported for unit testing (also used by the /oauth/callback endpoint).
 export function extractOAuthToken(input) {
   const raw = String(input || '').trim();
@@ -325,11 +335,30 @@ export function extractOAuthToken(input) {
       if (fromQuery) return fromQuery.trim();
       // token may live in the #fragment (implicit flow): #access_token=...&...
       const frag = u.hash.startsWith('#') ? u.hash.slice(1) : u.hash;
-      if (frag) {
-        const fromHash = pick(new URLSearchParams(frag));
+      const fragParams = frag ? new URLSearchParams(frag) : null;
+      if (fragParams) {
+        const fromHash = pick(fragParams);
         if (fromHash) return fromHash.trim();
       }
-    } catch { /* fall through to bare-token handling */ }
+      // No token present — before giving up, distinguish an explicit upstream
+      // error or an intermediate callback so the caller can explain what to do.
+      const upstreamErr = u.searchParams.get('error') || (fragParams && fragParams.get('error')) || '';
+      if (upstreamErr) {
+        const desc = u.searchParams.get('error_description') || (fragParams && fragParams.get('error_description')) || '';
+        const e = new Error('ERR_OAUTH_UPSTREAM:' + upstreamErr + (desc ? ':' + desc : ''));
+        e.code = 'ERR_OAUTH_UPSTREAM';
+        throw e;
+      }
+      if (u.searchParams.get('code') && /\/auth\/[^/]+\/callback/i.test(u.pathname)) {
+        const e = new Error('ERR_INTERMEDIATE_CALLBACK');
+        e.code = 'ERR_INTERMEDIATE_CALLBACK';
+        throw e;
+      }
+    } catch (e) {
+      // Propagate our own diagnostic ERR_* codes; swallow URL-parse failures
+      // (malformed input) and fall through to bare-token handling.
+      if (e && typeof e.message === 'string' && e.message.startsWith('ERR_')) throw e;
+    }
     return '';
   }
   // Bare paste: accept a raw token (session/auth token), reject anything with

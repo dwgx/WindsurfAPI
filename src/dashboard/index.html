@@ -3209,6 +3209,12 @@ const App = {
   translateError(errorCode, fallbackKey = 'error.unknown') {
     const errKey = errorCode ? `error.${errorCode}` : '';
     if (errKey && I18n.t(errKey) !== errKey) return I18n.t(errKey);
+    // Some codes carry a detail after a colon (e.g. ERR_OAUTH_UPSTREAM:access_denied).
+    // Fall back to the base-code key so the localized message still shows.
+    if (errorCode && errorCode.includes(':')) {
+      const baseKey = `error.${errorCode.slice(0, errorCode.indexOf(':'))}`;
+      if (I18n.t(baseKey) !== baseKey) return I18n.t(baseKey);
+    }
     return errorCode || I18n.t(fallbackKey);
   },
 
@@ -3725,6 +3731,14 @@ docker compose up -d --force-recreate</pre>
         try { localStorage.removeItem('dp'); } catch {}
         this.stopAllPolls();
         document.getElementById('login-overlay').classList.remove('hidden');
+        // A lockout (handleLockout) hides the password field + submit button
+        // while its countdown runs. If a 401 lands mid-countdown we re-show the
+        // overlay but must also restore those controls, otherwise the user is
+        // left staring at a login box with no inputs until the timer expires.
+        const pwEl = document.getElementById('login-password');
+        const btnEl = document.getElementById('login-btn');
+        if (pwEl) pwEl.style.display = '';
+        if (btnEl) btnEl.style.display = '';
         return {};
       }
       // Surface non-2xx failures instead of silently returning error-shaped data
@@ -3739,6 +3753,10 @@ docker compose up -d --force-recreate</pre>
   stopAllPolls() {
     Object.values(this.pollers || {}).forEach(clearInterval);
     this.pollers = {};
+    // Also tear down the logs SSE stream. Without this, stopping polls while
+    // sitting on the logs panel during a 429/401 lockout leaves the fetch
+    // ReadableStream open and still hitting the banned /logs/stream endpoint.
+    if (this.sseConn) { try { this.sseConn.close(); } catch {} this.sseConn = null; }
   },
 
   // Show a single non-spammy lockout overlay with a live countdown. Stops all
@@ -4609,7 +4627,19 @@ docker compose up -d --force-recreate</pre>
   // Small chooser popup over the modal-overlay: left = open page, right = copy
   // URL, plus a "don't ask again" checkbox that persists to backend prefs.
   async showOAuthChooser(provider) {
+    // Re-entrancy guard: the `await /oauth/start` below is async, so a second
+    // click before it resolves would stack a duplicate modal and clobber the
+    // _oauthUrl/_oauthState of the first. Bail if a chooser is already open.
+    if (document.querySelector('.modal-overlay[data-oauth-chooser]')) return;
     const label = provider === 'google' ? 'Google' : 'GitHub';
+    // Append the (empty) overlay + marker synchronously BEFORE the async
+    // /oauth/start below, so a second click during that await is caught by the
+    // guard above instead of stacking a duplicate modal and clobbering
+    // _oauthUrl/_oauthState.
+    const wrap = document.createElement('div');
+    wrap.className = 'modal-overlay';
+    wrap.setAttribute('data-oauth-chooser', '');
+    document.body.appendChild(wrap);
     // Start the session up front so "copy URL" hands back the same state-bound
     // URL the "open page" path would use.
     let url, state;
@@ -4625,8 +4655,6 @@ docker compose up -d --force-recreate</pre>
     this._oauthUrl = url;
     this._oauthState = state;
 
-    const wrap = document.createElement('div');
-    wrap.className = 'modal-overlay';
     wrap.innerHTML = `
       <div class="modal" style="max-width:440px">
         <div class="modal-title">${I18n.t('oauth.chooser.title', { label })}</div>
@@ -4643,7 +4671,6 @@ docker compose up -d --force-recreate</pre>
           <button class="btn btn-ghost btn-sm" data-act="cancel">${I18n.t('action.cancel')}</button>
         </div>
       </div>`;
-    document.body.appendChild(wrap);
     const close = () => wrap.remove();
     const persistSkip = async () => {
       if (wrap.querySelector('[data-act=skip]')?.checked) {
@@ -5447,26 +5474,26 @@ docker compose up -d --force-recreate</pre>
       const usTipLines = [];
       let tierSubline = '';
       if (us) {
-        if (us.planName) usTipLines.push(`Plan: ${us.planName}`);
+        if (us.planName) usTipLines.push(I18n.t('tooltip.plan', { plan: us.planName }));
         if (us.trialEndMs) {
           const daysLeft = Math.max(0, Math.ceil((us.trialEndMs - Date.now()) / 86400000));
-          usTipLines.push(`Trial ends: ${new Date(us.trialEndMs).toLocaleDateString()} (${daysLeft}d left)`);
+          usTipLines.push(I18n.t('tooltip.trialEnds', { date: new Date(us.trialEndMs).toLocaleDateString(), days: daysLeft }));
           tierSubline = `${daysLeft}d trial`;
         } else if (us.planName) {
           tierSubline = us.planName.length > 12 ? us.planName.slice(0, 12) + '…' : us.planName;
         }
         if (us.monthlyPromptCredits > 0) {
-          usTipLines.push(`Prompt: ${us.promptCreditsUsed}/${us.monthlyPromptCredits}`);
+          usTipLines.push(I18n.t('tooltip.promptCredits', { used: us.promptCreditsUsed, total: us.monthlyPromptCredits }));
         }
         if (us.monthlyFlowCredits > 0) {
-          usTipLines.push(`Flow: ${us.flowCreditsUsed}/${us.monthlyFlowCredits}`);
+          usTipLines.push(I18n.t('tooltip.flowCredits', { used: us.flowCreditsUsed, total: us.monthlyFlowCredits }));
         }
         if (us.allowedModels?.length) {
-          usTipLines.push(`Allowed cascade models: ${us.allowedModels.length}`);
+          usTipLines.push(I18n.t('tooltip.allowedModels', { count: us.allowedModels.length }));
         }
         if (a.userStatusLastFetched) {
           const ago = Math.round((Date.now() - a.userStatusLastFetched) / 60000);
-          usTipLines.push(`Fetched: ${ago}m ago`);
+          usTipLines.push(I18n.t('tooltip.fetchedAgo', { mins: ago }));
         }
       }
       const tierTooltip = usTipLines.length
@@ -7771,9 +7798,12 @@ docker compose up -d --force-recreate</pre>
       banner.style.display = '';
       const lw = d.lowestWeeklyPercent;
       const ld = d.lowestDailyPercent;
-      const summary = (lw == null ? '' : `min weekly=${lw.toFixed(0)}%`)
-        + (ld == null ? '' : ` · min daily=${ld.toFixed(0)}%`)
-        + ` · ${d.knownAccounts}/${d.activeAccounts} accounts known`;
+      const summary = I18n.t('drought.detail', {
+        weekly: lw == null ? '?' : lw.toFixed(0),
+        daily: ld == null ? '?' : ld.toFixed(0),
+        known: d.knownAccounts,
+        active: d.activeAccounts,
+      });
       msg.textContent = I18n.t('drought.body') || msg.textContent;
       detail.textContent = summary;
     } catch (e) {

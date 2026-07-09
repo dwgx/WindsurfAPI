@@ -76,4 +76,66 @@ describe('extractOAuthToken', () => {
     assert.equal(extractOAuthToken('hello world with spaces'), '');
     assert.equal(extractOAuthToken(null), '');
   });
+
+  // assert.throws matches a RegExp against String(error) ("Error: <msg>"), so
+  // assert on err.message directly for an exact-code check.
+  const msgIs = (expected) => (err) => err.message === expected;
+  const msgStarts = (prefix) => (err) => err.message.startsWith(prefix);
+
+  it('throws ERR_INTERMEDIATE_CALLBACK for a federated ?code= callback URL', () => {
+    // User pasted the intermediate app.devin.ai -> windsurf.com/auth/devin/callback
+    // page (has ?code=) instead of waiting for the final show-auth-token page.
+    assert.throws(
+      () => extractOAuthToken('https://windsurf.com/auth/devin/callback?code=7TPbmmW7abc&state=xyz&intent=show-auth-token'),
+      msgIs('ERR_INTERMEDIATE_CALLBACK'),
+    );
+    assert.throws(
+      () => extractOAuthToken('https://windsurf.com/auth/google/callback?code=abc&state=xyz'),
+      msgIs('ERR_INTERMEDIATE_CALLBACK'),
+    );
+  });
+
+  it('does NOT treat a bare ?code= (no /auth/*/callback path) as intermediate', () => {
+    // A code param on some unrelated path is not our federated callback shape —
+    // there is simply no token, so return '' (generic "no token" handling).
+    assert.equal(extractOAuthToken('https://x.com/random?code=abc'), '');
+  });
+
+  it('prefers an actual token over the intermediate-callback diagnostic', () => {
+    // If the callback URL somehow also carries a real token, hand back the token
+    // rather than throwing.
+    assert.equal(
+      extractOAuthToken('https://windsurf.com/auth/devin/callback?code=abc&token=devin-session-token$real'),
+      'devin-session-token$real',
+    );
+  });
+
+  it('throws ERR_OAUTH_UPSTREAM:<error> for a provider error redirect', () => {
+    assert.throws(
+      () => extractOAuthToken('https://windsurf.com/auth/devin/callback?error=access_denied&state=xyz'),
+      msgIs('ERR_OAUTH_UPSTREAM:access_denied'),
+    );
+  });
+
+  it('includes error_description in the upstream error when present', () => {
+    assert.throws(
+      () => extractOAuthToken('https://x.com/cb?error=server_error&error_description=upstream+down'),
+      msgIs('ERR_OAUTH_UPSTREAM:server_error:upstream down'),
+    );
+  });
+
+  it('surfaces an error carried in the #fragment (implicit flow)', () => {
+    assert.throws(
+      () => extractOAuthToken('https://x.com/cb#error=access_denied'),
+      msgStarts('ERR_OAUTH_UPSTREAM:access_denied'),
+    );
+  });
+
+  it('prefers upstream error over intermediate-callback when both apply', () => {
+    // error= wins over code= — the real failure reason is more actionable.
+    assert.throws(
+      () => extractOAuthToken('https://windsurf.com/auth/devin/callback?code=abc&error=access_denied'),
+      msgIs('ERR_OAUTH_UPSTREAM:access_denied'),
+    );
+  });
 });

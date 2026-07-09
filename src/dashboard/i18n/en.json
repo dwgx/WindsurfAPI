@@ -328,7 +328,7 @@
       "title": "Language Server Pool",
       "desc": "{{count}} LS instances · one process per dedicated proxy",
       "sectionTitle": "Language Server Pool",
-      "sectionDesc": "Dedicated Language Server instances per proxy",
+      "sectionDesc": "{{count}} Language Server instances · one process per dedicated proxy",
       "port": "Port",
       "defaultInstance": "Default Instance",
       "noProxy": "No proxy"
@@ -723,7 +723,16 @@
   },
   "drought": {
     "title": "Quota drought:",
-    "body": "Every active account is below the weekly quota threshold — add accounts or wait for reset"
+    "body": "Every active account is below the weekly quota threshold — add accounts or wait for reset",
+    "detail": "min weekly={{weekly}}% · min daily={{daily}}% · {{known}}/{{active}} accounts known"
+  },
+  "tooltip": {
+    "plan": "Plan: {{plan}}",
+    "trialEnds": "Trial ends: {{date}} ({{days}}d left)",
+    "promptCredits": "Prompt: {{used}}/{{total}}",
+    "flowCredits": "Flow: {{used}}/{{total}}",
+    "allowedModels": "Allowed cascade models: {{count}}",
+    "fetchedAgo": "Fetched: {{mins}}m ago"
   },
   "credentials": {
     "apiKey": "API_KEY",
@@ -1167,7 +1176,9 @@
     "ERR_TOKEN_FETCH_FAILED": "Failed to fetch one-time auth token",
     "ERR_FIREBASE_TOKEN_MISSING": "Firebase response missing idToken",
     "ERR_LOCAL_IMPORT_LOOPBACK_ONLY": "Local import only available from 127.0.0.1 — open the dashboard from the host machine itself, not via a public domain",
-    "ERR_LOCAL_IMPORT_FAILED": "Failed to scan local Windsurf credentials"
+    "ERR_LOCAL_IMPORT_FAILED": "Failed to scan local Windsurf credentials",
+    "ERR_INTERMEDIATE_CALLBACK": "This is an intermediate callback page — its login code can't be exchanged here. Wait until the browser lands on the show-auth-token page, then paste the token shown there.",
+    "ERR_OAUTH_UPSTREAM": "The login provider returned an error. Please retry the sign-in."
   },
   "footer": {
     "version": "Version",
