@@ -202,7 +202,12 @@ async function route(req, res) {
   // Tolerate a doubled `/v1/v1/` prefix some clients emit.
   if (path.startsWith('/v1/v1/')) path = path.slice(3);
 
-  if (method === 'OPTIONS') {
+  if (method === 'OPTIONS' && !path.startsWith('/dashboard/api/')) {
+    // Public API (/v1/*) preflight: blanket `*`, no credentials — correct for an
+    // open, key-authenticated API. Dashboard-API preflights are deliberately
+    // excluded so they fall through to handleDashboardApi, whose OPTIONS handler
+    // answers through the DASHBOARD_CORS_ORIGINS allowlist (matching the actual
+    // dashboard responses instead of a blanket `*`). #9.
     res.writeHead(204, {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',

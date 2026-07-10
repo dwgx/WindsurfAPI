@@ -13,7 +13,12 @@
 
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { dirname, join } from 'node:path';
 import { config } from '../src/config.js';
+
+const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 import {
   configureBindHost, addAccountByKey, removeAccount,
   checkLockout, failedAuthAttempt, _resetLockoutForTests,
@@ -147,6 +152,30 @@ describe('AUTH-1: CORS is not a blanket wildcard', () => {
     await handleDashboardApi('OPTIONS', '/config', {}, mkReq({ origin: 'https://evil.example' }), res);
     assert.equal(captured.status, 204);
     assert.equal(captured.headers['Access-Control-Allow-Origin'], undefined);
+  });
+
+  it('OPTIONS preflight from an allowlisted origin echoes it (not `*`)', async () => {
+    process.env.DASHBOARD_CORS_ORIGINS = 'https://ok.example';
+    const { res, captured } = mkRes();
+    await handleDashboardApi('OPTIONS', '/config', {}, mkReq({ origin: 'https://ok.example' }), res);
+    assert.equal(captured.status, 204);
+    assert.equal(captured.headers['Access-Control-Allow-Origin'], 'https://ok.example');
+    assert.notEqual(captured.headers['Access-Control-Allow-Origin'], '*');
+  });
+
+  // #9: the dashboard OPTIONS handler above is only REACHED if the global
+  // OPTIONS short-circuit in server.js excludes /dashboard/api/. Without the
+  // exclusion, every dashboard preflight is answered with a blanket ACAO:* by
+  // server.js:route and the allowlist handler is dead code. Pin the routing
+  // invariant at the source level (route() is not exported / no full-route
+  // harness — same source-assertion convention as http-cache-control.test.js).
+  it('server.js global OPTIONS short-circuit excludes /dashboard/api/ so the allowlist handler is reachable', () => {
+    const src = readFileSync(join(REPO_ROOT, 'src/server.js'), 'utf-8');
+    assert.match(
+      src,
+      /if \(method === 'OPTIONS' && !path\.startsWith\('\/dashboard\/api\/'\)\)/,
+      'global OPTIONS handler must exclude /dashboard/api/ (else dashboard preflight is a blanket `*`)',
+    );
   });
 
   it('allowlisted origin is echoed (not `*`) with Vary: Origin', async () => {
