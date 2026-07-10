@@ -156,3 +156,43 @@ describe('F4 /v1/messages error body carries request_id', () => {
     assert.match(res.body.request_id, /^req_/);
   });
 });
+
+// Regression: an empty-body POST to a dashboard endpoint (App.api('POST', path)
+// with no body → Content-Length 0) must NOT be rejected as "Invalid JSON".
+// JSON.parse('') throws; the fix treats an empty body as {}. This surfaced as
+// the dashboard Update button printing "✗ Invalid JSON" on /self-update.
+describe('dashboard empty-body POST is not Invalid JSON', () => {
+  function postEmpty(port, path, headers = {}) {
+    return new Promise((resolve, reject) => {
+      const req = http.request({
+        host: '127.0.0.1', port, path, method: 'POST',
+        headers: { 'Content-Length': 0, ...headers },
+      }, res => {
+        let raw = '';
+        res.on('data', chunk => { raw += chunk; });
+        res.on('end', () => resolve({ statusCode: res.statusCode, body: raw ? JSON.parse(raw) : null }));
+      });
+      req.on('error', reject);
+      req.end();
+    });
+  }
+
+  it('empty-body POST reaches the handler instead of a 400 Invalid JSON', async () => {
+    _resetLockoutForTests();
+    config.dashboardPassword = 'pw-empty-body';
+    config.host = '127.0.0.1';
+    config.port = 0;
+
+    runningServer = startServer();
+    await waitListening(runningServer);
+    const port = runningServer.address().port;
+
+    // /accounts/probe-all is a no-op on an empty pool; the point is the body
+    // parser must not short-circuit an empty body to { error: 'Invalid JSON' }.
+    const res = await postEmpty(port, '/dashboard/api/accounts/probe-all',
+      { 'X-Dashboard-Password': 'pw-empty-body' });
+
+    assert.notEqual(res.body?.error, 'Invalid JSON', 'empty body must not be rejected as Invalid JSON');
+    assert.notEqual(res.statusCode, 400);
+  });
+});

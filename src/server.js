@@ -280,9 +280,22 @@ async function route(req, res) {
   if (path.startsWith('/dashboard/api/')) {
     let body = {};
     if (method === 'POST' || method === 'PUT' || method === 'PATCH') {
-      try { body = JSON.parse(await readBody(req)); } catch (err) {
+      let raw;
+      try {
+        raw = await readBody(req);
+      } catch (err) {
         if (sendBodyTooLargeIfNeeded(res, err, 'dashboard')) return;
         return json(res, 400, { ok: false, error: 'Invalid JSON' });
+      }
+      // An empty body is a valid "no payload" POST (e.g. /self-update,
+      // account status toggles) — treat it as {} instead of feeding
+      // JSON.parse('') which throws and surfaced as a bogus "Invalid JSON"
+      // on the dashboard's Update button (#self-update).
+      const trimmed = String(raw ?? '').trim();
+      if (trimmed) {
+        try { body = JSON.parse(trimmed); } catch {
+          return json(res, 400, { ok: false, error: 'Invalid JSON' });
+        }
       }
     }
     const subpath = path.slice('/dashboard/api'.length);
