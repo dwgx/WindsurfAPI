@@ -17,8 +17,9 @@
 
 import http from 'http';
 import https from 'https';
-import { log } from './config.js';
+import { config, log } from './config.js';
 import { safeKeyRef } from './log-safety.js';
+import { resolveProxyConnectHost } from './net-safety.js';
 
 const SERVER_HOSTS = [
   'server.codeium.com',
@@ -32,10 +33,13 @@ const WEB_SEARCH_PATH = '/exa.api_server_pb.ApiServerService/GetWebSearchResults
 import { isSocks, createSocksTunnel } from './socks.js';
 
 // Tunnel HTTPS through an HTTP CONNECT proxy or SOCKS5 proxy.
-function createProxyTunnel(proxy, targetHost, targetPort) {
+async function createProxyTunnel(proxy, targetHost, targetPort) {
   if (isSocks(proxy)) return createSocksTunnel(proxy, targetHost, targetPort);
+  // #11: pin the proxy host to a vetted IP literal so the CONNECT socket does no
+  // second (rebindable) DNS lookup. Honors ALLOW_PRIVATE_PROXY_HOSTS.
+  const rawHost = proxy.host.replace(/:\d+$/, '');
+  const proxyHost = await resolveProxyConnectHost(rawHost, { allowPrivate: config.allowPrivateProxyHosts });
   return new Promise((resolve, reject) => {
-    const proxyHost = proxy.host.replace(/:\d+$/, '');
     const proxyPort = proxy.port || 8080;
     const req = http.request({
       host: proxyHost,

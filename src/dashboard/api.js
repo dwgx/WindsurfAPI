@@ -39,7 +39,7 @@ import { checkMessageRateLimit } from '../windsurf-api.js';
 import { getNativeBridgeConfigStatus } from '../cascade-native-bridge.js';
 import { getNativeBridgeStats } from '../native-bridge-stats.js';
 import { assertPublicUrlHost } from '../image.js';
-import { validateHostFormat } from '../net-safety.js';
+import { validateHostFormat, resolveProxyConnectHost } from '../net-safety.js';
 import { discoverWindsurfCredentials, isLoopbackAddress } from './local-windsurf.js';
 import { parseAccountText, classifyToken } from './account-text-parser.js';
 import { detectDockerSelfUpdate, runDockerSelfUpdate } from './docker-self-update.js';
@@ -2140,12 +2140,15 @@ async function testProxy({ host, port, username, password, type }) {
     socket = await createSocksTunnel(proxy, targetHost, targetPort, 10000);
   } else {
     const http = await import('node:http');
+    // #11: pin the proxy host to a vetted IP literal so this CONNECT does not
+    // re-resolve the (already validated) hostname via a second, rebindable lookup.
+    const dialHost = await resolveProxyConnectHost(host, { allowPrivate: config.allowPrivateProxyHosts });
     socket = await new Promise((resolve, reject) => {
       const authHeader = username
         ? { 'Proxy-Authorization': 'Basic ' + Buffer.from(`${username}:${password || ''}`).toString('base64') }
         : {};
       const req = http.request({
-        host, port, method: 'CONNECT',
+        host: dialHost, port, method: 'CONNECT',
         path: `${targetHost}:${targetPort}`,
         headers: { Host: `${targetHost}:${targetPort}`, ...authHeader },
         timeout: 10000,

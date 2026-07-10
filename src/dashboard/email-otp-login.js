@@ -16,7 +16,8 @@
  */
 
 import tls from 'node:tls';
-import { log } from '../config.js';
+import { config, log } from '../config.js';
+import { resolveProxyConnectHost } from '../net-safety.js';
 import { safeEmailRef, safeKeyRef } from '../log-safety.js';
 
 // Test-only transport seam (same pattern as windsurf-login.js __setLoginTransportForTests)
@@ -86,10 +87,12 @@ import https from 'node:https';
 import http from 'node:http';
 import { isSocks, createSocksTunnel } from '../socks.js';
 
-function createProxyTunnel(proxy, targetHost, targetPort) {
+async function createProxyTunnel(proxy, targetHost, targetPort) {
   if (isSocks(proxy)) return createSocksTunnel(proxy, targetHost, targetPort);
+  // #11: pin the proxy host to a vetted IP literal (no second rebindable lookup).
+  const rawHost = proxy.host.replace(/:\d+$/, '');
+  const proxyHost = await resolveProxyConnectHost(rawHost, { allowPrivate: config.allowPrivateProxyHosts });
   return new Promise((resolve, reject) => {
-    const proxyHost = proxy.host.replace(/:\d+$/, '');
     const proxyPort = proxy.port || 8080;
 
     const connectReq = http.request({

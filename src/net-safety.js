@@ -115,3 +115,38 @@ export async function validateHostFormat(hostname, lookupFn = dnsLookup) {
   return Array.isArray(result) ? result : [result];
 }
 
+// Resolve a proxy host and return a single VALIDATED IP literal to dial. The
+// point is to close the TOCTOU / DNS-rebinding gap: validateProxyHost() resolved
+// the name once for its check, but the later net.connect(host) / http CONNECT
+// re-resolved it — a second lookup an attacker's DNS can answer with a private
+// IP. By connecting to the literal returned here, the socket performs NO further
+// resolution, so the address we vetted is exactly the address we dial.
+//
+// When allowPrivate is true (ALLOW_PRIVATE_PROXY_HOSTS=1) we still resolve to a
+// literal (keeping the "connect the vetted address" invariant) but skip the
+// private-IP rejection, matching validateHostFormat's laxer policy.
+export async function resolveProxyConnectHost(hostname, { allowPrivate = false, lookupFn = dnsLookup } = {}) {
+  const host = String(hostname || '').replace(/^\[|\]$/g, '');
+  if (!host) throw new Error('ERR_INVALID_HOST');
+  // An IP literal cannot be rebound; still enforce the private-IP policy on it.
+  if (net.isIP(host)) {
+    if (!allowPrivate && isPrivateIp(host)) throw new Error('ERR_PROXY_PRIVATE_IP');
+    return host;
+  }
+  if (!allowPrivate && host.toLowerCase() === 'localhost') throw new Error('ERR_PROXY_PRIVATE_HOST');
+  const result = await new Promise((resolve, reject) => {
+    lookupFn(host, { all: true }, (err, addrs) => err ? reject(err) : resolve(addrs));
+  });
+  const addrs = (Array.isArray(result) ? result : [result]).filter(a => a && a.address);
+  if (!addrs.length) throw new Error('ERR_PROXY_DNS_EMPTY');
+  if (!allowPrivate) {
+    // Reject if ANY resolved address is private (a rebinding answer often mixes
+    // a public and a private A record); then dial the first public one.
+    for (const a of addrs) {
+      if (isPrivateIp(a.address)) throw new Error('ERR_PROXY_PRIVATE_IP');
+    }
+  }
+  const pick = allowPrivate ? addrs[0] : (addrs.find(a => !isPrivateIp(a.address)) || addrs[0]);
+  return pick.address;
+}
+

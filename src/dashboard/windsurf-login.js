@@ -5,7 +5,8 @@
 
 import http from 'http';
 import https from 'https';
-import { log } from '../config.js';
+import { config, log } from '../config.js';
+import { resolveProxyConnectHost } from '../net-safety.js';
 import { safeEmailRef, safeKeyRef, logHash } from '../log-safety.js';
 import { isSocks, createSocksTunnel } from '../socks.js';
 import { getEmailLockThreshold, getEmailLockMs, getBackendSwitch } from '../runtime-config.js';
@@ -234,10 +235,12 @@ function buildJsonHeaders(fingerprint, body, extra = {}) {
 
 // ─── Proxy tunnel (HTTP CONNECT or SOCKS5) ───────────────
 
-function createProxyTunnel(proxy, targetHost, targetPort) {
+async function createProxyTunnel(proxy, targetHost, targetPort) {
   if (isSocks(proxy)) return createSocksTunnel(proxy, targetHost, targetPort);
+  // #11: pin the proxy host to a vetted IP literal (no second rebindable lookup).
+  const rawHost = proxy.host.replace(/:\d+$/, '');
+  const proxyHost = await resolveProxyConnectHost(rawHost, { allowPrivate: config.allowPrivateProxyHosts });
   return new Promise((resolve, reject) => {
-    const proxyHost = proxy.host.replace(/:\d+$/, '');
     const proxyPort = proxy.port || 8080;
 
     const connectReq = http.request({

@@ -6,6 +6,8 @@
  */
 
 import net from 'node:net';
+import { config } from './config.js';
+import { resolveProxyConnectHost } from './net-safety.js';
 
 const SOCKS_VERSION = 0x05;
 const AUTH_NONE = 0x00;
@@ -20,10 +22,15 @@ export function isSocks(proxy) {
   return t === 'socks5' || t === 'socks' || t === 'socks5h';
 }
 
-export function createSocksTunnel(proxy, targetHost, targetPort, timeoutMs = 15000) {
+export async function createSocksTunnel(proxy, targetHost, targetPort, timeoutMs = 15000) {
+  const rawHost = proxy.host.replace(/:\d+$/, '');
+  const port = proxy.port || 1080;
+  // #11: resolve the proxy host ONCE to a vetted IP literal and dial that, so
+  // net.connect performs no second (rebindable) DNS lookup. Honors the
+  // ALLOW_PRIVATE_PROXY_HOSTS policy. targetHost is left as a name on purpose —
+  // it is resolved by the proxy server, not by us.
+  const host = await resolveProxyConnectHost(rawHost, { allowPrivate: config.allowPrivateProxyHosts });
   return new Promise((resolve, reject) => {
-    const host = proxy.host.replace(/:\d+$/, '');
-    const port = proxy.port || 1080;
     let settled = false;
     const done = (fn, val) => { if (!settled) { settled = true; fn(val); } };
 
