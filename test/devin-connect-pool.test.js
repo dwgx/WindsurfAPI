@@ -2,6 +2,7 @@ import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { addAccountByKey, getApiKey, getRpmStats, removeAccount, getAccountList, __setReloginDeps, __resetReloginState } from '../src/auth.js';
 import { finalizeConnectAccount } from '../src/handlers/chat.js';
+import { setBreakerTunables } from '../src/runtime-config.js';
 import { getStats } from '../src/dashboard/stats.js';
 
 // DEVIN_CONNECT account lifecycle: acquireConnectAccount draws from the same
@@ -65,6 +66,54 @@ describe('finalizeConnectAccount', () => {
       { id: acct.id, apiKey: acct.apiKey },
       { model: 'swe-1-6-slow', startTime: Date.now(), err: Object.assign(new Error('rl'), { code: 'RATE_LIMITED' }) },
     ));
+  });
+
+  // F2 (2026-07-10): a BARE 429 (no upstream reset window) applies an account-wide
+  // cooldown of `rlBurstMs`. Default 300000 = the historical 5min (byte-identical);
+  // an operator can shorten it so a transient burst does not bench the account for
+  // 5 minutes. A 429 WITH a reset window is unaffected (stays model-scoped).
+  it('F2: bare 429 default cools the account ~5min account-wide (byte-identical)', () => {
+    const acct = seed('rl-bare-default');
+    const t0 = Date.now();
+    finalizeConnectAccount(
+      { id: acct.id, apiKey: acct.apiKey },
+      { model: 'swe-1-6-slow', startTime: t0, err: Object.assign(new Error('rate limited'), { code: 'RATE_LIMITED' }) },
+    );
+    const until = acct.rateLimitedUntil || 0;
+    assert.ok(until > t0 + 4.5 * 60 * 1000 && until < t0 + 5.5 * 60 * 1000, `account-wide ~5min (got ${(until - t0) / 1000}s)`);
+  });
+
+  it('F2: rlBurstMs override shortens the bare-429 account-wide cooldown', () => {
+    setBreakerTunables({ rlBurstMs: 15000 });
+    try {
+      const acct = seed('rl-bare-short');
+      const t0 = Date.now();
+      finalizeConnectAccount(
+        { id: acct.id, apiKey: acct.apiKey },
+        { model: 'swe-1-6-slow', startTime: t0, err: Object.assign(new Error('rate limited'), { code: 'RATE_LIMITED' }) },
+      );
+      const until = acct.rateLimitedUntil || 0;
+      assert.ok(until > t0 + 10 * 1000 && until < t0 + 20 * 1000, `shortened to ~15s (got ${(until - t0) / 1000}s)`);
+    } finally {
+      setBreakerTunables({ rlBurstMs: null });
+    }
+  });
+
+  it('F2: a 429 WITH a reset window stays model-scoped, ignores rlBurstMs', () => {
+    setBreakerTunables({ rlBurstMs: 15000 });
+    try {
+      const acct = seed('rl-window');
+      const t0 = Date.now();
+      finalizeConnectAccount(
+        { id: acct.id, apiKey: acct.apiKey },
+        { model: 'swe-1-6-slow', startTime: t0, err: Object.assign(new Error('resets in 3h'), { code: 'RATE_LIMITED', resetMs: 3 * 60 * 60 * 1000 }) },
+      );
+      // reset-window path is model-scoped: no account-wide rateLimitedUntil.
+      assert.ok(!(acct.rateLimitedUntil > t0), 'account-wide cooldown NOT set for a windowed 429');
+      assert.ok((acct._modelRateLimits?.['swe-1-6-slow'] || 0) > t0 + 2 * 60 * 60 * 1000, 'model-scoped cooldown honours the 3h window');
+    } finally {
+      setBreakerTunables({ rlBurstMs: null });
+    }
   });
 
   it('fires a background re-login on UNAUTHORIZED when auto-relogin is configured', async () => {

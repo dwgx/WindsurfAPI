@@ -15,7 +15,8 @@ import { recordRequest, recordTokenUsage, recordPolicyBlocked, recordRateLimited
 import { extractIntentFromNarrative, detectToolIntentInNarrative } from './intent-extractor.js';
 import { isModelAllowed } from '../dashboard/model-access.js';
 import { cacheKey, cacheGet, cacheSet } from '../cache.js';
-import { isExperimentalEnabled } from '../runtime-config.js';
+import { isExperimentalEnabled, getBreakerTunable } from '../runtime-config.js';
+import { neutralizeClientIdentity } from './identity-neutralize.js';
 import { checkMessageRateLimit } from '../windsurf-api.js';
 import { getEffectiveProxy } from '../dashboard/proxy-config.js';
 import {
@@ -43,6 +44,7 @@ import { resolveConnectSelector } from '../devin-connect-models.js';
 import { isRetryable as isConnectRetryable, getToolDefTags, parseToolCallTagMap } from '../devin-connect.js';
 import { isRouterModel, assignModel } from '../devin-connect-catalog.js';
 import { bumpConnect } from '../devin-connect-metrics.js';
+import { newTraceId, traceClientRequest, traceRouting, traceClientResponse, traceEnabled } from '../trace.js';
 import { sanitizeText, sanitizeToolCall, PathSanitizeStream } from '../sanitize.js';
 import { systemFingerprint } from '../system-fingerprint.js';
 import { registerSseController } from '../sse-registry.js';
@@ -366,6 +368,10 @@ export function connectErrorToHttp(code) {
     case 'RATE_LIMITED': return { status: 429, type: 'rate_limit_error' };
     case 'CAPACITY': return { status: 503, type: 'capacity_error' };
     case 'UPSTREAM_INTERNAL': return { status: 503, type: 'upstream_transient_error' };
+    // CONTENT_BLOCKED: upstream content policy rejected the REQUEST content (not an
+    // auth or account fault). 400 invalid_request_error is the honest surface — the
+    // caller must change the prompt, not retry or re-auth. NO account penalty.
+    case 'CONTENT_BLOCKED': return { status: 400, type: 'invalid_request_error' };
     case 'NO_TOKEN': return { status: 401, type: 'authentication_error' };
     case 'TIMEOUT': return { status: 504, type: 'timeout_error' };
     default: return { status: 502, type: 'upstream_error' };
@@ -758,18 +764,30 @@ const OPUS47_STRICT_REUSE = process.env.OPUS47_STRICT_REUSE !== '0';
 // into the legacy permissive behavior (single-user proxies, internal use).
 const CASCADE_REUSE_ALLOW_SHARED_API_KEY = process.env.CASCADE_REUSE_ALLOW_SHARED_API_KEY === '1';
 
-// True when callerKey has any per-user / per-session dimension beyond a
-// bare API key (`api:<hash>`). Bare API-key callers without a user signal
-// share state across concurrent requests — see HIGH-3 above.
+// SEC-W2: the `:client:<ip+ua>` bucket is a GUESSED identity, not a real one.
+// Behind a reverse proxy every end user collapses to the same proxy IP + the
+// same UA (e.g. everyone on Claude Code), so treating `:client:` as a stable
+// per-user scope lets user B receive user A's cached answer / resumed cascade —
+// a cross-tenant session leak (P0 for shared / relay deployments, which is the
+// primary use here). So `:client:` is NOT trusted as a per-user dimension by
+// default. A genuine single-user self-host can opt back in with
+// WINDSURFAPI_SINGLE_TENANT_CACHE=1 (an opt-in to RELAX, never required for
+// safety — fail-safe: forget the flag and you're still isolated).
+const SINGLE_TENANT_CACHE = process.env.WINDSURFAPI_SINGLE_TENANT_CACHE === '1';
+
+// True when callerKey has a TRUSTWORTHY per-user / per-session dimension beyond
+// a bare API key (`api:<hash>`) or a guessed `:client:` bucket. Callers without
+// one must not share response-cache hits or resume each other's cascade — see
+// HIGH-3 and SEC-W2 above.
 function hasPerUserScope(callerKey) {
   if (typeof callerKey !== 'string' || !callerKey) return false;
+  // A real, client-supplied user/session signal is always trusted.
   if (callerKey.includes(':user:')) return true;
-  // v2.0.37: apiKey-mode now appends `:client:<ip+ua>` when no body
-  // user signal is present, so single-user self-hosted setups land on
-  // a stable scope and cascade reuse works across turns. Match the
-  // segment anywhere in the string (#93 follow-up zhangzhang-bit).
-  if (callerKey.includes(':client:')) return true;
-  if (callerKey.startsWith('session:') || callerKey.startsWith('client:')) return true;
+  if (callerKey.startsWith('session:')) return true;
+  // A guessed `:client:<ip+ua>` bucket is trusted ONLY in explicit single-tenant
+  // mode. Default (multi-tenant / relay) treats it as non-isolating so distinct
+  // users behind one proxy never share cache/cascade state.
+  if (SINGLE_TENANT_CACHE && (callerKey.includes(':client:') || callerKey.startsWith('client:'))) return true;
   return false;
 }
 
@@ -1117,6 +1135,27 @@ export function rateLimitBurstCooldownMs({ message = '', retryAfterMs = 0, apiKe
     }
   }
   return Math.max(...candidates);
+}
+
+// F3 (2026-07-10): client-replay mitigation for the Retry-After we advertise on a
+// 429. Agent clients (Claude Code) honour Retry-After to schedule their automatic
+// retry — so a too-SHORT hint (e.g. a 1s residual cooldown) makes the client
+// re-hammer almost immediately and re-trip the same limit, while a too-LONG hint
+// (an over-sized upstream reset window) freezes the client for minutes. Clamp the
+// advertised value into [floor, ceil]:
+//   floor = rlClientBackoffFloorMs (def 0 → NO floor = byte-identical to current
+//           behaviour; set e.g. 30000 to make CC actually back off)
+//   ceil  = rlClientBackoffCeilMs  (def 600000 → pure safety, only shortens absurd
+//           hints; never lengthens a normal one)
+// Returns whole seconds (the Retry-After header unit) so header + body agree.
+export function clientRetryAfterSeconds(retryAfterMs, env = process.env) {
+  const floorMs = getBreakerTunable('rlClientBackoffFloorMs', env);
+  const ceilMs = getBreakerTunable('rlClientBackoffCeilMs', env);
+  let ms = Number(retryAfterMs);
+  if (!Number.isFinite(ms) || ms < 0) ms = 0;
+  if (floorMs > 0) ms = Math.max(ms, floorMs);
+  if (ceilMs > 0) ms = Math.min(ms, ceilMs);
+  return Math.max(1, Math.ceil(ms / 1000));
 }
 
 function genId() {
@@ -1697,6 +1736,12 @@ export function finalizeConnectAccount(acct, { model, startTime, err }) {
     // it would demote a perfectly good free account toward eviction every time a
     // client names claude-*/gpt-* — so release cleanly, same as a success.
     else if (err.code === 'MODEL_BLOCKED') { /* no penalty — tier wall, not a fault */ }
+    // CONTENT_BLOCKED is an upstream content-policy rejection of the REQUEST
+    // content — the session token is alive and the account is healthy. Penalizing
+    // it (dead-token/re-login/cooldown) would bench a perfectly good account over a
+    // prompt the caller sent; a single such request used to cascade the whole pool
+    // to "exhausted (dead session tokens)". Release cleanly, exactly like a success.
+    else if (err.code === 'CONTENT_BLOCKED') { /* no penalty — request content rejected, not an account fault */ }
     else if (err.code === 'QUOTA_EXHAUSTED') {
       // The account ran out of credit/quota — unlike a tier wall this IS an
       // account-specific dry-well. Cool it down so getApiKey stops re-selecting
@@ -1724,12 +1769,15 @@ export function finalizeConnectAccount(acct, { model, startTime, err }) {
       // (e.g. "message rate limit ... Resets in: 3h0m0s" → err.resetMs). A hard
       // per-model limit is model-scoped, so cool THIS model only and let the pool
       // prefer another account/model for it, rather than benching the account for
-      // every model. Falls back to a 5-min account-wide cooldown when no window
-      // was given (generic 429 with no retry-after).
+      // every model. Falls back to an account-wide burst cooldown when no window
+      // was given (generic 429 with no retry-after). F2: that burst duration is
+      // now the `rlBurstMs` tunable (default 300000 = the historical 5min, so
+      // this is byte-identical unless an operator shortens it — see the tunable's
+      // note re: KiroStudio's "bare bursts self-heal in seconds" finding).
       if (Number.isFinite(err.resetMs) && err.resetMs > 0) {
         markRateLimited(apiKey, err.resetMs, model, 'r');
       } else {
-        markRateLimited(apiKey, 5 * 60 * 1000, null);
+        markRateLimited(apiKey, getBreakerTunable('rlBurstMs'), null);
       }
     }
     else if (err.code === 'CAPACITY') {
@@ -1864,13 +1912,20 @@ export function shouldAutoFallback(body, context, result) {
 }
 
 export async function handleChatCompletions(body, context = {}) {
+  // Full-chain trace (gated WINDSURFAPI_TRACE=1): one traceId stitches client
+  // request → routing → Devin wire bytes → client response. Reused as reqId so
+  // logs and the trace dir share the same id. No-op when tracing is off.
+  const traceId = context.traceId || newTraceId();
+  const traceStart = Date.now();
+  if (traceEnabled()) traceClientRequest(body, { ...context, traceId, protocol: context.protocol || 'openai' });
   // v2.0.88 (audit H-3) — compute original cache key BEFORE any
   // fallback rewrite. We pass it into the inner via context so a
   // successful fallback writes into the cache slot the NEXT identical
   // original-model request will look up, instead of the fallback-model
   // slot that the next request will miss.
   const originalCkey = cacheKey(body, context.callerKey || body.__callerKey || '');
-  const result = await _handleChatCompletionsInner(body, { ...context, __originalCkey: originalCkey });
+  const result = await _handleChatCompletionsInner(body, { ...context, traceId, __originalCkey: originalCkey });
+  if (traceEnabled()) traceClientResponse(traceId, { status: result?.status, stream: !!result?.stream, ms: Date.now() - traceStart, cached: !!result?.__cached });
   if (shouldAutoFallback(body, context, result)) {
     // v2.0.88 (audit H-1) — `body.model` is the RAW request string; the
     // inner handler resolves it through mergeReasoningEffortIntoModel +
@@ -1919,7 +1974,9 @@ export async function handleChatCompletions(body, context = {}) {
 }
 
 async function _handleChatCompletionsInner(body, context = {}) {
-  const reqId = Math.random().toString(36).slice(2, 8);
+  // Reuse the trace id as reqId so log lines Chat[<id>] correlate 1:1 with the
+  // <traceId>/ trace dir. Falls back to a random short id when untraced.
+  const reqId = context.traceId || Math.random().toString(36).slice(2, 8);
   const {
     stream = false,
     tools,
@@ -2166,9 +2223,25 @@ async function _handleChatCompletionsInner(body, context = {}) {
     // silently falling back to prompt emulation.
     if (emulateTools) log.info(`Chat[${reqId}]: TOOLCALL nativeFlag=${nativeFlag} defsOn=${nativeDefsOn} callsOn=${nativeCallsOn} suppressPreamble=${suppressPreamble} mode=${(nativeDefsOn && nativeCallsOn) ? 'NATIVE' : 'emulation'}`);
     const nativeStructured = nativeDefsOn && nativeCallsOn;
-    const connectMessages = emulateTools
+    let connectMessages = emulateTools
       ? normalizeMessagesForCascade(messages, connectTools, { modelKey: reqModelName, provider: null, route: 'devin_connect', toolChoice: tool_choice, injectUserPreamble: !suppressPreamble, stripOrphans: nativeDefsOn, nativeStructured })
       : messages;
+    // DEVIN_CONNECT public egress: neutralize competitor client-identity in the
+    // system prompt BODY. This path (incl. Codex /v1/responses and direct
+    // /v1/chat/completions) previously had NO neutralization — only the
+    // /v1/messages→anthropicToOpenAI path did — so a Claude Code / Agent-SDK
+    // system prompt reached Devin verbatim. Live A/B (2026-07-10) proved the
+    // "You are a Claude agent, built on Anthropic's Claude Agent SDK" line trips
+    // Devin's content policy → permission_denied; neutralizing it lets the exact
+    // same heavy request through. Only rewrites system messages; user/assistant
+    // content is untouched. Off-switch: WINDSURFAPI_NEUTRALIZE_CLIENT_ID=0.
+    if (Array.isArray(connectMessages)) {
+      connectMessages = connectMessages.map((m) => {
+        if (m?.role !== 'system' || typeof m.content !== 'string') return m;
+        const neut = neutralizeClientIdentity(m.content);
+        return neut === m.content ? m : { ...m, content: neut };
+      });
+    }
     log.info(`Chat[${reqId}]: DEVIN_CONNECT ${reqModelName} -> selector=${selector}${mapped ? '' : ' [unmapped→free-tier]'} stream=${!!stream}${emulateTools ? ` tools=${connectTools.length}` : ''}`);
     const ccId = genId();
     const ccCreated = Math.floor(Date.now() / 1000);
@@ -2209,20 +2282,51 @@ async function _handleChatCompletionsInner(body, context = {}) {
       }
       const rl = isAllRateLimited(null, selector);
       const tu = isAllTemporarilyUnavailable(null, selector);
-      if (rl.allLimited || tu.allUnavailable) {
+      // L2: when degraded-serve is on, DON'T fast-429 a fully-throttled pool here.
+      // Fall through to acquireConnectAccount → getApiKey, which will degrade-serve
+      // the least-bad transiently-cooled account (pickDegradedFallback) instead of
+      // blacking out. A genuine dry-well (quota) still surfaces downstream since the
+      // fallback strictly excludes quotaResetAt accounts. Default OFF = the original
+      // fast-429 preflight is byte-identical. (tu = temporarily-unavailable, e.g.
+      // maintenance, is NOT degradable — only transient rate-limits are — so we only
+      // suppress the 429 for the rate-limit arm when a degradable candidate exists.)
+      const degradable = getBreakerTunable('degradedServe') && rl.allLimited && !tu.allUnavailable;
+      if ((rl.allLimited || tu.allUnavailable) && !degradable) {
         const retryAfterMs = rl.retryAfterMs || tu.retryAfterMs || 60000;
-        log.info(`Chat[${reqId}]: DEVIN_CONNECT pool exhausted (all accounts rate-limited/unavailable) → 429 retry_after=${retryAfterMs}ms`);
+        // F3: clamp the advertised Retry-After so an agent client's auto-retry
+        // backs off usefully (floor) and is never frozen by an over-long window
+        // (ceil). header + body report the SAME clamped value.
+        const retryAfterSec = clientRetryAfterSeconds(retryAfterMs);
+        log.info(`Chat[${reqId}]: DEVIN_CONNECT pool exhausted (all accounts rate-limited/unavailable) → 429 retry_after=${retryAfterMs}ms (advertised ${retryAfterSec}s)`);
         bumpConnect('pool_exhausted');
         return {
           status: 429,
-          headers: { 'Retry-After': String(Math.ceil(retryAfterMs / 1000)) },
-          body: { error: { message: `All DEVIN_CONNECT accounts are temporarily rate-limited. Retry in ~${Math.ceil(retryAfterMs / 1000)}s.`, type: 'rate_limit_exceeded', retry_after_ms: retryAfterMs } },
+          headers: { 'Retry-After': String(retryAfterSec) },
+          body: { error: { message: `All DEVIN_CONNECT accounts are temporarily rate-limited. Retry in ~${retryAfterSec}s.`, type: 'rate_limit_exceeded', retry_after_ms: retryAfterSec * 1000 } },
         };
       }
     }
     const ccAcct = await acquireConnectAccount(context.signal, callerKey, selector);
     const connectParams = { messages: connectMessages, model: selector };
     if (ccAcct) connectParams.token = ccAcct.apiKey;
+    // Thread the trace id into the connect params so the upstream wire-dump
+    // (devin-connect dumpWire) names its .bin files with the same id → the raw
+    // Devin request/response bytes land in this request's <traceId>/ dir.
+    if (context.traceId) connectParams.traceId = context.traceId;
+    // Record the routing decision (leg 02) now that backend + selector + account
+    // are resolved. reqModelName is the client-requested model; selector is what
+    // we actually send to Devin — the whole point of "what does fable/opus look
+    // like in Devin" is captured here + in the wire bytes.
+    if (traceEnabled()) traceRouting(context.traceId, {
+      backend: 'devin-connect',
+      requestedModel: reqModelName,
+      selector,
+      mapped,
+      account: ccAcct ? (ccAcct.email || ccAcct.id) : null,
+      accountTier: ccAcct ? ccAcct.tier : null,
+      nativeToolCall: !!nativeFlag,
+      toolCount: Array.isArray(connectTools) ? connectTools.length : 0,
+    });
     // NOTE (2026-07-08): host-forwarding kept but DISARMED-BY-DEFAULT. Live capture
     // disproved the "teams token needs its own apiServerUrl host" theory — real
     // teams GetChatMessage goes to server.codeium.com (same host as the working
@@ -3003,6 +3107,11 @@ async function _handleChatCompletionsInner(body, context = {}) {
   const chatId = genId();
   const created = Math.floor(Date.now() / 1000);
   const ckey = cacheKey(body, callerKey);
+  // SEC-W2: only share the response cache ACROSS requests when the caller has a
+  // trustworthy per-user scope. A guessed `:client:` bucket (shared key behind a
+  // proxy) must never serve one user's cached answer to another — treat it as
+  // cache-private (skip get+set) so there is zero cross-tenant leak by default.
+  const cacheShareable = hasPerUserScope(callerKey);
 
   if (stream) {
     return streamResponse(
@@ -3046,7 +3155,8 @@ async function _handleChatCompletionsInner(body, context = {}) {
   }
 
   // ── Local response cache (exact body match) ─────────────
-  const cached = cacheGet(ckey);
+  // SEC-W2: skip cross-request cache reads for an untrusted (guessed) scope.
+  const cached = cacheShareable ? cacheGet(ckey) : null;
   if (cached) {
     log.info(`Chat: cache HIT model=${displayModel} flow=non-stream`);
     recordRequest(displayModel, true, 0, null);
@@ -3251,7 +3361,11 @@ async function _handleChatCompletionsInner(body, context = {}) {
     const client = new WindsurfClientClass(acct.apiKey, ls.port, ls.csrfToken);
     const result = await nonStreamResponse(
       client, chatId, created, displayModel, routingModelKey, messages, cascadeMessages, modelEnum, modelUid,
-      useCascade, acct.apiKey, ckey,
+      // SEC-W2: pass a null cache key when the scope isn't trustworthy so
+      // nonStreamResponse neither reads nor writes the shared response cache
+      // (its cacheSet is gated on ckey truthiness). Guessed `:client:` buckets
+      // stay cache-private → no cross-tenant answer leak behind a shared proxy.
+      useCascade, acct.apiKey, cacheShareable ? ckey : null,
       // v2.0.87 (#129) — aliasModelKey is set by the outer wrapper
       // when this handler is the second pass of an auto-fallback
       // retry; it carries the ORIGINAL model name the client asked
@@ -3267,7 +3381,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
       // next identical original-model request hits cache instead of
       // re-burning the rate-limit + fallback cycle.
       reqId,
-      context.__originalCkey || null,
+      cacheShareable ? (context.__originalCkey || null) : null,
     );
     if (result.status === 200) return result;
     reuseEntry = null; // don't try to reuse on the retry
@@ -4041,6 +4155,10 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
   // throw a ReferenceError mid-stream — the exact failure surface reported
   // in issues #82 and #83.
   const cachePolicy = deps.cachePolicy || null;
+  // SEC-W2: same rule as the non-stream path — only share the response cache
+  // across requests for a trustworthy per-user scope; a guessed `:client:`
+  // bucket is cache-private (no cross-tenant leak behind a shared-key proxy).
+  const cacheShareable = hasPerUserScope(callerKey);
   const fpOpts = deps.fpOpts || { route: 'chat' };
   // v2.0.55 audit M2: stream parser also needs the request-declared
   // tools[] to filter out tool_calls whose name isn't on the allowlist.
@@ -4113,7 +4231,8 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
       res.on('close', stopHeartbeat);
 
       // ── Cache hit: replay stored response as a fake stream ──
-      const cached = cacheGet(ckey);
+      // SEC-W2: skip cross-request cache reads for an untrusted (guessed) scope.
+      const cached = cacheShareable ? cacheGet(ckey) : null;
       if (cached) {
         log.info(`Chat: cache HIT model=${model} flow=stream`);
         recordRequest(model, true, 0, null);
@@ -4882,7 +5001,7 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
               }
             }
             if (!res.writableEnded) { res.write('data: [DONE]\n\n'); res.end(); }
-            if (ckey && !collectedToolCalls.length && (accText || accThinking)) {
+            if (ckey && !collectedToolCalls.length && cacheShareable && (accText || accThinking)) {
               cacheSet(ckey, { text: accText, thinking: accThinking });
             }
             return;

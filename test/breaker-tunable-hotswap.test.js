@@ -39,7 +39,7 @@ describe('breaker tunables — three-tier resolution (v3.0.3)', () => {
     assert.equal(getBreakerTunable('errorStreakThreshold'), 3);
     assert.equal(getBreakerTunable('errorWindowMs'), 1800000);
     assert.equal(getBreakerTunable('internalErrorThreshold'), 2);
-    assert.equal(getBreakerTunable('internalQuarantineMs'), 300000);
+    assert.equal(getBreakerTunable('internalQuarantineMs'), 120000); // L1: cut 5min→2min (KiroStudio short-cooldown philosophy)
     assert.equal(getBreakerTunable('errorRecoveryMs'), 900000);
     assert.equal(getBreakerTunable('breakerFactor'), 1.5);
     assert.equal(getBreakerTunable('breakerMaxMs'), 3600000);
@@ -48,6 +48,13 @@ describe('breaker tunables — three-tier resolution (v3.0.3)', () => {
     assert.equal(getBreakerTunable('breakerEnabled'), true);
     assert.equal(getBreakerTunable('lastAccountExempt'), true);
     assert.equal(getBreakerTunable('newAccountBaseline'), true);
+    // F3/F2 defaults must be byte-identical to pre-change behaviour: floor=0 (no
+    // floor), ceil=600000 (safety only), burst=300000 (the old hard-coded 5min).
+    assert.equal(getBreakerTunable('rlClientBackoffFloorMs'), 0);
+    assert.equal(getBreakerTunable('rlClientBackoffCeilMs'), 600000);
+    assert.equal(getBreakerTunable('rlBurstMs'), 300000);
+    // L2 degraded-serve defaults OFF (byte-identical: return null → 429).
+    assert.equal(getBreakerTunable('degradedServe'), false);
   });
 
   it('env overrides the default; injected env is honored (env-only deploy path)', () => {
@@ -117,7 +124,9 @@ describe('setBreakerTunables — whitelist / clamp / clear (v3.0.3)', () => {
 
   it('getBreakerTunables returns every knob', () => {
     const all = getBreakerTunables();
-    assert.equal(Object.keys(all).length, 13);
+    // 13 original breaker knobs + F3 (rlClientBackoffFloorMs, rlClientBackoffCeilMs)
+    // + F2 (rlBurstMs) + L2 (degradedServe) = 17.
+    assert.equal(Object.keys(all).length, 17);
   });
 });
 

@@ -99,6 +99,24 @@ const DEFAULTS = {
     errorRecoveryMs: null, breakerEnabled: null, breakerBaseMs: null,
     breakerFactor: null, breakerMaxMs: null, breakerStreakStart: null,
     newAccountGraceMs: null, lastAccountExempt: null, newAccountBaseline: null,
+    rlClientBackoffFloorMs: null, rlClientBackoffCeilMs: null, rlBurstMs: null,
+    degradedServe: null,
+  },
+  // v3.0.3 — quota / on-demand spend policy. Governs what happens when an
+  // account's INCLUDED weekly quota runs dry (applyQuotaSnapshot in auth.js).
+  // Same three-tier contract as breaker: null = "unset → env var, then
+  // historical default", so an env-only deploy is byte-identical. spendOnDemand
+  // = when the included quota is dry, may the account keep serving by billing
+  // to its prepaid on-demand ($) balance? Default true = keep serving (matches
+  // the 52e255f behaviour). onDemandReserveUsd = a floor on that balance: once
+  // balance <= reserve the account is treated as dry and cooled, so it is never
+  // burned all the way to zero. Default 0 = no reserve (spend to the last cent).
+  quota: {
+    cooldownEnabled: null,   // WINDSURFAPI_QUOTA_COOLDOWN — master on/off for quota cooldown
+    cooldownMs: null,        // WINDSURFAPI_QUOTA_COOLDOWN_MS — how long a dry account is cooled
+    dryThreshold: null,      // WINDSURFAPI_QUOTA_DRY_THRESHOLD — weeklyPercent at/under = dry
+    spendOnDemand: null,     // global default: burn on-demand balance when included quota dry
+    onDemandReserveUsd: null,// global default: keep at least $X of on-demand balance in reserve
   },
   // Dashboard UI preferences shared across browsers/devices (persisted here,
   // not in each browser's localStorage). Booleans only; toggle from the
@@ -384,7 +402,17 @@ const BREAKER_TUNABLES = {
   errorStreakThreshold:   { env: 'WINDSURFAPI_ERROR_STREAK_THRESHOLD',   kind: 'int',   def: 3,       min: 1,    max: 50 },
   errorWindowMs:          { env: 'WINDSURFAPI_ERROR_WINDOW_MS',          kind: 'int',   def: 1800000, min: 1000, max: 86400000 },
   internalErrorThreshold: { env: 'WINDSURFAPI_INTERNAL_ERROR_THRESHOLD', kind: 'int',   def: 2,       min: 1,    max: 50 },
-  internalQuarantineMs:   { env: 'WINDSURFAPI_INTERNAL_QUARANTINE_MS',   kind: 'int',   def: 300000,  min: 1000, max: 86400000 },
+  // L1 (2026-07-10): internal-error quarantine window. Cut from the historical
+  // 300000 (5min) to 120000 (2min), toward KiroStudio's hard-won short-cooldown
+  // philosophy (RESEARCH-RATELIMIT-DYNAMIC capped short cooldowns at 90s because
+  // a longer window "把小号池下一个卡住请求压死数分钟"). An upstream internal
+  // error is a TRANSIENT backend fault that self-heals in seconds~a minute; 5min
+  // was punitive. 2min (not 90s) keeps the value clean in the minute-granular
+  // settings UI. In a multi-account pool this lets a quarantined account rejoin
+  // 3min sooner; in a single-account pool F1' (tier exemption) + L2 (degraded-
+  // serve) already prevent the blackout, so this is defence-in-depth. Env/
+  // override still accept any value in [1s, 24h].
+  internalQuarantineMs:   { env: 'WINDSURFAPI_INTERNAL_QUARANTINE_MS',   kind: 'int',   def: 120000,  min: 1000, max: 86400000 },
   errorRecoveryMs:        { env: 'WINDSURFAPI_ERROR_RECOVERY_MS',        kind: 'int',   def: 900000,  min: 1000, max: 86400000 },
   breakerEnabled:         { env: 'WINDSURFAPI_BREAKER',                  kind: 'bool',  def: true },
   breakerBaseMs:          { env: 'WINDSURFAPI_BREAKER_BASE_MS',          kind: 'int',   def: null,    min: 1000, max: 86400000 },
@@ -394,6 +422,36 @@ const BREAKER_TUNABLES = {
   newAccountGraceMs:      { env: 'WINDSURFAPI_NEW_ACCOUNT_GRACE_MS',     kind: 'int',   def: 600000,  min: 0,    max: 86400000 },
   lastAccountExempt:      { env: 'WINDSURFAPI_LAST_ACCOUNT_EXEMPT',      kind: 'bool',  def: true },
   newAccountBaseline:     { env: 'WINDSURFAPI_NEW_ACCOUNT_BASELINE',     kind: 'bool',  def: true },
+  // F3 (2026-07-10): client-replay mitigation. When we surface a 429 to an agent
+  // client (Claude Code honours Retry-After for its auto-retry backoff), floor the
+  // advertised Retry-After so the client waits a useful minimum instead of hot-
+  // looping (a 1s hint = immediate re-hammer), and ceil it so an over-long upstream
+  // reset window can't freeze the client for minutes. def 0 for the floor keeps
+  // env-only deploys byte-identical (0 = "no floor", i.e. exact current behaviour);
+  // set it (e.g. 30000) to enable the mitigation. Ceil default 600000 (10min) is a
+  // pure safety clamp that only ever shortens an absurd hint.
+  rlClientBackoffFloorMs: { env: 'WINDSURFAPI_RL_CLIENT_BACKOFF_FLOOR_MS', kind: 'int', def: 0,      min: 0,    max: 600000 },
+  rlClientBackoffCeilMs:  { env: 'WINDSURFAPI_RL_CLIENT_BACKOFF_CEIL_MS',  kind: 'int', def: 600000, min: 1000, max: 86400000 },
+  // F2 (2026-07-10): duration of the account-wide cooldown applied to a BARE 429
+  // (RATE_LIMITED with no upstream reset window). def 300000 (5min) = byte-
+  // identical to the historical hard-coded value. KiroStudio's production data
+  // (PLAN-RETRY-AMPLIFICATION-FIX-0708) showed bare bursts self-heal in seconds,
+  // so an operator can shorten this (e.g. 15000) to stop a transient burst from
+  // benching an account for 5 minutes. Left at the historical default because we
+  // have no WindsurfAPI-side evidence that Devin's bare 429s behave like Kiro's —
+  // this is a lever, not a blind behavioural change. A 429 WITH a parsed reset
+  // window still honours the upstream value (model-scoped), unaffected by this.
+  rlBurstMs:              { env: 'WINDSURFAPI_RL_BURST_MS',                kind: 'int', def: 300000, min: 1000, max: 86400000 },
+  // L2 (2026-07-10): degraded-serve fallback. When the hard account filter leaves
+  // ZERO candidates (whole entitled pool transiently throttled), serve the least-
+  // bad transiently-cooled account instead of returning 429. def FALSE → byte-
+  // identical to current behaviour (return null → 429); set true to opt in. This
+  // is the architectural replacement for the isLastUsableAccount exemption patch:
+  // it covers a single-account pool AND any all-throttled pool without a special
+  // "last account" rule. STRICT scope (see pickDegradedFallback): only transient
+  // rateLimitedUntil qualifies — never quota dry-wells, dead accounts, or tier-
+  // ineligible ones, so it can't turn a real fault into a degraded gamble.
+  degradedServe:          { env: 'WINDSURFAPI_DEGRADED_SERVE',            kind: 'bool', def: false },
 };
 const BREAKER_KEYS = new Set(Object.keys(BREAKER_TUNABLES));
 
@@ -450,6 +508,65 @@ export function setBreakerTunables(patch) {
     if (Number.isFinite(n)) next[k] = Math.max(spec.min, Math.min(spec.max, n));
   }
   _state.breaker = next; persist(); return getBreakerOverrides();
+}
+
+// ─── v3.0.3: quota / on-demand spend tunables ──────────────────────────────
+// Migrated from the WINDSURFAPI_QUOTA_* env vars in auth.js. Same three-tier
+// resolution (override → env → historical default) so env-only deploys are
+// unchanged. bool env semantics match the legacy `env.X !== '0'` guard.
+const QUOTA_TUNABLES = {
+  cooldownEnabled:    { env: 'WINDSURFAPI_QUOTA_COOLDOWN',       kind: 'bool',  def: true },
+  cooldownMs:         { env: 'WINDSURFAPI_QUOTA_COOLDOWN_MS',    kind: 'int',   def: 1800000, min: 1000, max: 86400000 },
+  dryThreshold:       { env: 'WINDSURFAPI_QUOTA_DRY_THRESHOLD',  kind: 'int',   def: 0,       min: 0,    max: 100 },
+  spendOnDemand:      { env: 'WINDSURFAPI_SPEND_ON_DEMAND',      kind: 'bool',  def: true },
+  onDemandReserveUsd: { env: 'WINDSURFAPI_ON_DEMAND_RESERVE_USD',kind: 'float', def: 0,       min: 0,    max: 100000 },
+};
+const QUOTA_KEYS = new Set(Object.keys(QUOTA_TUNABLES));
+
+// Resolve one quota knob: override (clamped) → env (legacy guard) → default.
+export function getQuotaTunable(key, env = process.env) {
+  const spec = QUOTA_TUNABLES[key];
+  if (!spec) return undefined;
+  const override = _state.quota?.[key];
+  if (spec.kind === 'bool') {
+    if (typeof override === 'boolean') return override;
+    if (env?.[spec.env] != null && String(env[spec.env]).trim() !== '')
+      return breakerEnvNotZero(env, spec.env);
+    return spec.def;
+  }
+  if (typeof override === 'number' && Number.isFinite(override)) {
+    return Math.max(spec.min, Math.min(spec.max, override));
+  }
+  // env path replicates the ORIGINAL auth.js guard (ms/threshold >= min) with
+  // no max clamp so an env-only deploy is byte-identical.
+  const raw = Number(env?.[spec.env]);
+  if (Number.isFinite(raw) && raw >= spec.min) return raw;
+  return spec.def;
+}
+export function getQuotaTunables(env = process.env) {
+  const out = {}; for (const k of QUOTA_KEYS) out[k] = getQuotaTunable(k, env); return out;
+}
+export function getQuotaOverrides() {
+  const out = {};
+  for (const k of QUOTA_KEYS) { const v = _state.quota?.[k]; out[k] = v === undefined ? null : v; }
+  return out;
+}
+// Apply patch. Whitelist only. null CLEARS (env fallback). Bools coerced;
+// numerics clamped. Empty/whitespace string IGNORED (never coerced to 0) so a
+// cleared box can't silently flip a safety knob (same guard as setTunables).
+export function setQuotaTunables(patch) {
+  if (!patch || typeof patch !== 'object') return getQuotaOverrides();
+  const next = { ...(_state.quota || {}) };
+  for (const [k, v] of Object.entries(patch)) {
+    if (!QUOTA_KEYS.has(k)) continue;
+    if (v === null) { next[k] = null; continue; }
+    const spec = QUOTA_TUNABLES[k];
+    if (spec.kind === 'bool') { next[k] = !!v; continue; }
+    if (typeof v !== 'number' && !(typeof v === 'string' && v.trim() !== '')) continue;
+    const n = Number(v);
+    if (Number.isFinite(n)) next[k] = Math.max(spec.min, Math.min(spec.max, n));
+  }
+  _state.quota = next; persist(); return getQuotaOverrides();
 }
 
 export function getSystemPrompts() {

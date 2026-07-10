@@ -12,7 +12,7 @@
 
 import { createHash, randomUUID, timingSafeEqual } from 'crypto';
 import { isStickyEnabled, getStickyBinding, setStickyBinding, clearStickyBinding } from './account/sticky-session.js';
-import { isExperimentalEnabled, getDroughtThresholdPercent, getIpLockThreshold, getIpLockMs, getBackendSwitch, getBreakerTunable } from './runtime-config.js';
+import { isExperimentalEnabled, getDroughtThresholdPercent, getIpLockThreshold, getIpLockMs, getBackendSwitch, getBreakerTunable, getQuotaTunable } from './runtime-config.js';
 import { readFileSync, writeFileSync, existsSync, unlinkSync, readdirSync } from 'fs';
 import { config, log } from './config.js';
 import { safeAccountRef } from './log-safety.js';
@@ -305,13 +305,31 @@ export function getAccountHealth(apiKey, now = Date.now()) {
 
 /** Public accessor: rolling-hour health across the whole pool (triage/metrics). */
 export function getPoolHealthWindow(now = Date.now()) {
-  return accounts.map(a => ({
-    id: a.id,
-    email: a.email,
-    status: a.status,
-    tier: a.tier,
-    health: healthSummary(a, now),
-  }));
+  return accounts.map(a => {
+    const rpmLimit = rpmLimitFor(a);
+    const rpmUsed = pruneRpmHistory(a, now);
+    // "saturated" = at/over 85% of the RPM soft-limit → the GlowGrid lights this
+    // core on fire (KiroStudio-style). rpmLimit<=0 means unlimited → never hot.
+    const saturated = rpmLimit > 0 && rpmUsed / rpmLimit >= 0.85;
+    return {
+      id: a.id,
+      email: a.email,
+      status: a.status,
+      tier: a.tier,
+      // in-flight request count drives the GlowGrid "busy" faster-breathe pulse.
+      inflight: Math.max(0, a._inflight || 0),
+      rpmUsed,
+      rpmLimit,
+      saturated,
+      // hover-card / StatusBars fields (all free, no upstream call): last-used
+      // timestamp, cumulative error count, and current transient states.
+      lastUsed: a.lastUsed || 0,
+      errorCount: a.errorCount || 0,
+      rateLimited: !!(a.rateLimitedUntil && a.rateLimitedUntil > now),
+      quotaCooled: !!(a.quotaResetAt && a.quotaResetAt > now),
+      health: healthSummary(a, now),
+    };
+  });
 }
 
 /** Test seam: short-window trouble score used by selection de-prioritization. */
@@ -357,6 +375,10 @@ function _serializeAccounts() {
     // separate from transient rateLimitedUntil). Persisted so a restart mid-
     // cooldown doesn't immediately re-select a dry account and eat a 402.
     quotaResetAt: a.quotaResetAt || 0,
+    // v3.0.3: per-account on-demand spend policy. Persisted only when the
+    // operator set an explicit override; null = inherit the global default.
+    ...(typeof a.spendOnDemand === 'boolean' ? { spendOnDemand: a.spendOnDemand } : {}),
+    ...(Number.isFinite(Number(a.onDemandReserve)) ? { onDemandReserve: Number(a.onDemandReserve) } : {}),
     // RB2/B1: exponential-backoff episode streak. Persisted as "memory" (not a
     // disable state) so a restart doesn't reset a repeat-offender's ladder to
     // zero; losing it is harmless (backoff just restarts) so it's best-effort.
@@ -376,7 +398,9 @@ function saveAccounts() {
     // mid-write cannot leave accounts.json truncated/corrupt. The unique
     // tmp also prevents concurrent test/process saves from racing on the
     // same `${ACCOUNTS_FILE}.tmp` name.
-    writeFileSync(tempFile, JSON.stringify(_serializeAccounts(), null, 2));
+    // 0600: accounts.json holds live upstream tokens (apiKey/refreshToken/
+    // idToken) in cleartext — must not be world-readable on a shared host.
+    writeFileSync(tempFile, JSON.stringify(_serializeAccounts(), null, 2), { mode: 0o600 });
     renameSyncWithRetry(tempFile, ACCOUNTS_FILE);
   } catch (e) {
     log.error('Failed to save accounts:', e.message);
@@ -397,7 +421,9 @@ function saveAccounts() {
 export function saveAccountsSync() {
   const tempFile = `${ACCOUNTS_FILE}.${process.pid}.shutdown.tmp`;
   try {
-    writeFileSync(tempFile, JSON.stringify(_serializeAccounts(), null, 2));
+    // 0600: accounts.json holds live upstream tokens (apiKey/refreshToken/
+    // idToken) in cleartext — must not be world-readable on a shared host.
+    writeFileSync(tempFile, JSON.stringify(_serializeAccounts(), null, 2), { mode: 0o600 });
     renameSyncWithRetry(tempFile, ACCOUNTS_FILE);
   } catch (e) {
     log.error('Shutdown: failed to flush accounts:', e.message);
@@ -441,7 +467,7 @@ export function migrateReplicaAccountsTo({ sharedDir, accountsFile, logger = log
   if (!merged.size) return { migrated: 0, scanned, skipped: false };
   const tempFile = accountsFile + '.migrate.tmp';
   try {
-    writeFileSync(tempFile, JSON.stringify([...merged.values()], null, 2));
+    writeFileSync(tempFile, JSON.stringify([...merged.values()], null, 2), { mode: 0o600 });
     renameSyncWithRetry(tempFile, accountsFile);
     logger.warn?.(`Migrated ${merged.size} account(s) from ${scanned} replica-* subdir(s) into ${accountsFile} (issue #67)`);
     return { migrated: merged.size, scanned, skipped: false };
@@ -482,6 +508,10 @@ function _deserializeAccount(a, now = Date.now()) {
     userStatusLastFetched: a.userStatusLastFetched || 0,
     // RB2/B2 + B1: restore self-healing quota cooldown + backoff memory.
     quotaResetAt: a.quotaResetAt || 0,
+    // v3.0.3: per-account on-demand spend policy overrides (null = inherit the
+    // global runtime-config default). Only persisted when explicitly set.
+    spendOnDemand: typeof a.spendOnDemand === 'boolean' ? a.spendOnDemand : null,
+    onDemandReserve: Number.isFinite(Number(a.onDemandReserve)) ? Number(a.onDemandReserve) : null,
     _breakerStreak: a._breakerStreak || 0,
     // C5: restore the rolling health window; drop anything already out of
     // the 1h window at load so a long-stopped process starts clean.
@@ -1090,6 +1120,47 @@ export function removeAccount(id) {
  * Returns null when every account is temporarily full — callers should
  * wait a moment and retry (see handlers/chat.js queue loop).
  */
+
+// L2 (2026-07-10): degraded-serve fallback. When the hard filter leaves ZERO
+// candidates, this picks the "least-bad" account to serve anyway rather than
+// returning null → 429. This is KiroStudio's "全池 unusable 也挑最不坏的一个"
+// philosophy: in a small pool a TRANSIENT throttle on the only account should
+// degrade service, not black it out.
+//
+// STRICT scope — only a TRANSIENT `rateLimitedUntil` cooldown qualifies. We do
+// NOT fall back onto:
+//   - quotaResetAt (real dry-well: serving it earns a 402, not degraded success)
+//   - status !== 'active' (dead/errored/banned — a real fault, respect the breaker)
+//   - tier/selector-ineligible (would earn an upstream permission_denied → 529)
+//   - RPM-exhausted (would compound the very rate limit we're bleeding from)
+//   - excludeKeys (already tried this request)
+// Among the transient-cooled survivors we pick the SHORTEST remaining cooldown —
+// the one closest to self-healing, most likely to succeed right now. Default OFF
+// (degradedServeEnabled) so behaviour is byte-identical until an operator opts in.
+function pickDegradedFallback(now, excludeKeys, modelKey, connectSelector) {
+  let best = null;
+  let bestUntil = Infinity;
+  for (const a of accounts) {
+    if (a.status !== 'active') continue;                       // real fault — respect breaker
+    if (excludeKeys.includes(a.apiKey)) continue;              // already tried
+    if (isAccountInMaintenance(a)) continue;
+    if (a.quotaResetAt && a.quotaResetAt > now) continue;      // dry-well, not transient
+    if (rpmLimitFor(a) <= 0) continue;                         // expired tier
+    if (pruneRpmHistory(a, now) >= rpmLimitFor(a)) continue;   // RPM full — don't compound
+    if (modelKey && !isModelAllowedForAccount(a, modelKey)) continue;
+    if (connectSelector && !isConnectSelectorAllowedForAccount(a, connectSelector)) continue;
+    // Must be gated ONLY by a transient throttle (global or per-model). If it has
+    // no cooldown at all it would have passed the hard filter — so its presence
+    // here means the caller already returned it; skip (defensive).
+    const globalUntil = (a.rateLimitedUntil && a.rateLimitedUntil > now) ? a.rateLimitedUntil : 0;
+    const modelUntil = (modelKey && a._modelRateLimits?.[modelKey] > now) ? a._modelRateLimits[modelKey] : 0;
+    const until = Math.max(globalUntil, modelUntil);
+    if (!until) continue; // not transiently cooled → not our case
+    if (until < bestUntil) { bestUntil = until; best = a; }
+  }
+  return best;
+}
+
 export function getApiKey(excludeKeys = [], modelKey = null, callerKey = null, connectSelector = null) {
   const now = Date.now();
 
@@ -1152,7 +1223,34 @@ export function getApiKey(excludeKeys = [], modelKey = null, callerKey = null, c
     if (connectSelector && !isConnectSelectorAllowedForAccount(a, connectSelector)) continue;
     candidates.push({ account: a, used, limit });
   }
-  if (candidates.length === 0) return null;
+  if (candidates.length === 0) {
+    // L2: hard filter left nothing. Before returning null → 429, try a degraded
+    // serve on the least-bad transiently-cooled account (opt-in). This is the
+    // architectural replacement for the isLastUsableAccount exemption patch: it
+    // covers the single-account pool AND any pool where every entitled account is
+    // momentarily throttled, without a special-case "last account" rule.
+    if (degradedServeEnabled()) {
+      const fallback = pickDegradedFallback(now, excludeKeys, modelKey, connectSelector);
+      if (fallback) {
+        const reservationTimestamp = nextReservationToken(now);
+        fallback._rpmHistory.push(reservationTimestamp);
+        fallback.lastUsed = now;
+        fallback._inflight = (fallback._inflight || 0) + 1;
+        fallback._inflightAt = now;
+        const remainMs = Math.max(0, (fallback.rateLimitedUntil || 0) - now,
+          (modelKey && fallback._modelRateLimits?.[modelKey]) ? fallback._modelRateLimits[modelKey] - now : 0);
+        log.warn(`getApiKey: pool fully throttled — DEGRADED serve on ${safeAccountRef(fallback)} (shortest cooldown ${Math.ceil(remainMs / 1000)}s remaining) instead of 429`);
+        return {
+          id: fallback.id, email: fallback.email, apiKey: fallback.apiKey,
+          apiServerUrl: fallback.apiServerUrl || '',
+          proxy: getEffectiveProxy(fallback.id) || null,
+          reservationTimestamp,
+          _degraded: true,
+        };
+      }
+    }
+    return null;
+  }
 
   // Pick the account with the fewest in-flight requests first (so a burst
   // of concurrent calls spreads across accounts instead of piling onto a
@@ -1626,19 +1724,56 @@ function isNewAccount(account, now = Date.now()) {
 // history — this only suppresses the terminal REMOVAL, nothing else.
 // Set WINDSURFAPI_LAST_ACCOUNT_EXEMPT=0 to restore the strict trip-always behaviour.
 function lastAccountExemptEnabled() { return getBreakerTunable('lastAccountExempt'); }
-// True when `account` is the last one that would still be selectable if we took
-// it out of rotation — i.e. no OTHER account is currently active and free of a
-// cooldown (rateLimitedUntil / quotaResetAt / per-model). Account-wide view
-// (modelKey=null): the breaker is not model-scoped, so a peer that could serve
-// SOME model counts as a fallback. Object identity (a !== account) is immune to
-// a mid-flight re-login re-keying the account.
+// L2: opt-in degraded-serve when the whole entitled pool is transiently throttled.
+function degradedServeEnabled() { return getBreakerTunable('degradedServe'); }
+// True when `account` is the last one that would still be selectable, FOR THE
+// CAPABILITY TIER IT SERVES, if we took it out of rotation.
+//
+// TIER-AWARE (2026-07-10 fix): the old version was tier/selector-blind — ANY
+// active, non-cooled peer counted as a fallback, so a healthy FREE peer made a
+// PRO account "not the last usable" and let the breaker quarantine it. But a
+// free peer CANNOT serve a paid selector (isConnectSelectorAllowedForAccount),
+// so quarantining the sole pro account produced a pool-wide blackout for every
+// paid model (opus/sonnet): the connect preflight isAllRateLimited(null,
+// paidSelector) saw only the (now-cooled) pro account as eligible → 429. That
+// is exactly the Claude-Code 1ms-429 lockout (see .workflow-results/
+// PLAN-429-MITIGATION). A peer only counts as a real fallback when it can serve
+// AT LEAST what `account` serves — i.e. its tier bucket is same-or-higher.
+//
+// Bucket rank: pro(2) > unknown(1) > free(0) > expired(-1, never a fallback). A
+// peer counts as a fallback only when its rank is >= this account's rank, i.e. it
+// can serve at least the same capability tier. Consequences:
+//   - a PRO account is "the last usable" the moment no OTHER active, non-cooled
+//     peer is ALSO pro — a free OR unknown peer does NOT rescue it. An unknown
+//     peer is only OPTIMISTICALLY paid-capable (it self-heals to free or pro on
+//     the next probe); betting the sole known-pro account's quarantine on an
+//     unprobed peer is exactly how paid selectors get blacked out, so we keep the
+//     definitely-paid account in rotation (degraded-but-serving > gamble).
+//   - a FREE account is not the last whenever any healthy peer of ANY paid-capable
+//     or free tier exists (pro/unknown/free all serve free-reachable selectors).
+//   - two same-tier peers (e.g. unknown+unknown) are mutual fallbacks → breaker
+//     trips normally, exactly as before this fix.
+// Object identity (a !== account) is immune to a mid-flight re-login re-keying.
+function tierBucketRank(tier) {
+  switch (tierBucket(tier)) {
+    case 'pro': return 2;
+    case 'unknown': return 1;
+    case 'free': return 0;
+    default: return -1; // expired / anything else — never a capability fallback
+  }
+}
 function isLastUsableAccount(account, now = Date.now()) {
   if (!account) return false;
+  const ownRank = tierBucketRank(account.tier);
   for (const a of accounts) {
     if (a === account) continue;
     if (a.status !== 'active') continue;
     if (isRateLimitedForModel(a, null, now)) continue;
-    return false; // found another usable account — this one is not the last
+    // Only a peer that can serve AT LEAST what `account` serves is a real
+    // fallback (same-or-higher tier bucket). A lower-tier peer (e.g. free when
+    // `account` is pro) cannot cover this account's paid selectors, so it does
+    // NOT disqualify `account` from the single-account exemption.
+    if (tierBucketRank(a.tier) >= ownRank) return false;
   }
   return true;
 }
@@ -1681,20 +1816,30 @@ function seedNewAccountBaseline(account) {
 // (a) expires on its own and (b) is cleared the instant a later refresh sees
 // the balance recover. There is NO permanent disable here — Windsurf quota
 // refills on a weekly/daily cycle.
-function quotaCooldownEnabled() {
-  return process.env.WINDSURFAPI_QUOTA_COOLDOWN !== '0';
-}
-function quotaCooldownMs() {
-  const raw = Number(process.env.WINDSURFAPI_QUOTA_COOLDOWN_MS);
-  // Default 30min, matching chat.js's post-402 QUOTA_EXHAUSTED cooldown.
-  return Number.isFinite(raw) && raw >= 1000 ? raw : 30 * 60 * 1000;
-}
-function quotaDryThreshold() {
-  // weeklyPercent at/under this is treated as "dry". Default 0 (only a literal
-  // zero-balance pre-cools), the conservative choice while the paid-account
-  // weeklyPercent wire shape is still unverified (#15/#28/#29).
-  const raw = Number(process.env.WINDSURFAPI_QUOTA_DRY_THRESHOLD);
-  return Number.isFinite(raw) && raw >= 0 ? raw : 0;
+// v3.0.3: these three now resolve through runtime-config (override → env →
+// historical default) so an operator can hot-flip them from Settings without a
+// redeploy. getQuotaTunable replicates the original env guard exactly, so an
+// env-only deploy behaves byte-identically to the pre-migration constants.
+function quotaCooldownEnabled() { return getQuotaTunable('cooldownEnabled'); }
+function quotaCooldownMs() { return getQuotaTunable('cooldownMs'); }
+function quotaDryThreshold() { return getQuotaTunable('dryThreshold'); }
+
+// Resolve the effective on-demand spend policy for one account. Per-account
+// override (account.spendOnDemand / account.onDemandReserve) wins; otherwise the
+// global runtime-config default. spendOnDemand=false means "when the included
+// quota is dry, do NOT burn the prepaid $ balance — cool the account". reserve
+// is a floor: the balance must exceed it for the account to keep serving, so it
+// is never spent all the way to zero.
+function resolveSpendPolicy(account) {
+  const spendOverride = account?.spendOnDemand;
+  const spend = typeof spendOverride === 'boolean'
+    ? spendOverride
+    : getQuotaTunable('spendOnDemand');
+  const reserveOverride = Number(account?.onDemandReserve);
+  const reserve = Number.isFinite(reserveOverride) && reserveOverride >= 0
+    ? reserveOverride
+    : getQuotaTunable('onDemandReserveUsd');
+  return { spend, reserve };
 }
 
 /**
@@ -1710,14 +1855,19 @@ export function applyQuotaSnapshot(account, weeklyPercent, now = Date.now()) {
   const w = typeof weeklyPercent === 'number' ? weeklyPercent : null;
   if (w === null) return; // unknown balance → never cool (don't punish unprobed)
   // On-demand override: an account whose included weekly quota is dry but that
-  // still holds a positive on-demand ($) balance can keep serving on the prepaid
-  // pool — usage just bills to that balance. Cooling it would waste the balance
-  // the operator paid for (and, on a small pool, take the model fully offline).
-  // Only the included-quota dry signal drives the cooldown; a real on-demand
-  // exhaustion surfaces separately as a live QUOTA_EXHAUSTED (markQuotaExhausted).
+  // still holds a spendable on-demand ($) balance can keep serving on the
+  // prepaid pool — usage just bills to that balance. Whether we DO that is now a
+  // policy (spendOnDemand, global default or per-account) plus a reserve floor
+  // so the balance is never burned to zero. Cooling a still-spendable account
+  // would waste the balance the operator paid for (and, on a small pool, take
+  // the model fully offline). Only the included-quota dry signal drives the
+  // cooldown; a real on-demand exhaustion surfaces separately as a live
+  // QUOTA_EXHAUSTED (markQuotaExhausted). Defaults (spend=true, reserve=0)
+  // reproduce the pre-policy 52e255f behaviour exactly (zero regression).
+  const { spend, reserve } = resolveSpendPolicy(account);
   const onDemand = Number(account.credits?.balance);
-  const hasOnDemand = Number.isFinite(onDemand) && onDemand > 0;
-  if (w <= quotaDryThreshold() && !hasOnDemand) {
+  const hasSpendableBalance = spend && Number.isFinite(onDemand) && onDemand > reserve;
+  if (w <= quotaDryThreshold() && !hasSpendableBalance) {
     const alreadyCooled = account.quotaResetAt && account.quotaResetAt > now;
     account.quotaResetAt = now + quotaCooldownMs();
     if (!alreadyCooled) {
@@ -1725,11 +1875,64 @@ export function applyQuotaSnapshot(account, weeklyPercent, now = Date.now()) {
       log.warn(`Account ${safeAccountRef(account)} quota dry (weekly ${w}%) — quota cooldown ${Math.round(quotaCooldownMs() / 60000)}m (self-healing)`);
     }
   } else if (account.quotaResetAt) {
-    // Recovered included quota OR a positive on-demand balance → clear ONLY the
-    // quota dimension, never the transient one.
+    // Recovered included quota OR a spendable on-demand balance under the active
+    // policy → clear ONLY the quota dimension, never the transient one.
     account.quotaResetAt = 0;
     log.info(`Account ${safeAccountRef(account)} quota recovered (weekly ${w}%) — quota cooldown cleared`);
   }
+}
+
+/**
+ * Operator-set per-account on-demand spend policy. Governs whether this account
+ * keeps serving off its prepaid $ balance once the included weekly quota is dry.
+ *   spendOnDemand: true (always burn) | false (stop when dry) | null (inherit
+ *     the global runtime-config default)
+ *   reserve: a $ floor kept in reserve (>0), or null to inherit the global
+ *     default. Setting to '' / null clears the per-account override.
+ * Only the provided keys are touched, so the dashboard can PATCH either alone.
+ */
+export function setAccountSpendPolicy(id, { spendOnDemand, reserve } = {}) {
+  const account = accounts.find(a => a.id === id);
+  if (!account) return false;
+  if (spendOnDemand !== undefined) {
+    account.spendOnDemand = typeof spendOnDemand === 'boolean' ? spendOnDemand : null;
+  }
+  if (reserve !== undefined) {
+    if (reserve === null || reserve === '') {
+      account.onDemandReserve = null;
+    } else {
+      const n = Number(reserve);
+      if (Number.isFinite(n) && n >= 0) account.onDemandReserve = n;
+    }
+  }
+  saveAccounts();
+  log.info(`Account ${safeAccountRef(account)} spend policy: spendOnDemand=${account.spendOnDemand ?? 'inherit'} reserve=${account.onDemandReserve ?? 'inherit'}`);
+  return true;
+}
+
+// Expose the RESOLVED effective policy + a human-readable quota state for the
+// dashboard, so an operator can see at a glance whether a dry account is
+// currently burning balance, cooled, or fine. Pure read — no mutation.
+export function getAccountSpendState(account, now = Date.now()) {
+  const { spend, reserve } = resolveSpendPolicy(account);
+  const balance = Number(account?.credits?.balance);
+  const hasBalance = Number.isFinite(balance);
+  const cooled = !!(account?.quotaResetAt && account.quotaResetAt > now);
+  let state;
+  if (cooled) state = 'cooled';                                   // quota dry + not spendable → cooled
+  else if (spend && hasBalance && balance > reserve) state = 'spending'; // may burn balance
+  else if (!spend) state = 'stop-when-dry';                       // policy forbids burning
+  else state = 'ok';                                              // quota healthy / unprobed
+  return {
+    spendOnDemand: spend,
+    reserve,
+    spendOverride: typeof account?.spendOnDemand === 'boolean' ? account.spendOnDemand : null,
+    reserveOverride: Number.isFinite(Number(account?.onDemandReserve)) ? Number(account.onDemandReserve) : null,
+    balance: hasBalance ? balance : null,
+    cooled,
+    quotaResetAt: cooled ? account.quotaResetAt : 0,
+    state,
+  };
 }
 
 /**
@@ -1891,7 +2094,7 @@ export function reportInternalError(apiKey) {
   if (account.internalErrorStreak >= getBreakerTunable('internalErrorThreshold')) {
     const now = Date.now();
     // LB: never quarantine the LAST usable account — in a single-account pool a
-    // 5min quarantine is a 5min total outage (every request 529s). The streak
+    // quarantine is a total outage (every request 529s). The streak
     // stays elevated, so once a healthy peer exists the next hit quarantines
     // normally. A degraded sole account serving what it can beats guaranteed
     // pool-wide failure.
@@ -2145,6 +2348,8 @@ function publicAccount(a, now, { view = 'full' } = {}) {
     blockedModels: a.blockedModels || [],
     availableModels: getAvailableModelsForAccount(a),
     tierModels,
+    // v3.0.3: resolved on-demand spend policy + live quota state for the panel.
+    spendState: getAccountSpendState(a, now),
     userStatus: a.userStatus || null,
     lsAdmission: {
       ok: lsAdmission.ok,

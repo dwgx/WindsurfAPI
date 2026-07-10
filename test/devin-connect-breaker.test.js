@@ -18,7 +18,10 @@ import {
   addAccountByKey, removeAccount,
   reportError, reportSuccess, markRateLimited, reportInternalError,
   applyQuotaSnapshot, __isRateLimitedForModel, __isLastUsableAccount,
+  setAccountSpendPolicy, getAccountSpendState,
+  getApiKey, markQuotaExhausted, releaseAccount,
 } from '../src/auth.js';
+import { setBreakerTunables } from '../src/runtime-config.js';
 
 const created = [];
 let _seq = 0;
@@ -38,6 +41,7 @@ const BREAKER_ENV = [
   'WINDSURFAPI_NEW_ACCOUNT_BASELINE', 'WINDSURFAPI_QUOTA_COOLDOWN',
   'WINDSURFAPI_QUOTA_COOLDOWN_MS', 'WINDSURFAPI_QUOTA_DRY_THRESHOLD',
   'WINDSURFAPI_ERROR_RECOVERY_MS', 'WINDSURFAPI_LAST_ACCOUNT_EXEMPT',
+  'WINDSURFAPI_SPEND_ON_DEMAND', 'WINDSURFAPI_ON_DEMAND_RESERVE_USD',
 ];
 
 afterEach(() => {
@@ -246,6 +250,106 @@ describe('RB2/B2 — quota-exhaustion closed loop', () => {
   });
 });
 
+// v3.0.3 — on-demand spend POLICY. When the included weekly quota is dry, does
+// the account keep serving off its prepaid $ balance? Governed by a global
+// default (runtime-config / env WINDSURFAPI_SPEND_ON_DEMAND + a reserve floor)
+// and a per-account override. Defaults (spend=true, reserve=0) reproduce the
+// pre-policy 52e255f behaviour exactly — the B2 block above is the regression
+// guard for that.
+describe('v3.0.3 — on-demand spend policy', () => {
+  it('ZERO REGRESSION: default policy (spend on, reserve 0) burns balance just like before', () => {
+    const acct = mk('sp-default');
+    acct.credits = { balance: 74.39 };
+    const now = 10_000_000;
+    applyQuotaSnapshot(acct, 0, now);       // dry, but funded
+    assert.ok(!acct.quotaResetAt, 'default policy keeps a funded dry account serving');
+  });
+
+  it('global spend-off (env=0): a dry account is cooled even WITH a balance', () => {
+    process.env.WINDSURFAPI_SPEND_ON_DEMAND = '0';
+    const acct = mk('sp-global-off');
+    acct.credits = { balance: 74.39 };
+    const now = 10_100_000;
+    applyQuotaSnapshot(acct, 0, now);
+    assert.equal(acct.quotaResetAt, now + 30 * 60 * 1000,
+      'spend-off policy cools a dry account rather than burning its balance');
+    assert.equal(__isRateLimitedForModel(acct, null, now + 1000), true, 'excluded from selection');
+  });
+
+  it('global reserve floor: balance at/under the reserve is treated as dry → cooled', () => {
+    process.env.WINDSURFAPI_ON_DEMAND_RESERVE_USD = '10';
+    const low = mk('sp-reserve-low'); low.credits = { balance: 8 };   // under floor
+    const high = mk('sp-reserve-high'); high.credits = { balance: 25 }; // above floor
+    const now = 10_200_000;
+    applyQuotaSnapshot(low, 0, now);
+    applyQuotaSnapshot(high, 0, now);
+    assert.ok(low.quotaResetAt > now, 'balance under the reserve floor → cooled (never burned to zero)');
+    assert.ok(!high.quotaResetAt, 'balance above the reserve floor keeps serving');
+  });
+
+  it('per-account override BEATS the global default (force spend on a globally-off pool)', () => {
+    process.env.WINDSURFAPI_SPEND_ON_DEMAND = '0'; // global: stop when dry
+    const acct = mk('sp-override-on');
+    acct.credits = { balance: 50 };
+    setAccountSpendPolicy(acct.id, { spendOnDemand: true }); // but THIS account may burn
+    const now = 10_300_000;
+    applyQuotaSnapshot(acct, 0, now);
+    assert.ok(!acct.quotaResetAt, 'per-account spend=true overrides the global off default');
+  });
+
+  it('per-account override can STOP an account while the global default burns', () => {
+    const acct = mk('sp-override-off');
+    acct.credits = { balance: 50 };
+    setAccountSpendPolicy(acct.id, { spendOnDemand: false }); // protect THIS account
+    const now = 10_400_000;
+    applyQuotaSnapshot(acct, 0, now);
+    assert.ok(acct.quotaResetAt > now, 'per-account spend=false cools it despite the global burn default');
+  });
+
+  it('per-account reserve override protects one account with a custom floor', () => {
+    const acct = mk('sp-reserve-override');
+    acct.credits = { balance: 30 };
+    setAccountSpendPolicy(acct.id, { reserve: 40 }); // keep >$40 → 30 is under floor
+    const now = 10_500_000;
+    applyQuotaSnapshot(acct, 0, now);
+    assert.ok(acct.quotaResetAt > now, 'balance below the per-account reserve → cooled');
+  });
+
+  it('clearing an override (null) falls back to the global default', () => {
+    const acct = mk('sp-clear');
+    acct.credits = { balance: 50 };
+    setAccountSpendPolicy(acct.id, { spendOnDemand: false });
+    assert.equal(acct.spendOnDemand, false);
+    setAccountSpendPolicy(acct.id, { spendOnDemand: null }); // back to inherit
+    assert.equal(acct.spendOnDemand, null, 'override cleared → inherits global');
+    const now = 10_600_000;
+    applyQuotaSnapshot(acct, 0, now);
+    assert.ok(!acct.quotaResetAt, 'inherited default (spend on) keeps it serving');
+  });
+
+  it('getAccountSpendState reports the resolved policy + live state for the dashboard', () => {
+    const spending = mk('sp-state-spending'); spending.credits = { balance: 50 };
+    const now = 10_700_000;
+    applyQuotaSnapshot(spending, 0, now);
+    let st = getAccountSpendState(spending, now + 1000);
+    assert.equal(st.state, 'spending', 'funded dry account under burn policy = spending');
+    assert.equal(st.spendOnDemand, true);
+    assert.equal(st.balance, 50);
+
+    const stopped = mk('sp-state-stopped'); stopped.credits = { balance: 50 };
+    setAccountSpendPolicy(stopped.id, { spendOnDemand: false });
+    applyQuotaSnapshot(stopped, 0, now);
+    st = getAccountSpendState(stopped, now + 1000);
+    assert.equal(st.cooled, true, 'stop-when-dry account is cooled');
+    assert.equal(st.state, 'cooled');
+    assert.equal(st.spendOverride, false, 'surfaces the explicit per-account override');
+  });
+
+  it('setAccountSpendPolicy on a missing id is a safe no-op', () => {
+    assert.equal(setAccountSpendPolicy('no-such-id', { spendOnDemand: true }), false);
+  });
+});
+
 describe('RB2/T3 — new-credential thunderstorm guard', () => {
   it('T3b: a brand-new account is EXEMPT from backoff escalation during the grace window', () => {
     process.env.WINDSURFAPI_BREAKER_BASE_MS = '60000';
@@ -405,9 +509,57 @@ describe('LB — last-account breaker exemption', () => {
     assert.equal(bad.status, 'error', 'a non-last account still trips to error');
     // internal-error quarantine path also trips when a peer exists
     const bad2 = mk('lb-bad2');
+    const t0 = Date.now();
     reportInternalError(bad2.apiKey);
     reportInternalError(bad2.apiKey);
     assert.ok(bad2.rateLimitedUntil > Date.now(), 'non-last account still quarantined');
+    // L1 (2026-07-10): quarantine window cut 5min → 2min (KiroStudio short-cooldown
+    // philosophy). Assert ~2min, NOT the old ~5min.
+    const quarMs = bad2.rateLimitedUntil - t0;
+    assert.ok(quarMs > 1.5 * 60 * 1000 && quarMs < 2.5 * 60 * 1000, `quarantine ~2min (got ${(quarMs / 1000).toFixed(0)}s)`);
+  });
+
+  // 2026-07-10 tier-aware exemption: a healthy FREE peer is NOT a fallback for a
+  // PRO account, because free accounts cannot serve paid selectors. The sole pro
+  // account must therefore be exempt from quarantine even with a free peer
+  // present — otherwise quarantining it blacks out every paid model pool-wide
+  // (the Claude-Code 1ms-429 lockout this fix targets).
+  it('a PRO account with only a FREE peer is still the last usable (tier-aware exemption)', () => {
+    const pro = mk('lb-pro');
+    const free = mk('lb-free');
+    pro.tier = 'pro';
+    free.tier = 'free';
+    reportSuccess(free.apiKey); // free peer is unambiguously healthy
+    // Free cannot cover pro's paid selectors → pro is the last usable for its tier.
+    assert.equal(__isLastUsableAccount(pro), true, 'pro is last usable despite healthy free peer');
+    reportInternalError(pro.apiKey);
+    reportInternalError(pro.apiKey);
+    assert.ok(!(pro.rateLimitedUntil > Date.now()), 'sole pro account NOT quarantined (tier-aware exemption)');
+    // Symmetry check: the FREE account, with a healthy PRO peer, is NOT the last
+    // (pro outranks and can serve everything free can) → breaker trips normally.
+    reportSuccess(pro.apiKey); // clear pro's streak + make it healthy again
+    pro.rateLimitedUntil = 0;
+    assert.equal(__isLastUsableAccount(free), false, 'free is not last usable when a healthy pro peer exists');
+  });
+
+  // Boundary: an UNKNOWN (unprobed) peer is only optimistically paid-capable, so
+  // it must NOT justify quarantining the sole KNOWN-pro account — betting on an
+  // unprobed peer is how paid selectors get blacked out. Conversely two same-tier
+  // (unknown+unknown) peers ARE mutual fallbacks (breaker trips normally).
+  it('an UNKNOWN peer does not rescue a PRO account, but same-tier peers do', () => {
+    const pro = mk('lb-pro2');
+    const unk = mk('lb-unknown');
+    pro.tier = 'pro';
+    unk.tier = 'unknown'; // mk() default is already 'unknown', set explicit for clarity
+    reportSuccess(unk.apiKey);
+    assert.equal(__isLastUsableAccount(pro), true, 'pro not rescued by an unprobed unknown peer');
+    // But the unknown account itself, with a healthy pro peer, is NOT the last
+    // (pro rank 2 >= unknown rank 1).
+    assert.equal(__isLastUsableAccount(unk), false, 'unknown is not last when a healthy pro peer exists');
+    // And two unknowns are mutual fallbacks.
+    const unk2 = mk('lb-unknown2');
+    reportSuccess(unk2.apiKey);
+    assert.equal(__isLastUsableAccount(unk), false, 'unknown+unknown are mutual fallbacks');
   });
 
   it('once the only peer is itself down, the survivor is exempt again', () => {
@@ -429,5 +581,65 @@ describe('LB — last-account breaker exemption', () => {
     const acct = mk('lb-optout');
     failToError(acct);
     assert.equal(acct.status, 'error', 'opt-out: sole account trips as before');
+  });
+});
+
+// L2 (2026-07-10): degraded-serve fallback. When the hard filter leaves zero
+// candidates (whole entitled pool transiently throttled), serve the least-bad
+// transiently-cooled account instead of returning null → 429. Opt-in.
+describe('L2 — degraded-serve fallback (pool fully throttled)', () => {
+  afterEach(() => { setBreakerTunables({ degradedServe: null }); });
+
+  function cool(acct, ms) { markRateLimited(acct.apiKey, ms, null); } // account-wide transient
+
+  it('default OFF: a fully-throttled pool returns null (byte-identical → 429)', () => {
+    const a = mk('l2-off');
+    cool(a, 60_000);
+    assert.equal(getApiKey([], null, ''), null, 'no degraded serve when disabled → null → 429');
+  });
+
+  it('enabled: serves the throttled account (degraded) instead of null', () => {
+    setBreakerTunables({ degradedServe: true });
+    const a = mk('l2-on');
+    cool(a, 60_000);
+    const got = getApiKey([], null, '');
+    assert.ok(got, 'degraded serve returned an account');
+    assert.equal(got.apiKey, a.apiKey);
+    assert.equal(got._degraded, true, 'flagged as a degraded serve');
+    releaseAccount(got.apiKey);
+  });
+
+  it('enabled: picks the account with the SHORTEST remaining cooldown', () => {
+    setBreakerTunables({ degradedServe: true });
+    const soon = mk('l2-soon');
+    const later = mk('l2-later');
+    cool(soon, 5_000);   // frees up sooner
+    cool(later, 90_000);
+    const got = getApiKey([], null, '');
+    assert.equal(got.apiKey, soon.apiKey, 'chose the closest-to-healing account');
+    releaseAccount(got.apiKey);
+  });
+
+  it('enabled: does NOT fall back onto a QUOTA-exhausted account (real dry-well)', () => {
+    setBreakerTunables({ degradedServe: true });
+    const a = mk('l2-quota');
+    markQuotaExhausted(a.apiKey, 60_000);
+    assert.equal(getApiKey([], null, ''), null, 'quota dry-well is not a degraded-serve candidate');
+  });
+
+  it('enabled: does NOT fall back onto a dead/errored account (real fault)', () => {
+    setBreakerTunables({ degradedServe: true });
+    const a = mk('l2-dead');
+    a.status = 'error';
+    assert.equal(getApiKey([], null, ''), null, 'errored account is not a degraded-serve candidate');
+  });
+
+  it('enabled: a healthy account is still selected normally (fallback not triggered)', () => {
+    setBreakerTunables({ degradedServe: true });
+    const a = mk('l2-healthy');
+    reportSuccess(a.apiKey);
+    const got = getApiKey([], null, '');
+    assert.ok(got && !got._degraded, 'healthy account served via normal path, not degraded');
+    releaseAccount(got.apiKey);
   });
 });

@@ -10,8 +10,8 @@ import {
   removeAccount,
   setAccountTier,
 } from '../src/auth.js';
-import { handleChatCompletions, rateLimitBurstCooldownMs, rateLimitCooldownMs } from '../src/handlers/chat.js';
-import { getExperimental, setExperimental } from '../src/runtime-config.js';
+import { handleChatCompletions, rateLimitBurstCooldownMs, rateLimitCooldownMs, clientRetryAfterSeconds } from '../src/handlers/chat.js';
+import { getExperimental, setExperimental, setBreakerTunables } from '../src/runtime-config.js';
 
 const createdAccountIds = [];
 const originalExperimental = getExperimental();
@@ -190,5 +190,41 @@ describe('rate-limit handling', () => {
 
     assert.equal(result.status, 503);
     assert.equal(getRpmStats()[account.id].used, 0);
+  });
+});
+
+// F3 (2026-07-10): client-replay mitigation — clamp the Retry-After we advertise
+// to an agent client's auto-retry into [floor, ceil]. Uses runtime-config
+// overrides (not env) so the tests are hermetic and self-clean via afterEach.
+describe('F3 — clientRetryAfterSeconds (client-replay backoff clamp)', () => {
+  afterEach(() => {
+    // clear both overrides back to null (env/default fallback)
+    setBreakerTunables({ rlClientBackoffFloorMs: null, rlClientBackoffCeilMs: null });
+  });
+
+  it('default (floor=0) is byte-identical to plain ceil(ms/1000) — no floor applied', () => {
+    // def floor=0 → no lengthening; def ceil=600000 → only clamps absurd values.
+    assert.equal(clientRetryAfterSeconds(1000), 1, '1s hint stays 1s when no floor set');
+    assert.equal(clientRetryAfterSeconds(4500), 5, 'rounds up to whole seconds (ceil)');
+    assert.equal(clientRetryAfterSeconds(0), 1, 'zero floored to the 1s header minimum');
+  });
+
+  it('floor raises a too-short hint so the client actually backs off', () => {
+    setBreakerTunables({ rlClientBackoffFloorMs: 30000 });
+    assert.equal(clientRetryAfterSeconds(1000), 30, '1s residual cooldown lifted to the 30s floor');
+    assert.equal(clientRetryAfterSeconds(45000), 45, 'a hint already above the floor is untouched');
+  });
+
+  it('ceil clamps an over-long upstream window so the client is not frozen', () => {
+    setBreakerTunables({ rlClientBackoffCeilMs: 600000 });
+    assert.equal(clientRetryAfterSeconds(3 * 60 * 60 * 1000), 600, '3h window clamped to the 10min ceil');
+    assert.equal(clientRetryAfterSeconds(120000), 120, 'a 2min window under the ceil is untouched');
+  });
+
+  it('floor and ceil compose; non-finite/negative input is treated as zero', () => {
+    setBreakerTunables({ rlClientBackoffFloorMs: 30000, rlClientBackoffCeilMs: 600000 });
+    assert.equal(clientRetryAfterSeconds(NaN), 30, 'NaN → 0 → lifted to floor');
+    assert.equal(clientRetryAfterSeconds(-5000), 30, 'negative → 0 → lifted to floor');
+    assert.equal(clientRetryAfterSeconds(9_999_999), 600, 'huge value clamped to ceil');
   });
 });
