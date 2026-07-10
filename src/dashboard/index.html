@@ -406,6 +406,19 @@ code {
 .sbar-err { color: #e0524a; min-width: 26px; }
 .sbar-muted { color: var(--text-dim); min-width: 26px; }
 .sbar.hot { border-color: rgba(255,120,30,.5); box-shadow: 0 0 8px rgba(255,110,20,.25) inset; }
+/* WebGL fire (KiroStudio FireCanvas port): a full-width burning band behind the
+   row content on saturated accounts. Absolutely positioned so it fills the row,
+   clipped to the border-radius by .sbar's overflow:hidden. `screen` blend makes
+   the flame add light over the dark row without a hard rectangle. Sits under the
+   text/metrics (z-index 0; children default above). Only mounted on .hot rows
+   (see _mountBarFires) so there are only ever 1-2 live WebGL contexts. */
+.sbar-fire-canvas {
+  position: absolute; inset: 0; width: 100%; height: 100%;
+  pointer-events: none; mix-blend-mode: screen; z-index: 0; opacity: .92;
+}
+.sbar.hot > *:not(.sbar-fire-canvas) { position: relative; z-index: 1; }
+/* When the emoji fallback is used (no WebGL2) the row keeps its CSS glow. */
+@media (prefers-reduced-motion: reduce) { .sbar-fire-canvas { display: none; } }
 
 /* ─── Mouse-following account hover card (both pool views) ─── */
 .pool-hover-card {
@@ -4442,6 +4455,9 @@ docker compose up -d --force-recreate</pre>
       + lg(RGB.disabled, I18n.t('overview.poolHealth.dead'), false)
       + `</div>`;
     this._bindPoolHover(el, rows);
+    // WebGL fire on saturated StatusBars rows (grid view has no .sbar → this
+    // disposes any prior fires and mounts none, freeing the contexts).
+    this._mountBarFires(el, rows);
   },
 
   // GlowGrid view: the breathing "compute core" wall.
@@ -4490,6 +4506,198 @@ docker compose up -d --force-recreate</pre>
         + `</div>`;
     }).join('');
     return `<div class="sbar-list">${bars}</div>`;
+  },
+
+  // ─── WebGL2 fire engine (ported from KiroStudio FireCanvas) ───────────────
+  // GLSL shaders are framework-agnostic; copied verbatim. Three-pass pipeline:
+  // sim (flame, reads back last frame for a decaying trail) → gaussian blur →
+  // composite (glow). Mounted ONLY on saturated (.hot) StatusBars rows so there
+  // are at most 1-2 live WebGL contexts; unmounting force-loses the context.
+  _fireShaders() {
+    if (this._fireSrc) return this._fireSrc;
+    const VERT = '#version 300 es\nlayout(location=0) in vec2 a_pos;\nout vec2 v_uv;\nvoid main(){ v_uv=a_pos*0.5+0.5; gl_Position=vec4(a_pos,0.0,1.0); }';
+    const FRAG_SIM = `#version 300 es
+precision highp float;
+in vec2 v_uv; out vec4 fc;
+uniform float u_time, u_slider, u_elapsed;
+uniform vec3 u_ember, u_glow, u_core;
+uniform sampler2D u_back;
+float hash(vec2 p){ return fract(sin(dot(p,vec2(127.1,311.7)))*43758.5453); }
+void main(){
+  vec2 uv=v_uv;
+  vec2 g=uv*vec2(26.0,3.0);
+  vec2 id=floor(g); vec2 cf=fract(g);
+  float h=hash(id); vec2 ap=abs(cf-0.5);
+  float cell=smoothstep(0.34,0.22,max(ap.x*0.9,ap.y));
+  vec3 prev=texture(u_back,uv).rgb;
+  float fade_mask = smoothstep(0.0, 0.35, uv.x);
+  vec3 decay = prev * 0.90 * fade_mask;
+  float act=smoothstep(0.95,1.0,u_slider);
+  if(act<0.01||u_elapsed<0.0){ fc=vec4(decay,1.0); return; }
+  float t=u_time;
+  float cellDelay = h * 1.2;
+  float cellAge   = max(u_elapsed - cellDelay, 0.0);
+  float ignited   = step(0.001, cellAge);
+  float cellSpd   = 0.85 + h * 0.30;
+  float eased = 1.0 - pow(1.0 - clamp(cellAge / 2.5, 0.0, 1.0), 3.0);
+  float dist  = eased * u_slider * cellSpd * ignited;
+  float cellOff = (h - 0.5) * 0.05;
+  float front   = max(u_slider - dist - cellOff, 0.02);
+  float tail    = max(u_slider - front, 0.001);
+  float inZ   = step(front - 0.003, uv.x) * step(uv.x, u_slider + 0.003);
+  float dn    = clamp(max(u_slider - uv.x, 0.0) / tail, 0.0, 1.0);
+  float bright = pow(1.0 - dn, 0.65);
+  bright = max(bright, 0.05 * ignited) * inZ;
+  bright *= 1.0 - smoothstep(0.94, 1.05, dn);
+  float es = mix(0.15, 0.5, min(u_elapsed / 1.0, 1.0));
+  float vy = abs(uv.y - 0.5) * 2.0;
+  float vf = pow(max(1.0 - vy * vy * 0.45, 0.0), 0.75);
+  float ts = mix(0.85, 1.0, min(u_elapsed / 1.5, 1.0));
+  float f1 = sin(uv.x * 30.0 + t * 15.0 * ts + h * 6.28);
+  float f2 = sin(uv.x * 17.0 + t * 8.0 * ts + h * 3.14);
+  float f3 = sin(uv.x * 52.0 + t * 25.0 * ts + h * 10.0);
+  float flame = smoothstep(0.08, 0.92, (f1 + f2 * 0.5 + f3 * 0.25) * 0.35 + 0.5);
+  float r1 = sin(dn * 16.0 - t * 5.0 * ts + h * 3.0);
+  float r2 = sin(dn * 8.0 - t * 2.5 * ts + h * 5.0);
+  float rhythm = smoothstep(-0.15, 0.55, r1) * (r2 * 0.5 + 0.5);
+  rhythm = pow(max(rhythm, 0.0), 1.2);
+  float avgSpd = dist / max(cellAge, 0.001);
+  float age    = max(cellAge - max(u_slider - uv.x, 0.0) / max(avgSpd, 0.001), 0.0);
+  float flash  = step(0.0, age) * exp(-age * 3.2);
+  float sp  = fract(t * (0.38 + h * 0.15) + h * 7.0);
+  float sX  = u_slider - sp * tail;
+  float sY  = 0.5 + sin(sp * 11.0 + h * 6.28) * 0.28;
+  float spark = smoothstep(0.014, 0.0, abs(uv.x - sX)) * smoothstep(0.18, 0.0, abs(uv.y - sY)) * (1.0 - sp) * (1.0 - sp) * es;
+  float energy = bright * vf * (flame * 0.42 + rhythm * 0.38) + flash * bright * vf * 0.55 + spark * 0.7 * inZ;
+  energy *= es;
+  float edgeBase = exp(-pow((uv.x - front) * 18.0, 2.0));
+  float ef1 = sin(uv.x * 45.0 + t * 20.0 * ts + h * 6.28) * 0.5 + 0.5;
+  float ef2 = sin(uv.x * 28.0 + t * 11.0 * ts + h * 3.14) * 0.5 + 0.5;
+  float edge = edgeBase * (0.25 + ef1 * ef2 * 1.5) * 1.6 * act * es;
+  float leadD    = front - uv.x;
+  float leadZone = smoothstep(0.07, 0.0, leadD) * step(0.0, leadD) * vf;
+  float h2       = hash(id + vec2(99.0, 33.0));
+  float leadF    = sin(leadD * 100.0 + t * 20.0 * ts + h2 * 6.28) * 0.5 + 0.5;
+  float leadSpark = leadZone * step(0.6, h2) * leadF * act * es * 0.5;
+  float total = energy + edge + leadSpark;
+  float temp = 1.0 - dn;
+  vec3 col   = mix(u_ember, u_glow, temp);
+  col        = mix(col, u_core, pow(temp, 4.5));
+  col       *= total; col *= cell; col *= fade_mask;
+  fc = vec4(min(decay + col, vec3(1.5)), 1.0);
+}`;
+    const FRAG_BLUR = `#version 300 es
+precision highp float;
+in vec2 v_uv; out vec4 fc;
+uniform sampler2D u_tex; uniform vec2 u_dir, u_res; uniform float u_ext;
+vec3 s(vec2 uv){ vec3 c=texture(u_tex,uv).rgb; return u_ext>0.5 && dot(c,vec3(0.2126,0.7152,0.0722))<0.3 ? vec3(0.0) : c; }
+void main(){
+  vec2 o=u_dir*1.8/u_res;
+  vec3 r=s(v_uv)*0.227027;
+  r+=s(v_uv+o)*0.194595; r+=s(v_uv-o)*0.194595;
+  r+=s(v_uv+o*2.0)*0.121622; r+=s(v_uv-o*2.0)*0.121622;
+  r+=s(v_uv+o*3.0)*0.054054; r+=s(v_uv-o*3.0)*0.054054;
+  fc=vec4(r,1.0);
+}`;
+    const FRAG_COMP = `#version 300 es
+precision highp float;
+in vec2 v_uv; out vec4 fc;
+uniform sampler2D u_scene, u_glow;
+void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; fc=vec4(1.0-exp(-(s+g*1.2+s*g*0.35)*1.15),1.0); }`;
+    this._fireSrc = { VERT, FRAG_SIM, FRAG_BLUR, FRAG_COMP };
+    return this._fireSrc;
+  },
+
+  // Intensity 0..1 → flame triad (ember/glow/core). 7 stops: cyan→green→gold→
+  // orange→violet→ice-white→ruby, matching KiroStudio's FIRE_STOPS.
+  _fireTriad(level) {
+    const S = this._FIRE_STOPS || (this._FIRE_STOPS = [
+      { at: 0.0, c: [[0.02,0.22,0.34],[0.15,0.78,1.0],[0.88,1.0,1.0]] },
+      { at: 0.2, c: [[0.02,0.24,0.10],[0.18,0.88,0.42],[0.88,1.0,0.90]] },
+      { at: 0.4, c: [[0.42,0.24,0.02],[1.0,0.72,0.08],[1.0,0.98,0.82]] },
+      { at: 0.6, c: [[0.50,0.12,0.03],[1.0,0.38,0.10],[1.0,0.93,0.78]] },
+      { at: 0.75, c: [[0.28,0.10,0.58],[0.62,0.32,1.0],[1.0,0.94,0.98]] },
+      { at: 0.88, c: [[0.18,0.20,0.26],[0.64,0.72,0.86],[1.0,1.0,1.0]] },
+      { at: 1.0, c: [[0.55,0.02,0.04],[1.0,0.06,0.08],[1.0,0.82,0.72]] },
+    ]);
+    const x = Math.max(0, Math.min(1, level));
+    let lo = S[0], hi = S[S.length - 1];
+    for (let i = 0; i < S.length - 1; i++) { if (x >= S[i].at && x <= S[i + 1].at) { lo = S[i]; hi = S[i + 1]; break; } }
+    const t = (x - lo.at) / ((hi.at - lo.at) || 1);
+    const mix3 = (a, b) => [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t];
+    return { ember: mix3(lo.c[0], hi.c[0]), glow: mix3(lo.c[1], hi.c[1]), core: mix3(lo.c[2], hi.c[2]) };
+  },
+
+  // RPM/inflight → 0..1 fire intensity (harder-working account = redder/hotter).
+  _fireIntensity(rpm, lim, inflight) {
+    const rpmPart = lim > 0 ? Math.min(1, rpm / lim) : (rpm > 0 ? 0.6 : 0);
+    const flightPart = Math.min(1, (inflight || 0) / 4);
+    return Math.max(0.15, Math.min(1, rpmPart * 0.7 + flightPart * 0.5));
+  },
+
+  // Start a fire on one canvas. Returns a dispose() that frees the WebGL
+  // context (call on unmount so a few hundred accounts never leak contexts).
+  // getIntensity() is polled each frame so a row heating up recolours smoothly.
+  _startFire(canvas, getIntensity) {
+    const gl = canvas.getContext('webgl2', { preserveDrawingBuffer: false, antialias: false, alpha: true });
+    if (!gl) return null; // no WebGL2 → caller keeps the emoji fallback
+    const { VERT, FRAG_SIM, FRAG_BLUR, FRAG_COMP } = this._fireShaders();
+    const compile = (type, src) => { const sh = gl.createShader(type); gl.shaderSource(sh, src); gl.compileShader(sh); return gl.getShaderParameter(sh, gl.COMPILE_STATUS) ? sh : (gl.deleteShader(sh), null); };
+    const link = (vs, fs) => { const v = compile(gl.VERTEX_SHADER, vs), f = compile(gl.FRAGMENT_SHADER, fs); if (!v || !f) return null; const p = gl.createProgram(); gl.attachShader(p, v); gl.attachShader(p, f); gl.bindAttribLocation(p, 0, 'a_pos'); gl.linkProgram(p); gl.deleteShader(v); gl.deleteShader(f); return gl.getProgramParameter(p, gl.LINK_STATUS) ? p : null; };
+    const simProg = link(VERT, FRAG_SIM), blurProg = link(VERT, FRAG_BLUR), compProg = link(VERT, FRAG_COMP);
+    if (!simProg || !blurProg || !compProg) { gl.getExtension('WEBGL_lose_context')?.loseContext(); return null; }
+    const vao = gl.createVertexArray(); gl.bindVertexArray(vao);
+    const vbo = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, vbo);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1,1,-1,-1,1,-1,1,1,-1,1,1]), gl.STATIC_DRAW);
+    gl.enableVertexAttribArray(0); gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+    const U = {
+      time: gl.getUniformLocation(simProg, 'u_time'), slider: gl.getUniformLocation(simProg, 'u_slider'), elapsed: gl.getUniformLocation(simProg, 'u_elapsed'),
+      ember: gl.getUniformLocation(simProg, 'u_ember'), glow: gl.getUniformLocation(simProg, 'u_glow'), core: gl.getUniformLocation(simProg, 'u_core'), back: gl.getUniformLocation(simProg, 'u_back'),
+      bDir: gl.getUniformLocation(blurProg, 'u_dir'), bExt: gl.getUniformLocation(blurProg, 'u_ext'), bTex: gl.getUniformLocation(blurProg, 'u_tex'), bRes: gl.getUniformLocation(blurProg, 'u_res'),
+      cScene: gl.getUniformLocation(compProg, 'u_scene'), cGlow: gl.getUniformLocation(compProg, 'u_glow'),
+    };
+    const makeFBO = () => { const fbo = gl.createFramebuffer(), tex = gl.createTexture(); gl.bindFramebuffer(gl.FRAMEBUFFER, fbo); gl.bindTexture(gl.TEXTURE_2D, tex); gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, canvas.width, canvas.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, null); for (const p of [[gl.TEXTURE_MIN_FILTER, gl.LINEAR],[gl.TEXTURE_MAG_FILTER, gl.LINEAR],[gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE],[gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE]]) gl.texParameteri(gl.TEXTURE_2D, p[0], p[1]); gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0); gl.clearColor(0,0,0,1); gl.clear(gl.COLOR_BUFFER_BIT); return { fbo, tex }; };
+    const rect = canvas.getBoundingClientRect(); const dpr = Math.min(window.devicePixelRatio || 1, 2);
+    canvas.width = Math.max(1, Math.round((rect.width || 84) * dpr)); canvas.height = Math.max(1, Math.round((rect.height || 16) * dpr));
+    let simA = makeFBO(), simB = makeFBO(), blurH = makeFBO(), blurV = makeFBO();
+    const start = performance.now(); let raf = 0, disposed = false, cur = getIntensity();
+    const render = (tms) => {
+      if (disposed) return;
+      if (document.hidden) { raf = requestAnimationFrame(render); return; }
+      const elapsed = (performance.now() - start) / 1000, t = tms * 0.001;
+      cur += (getIntensity() - cur) * 0.04; const tri = this._fireTriad(cur);
+      gl.viewport(0, 0, canvas.width, canvas.height); gl.bindVertexArray(vao);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, simB.fbo); gl.useProgram(simProg);
+      gl.uniform1f(U.time, t); gl.uniform1f(U.slider, 1.0); gl.uniform1f(U.elapsed, elapsed);
+      gl.uniform3f(U.ember, tri.ember[0], tri.ember[1], tri.ember[2]); gl.uniform3f(U.glow, tri.glow[0], tri.glow[1], tri.glow[2]); gl.uniform3f(U.core, tri.core[0], tri.core[1], tri.core[2]);
+      gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, simA.tex); gl.uniform1i(U.back, 0); gl.drawArrays(gl.TRIANGLES, 0, 6);
+      gl.useProgram(blurProg); gl.uniform2f(U.bRes, canvas.width, canvas.height);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, blurH.fbo); gl.uniform2f(U.bDir, 1, 0); gl.uniform1f(U.bExt, 1); gl.bindTexture(gl.TEXTURE_2D, simB.tex); gl.uniform1i(U.bTex, 0); gl.drawArrays(gl.TRIANGLES, 0, 6);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, blurV.fbo); gl.uniform2f(U.bDir, 0, 1); gl.uniform1f(U.bExt, 0); gl.bindTexture(gl.TEXTURE_2D, blurH.tex); gl.drawArrays(gl.TRIANGLES, 0, 6);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null); gl.useProgram(compProg);
+      gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, simB.tex); gl.uniform1i(U.cScene, 0);
+      gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, blurV.tex); gl.uniform1i(U.cGlow, 1); gl.drawArrays(gl.TRIANGLES, 0, 6);
+      const tmp = simA; simA = simB; simB = tmp; raf = requestAnimationFrame(render);
+    };
+    raf = requestAnimationFrame(render);
+    return () => { disposed = true; cancelAnimationFrame(raf); [simA, simB, blurH, blurV].forEach(f => { gl.deleteFramebuffer(f.fbo); gl.deleteTexture(f.tex); }); gl.deleteBuffer(vbo); gl.deleteVertexArray(vao); gl.deleteProgram(simProg); gl.deleteProgram(blurProg); gl.deleteProgram(compProg); gl.getExtension('WEBGL_lose_context')?.loseContext(); };
+  },
+
+  // Mount fires on all .hot rows in `container`, dispose any from a prior render.
+  _mountBarFires(container, rows) {
+    if (this._barFires) this._barFires.forEach(d => { try { d(); } catch {} });
+    this._barFires = [];
+    if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const byId = new Map(rows.map(r => [String(r.a.id), r]));
+    container.querySelectorAll('.sbar.hot').forEach((row) => {
+      const r = byId.get(row.dataset.acct); if (!r) return;
+      const emoji = row.querySelector('.sbar-fire'); if (emoji) emoji.style.display = 'none';
+      const canvas = document.createElement('canvas'); canvas.className = 'sbar-fire-canvas'; canvas.setAttribute('aria-hidden', 'true');
+      row.insertBefore(canvas, row.firstChild);
+      const getI = () => { const a = (byId.get(row.dataset.acct) || r).a; return this._fireIntensity(a.rpmUsed || 0, a.rpmLimit || 0, a.inflight || 0); };
+      const dispose = this._startFire(canvas, getI);
+      if (dispose) this._barFires.push(dispose); else { canvas.remove(); if (emoji) emoji.style.display = ''; }
+    });
   },
 
   _poolTierLabel(tier) {
@@ -4768,10 +4976,29 @@ docker compose up -d --force-recreate</pre>
   },
 
   _trendGeom(W, H, buckets) {
-    const pad = { l: 34, r: 30, t: 12, b: 20 };
+    // pad.t is deliberately roomy (18, not 12): even after niceMax rounds the
+    // axis top up, a rawMax that is already a "nice" number (100, 250, 1) puts
+    // the peak on the top row, and the Catmull-Rom line overshoots a few px above
+    // it. The extra top padding absorbs that overshoot so the peak never clips
+    // out of the canvas. Together with niceMax this fully fixes the clipping.
+    const pad = { l: 34, r: 30, t: 18, b: 20 };
     const cW = W - pad.l - pad.r, cH = H - pad.t - pad.b;
     const n = buckets.length;
-    const maxV = Math.max(1, ...buckets.map(b => b.requests));
+    const rawMax = Math.max(1, ...buckets.map(b => b.requests));
+    // Round the top of the left axis up to a "nice" number (same helper the main
+    // stats chart uses via niceY). Two wins: the gridline labels become clean
+    // (80/4=20 not 74/4=18.5), AND the peak data point no longer sits on the very
+    // top row — so the smoothed (Catmull-Rom) request line, which overshoots above
+    // a peak when both neighbours are lower, has headroom instead of clipping out
+    // the top of the canvas. Previously maxV === rawMax put the peak at y=pad.t and
+    // the bezier overshoot drew above the plot area (reported: "最高点的线超出图外").
+    const niceMax = (nn) => {
+      const exp = Math.pow(10, Math.floor(Math.log10(nn)));
+      const frac = nn / exp;
+      const fr = frac <= 1 ? 1 : frac <= 2 ? 2 : frac <= 2.5 ? 2.5 : frac <= 5 ? 5 : 10;
+      return fr * exp;
+    };
+    const maxV = niceMax(rawMax);
     const xAt = (i) => pad.l + (n <= 1 ? cW / 2 : (i / (n - 1)) * cW);
     const yAt = (v) => pad.t + cH - (v / maxV) * cH;
     const yRate = (p) => pad.t + cH - (p / 100) * cH; // success-rate on 0..100
