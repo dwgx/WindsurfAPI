@@ -49,10 +49,15 @@ export function renameSyncWithRetry(sourcePath, targetPath, { attempts = 6, base
   }
 }
 
-export function writeJsonAtomic(targetPath, value, { spaces = 2 } = {}) {
+export function writeJsonAtomic(targetPath, value, { spaces = 2, mode = 0o600 } = {}) {
+  // mode defaults to 0600 (owner-only): these config files can carry the runtime
+  // API key / dashboard password hash / upstream tokens, and must not be
+  // world-readable by other users on a shared host. rename preserves the temp
+  // file's mode, so it has to be set at creation. Callers can override for
+  // non-sensitive files, but 0600 is the safe default.
   const tmp = `${targetPath}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
   try {
-    writeFileSync(tmp, JSON.stringify(value, null, spaces));
+    writeFileSync(tmp, JSON.stringify(value, null, spaces), { mode });
     renameSyncWithRetry(tmp, targetPath);
   } catch (err) {
     try { unlinkSync(tmp); } catch {}
