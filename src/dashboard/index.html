@@ -3972,6 +3972,11 @@ docker compose up -d --force-recreate</pre>
     Object.values(this.pollers).forEach(clearInterval);
     this.pollers = {};
     if (this.sseConn) { this.sseConn.close(); this.sseConn = null; }
+    // Dispose pool fires when navigating away — display:none does NOT pause
+    // requestAnimationFrame (only tab-hidden does), so without this every hot-row
+    // fire keeps running its 3-pass GL forever in the background. Switching back
+    // to overview re-mounts via _renderPoolHealth → _mountBarFires.
+    this._teardownFires();
 
     const loaders = {
       overview: 'loadOverview', 'windsurf-login': 'loadWindsurfLogin',
@@ -4394,6 +4399,9 @@ docker compose up -d --force-recreate</pre>
       el.innerHTML = `<div class="panel-empty">`
         + `<svg class="pe-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>`
         + `<div class="pe-title">${title}</div><div class="pe-sub">${sub}</div></div>`;
+      // The innerHTML above discards any hot-row fire canvases; dispose their GL
+      // contexts too (a transient cm===null poll must not orphan burning fires).
+      this._teardownFires();
       return;
     }
     // Change-signature guard (mirrors _chartSig): if the pool data + view + lang
@@ -4683,21 +4691,44 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     return () => { disposed = true; cancelAnimationFrame(raf); [simA, simB, blurH, blurV].forEach(f => { gl.deleteFramebuffer(f.fbo); gl.deleteTexture(f.tex); }); gl.deleteBuffer(vbo); gl.deleteVertexArray(vao); gl.deleteProgram(simProg); gl.deleteProgram(blurProg); gl.deleteProgram(compProg); gl.getExtension('WEBGL_lose_context')?.loseContext(); };
   },
 
-  // Mount fires on all .hot rows in `container`, dispose any from a prior render.
-  _mountBarFires(container, rows) {
+  // Dispose every live fire (force-loses each WebGL context). Idempotent — call
+  // on re-render, on empty-state, and when leaving the overview panel so the RAF
+  // loops stop and contexts are reclaimed instead of burning GPU in the bg.
+  _teardownFires() {
     if (this._barFires) this._barFires.forEach(d => { try { d(); } catch {} });
     this._barFires = [];
+  },
+
+  // Max simultaneous WebGL fire contexts. Browsers cap live WebGL contexts at
+  // ~16 and silently drop the oldest past that; a pool-wide rate-limit event can
+  // mark many accounts `saturated` at once, so we hard-cap to the few HOTTEST
+  // rows (by intensity) and leave the rest on the emoji/CSS highlight. Keeps us
+  // far under the browser limit no matter how many rows are .hot.
+  _FIRE_MAX: 3,
+
+  // Mount fires on the hottest .hot rows in `container`, disposing any prior ones.
+  _mountBarFires(container, rows) {
+    this._teardownFires();
     if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     const byId = new Map(rows.map(r => [String(r.a.id), r]));
+    const intensityOf = (a) => this._fireIntensity(a.rpmUsed || 0, a.rpmLimit || 0, a.inflight || 0);
+    // Rank the hot rows by fire intensity and keep only the top _FIRE_MAX — the
+    // rest keep their emoji. `.sbar.hot` order follows rows order (worst-first),
+    // so pair each DOM node with its account to sort by real intensity.
+    const hotRows = [];
     container.querySelectorAll('.sbar.hot').forEach((row) => {
-      const r = byId.get(row.dataset.acct); if (!r) return;
+      const r = byId.get(row.dataset.acct);
+      if (r) hotRows.push({ row, r, i: intensityOf(r.a) });
+    });
+    hotRows.sort((a, b) => b.i - a.i);
+    for (const { row, r } of hotRows.slice(0, this._FIRE_MAX)) {
       const emoji = row.querySelector('.sbar-fire'); if (emoji) emoji.style.display = 'none';
       const canvas = document.createElement('canvas'); canvas.className = 'sbar-fire-canvas'; canvas.setAttribute('aria-hidden', 'true');
       row.insertBefore(canvas, row.firstChild);
-      const getI = () => { const a = (byId.get(row.dataset.acct) || r).a; return this._fireIntensity(a.rpmUsed || 0, a.rpmLimit || 0, a.inflight || 0); };
+      const getI = () => { const a = (byId.get(row.dataset.acct) || r).a; return intensityOf(a); };
       const dispose = this._startFire(canvas, getI);
       if (dispose) this._barFires.push(dispose); else { canvas.remove(); if (emoji) emoji.style.display = ''; }
-    });
+    }
   },
 
   _poolTierLabel(tier) {
