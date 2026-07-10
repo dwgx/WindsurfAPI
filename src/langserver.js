@@ -1523,9 +1523,9 @@ export async function startLanguageServer(opts = {}) {
 /**
  * v2.0.85 (#127 123cek): scan host process table for orphan
  * `language_server_linux_x64` instances left over from previous runs
- * (e.g. self-update via `process.exit(0)` skipped the SIGTERM hook,
- * or PM2 SIGKILL killed us before stopLanguageServer could run) and
- * kill them. Keeps long-running PM2 deployments from accumulating
+ * (e.g. self-update via `process.exit()` skipped the SIGTERM hook,
+ * or a supervisor SIGKILL killed us before stopLanguageServer could run) and
+ * kill them. Keeps long-running supervised deployments from accumulating
  * dead LS processes that hold their pool ports.
  *
  * Limited to processes whose argv[0] matches our `_binaryPath` (or

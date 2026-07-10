@@ -5,7 +5,7 @@
 
 import { createHash, randomUUID } from 'crypto';
 import { WindsurfClient, contentToString, isCascadeTransportError } from '../client.js';
-import { getApiKey, acquireAccountByKey, releaseAccount, releaseAccountById, currentApiKeyForId, getAccountAvailability, reportError, reportSuccess, markRateLimited, markQuotaExhausted, reportInternalError, reportDeadToken, updateCapability, getAccountList, isAllRateLimited, isAllTemporarilyUnavailable, refundReservation, looksLikeBanSignal, reportBanSignal, clearBanSignals, isModelBlockedByDrought, getDroughtSummary, reLoginAccount, getAccountCount, hasConnectEntitledAccount } from '../auth.js';
+import { getApiKey, acquireAccountByKey, releaseAccountById, currentApiKeyForId, getAccountAvailability, reportError, reportSuccess, markRateLimited, markQuotaExhausted, reportInternalError, reportDeadToken, updateCapability, getAccountList, isAllRateLimited, isAllTemporarilyUnavailable, refundReservation, looksLikeBanSignal, reportBanSignal, clearBanSignals, isModelBlockedByDrought, getDroughtSummary, reLoginAccount, getAccountCount, hasConnectEntitledAccount } from '../auth.js';
 import { isStickyEnabled, setStickyBinding } from '../account/sticky-session.js';
 import { resolveModel, getModelInfo, pickRateLimitFallback } from '../models.js';
 import { getLsFor, ensureLs } from '../langserver.js';
@@ -3511,7 +3511,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
       // Pair every successful getApiKey/acquireAccountByKey with a release
       // so the in-flight-count based balancer in auth.js (issue #37) stays
       // accurate across success, retry, and abort paths.
-      if (acct) releaseAccount(acct.apiKey);
+      if (acct) releaseAccountById(acct.id);
     }
   }
   // 所有账号都遇到 Cascade transient 时，账号轮换已经无法修复；返回明确错误，避免误报成限流或模型不可用。
@@ -5150,7 +5150,7 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
             // Pair every successful getApiKey/acquireAccountByKey with a
             // release so the in-flight balancer in auth.js (issue #37)
             // stays accurate through stream success, retry, and abort.
-            if (acct) releaseAccount(acct.apiKey);
+            if (acct) releaseAccountById(acct.id);
           }
         }
 

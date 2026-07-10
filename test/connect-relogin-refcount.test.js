@@ -11,11 +11,13 @@ import { afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   addAccountByKey, removeAccount, getAccountInternal,
-  releaseAccountById, currentApiKeyForId,
+  getApiKey, releaseAccountById, currentApiKeyForId,
 } from '../src/auth.js';
-import { finalizeConnectAccount } from '../src/handlers/chat.js';
+import { finalizeConnectAccount, handleChatCompletions } from '../src/handlers/chat.js';
 
 const createdIds = [];
+let originalDevinConnect;
+let originalDevinOnly;
 
 function seed(label) {
   const key = `devin-session-token$ref-${label}-${Math.random().toString(36).slice(2)}`;
@@ -40,9 +42,85 @@ function relogin(acct, newKey) {
   return newKey;
 }
 
-afterEach(() => { while (createdIds.length) removeAccount(createdIds.pop()); });
+function fakeResponse() {
+  return {
+    body: '',
+    writableEnded: false,
+    write(chunk) { this.body += String(chunk); return true; },
+    end(chunk = '') { this.body += String(chunk); this.writableEnded = true; },
+    on() {},
+  };
+}
+
+function contextFor(acct, stream) {
+  class FakeClient {
+    async cascadeChat(_messages, _modelEnum, _modelUid, opts = {}) {
+      const live = getAccountInternal(acct.id);
+      assert.equal(live._inflight, 1, 'handler acquired exactly one pool slot');
+      const oldKey = live.apiKey;
+      relogin(acct, `${oldKey}$${stream ? 'STREAM' : 'NON_STREAM'}_FRESH`);
+      assert.notEqual(getAccountInternal(acct.id).apiKey, oldKey, 'background re-login replaced the key');
+      if (stream) {
+        opts.onChunk({ text: 'OK' });
+        return { text: '', toolCalls: [] };
+      }
+      return Object.assign([{ text: 'OK' }], { toolCalls: [] });
+    }
+  }
+
+  return {
+    waitForAccount(tried, _signal, _maxWait, modelKey) {
+      return tried.length === 0 ? getApiKey(tried, modelKey) : null;
+    },
+    ensureLs: async () => {},
+    getLsFor: () => ({ port: 17777, csrfToken: 'csrf', generation: 1 }),
+    WindsurfClient: FakeClient,
+  };
+}
+
+beforeEach(() => {
+  originalDevinConnect = process.env.DEVIN_CONNECT;
+  originalDevinOnly = process.env.DEVIN_ONLY;
+  delete process.env.DEVIN_CONNECT;
+  delete process.env.DEVIN_ONLY;
+});
+
+afterEach(() => {
+  while (createdIds.length) removeAccount(createdIds.pop());
+  if (originalDevinConnect === undefined) delete process.env.DEVIN_CONNECT;
+  else process.env.DEVIN_CONNECT = originalDevinConnect;
+  if (originalDevinOnly === undefined) delete process.env.DEVIN_ONLY;
+  else process.env.DEVIN_ONLY = originalDevinOnly;
+});
 
 describe('REF-1: finalize releases the in-flight slot after an in-place re-key', () => {
+  it('non-stream attempt finally releases by immutable id after re-key', async () => {
+    const acct = seed('non-stream-attempt');
+    const result = await handleChatCompletions({
+      model: 'gemini-2.5-flash',
+      messages: [{ role: 'user', content: 'test' }],
+      stream: false,
+    }, contextFor(acct, false));
+
+    assert.equal(result.status, 200);
+    assert.equal(getAccountInternal(acct.id)._inflight, 0, 'non-stream finally released the slot');
+  });
+
+  it('stream attempt finally releases by immutable id after re-key', async () => {
+    const acct = seed('stream-attempt');
+    const result = await handleChatCompletions({
+      model: 'gemini-2.5-flash',
+      messages: [{ role: 'user', content: 'test' }],
+      stream: true,
+    }, contextFor(acct, true));
+    const res = fakeResponse();
+
+    assert.equal(result.status, 200);
+    await result.handler(res);
+    assert.match(res.body, /OK/);
+    assert.equal(getAccountInternal(acct.id)._inflight, 0, 'stream finally released the slot');
+  });
+
   it('decrements _inflight to 0 even though the snapshot key is stale', () => {
     const acct = seed('relogin-release');
     const snap = acquireSnapshot(acct);

@@ -673,7 +673,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
     }
   }
 
-  // ─── Self-update: pull latest code + restart PM2 ──────
+  // ─── Self-update: pull latest code + request supervisor restart ──────
   if (subpath === '/self-update/check' && method === 'GET') {
     try {
       const info = await gitStatus();
@@ -771,12 +771,12 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
       const pull = dirty ? 'hard-reset applied' : await runGit(['pull', 'origin', safeBranch, '--ff-only']);
       const after = await gitStatus();
       const changed = before.commit !== after.commit;
-      // Schedule process exit so PM2 auto-restarts us. This is far simpler
-      // and port/env-agnostic compared to spawning update.sh (which hardcodes
-      // PORT=3003 default). Requires PM2 autorestart: true (the default).
+      // Schedule process exit so the service supervisor restarts us. This is
+      // port/env-agnostic compared to spawning update.sh (which hardcodes
+      // PORT=3003 default).
       //
       // v2.0.85 (#127 123cek): graceful-stop the LS pool before exit so
-      // SIGKILL from PM2 doesn't leave orphan language_server_linux_x64
+      // a supervisor hard-kill doesn't leave orphan language_server_linux_x64
       // processes holding ports. Startup-time cleanup also runs as a
       // backstop, but stopping cleanly here means the next process won't
       // even need cleanup most of the time.
@@ -786,15 +786,15 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
           try {
             // v2.0.88 (audit H-4): use the await-and-wait variant so
             // SIGTERM has time to land before process.exit reparents
-            // surviving children to init. Otherwise the new PM2-spawned
+            // surviving children to init. Otherwise the newly spawned
             // process races with an orphan LS holding the same port.
             const m = await import('../langserver.js');
             await m.stopLanguageServerAndWait({ perProcessTimeoutMs: 1500 });
           } catch (e) {
             log.warn(`self-update: stopLanguageServer failed: ${e.message}`);
           }
-          log.info('self-update: exiting for PM2 auto-restart');
-          process.exit(0);
+          log.info('self-update: exiting with restart-requested status for service supervisor');
+          process.exit(selfUpdateRestartExitCode());
         }, 800);
       }
       return json(res, 200, {
@@ -2054,6 +2054,13 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
 // future refactor drops the regex, execFile still denies injection.
 const SELF_UPDATE_UNAVAILABLE = 'ERR_SELF_UPDATE_UNAVAILABLE';
 let gitExecFileForTest = null;
+
+// EX_TEMPFAIL: non-zero is intentional. systemd Restart=on-failure and PM2
+// autorestart both relaunch after this self-update-only exit, while normal
+// SIGINT/SIGTERM shutdown keeps its separate successful exit path in index.js.
+export function selfUpdateRestartExitCode() {
+  return 75;
+}
 
 export function setGitExecFileForTest(execFile) {
   gitExecFileForTest = execFile;

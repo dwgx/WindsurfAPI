@@ -831,7 +831,7 @@
     },
     "applyUpdate": {
       "title": "Update & Restart",
-      "desc": "Will execute git pull and restart PM2. Dashboard will be briefly unavailable during restart (about 5-10 seconds). Continue?"
+      "desc": "Will execute git pull and restart the service process. Dashboard will be briefly unavailable during restart (about 5-10 seconds). Continue?"
     },
     "dirtyWorktree": {
       "title": "Local Changes in Working Directory",

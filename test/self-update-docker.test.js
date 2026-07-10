@@ -1,6 +1,6 @@
 import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { config } from '../src/config.js';
@@ -45,6 +45,17 @@ function fakeRes() {
     json() { return this.body ? JSON.parse(this.body) : null; },
   };
 }
+
+describe('Source self-update supervisor restart', () => {
+  it('uses a non-zero restart-requested exit code', async () => {
+    const api = await import('../src/dashboard/api.js');
+    assert.equal(typeof api.selfUpdateRestartExitCode, 'function');
+    assert.notEqual(api.selfUpdateRestartExitCode(), 0);
+
+    const source = readFileSync(new URL('../src/dashboard/api.js', import.meta.url), 'utf8');
+    assert.match(source, /process\.exit\(selfUpdateRestartExitCode\(\)\)/);
+  });
+});
 
 describe('Docker self-update unavailable state', () => {
   it('maps missing git binary to ERR_SELF_UPDATE_UNAVAILABLE', async () => {

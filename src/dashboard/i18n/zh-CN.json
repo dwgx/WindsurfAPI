@@ -831,7 +831,7 @@
     },
     "applyUpdate": {
       "title": "一键更新并重启",
-      "desc": "将执行 git pull 并重启 PM2。重启期间 dashboard 会短暂不可用（约 5-10 秒）。确定继续？"
+      "desc": "将执行 git pull 并重启服务进程。重启期间 dashboard 会短暂不可用（约 5-10 秒）。确定继续？"
     },
     "dirtyWorktree": {
       "title": "工作区有本地修改",

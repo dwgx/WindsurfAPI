@@ -15,6 +15,9 @@ real WebGL flame in the pool-health view.
   Empty bodies are now treated as `{}`. This fixes every no-payload dashboard
   POST (self-update, probe-all, langserver restart, …). Route-level regression
   test added.
+  **Post-release correction:** a follow-up fix uses a non-zero restart-requested
+  exit status so both systemd `Restart=on-failure` and PM2 `autorestart` relaunch
+  after a source update; ordinary SIGINT/SIGTERM shutdown remains successful.
 - **Request-trend chart clipped its peak (`最高点的线超出图外`).** The smoothed
   (Catmull-Rom) request line overshoots above a peak when both neighbours are
   lower; the peak data point sat on the very top row (12px padding), so the
