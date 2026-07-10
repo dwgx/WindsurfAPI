@@ -410,8 +410,8 @@ code {
    row content on saturated accounts. Absolutely positioned so it fills the row,
    clipped to the border-radius by .sbar's overflow:hidden. `screen` blend makes
    the flame add light over the dark row without a hard rectangle. Sits under the
-   text/metrics (z-index 0; children default above). Only mounted on .hot rows
-   (see _mountBarFires) so there are only ever 1-2 live WebGL contexts. */
+   text/metrics (z-index 0; children default above). Only mounted on the hottest
+   .hot rows (see _mountBarFires), capped by _FIRE_MAX. */
 .sbar-fire-canvas {
   position: absolute; inset: 0; width: 100%; height: 100%;
   pointer-events: none; mix-blend-mode: screen; z-index: 0; opacity: .92;
@@ -3961,6 +3961,7 @@ docker compose up -d --force-recreate</pre>
   },
 
   navigate(panel) {
+    this._overviewLoadGeneration = (this._overviewLoadGeneration || 0) + 1;
     document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
     document.querySelectorAll('.sidebar nav a').forEach(a => a.classList.remove('active'));
     const el = document.getElementById('p-' + panel);
@@ -4411,6 +4412,7 @@ docker compose up -d --force-recreate</pre>
     const sig = (this._poolView || 'bars') + '|' + I18n.locale + '|'
       + ph.map(a => `${a.id}:${a.status}:${a.saturated ? 1 : 0}:${a.inflight || 0}:${a.rpmUsed || 0}:${(a.health && a.health.total) || 0}:${(a.health && a.health.error) || 0}:${(a.health && a.health.throttle) || 0}:${(a.health && a.health.dead) || 0}`).join(',');
     if (this._poolSig === sig) return;
+    this._teardownFires();
     this._poolSig = sig;
 
     // Live-hit detection: a core flashes when its total health-event count grows
@@ -4519,8 +4521,8 @@ docker compose up -d --force-recreate</pre>
   // ─── WebGL2 fire engine (ported from KiroStudio FireCanvas) ───────────────
   // GLSL shaders are framework-agnostic; copied verbatim. Three-pass pipeline:
   // sim (flame, reads back last frame for a decaying trail) → gaussian blur →
-  // composite (glow). Mounted ONLY on saturated (.hot) StatusBars rows so there
-  // are at most 1-2 live WebGL contexts; unmounting force-loses the context.
+  // composite (glow). Mounted only on saturated (.hot) StatusBars rows, capped
+  // by _FIRE_MAX (currently 3); unmounting force-loses each context.
   _fireShaders() {
     if (this._fireSrc) return this._fireSrc;
     const VERT = '#version 300 es\nlayout(location=0) in vec2 a_pos;\nout vec2 v_uv;\nvoid main(){ v_uv=a_pos*0.5+0.5; gl_Position=vec4(a_pos,0.0,1.0); }';
@@ -4697,6 +4699,9 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
   _teardownFires() {
     if (this._barFires) this._barFires.forEach(d => { try { d(); } catch {} });
     this._barFires = [];
+    document.querySelectorAll('.sbar-fire-canvas').forEach(c => c.remove());
+    document.querySelectorAll('.sbar-fire').forEach(e => { e.style.display = ''; });
+    this._poolSig = null;
   },
 
   // Max simultaneous WebGL fire contexts. Browsers cap live WebGL contexts at
@@ -4706,9 +4711,9 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
   // far under the browser limit no matter how many rows are .hot.
   _FIRE_MAX: 3,
 
-  // Mount fires on the hottest .hot rows in `container`, disposing any prior ones.
+  // Mount fires on the hottest .hot rows after the caller disposes prior ones.
   _mountBarFires(container, rows) {
-    this._teardownFires();
+    if (!document.getElementById('p-overview')?.classList.contains('active')) return;
     if (matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     const byId = new Map(rows.map(r => [String(r.a.id), r]));
     const intensityOf = (a) => this._fireIntensity(a.rpmUsed || 0, a.rpmLimit || 0, a.inflight || 0);
@@ -5007,22 +5012,16 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
   },
 
   _trendGeom(W, H, buckets) {
-    // pad.t is deliberately roomy (18, not 12): even after niceMax rounds the
-    // axis top up, a rawMax that is already a "nice" number (100, 250, 1) puts
-    // the peak on the top row, and the Catmull-Rom line overshoots a few px above
-    // it. The extra top padding absorbs that overshoot so the peak never clips
-    // out of the canvas. Together with niceMax this fully fixes the clipping.
+    // Keep room above the plot for the stroke and markers. Spline controls are
+    // separately clamped to the plot bounds in _trendPaint.
     const pad = { l: 34, r: 30, t: 18, b: 20 };
     const cW = W - pad.l - pad.r, cH = H - pad.t - pad.b;
     const n = buckets.length;
     const rawMax = Math.max(1, ...buckets.map(b => b.requests));
     // Round the top of the left axis up to a "nice" number (same helper the main
-    // stats chart uses via niceY). Two wins: the gridline labels become clean
-    // (80/4=20 not 74/4=18.5), AND the peak data point no longer sits on the very
-    // top row — so the smoothed (Catmull-Rom) request line, which overshoots above
-    // a peak when both neighbours are lower, has headroom instead of clipping out
-    // the top of the canvas. Previously maxV === rawMax put the peak at y=pad.t and
-    // the bezier overshoot drew above the plot area (reported: "最高点的线超出图外").
+    // stats chart uses via niceY). This keeps gridline labels clean and provides
+    // headroom whenever rounding raises the ceiling. If rawMax is already nice,
+    // _trendPaint's Y bounds keep spline controls inside the plot.
     const niceMax = (nn) => {
       const exp = Math.pow(10, Math.floor(Math.log10(nn)));
       const frac = nn / exp;
@@ -5041,6 +5040,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     const g = this._trendGeom(W, H, buckets);
     const { pad, cW, cH, n, maxV, xAt, yAt, yRate } = g;
     const base = pad.t + cH;
+    const yBounds = [pad.t, base];
     const yA = (v) => base - (base - yAt(v)) * p;        // grow from baseline
     const yR = (pc) => base - (base - yRate(pc)) * p;
     ctx.clearRect(0, 0, W, H);
@@ -5072,7 +5072,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     const reqPts = buckets.map((b, i) => ({ x: xAt(i), y: yA(b.requests) }));
     // requests area + line
     ctx.beginPath(); ctx.moveTo(reqPts[0].x, pad.t + cH); ctx.lineTo(reqPts[0].x, reqPts[0].y);
-    this._smoothPath(ctx, reqPts, false, 1/6);
+    this._smoothPath(ctx, reqPts, false, 1/6, yBounds);
     ctx.lineTo(reqPts[n - 1].x, pad.t + cH); ctx.closePath();
     // Light, airy area wash (KiroStudio-style): a faint tint at the top that
     // fades to nothing — the LINE carries the signal, not a heavy slab of fill.
@@ -5082,7 +5082,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     // Glowing request line (KiroStudio feGaussianBlur look, done with canvas
     // shadowBlur): a soft colored halo under the crisp 2.25px stroke.
     ctx.save();
-    ctx.beginPath(); this._smoothPath(ctx, reqPts, true, 1/6);
+    ctx.beginPath(); this._smoothPath(ctx, reqPts, true, 1/6, yBounds);
     ctx.shadowColor = this._hexA(c.acc, 0.85); ctx.shadowBlur = 10;
     ctx.strokeStyle = c.acc; ctx.lineWidth = 2.25; ctx.lineJoin = 'round'; ctx.lineCap = 'round'; ctx.stroke();
     ctx.restore();
@@ -5102,14 +5102,14 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     // errors line (only if any)
     if (buckets.some(b => b.errors > 0)) {
       const ep = buckets.map((b, i) => ({ x: xAt(i), y: yA(b.errors) }));
-      ctx.beginPath(); this._smoothPath(ctx, ep, true, 1/6);
+      ctx.beginPath(); this._smoothPath(ctx, ep, true, 1/6, yBounds);
       ctx.strokeStyle = c.err; ctx.lineWidth = 1.75; ctx.stroke();
     }
     // success-rate overlay (dashed, right-axis 0..100, blue)
     const rr = buckets.map((b, i) => ({ x: xAt(i), y: b.rate == null ? null : yR(b.rate) })).filter(pt => pt.y != null);
     if (rr.length > 1) {
       ctx.save(); ctx.setLineDash([4, 3]); ctx.globalAlpha = 0.8;
-      ctx.beginPath(); this._smoothPath(ctx, rr, true, 1/6);
+      ctx.beginPath(); this._smoothPath(ctx, rr, true, 1/6, yBounds);
       ctx.strokeStyle = c.suc; ctx.lineWidth = 1.75; ctx.stroke(); ctx.restore();
     }
     // hover crosshair + marker — `cursor` is now a continuous pixel-x (same
@@ -5119,7 +5119,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     // decoupling the y-slide from the value-snap is what kills the per-grid jump.
     if (cursor != null && n > 0) {
       const x = Math.max(xAt(0), Math.min(xAt(n - 1), cursor));
-      const sample = this._trendSample(reqPts, 1 / 6, 24);
+      const sample = this._trendSample(reqPts, 1 / 6, 24, yBounds);
       const cy = this._trendYAtX(sample, x);
       ctx.strokeStyle = c.dim; ctx.globalAlpha = 0.5; ctx.setLineDash([2, 2]);
       ctx.beginPath(); ctx.moveTo(x, pad.t); ctx.lineTo(x, pad.t + cH); ctx.stroke();
@@ -5183,6 +5183,10 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
   },
 
   async loadOverview() {
+    const generation = (this._overviewLoadGeneration || 0) + 1;
+    this._overviewLoadGeneration = generation;
+    const isCurrent = () => this._overviewLoadGeneration === generation
+      && document.getElementById('p-overview')?.classList.contains('active');
     // Cockpit data: fetch /overview (primary) plus /stats and /connect-metrics in
     // parallel for the trend/rankings/pool-health/self-healing panels. The two
     // extras are best-effort — a 401/failure on either renders that panel's empty
@@ -5193,10 +5197,12 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
       this.api('GET', '/stats').catch(() => null),
       this.api('GET', '/connect-metrics').catch(() => null),
     ]);
+    if (!isCurrent()) return;
     this.renderNativeBridgeTelemetry(d);
     // Fetch /health (no auth) in parallel for version/commit info
     try {
       const h = await fetch('/health').then(r => r.json()).catch(() => null);
+      if (!isCurrent()) return;
       if (h) {
         const sv = document.getElementById('sidebar-ver');
         if (sv) {
@@ -5212,6 +5218,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     } catch {
       /* keep overview telemetry from /dashboard/api/overview */
     }
+    if (!isCurrent()) return;
     const uptime = d.uptime ? this.fmtDuration(d.uptime) : '-';
     const ls = d.langServer || {};
     const poolCount = (ls.instances || []).length || (ls.running ? 1 : 0);
@@ -7689,7 +7696,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
 
   // Catmull-Rom → Bezier spline. Set move=false to continue the current
   // sub-path (important for area fills where we start from the baseline).
-  _smoothPath(ctx, points, move = true, tension = 0.28) {
+  _smoothPath(ctx, points, move = true, tension = 0.28, yBounds = null) {
     if (points.length < 1) return;
     if (move) ctx.moveTo(points[0].x, points[0].y);
     else ctx.lineTo(points[0].x, points[0].y);
@@ -7699,9 +7706,13 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
       const p2 = points[i + 1];
       const p3 = points[i + 2] || p2;
       const cp1x = p1.x + (p2.x - p0.x) * tension;
-      const cp1y = p1.y + (p2.y - p0.y) * tension;
+      let cp1y = p1.y + (p2.y - p0.y) * tension;
       const cp2x = p2.x - (p3.x - p1.x) * tension;
-      const cp2y = p2.y - (p3.y - p1.y) * tension;
+      let cp2y = p2.y - (p3.y - p1.y) * tension;
+      if (yBounds) {
+        cp1y = Math.max(yBounds[0], Math.min(yBounds[1], cp1y));
+        cp2y = Math.max(yBounds[0], Math.min(yBounds[1], cp2y));
+      }
       ctx.bezierCurveTo(cp1x, cp1y, cp2x, cp2y, p2.x, p2.y);
     }
   },
@@ -7711,7 +7722,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
   // _smoothPath (cp1=p1+(p2-p0)*t, cp2=p2-(p3-p1)*t) so sampled points sit exactly
   // on the drawn line. sub = subdivisions per segment. x is ascending because
   // xAt(i) is index-based (evenly spaced), so binary search is safe.
-  _trendSample(pts, tension = 1 / 6, sub = 24) {
+  _trendSample(pts, tension = 1 / 6, sub = 24, yBounds = null) {
     if (!pts || pts.length === 0) return [];
     if (pts.length === 1) return [{ x: pts[0].x, y: pts[0].y }];
     const out = [{ x: pts[0].x, y: pts[0].y }];
@@ -7721,9 +7732,13 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
       const p2 = pts[i + 1];
       const p3 = pts[i + 2] || p2;
       const cp1x = p1.x + (p2.x - p0.x) * tension;
-      const cp1y = p1.y + (p2.y - p0.y) * tension;
+      let cp1y = p1.y + (p2.y - p0.y) * tension;
       const cp2x = p2.x - (p3.x - p1.x) * tension;
-      const cp2y = p2.y - (p3.y - p1.y) * tension;
+      let cp2y = p2.y - (p3.y - p1.y) * tension;
+      if (yBounds) {
+        cp1y = Math.max(yBounds[0], Math.min(yBounds[1], cp1y));
+        cp2y = Math.max(yBounds[0], Math.min(yBounds[1], cp2y));
+      }
       for (let j = 1; j <= sub; j++) {
         const t = j / sub;
         const mt = 1 - t;
