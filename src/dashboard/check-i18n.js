@@ -84,6 +84,17 @@ function looksLikeDisplayCopy(text) {
   if (/^[#/]/.test(t)) return false;                              // comment / path / hash
   if (/[A-Za-z0-9_]+=[^=]/.test(t) && !/\s\S+\s/.test(t)) return false; // KEY=value with no prose
   if (/[a-z-]+\s*:\s*[^;]+;/.test(t)) return false;               // inline css declaration
+  // JS expression fragments that leak through the ${…} strip when a template has
+  // nested braces (e.g. an inline IIFE): "0) + (tt.cache_read", "a && b", "x.y".
+  // Real display copy never contains these operator/member-access shapes.
+  if (/[)(]/.test(t) && /[+\-*/%]|&&|\|\||=>|\breturn\b/.test(t)) return false; // arithmetic/logic w/ parens
+  if (/\|\||&&|=>|\?\.|\.\w+\s*\(/.test(t)) return false;          // logic ops / optional chain / method call
+  // Member access `obj.prop` — but ONLY when it looks like code, not prose or a
+  // decimal. Require the left side to START with a letter/underscore (excludes
+  // "95.5") and the property to be a snake_case/camelCase identifier of 2+ chars
+  // that isn't a natural sentence boundary. This still catches "tt.cache_read" /
+  // "obj.method" while NOT skipping real copy like "v2.0", "95.5%", or "e.g.".
+  if (/(?:^|[^A-Za-z0-9])[A-Za-z_]\w*\.[a-z_]\w+(?![A-Za-z0-9. ])/.test(t) && /_|[a-z][A-Z]/.test(t)) return false;
   const isMultiWord = /\S\s+\S/.test(t);
   if (!isMultiWord) {
     if (/^[a-z][\w-]*$/.test(t)) return false;                    // camel/kebab identifier
