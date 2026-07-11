@@ -182,3 +182,68 @@ describe('backend-router selectBackend — DEVIN_CONNECT (pure-HTTP egress)', ()
     assert.equal(padded.flow, 'devin_connect');
   });
 });
+
+// handlers/chat.js calls selectBackend TWICE per request — once early at
+// chat.js:2151 (`selectBackend({ modelInfo }).flow === 'devin_connect'`, to
+// short-circuit into the DEVIN_CONNECT egress BEFORE the Cascade "unsupported
+// model" gate) and once as the main decision at chat.js:2779. Between those two
+// calls `modelInfo` can be REASSIGNED (chat.js:2764, the model-blocked →
+// default-model fallback). If the two calls could disagree, a request could be
+// early-routed to DEVIN_CONNECT and then main-routed elsewhere (or vice versa),
+// splitting the pipeline. These tests pin the invariants that keep the two
+// calls in lockstep so a future edit to selectBackend can't silently fork them.
+describe('backend-router selectBackend — double-call consistency (chat.js:2151 vs :2779)', () => {
+  it('is a pure function: repeated calls with identical input are byte-identical', () => {
+    const cases = [
+      { modelInfo: { modelUid: 'MODEL_CLAUDE_4_5_SONNET' }, env: {} },
+      { modelInfo: { backend: 'special_agent' }, env: { DEVIN_CLI_MODE: 'acp' } },
+      { modelInfo: { enumValue: 0 }, env: { DEVIN_ONLY: '1' } },
+      { modelInfo: { modelUid: 'X' }, env: { DEVIN_CONNECT: '1' } },
+      { modelInfo: null, env: {} },
+    ];
+    for (const args of cases) {
+      const a = selectBackend(args);
+      const b = selectBackend(args);
+      assert.deepEqual(a, b, `selectBackend must be deterministic for ${JSON.stringify(args)}`);
+    }
+  });
+
+  it('devin_connect decision is env-only — invariant to any modelInfo swap at chat.js:2764', () => {
+    // This is THE invariant protecting the early short-circuit: the 2151 check
+    // only looks at .flow==='devin_connect', which selectBackend derives purely
+    // from env (devinConnectEnabled). So the model-blocked fallback reassigning
+    // modelInfo between 2151 and 2779 CANNOT flip the devin_connect routing.
+    const env = { DEVIN_CONNECT: '1' };
+    const modelInfos = [
+      { modelUid: 'MODEL_CLAUDE_4_5_SONNET' },   // original requested model
+      { modelUid: 'MODEL_DEFAULT_FALLBACK' },    // reassigned at 2764
+      { backend: 'special_agent' },
+      { enumValue: 0 },
+      null,
+    ];
+    for (const modelInfo of modelInfos) {
+      assert.equal(
+        selectBackend({ modelInfo, env }).flow, 'devin_connect',
+        `devin_connect must hold regardless of modelInfo=${JSON.stringify(modelInfo)}`
+      );
+    }
+    // And when DEVIN_CONNECT is off, NO modelInfo can early-route to it.
+    for (const modelInfo of modelInfos) {
+      assert.notEqual(selectBackend({ modelInfo, env: {} }).flow, 'devin_connect');
+    }
+  });
+
+  it('same modelInfo at both call sites → identical backend/flow/reason', () => {
+    // Simulate chat.js: modelInfo resolved once, used at 2151 and again at 2779
+    // WITHOUT the blocked-fallback reassignment (the common path). Both call
+    // sites must land on the same backend.
+    for (const env of [{}, { DEVIN_ONLY: '1' }, { DEVIN_CONNECT: '1' }]) {
+      const modelInfo = { modelUid: 'MODEL_CLAUDE_4_5_SONNET', enumValue: 200 };
+      const early = selectBackend({ modelInfo, env });
+      const main = selectBackend({ modelInfo, env });
+      assert.equal(early.backend, main.backend);
+      assert.equal(early.flow, main.flow);
+      assert.equal(early.reason, main.reason);
+    }
+  });
+});
