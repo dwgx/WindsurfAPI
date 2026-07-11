@@ -97,7 +97,12 @@ pm2 save >/dev/null 2>&1 || true
 echo ""
 echo "=== [5/5] Health check ==="
 sleep 3
-if curl -sf "http://localhost:$PORT/health" | head -200; then
+# audit #5: `curl -sf ... | head` returned head's exit code (always 0), so a 500
+# /health or an unbound port passed the check. Capture first — curl -sf's own
+# exit code (nonzero on HTTP >=400 / connection failure) is now authoritative.
+HEALTH_OUT="$(curl -sf "http://localhost:$PORT/health")" && HEALTH_OK=1 || HEALTH_OK=0
+if [ "$HEALTH_OK" = 1 ]; then
+  echo "$HEALTH_OUT" | head -200
   echo ""
   echo ""
   echo "✓ Update complete. Dashboard: http://\$YOUR_IP:$PORT/dashboard"

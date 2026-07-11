@@ -125,12 +125,28 @@ function dockerPull(image) {
         const chunks = [];
         res.on('data', (c) => chunks.push(c));
         res.on('end', () => {
-          if (res.statusCode >= 200 && res.statusCode < 300) {
-            resolve(Buffer.concat(chunks).toString('utf8'));
-          } else {
-            const buf = Buffer.concat(chunks).toString('utf8');
+          const buf = Buffer.concat(chunks).toString('utf8');
+          if (!(res.statusCode >= 200 && res.statusCode < 300)) {
             reject(new Error(`docker pull ${image} -> ${res.statusCode}: ${buf.slice(0, 400)}`));
+            return;
           }
+          // audit #11: /images/create streams JSONL and returns HTTP 200 EVEN
+          // WHEN THE PULL FAILS (unknown tag, auth/registry error) — the failure
+          // is an {"error":...} / {"errorDetail":...} line in the body, not the
+          // status. Treating 200 as success left the deployer silently on the
+          // OLD image. Scan the stream and reject if any line reports an error.
+          for (const line of buf.split('\n')) {
+            const s = line.trim();
+            if (!s) continue;
+            let obj;
+            try { obj = JSON.parse(s); } catch { continue; }
+            if (obj && (obj.error || obj.errorDetail)) {
+              const msg = (obj.errorDetail && obj.errorDetail.message) || obj.error || 'unknown docker pull error';
+              reject(new Error(`docker pull ${image} failed: ${String(msg).slice(0, 400)}`));
+              return;
+            }
+          }
+          resolve(buf);
         });
       },
     );

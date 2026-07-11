@@ -71,6 +71,25 @@ describe('docker self-update module shape', () => {
       'sidecar Cmd must sleep for DEPLOYER_DELAY_SECONDS before pulling/recreating');
   });
 
+  test('audit #11: dockerPull scans the JSONL stream for errors, not just HTTP status', () => {
+    // /images/create streams JSONL and returns HTTP 200 even when the pull
+    // fails (unknown tag / registry error) — the failure is an {"error":...}
+    // line in the body. Treating 200 as success left the deployer on the OLD
+    // image. The end handler must inspect the streamed lines for error/errorDetail.
+    const pull = MOD.slice(MOD.indexOf('function dockerPull'));
+    assert.match(pull, /errorDetail/, 'dockerPull must check for errorDetail in the JSONL stream');
+    assert.match(pull, /obj\.error/, 'dockerPull must check for an error field per streamed line');
+    assert.match(pull, /split\('\\n'\)/, 'dockerPull must scan the stream line by line');
+    // and an error line must lead to reject() (before the final resolve): the
+    // error-field check and a reject() call appear, in that order, ahead of the
+    // success resolve(buf).
+    const errIdx = pull.search(/obj\.error \|\| obj\.errorDetail/);
+    const rejIdx = pull.indexOf('reject(new Error(`docker pull ${image} failed');
+    const resIdx = pull.indexOf('resolve(buf)');
+    assert.ok(errIdx >= 0 && rejIdx > errIdx, 'error-field check must be followed by a reject()');
+    assert.ok(resIdx > rejIdx, 'the success resolve(buf) must come after the error-reject path');
+  });
+
   test('shell-quotes the project name and working dir', () => {
     // Both come from compose container labels which we don't fully
     // control — defensive single-quote-wrap so a malformed label
