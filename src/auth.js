@@ -3110,6 +3110,22 @@ export function emitNoAuthWarnings(bindHost = '0.0.0.0') {
   // fails closed (better than the old privilege-escalation), but the
   // operator still needs the warning so they explicitly configure one.
   const dashboardOpen = shouldEmitNoAuthWarning(bindHost, !!config.dashboardPassword);
+
+  // audit #7: brute-force lockout keys on the client IP, which is the socket
+  // peer unless TRUST_PROXY_X_FORWARDED_FOR=1. Behind a reverse proxy that
+  // terminates on loopback (the documented homecloud openresty→127.0.0.1
+  // topology) every request's peer IS 127.0.0.1, so ALL failed dashboard logins
+  // collapse into one bucket — an attacker's 5 wrong passwords lock the single
+  // loopback bucket and, because the lockout is checked BEFORE auth, the
+  // operator can't even log in to clear it. Warn so they enable real per-client
+  // IP attribution. (Not auto-enabled: trusting XFF blindly is itself spoofable,
+  // so it stays an explicit opt-in with a configured hop count.)
+  // Reuse the authoritative loopback classifier (handles ::ffff:127.* etc.)
+  // instead of a second, narrower regex that could drift from it.
+  if (isLocalBindHost(bindHost) && process.env.TRUST_PROXY_X_FORWARDED_FOR !== '1') {
+    log.warn('AUTH: dashboard bound to loopback with X-Forwarded-For trust OFF. Behind a reverse proxy, brute-force lockout buckets all clients as 127.0.0.1 (one bad actor can lock everyone, including you). If a proxy fronts this, set TRUST_PROXY_X_FORWARDED_FOR=1 and TRUST_PROXY_HOPS=<n> so lockout keys on the real client IP.');
+  }
+
   if (!apiOpen && !dashboardOpen) return;
   const lines = [
     '+------------------------------------------------------------------+',

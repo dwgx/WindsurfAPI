@@ -95,6 +95,69 @@ function addTestAccount(label) {
   return account;
 }
 
+describe('audit #1: apiKey/no-auth dashboard fallback requires a verified-LOCAL client IP, not just a loopback bind', () => {
+  // Behind a reverse proxy (openresty → app on 127.0.0.1) isLocalBindHost() is
+  // always true — and so is the raw socket peer (the proxy connects from
+  // 127.0.0.1). So the fallback gates on the TRUSTED client IP (dashboardClientIp:
+  // honors X-Forwarded-For when TRUST_PROXY_X_FORWARDED_FOR=1), not the socket peer.
+  const withXff = () => { process.env.TRUST_PROXY_X_FORWARDED_FOR = '1'; };
+
+  it('loopback bind + remote socket peer + chat apiKey → 401 (no proxy trust)', async () => {
+    config.apiKey = 'sk-chat-shared-key';
+    config.dashboardPassword = '';
+    configureBindHost('127.0.0.1'); // app bound to loopback (proxy fronts it)
+    const { res, captured } = mkRes();
+    await handleDashboardApi('GET', '/config', {}, mkReq({ 'x-dashboard-password': 'sk-chat-shared-key' }, '203.0.113.9'), res);
+    assert.equal(captured.status, 401, 'remote peer must NOT auth via the chat apiKey fallback');
+  });
+
+  it('SAME-HOST PROXY: loopback socket peer BUT remote real client (XFF) + chat apiKey → 401', async () => {
+    // The reviewer-caught hole: behind a same-host proxy the socket peer is
+    // 127.0.0.1 for everyone. With XFF trust on, dashboardClientIp resolves the
+    // real client from X-Forwarded-For — a remote client must be rejected even
+    // though the socket peer is loopback.
+    withXff();
+    config.apiKey = 'sk-chat-shared-key';
+    config.dashboardPassword = '';
+    configureBindHost('127.0.0.1');
+    const { res, captured } = mkRes();
+    // socket peer = 127.0.0.1 (the proxy), XFF carries the real remote client
+    const req = { headers: { 'x-dashboard-password': 'sk-chat-shared-key', 'x-forwarded-for': '203.0.113.9' }, socket: { remoteAddress: '127.0.0.1' } };
+    await handleDashboardApi('GET', '/config', {}, req, res);
+    assert.equal(captured.status, 401, 'proxied remote client (via XFF) must NOT auth via the apiKey fallback despite a loopback socket peer');
+  });
+
+  it('SAME-HOST PROXY: loopback socket peer + loopback real client (XFF) + chat apiKey → 200', async () => {
+    // A genuinely local client whose real IP (via XFF) is loopback still works.
+    withXff();
+    config.apiKey = 'sk-chat-shared-key';
+    config.dashboardPassword = '';
+    configureBindHost('127.0.0.1');
+    const { res, captured } = mkRes();
+    const req = { headers: { 'x-dashboard-password': 'sk-chat-shared-key', 'x-forwarded-for': '127.0.0.1' }, socket: { remoteAddress: '127.0.0.1' } };
+    await handleDashboardApi('GET', '/config', {}, req, res);
+    assert.equal(captured.status, 200, 'verified-local client (XFF loopback) keeps the convenience');
+  });
+
+  it('loopback bind + loopback peer + chat apiKey as password → 200 (genuine local convenience)', async () => {
+    config.apiKey = 'sk-chat-shared-key';
+    config.dashboardPassword = '';
+    configureBindHost('127.0.0.1');
+    const { res, captured } = mkRes();
+    await handleDashboardApi('GET', '/config', {}, mkReq({ 'x-dashboard-password': 'sk-chat-shared-key' }, '127.0.0.1'), res);
+    assert.equal(captured.status, 200, 'loopback peer with the correct apiKey is still accepted');
+  });
+
+  it('a configured DASHBOARD_PASSWORD is unaffected (remote peer with correct password still works)', async () => {
+    config.apiKey = 'sk-chat-shared-key';
+    config.dashboardPassword = 'real-admin-pw';
+    configureBindHost('127.0.0.1');
+    const { res, captured } = mkRes();
+    await handleDashboardApi('GET', '/config', {}, mkReq({ 'x-dashboard-password': 'real-admin-pw' }, '203.0.113.9'), res);
+    assert.equal(captured.status, 200, 'explicit dashboard password auths regardless of peer');
+  });
+});
+
 describe('AUTH-1: localhost no-secret fail-closed by default', () => {
   it('localhost + no secret + no opt-in → 401 (fail closed)', async () => {
     config.apiKey = '';

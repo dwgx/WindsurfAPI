@@ -72,10 +72,12 @@ describe('GET /accounts/import-local (security posture)', () => {
     config.dashboardPassword = '';
     config.apiKey = '';
     configureBindHost('127.0.0.1');
-    // AUTH-1: opt in to open-local so ambient auth passes; the point of this
-    // case is the SECOND-layer loopback guard — a non-loopback remote caller
-    // must still be rejected (403 ERR_LOCAL_IMPORT_LOOPBACK_ONLY) even when
-    // the dashboard itself is unauthenticated-open.
+    // audit #1: DASHBOARD_ALLOW_NO_AUTH=1 is "open LOCAL", now peer-gated to
+    // loopback. A non-loopback remote caller is rejected at the AUTH layer (401)
+    // BEFORE reaching the endpoint's own loopback guard — a tighter, earlier
+    // rejection. (Previously the remote peer passed ambient auth and hit the
+    // endpoint's 403 ERR_LOCAL_IMPORT_LOOPBACK_ONLY; both reject the caller, but
+    // fail-closing at auth is strictly safer.)
     process.env.DASHBOARD_ALLOW_NO_AUTH = '1';
 
     const res = fakeRes();
@@ -87,8 +89,7 @@ describe('GET /accounts/import-local (security posture)', () => {
       res
     );
 
-    assert.equal(res.statusCode, 403);
-    assert.equal(res.json().error, 'ERR_LOCAL_IMPORT_LOOPBACK_ONLY');
+    assert.equal(res.statusCode, 401, 'remote peer rejected at auth layer (open-local is loopback-only)');
   });
 
   it('does not leak absolute paths in discovery metadata', async () => {

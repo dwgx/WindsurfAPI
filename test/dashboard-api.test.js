@@ -91,14 +91,15 @@ describe('dashboard batch import proxy binding', () => {
     // AUTH-1: localhost + nothing configured is now fail-closed by default.
     delete process.env.DASHBOARD_ALLOW_NO_AUTH;
     const closed = fakeRes();
-    await handleDashboardApi('GET', '/cache', {}, { headers: {} }, closed);
+    await handleDashboardApi('GET', '/cache', {}, { headers: {}, socket: { remoteAddress: '127.0.0.1' } }, closed);
     assert.equal(closed.statusCode, 401);
     assert.match(closed.json().error, /Unauthorized/);
 
     // Operators who relied on the old open-local convenience must opt in.
+    // audit #1: open-local requires a loopback PEER, not just a loopback bind.
     process.env.DASHBOARD_ALLOW_NO_AUTH = '1';
     const open = fakeRes();
-    await handleDashboardApi('GET', '/cache', {}, { headers: {} }, open);
+    await handleDashboardApi('GET', '/cache', {}, { headers: {}, socket: { remoteAddress: '127.0.0.1' } }, open);
     assert.equal(open.statusCode, 200);
   });
 

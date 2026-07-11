@@ -264,16 +264,29 @@ function checkAuth(req) {
   const pw = req.headers['x-dashboard-password'] || '';
   const storedDashboardPw = getEffectiveDashboardPasswordStored();
   if (storedDashboardPw) return verifyPassword(pw, storedDashboardPw);
-  if (isLocalBindHost()) {
+  // audit #1: the localhost API-key fallback (and the no-auth opt-in) let a
+  // caller present the shared chat API key as the dashboard password. Gating on
+  // isLocalBindHost() alone is unsafe: behind a same-host reverse proxy
+  // (openresty → 127.0.0.1) the bind IS local for everyone. Gating on the raw
+  // socket peer is ALSO unsafe there — the proxy connects from 127.0.0.1, so a
+  // remote user proxied in still looks loopback. Use the TRUSTED client IP
+  // (dashboardClientIp: real client when TRUST_PROXY_X_FORWARDED_FOR + hops are
+  // configured, else the socket peer) so the convenience is genuinely local:
+  //  - XFF trust configured (the recommended proxy setup, see the #7 warning):
+  //    a remote client's real IP is non-loopback → fallback denied.
+  //  - No proxy, genuine localhost: client IP is loopback → fallback allowed.
+  //  - Proxy present but XFF trust OFF: can't verify the client, so the operator
+  //    is told (startup #7 warning) to set TRUST_PROXY_X_FORWARDED_FOR=1 or a
+  //    real DASHBOARD_PASSWORD; until then this convenience should not be relied
+  //    on for isolation.
+  const clientIp = dashboardClientIp(req);
+  if (isLocalBindHost() && isLoopbackAddress(clientIp)) {
     const effectiveApiKey = getEffectiveApiKey();
     if (effectiveApiKey) return safeEqualString(pw, effectiveApiKey);
     // AUTH-1: localhost with NO secret configured used to be treated as
-    // authenticated for every caller. Even on a loopback bind that lets any
-    // process on the host (or anything that can reach 127.0.0.1 via a
-    // container port-map / SSH forward / malicious localhost web page hitting
-    // the dashboard) drive privileged endpoints unauthenticated. Default is
-    // now fail-closed; operators who relied on the old open-local convenience
-    // must opt in explicitly with DASHBOARD_ALLOW_NO_AUTH=1.
+    // authenticated for every caller. Default is now fail-closed; operators who
+    // relied on the old open-local convenience must opt in with
+    // DASHBOARD_ALLOW_NO_AUTH=1 (and even then only from a verified-local client).
     return process.env.DASHBOARD_ALLOW_NO_AUTH === '1';
   }
   return false;
@@ -295,7 +308,12 @@ function confirmReauth(req, body) {
     || '';
   const storedDashboardPw = getEffectiveDashboardPasswordStored();
   if (storedDashboardPw) return verifyPassword(proof, storedDashboardPw);
-  if (isLocalBindHost()) {
+  // audit #1: same gate as checkAuth — use the TRUSTED client IP, not the raw
+  // socket peer (which is the proxy's 127.0.0.1 for everyone behind a same-host
+  // reverse proxy), so a remote proxied caller can't reauth with the shared chat
+  // key.
+  const clientIp = dashboardClientIp(req);
+  if (isLocalBindHost() && isLoopbackAddress(clientIp)) {
     const effectiveApiKey = getEffectiveApiKey();
     if (effectiveApiKey) return safeEqualString(proof, effectiveApiKey);
     return process.env.DASHBOARD_ALLOW_NO_AUTH === '1';

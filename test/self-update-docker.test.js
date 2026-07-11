@@ -114,7 +114,8 @@ describe('Docker self-update unavailable state', () => {
     });
 
     const res = fakeRes();
-    await handleDashboardApi('GET', '/self-update/check', {}, { headers: {} }, res);
+    // audit #1: open-local (DASHBOARD_ALLOW_NO_AUTH=1) is loopback-peer gated.
+    await handleDashboardApi('GET', '/self-update/check', {}, { headers: {}, socket: { remoteAddress: '127.0.0.1' } }, res);
 
     assert.equal(res.statusCode, 200);
     const body = res.json();
