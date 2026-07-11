@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
-import { addAccountByKey, removeAccount, __resetReloginState, __setReloginDeps } from '../src/auth.js';
+import { addAccountByKey, removeAccount, getAccountInternal, __resetReloginState, __setReloginDeps } from '../src/auth.js';
 import { handleChatCompletions, __setConnectDeps, __resetConnectDeps } from '../src/handlers/chat.js';
 import { activeSseCount, abortActiveSse } from '../src/sse-registry.js';
 
@@ -158,6 +158,67 @@ describe('DEVIN_CONNECT stream — client disconnect stops account-hopping', () 
     assert.equal(seen.length, 2, 'connected client still gets the failover hop');
     const frames = parseFrames(res.body);
     assert.ok(frames.some(f => f !== '[DONE]' && f.choices?.[0]?.delta?.content === 'OK'), 'streamed from the healthy account');
+  });
+});
+
+describe('DEVIN_CONNECT stream — inflight release on pre-attempt abort (audit #2/#3)', () => {
+  // REF-3: the top-of-loop abort break at chat.js:2570 fires when a client
+  // disconnects between failover hops — AFTER an account was acquired but
+  // BEFORE attemptStream (→ finalizeConnectAccount → releaseAccountById) ran for
+  // it. Without the release in that break, the acquired account's _inflight slot
+  // leaks until the acquire reservation ages out (≤15min), shrinking the pool
+  // under disconnect churn. This asserts the slot is returned to 0.
+  it('no account is left in-flight when a disconnect interrupts mid-failover', async () => {
+    // Account A fails over eligibly, but the disconnect fires during A's attempt.
+    // acquireConnectFailover then short-circuits on the aborted signal (returns
+    // null → no B acquired), and the post-attempt abort check breaks. A was
+    // already finalized (released) by attemptStream. This asserts the whole
+    // failover teardown leaves ZERO in-flight slots — the pool-integrity
+    // invariant the leak would violate.
+    const a = seed('inflight-a');
+    const b = seed('inflight-b');
+    let res;
+    const seen = [];
+    __setConnectDeps({
+      streamChatCompletion: async (params) => {
+        seen.push(params.token);
+        res.disconnect(); // client hangs up during the (only) attempt
+        throw rateLimited();
+      },
+    });
+
+    const result = await handleChatCompletions(
+      { model: 'swe-1-6-slow', stream: true, messages: [{ role: 'user', content: 'hi' }] },
+      { callerKey: '' },
+    );
+    res = fakeRes();
+    await result.handler(res);
+
+    assert.equal(seen.length, 1, 'no failover hop to a dead socket');
+    assert.equal(getAccountInternal(a.id)?._inflight || 0, 0, 'attempted account released');
+    assert.equal(getAccountInternal(b.id)?._inflight || 0, 0, 'untouched account holds no slot');
+  });
+
+  it('leaves no in-flight slot when the client aborts before the very first attempt', async () => {
+    // hop 0 edge: ccAcct was acquired before the loop; if the abort is already
+    // visible at loop entry, the break must still release ccAcct.
+    const a = seed('inflight-first');
+    const ctrl = new AbortController();
+    ctrl.abort(); // already aborted before the handler streams
+    const seen = [];
+    __setConnectDeps({
+      streamChatCompletion: async (params) => { seen.push(params.token); throw rateLimited(); },
+    });
+
+    const result = await handleChatCompletions(
+      { model: 'swe-1-6-slow', stream: true, messages: [{ role: 'user', content: 'hi' }] },
+      { callerKey: '', signal: ctrl.signal },
+    );
+    const res = fakeRes();
+    await result.handler(res);
+
+    assert.equal(seen.length, 0, 'pre-aborted request never attempts an upstream call');
+    assert.equal(getAccountInternal(a.id)?._inflight || 0, 0, 'ccAcct released at the entry abort break (no leak)');
   });
 });
 

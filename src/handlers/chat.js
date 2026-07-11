@@ -2569,6 +2569,20 @@ async function _handleChatCompletionsInner(body, context = {}) {
               // first attempt.
               if (abortController.signal.aborted) {
                 log.info(`Chat[${reqId}]: DEVIN_CONNECT stream aborted (client gone) — stopping account failover`);
+                // REF-3 (audit #2/#3): `acct` was acquired (ccAcct before the
+                // loop, or the failover `next` on a prior hop's continue) but
+                // NOT yet attempted this iteration, so attemptStream →
+                // finalizeConnectAccount never ran to release its in-flight slot.
+                // Breaking here without releasing leaks that slot until the
+                // acquire-time reservation ages out (≤15min), shrinking the
+                // usable pool under client-disconnect churn. Release by id (never
+                // by apiKey — a background re-login swaps the pool object's key,
+                // REF-1) with NO penalty and NO recordRequest: an aborted,
+                // never-attempted request is neither an account fault nor a
+                // completed request. This is the ONLY unfinalized-account break;
+                // the post-attempt abort check below runs after attemptStream has
+                // already finalized `acct`, so releasing there would double-free.
+                if (acct) releaseAccountById(acct.id);
                 break;
               }
               if (acct) triedKeys.push(acct.apiKey);
@@ -4093,7 +4107,15 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
     // we only catch unambiguous policy markers, not generic "content
     // moderation" warnings (which can be retried on a different model).
     const isPolicyBlocked = /cyber\s*verification|content[\s_-]+policy|policy[\s_-]+(?:violation|blocked|denied)|safety[\s_-]+(?:policy|blocked)|prompt[\s_-]+(?:rejected|blocked)\s+by[\s_-]+policy|usage[\s_-]+policy[\s_-]+violation/i.test(err.message);
-    if (isAuthFail) reportError(apiKey);
+    // audit #8: guard reportError with the SAME transient-first exclusions the
+    // ban branch below already uses. The upstream sometimes wraps a transient
+    // stall / internal-error / rate-limit in a 401/403 auth shell whose text
+    // matches isAuthFail ("unauthenticated ... permission_denied"); counting
+    // that against the account's error budget would demote a perfectly healthy
+    // account toward eviction on a purely transient blip. Transients must never
+    // reach reportError (the invariant reliability rests on). A genuine auth
+    // failure (no transient/rate-limit/internal marker) still penalizes as before.
+    if (isAuthFail && !isRateLimit && !isInternal && !isTransient) reportError(apiKey);
     if (isRateLimit) { markRateLimited(apiKey, rateLimitCooldownMs(err.message), modelKey); err.isRateLimit = true; err.isModelError = true; err.kind ||= 'model_error'; }
     if (isInternal) { reportInternalError(apiKey); err.isModelError = true; err.kind ||= 'transient_stall'; }
     if (isTransport) { err.isModelError = true; err.kind ||= 'transient_stall'; }
@@ -5075,7 +5097,12 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
             const isTransient = !isDeadline && isUpstreamTransientError(err, isInternal);
             // v2.0.61 (#113) — same policy detection as nonStreamResponse.
             const isPolicyBlocked = /cyber\s*verification|content[\s_-]+policy|policy[\s_-]+(?:violation|blocked|denied)|safety[\s_-]+(?:policy|blocked)|prompt[\s_-]+(?:rejected|blocked)\s+by[\s_-]+policy|usage[\s_-]+policy[\s_-]+violation/i.test(err.message);
-            if (isAuthFail) reportError(currentApiKey);
+            // audit #8: same transient-first guard as the stream ban branch
+            // below (5143) and the non-stream reportError. A transient stall /
+            // internal error / rate-limit wrapped in a 401/403 auth shell must
+            // NOT count against the account's error budget — transients never
+            // reach reportError. A genuine auth failure still penalizes.
+            if (isAuthFail && !isRateLimit && !isInternal && !isTransient) reportError(currentApiKey);
             if (isRateLimit) { recordRateLimited(); markRateLimited(currentApiKey, rateLimitCooldownMs(err.message), modelKey); err.isRateLimit = true; err.isModelError = true; err.kind ||= 'model_error'; }
             // v2.0.91 — IP-level rate limit circuit breaker (stream path).
             // Same logic as non-stream: ≥3 accounts rate-limited for the
