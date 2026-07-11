@@ -373,7 +373,9 @@
       "tooltipRequests": "请求",
       "tooltipErrors": "错误",
       "tooltipSuccess": "成功",
-      "tooltipRate": "成功率"
+      "tooltipRate": "成功率",
+      "tooltipByModel": "本小时按模型",
+      "tooltipMoreModels": "另 {{count}} 个"
     },
     "modelPie": {
       "title": "模型请求量分布",
@@ -603,7 +605,8 @@
         "cacheRead": "缓存读取",
         "cacheWrite": "缓存写入",
         "output": "输出"
-      }
+      },
+      "cacheEfficiency": "缓存命中率"
     },
     "credits": {
       "title": "Credits 花销",
@@ -1361,6 +1364,7 @@
     },
     "rankings": {
       "reqUnit": "{{count}} 次",
+      "creditsUnit": "点",
       "policyBlocked": "策略拦截：{{count}}",
       "rateLimited": "限流：{{count}}",
       "empty": "暂无排行数据"

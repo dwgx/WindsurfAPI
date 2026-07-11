@@ -2493,7 +2493,11 @@ async function _handleChatCompletionsInner(body, context = {}) {
           const attemptStream = async (a) => {
             const params = a ? { ...connectParams, token: a.apiKey } : connectParams;
             try {
-              await streamChatCompletion(params, send, connectMeta);
+              const _sr = await streamChatCompletion(params, send, connectMeta);
+              // Dashboard token-usage breakdown from the streaming connect path
+              // (the return value carries the terminal usage). Was discarded
+              // before → "Token 用量分布" empty on connect deployments.
+              try { recordTokenUsage(_sr?.usage); } catch {}
               finalizeConnectAccount(a, { model: reqModelName, startTime: ccStart, err: null });
               return { kind: 'ok' };
             } catch (err) {
@@ -2507,7 +2511,8 @@ async function _handleChatCompletionsInner(body, context = {}) {
                 log.info(`Chat[${reqId}]: DEVIN_CONNECT stream transient error (${err.code || err.status}); replaying once on same token`);
                 bumpConnect('transient_replays');
                 try {
-                  await streamChatCompletion(params, send, connectMeta);
+                  const _sr2 = await streamChatCompletion(params, send, connectMeta);
+                  try { recordTokenUsage(_sr2?.usage); } catch {}
                   finalizeConnectAccount(a, { model: reqModelName, startTime: ccStart, err: null });
                   return { kind: 'ok' };
                 } catch (retryErr) {
@@ -2528,7 +2533,8 @@ async function _handleChatCompletionsInner(body, context = {}) {
                 if (freshKey && !emitted) {
                   log.info(`Chat[${reqId}]: DEVIN_CONNECT re-login recovered token, replaying stream once`);
                   try {
-                    await streamChatCompletion({ ...connectParams, token: freshKey }, send, connectMeta);
+                    const _sr3 = await streamChatCompletion({ ...connectParams, token: freshKey }, send, connectMeta);
+                    try { recordTokenUsage(_sr3?.usage); } catch {}
                     finalizeConnectAccount(a, { model: reqModelName, startTime: ccStart, err: null });
                     return { kind: 'ok' };
                   } catch (retryErr) {
@@ -2660,7 +2666,15 @@ async function _handleChatCompletionsInner(body, context = {}) {
     for (let hops = 0; ; hops++) {
       if (acct) triedKeys.push(acct.apiKey);
       const r = await attempt(acct);
-      if (r.kind === 'ok') return r.out;
+      if (r.kind === 'ok') {
+        // Feed the dashboard token-usage breakdown from the DEVIN_CONNECT path
+        // too. Without this the non-stream connect responses never reached
+        // recordTokenUsage (only the cascade paths did), so the "Token 用量分布"
+        // card stayed empty on connect-only deployments (homecloud). Safe no-op
+        // when usage is absent (recordTokenUsage guards null).
+        try { recordTokenUsage(r.out?.body?.usage); } catch {}
+        return r.out;
+      }
       if (r.kind === 'error') {
         // R1: QUOTA_EXHAUSTED / RATE_LIMITED are ACCOUNT dry-wells — the offending
         // account was just cooled by finalizeConnectAccount, so if the pool still

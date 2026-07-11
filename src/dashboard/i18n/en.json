@@ -373,7 +373,9 @@
       "tooltipRequests": "Requests",
       "tooltipErrors": "Errors",
       "tooltipSuccess": "Success",
-      "tooltipRate": "Success Rate"
+      "tooltipRate": "Success Rate",
+      "tooltipByModel": "By model this hour",
+      "tooltipMoreModels": "+{{count}} more"
     },
     "modelPie": {
       "title": "Model Request Distribution",
@@ -603,7 +605,8 @@
         "cacheRead": "Cache read",
         "cacheWrite": "Cache write",
         "output": "Output"
-      }
+      },
+      "cacheEfficiency": "Cache efficiency"
     },
     "credits": {
       "title": "Credits Spent",
@@ -1361,6 +1364,7 @@
     },
     "rankings": {
       "reqUnit": "{{count}} req",
+      "creditsUnit": "cr",
       "policyBlocked": "Policy blocked: {{count}}",
       "rateLimited": "Rate limited: {{count}}",
       "empty": "No ranking data"

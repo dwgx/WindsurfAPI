@@ -448,6 +448,10 @@ code {
 .rank-track { height: 7px; border-radius: 9999px; background: var(--paper-3); overflow: hidden; }
 .rank-row.first .rank-track { height: 9px; }
 .rank-fill { height: 100%; border-radius: 9999px; width: 0; background: linear-gradient(90deg, var(--accent), var(--accent-hover)); transition: width 700ms cubic-bezier(.16,1,.3,1); }
+.rank-sub { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 5px; padding-left: 28px; }
+.rank-chip { display: inline-flex; align-items: center; gap: 4px; font-size: 11px; color: var(--text-muted); font-variant-numeric: tabular-nums; background: var(--paper-3); border-radius: 6px; padding: 1px 7px; line-height: 1.6; }
+.rank-chip-dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
+@media (prefers-reduced-motion: reduce) { .rank-fill { transition: none; } }
 
 .card-header {
   display: flex;
@@ -1599,7 +1603,9 @@ tbody tr:hover td { background: var(--surface-2); }
 .chart-tooltip .tt-row { display: flex; align-items: center; gap: 6px; }
 .chart-tooltip .tt-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 .chart-tooltip .tt-label { color: var(--text-dim); margin-right: 4px; }
-.chart-tooltip .tt-value { font-weight: 600; font-variant-numeric: tabular-nums; }
+.chart-tooltip .tt-value { font-weight: 600; font-variant-numeric: tabular-nums; margin-left: auto; }
+.chart-tooltip .tt-sep { height: 1px; background: var(--border, rgba(128,128,128,.2)); margin: 6px 0 4px; }
+.chart-tooltip .tt-subhead { color: var(--text-dim); font-size: 10px; text-transform: uppercase; letter-spacing: .04em; margin-bottom: 3px; }
 
 /* Inline help "?" with an i18n hover/focus bubble — reusable info tooltip.
    Text is injected via App._helpTip(key) or a static [data-i18n-tip] span.
@@ -2329,7 +2335,7 @@ tbody tr:hover td { background: var(--surface-2); }
          cannot render the widget, so this panel can never work here. Hidden from
          the UI; the backend code (email-otp-login.js + /email-otp/* endpoints)
          is kept intact behind this seal in case upstream drops turnstile.
-         See .workflow-results/otp-login-2026-07-06/VERIFIED-otp-flow.md -->
+         See docs-internal/workflow-results/otp-login-2026-07-06/VERIFIED-otp-flow.md -->
     <div class="section hidden" data-sealed="email-otp-turnstile-blocked">
       <div class="section-header">
         <div>
@@ -4907,17 +4913,47 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     if (models.length === 0 && accts.length === 0) { el.innerHTML = `<div class="text-sm text-muted">${I18n.t('overview.rankings.empty')}</div>`; return; }
     const maxM = models.length ? (models[0][1].requests || 0) : 0;
     const maxA = accts.length ? (accts[0][1].requests || 0) : 0;
-    const bar = (label, n, max, idx) => {
+    const creditsByModel = s.creditsByModel || {};
+    // Success-rate → color (KiroStudio RankBars parity: ≥95 green / ≥80 accent /
+    // else error-tinted). Returns a concrete color the inline style can use.
+    const rateColor = (rate) => rate == null ? 'var(--text-dim)'
+      : rate >= 95 ? 'var(--chart-succ, #4a9d6a)'
+      : rate >= 80 ? 'var(--accent)'
+      : 'var(--chart-err, #e0524a)';
+    const compact = (n) => this._compactNum ? this._compactNum(n) : String(n);
+    // A ranking row with an optional second line of dimensions (success-rate
+    // dot + credits + p95 latency) so the leaderboard answers "which model, how
+    // reliable, how expensive, how fast" — not just raw count.
+    const bar = (label, n, max, idx, sub) => {
       const pct = max > 0 ? (n / max) * 100 : 0;
       return `<div class="rank-row${idx === 0 ? ' first' : ''}">`
         + `<div class="rank-top"><span class="rank-no">${idx + 1}</span>`
-        + `<span class="rank-label text-sm">${this.esc(label)}</span>`
+        + `<span class="rank-label text-sm" title="${this.esc(label)}">${this.esc(label)}</span>`
         + `<span class="rank-val text-sm">${I18n.t('overview.rankings.reqUnit', { count: n })}</span></div>`
         + `<div class="rank-track"><div class="rank-fill" data-pct="${pct.toFixed(1)}"></div></div>`
+        + (sub ? `<div class="rank-sub">${sub}</div>` : '')
         + `</div>`;
     };
-    const col = (title, entries, max) => `<div><div class="text-sm text-muted" style="margin-bottom:8px;font-weight:600;">${title}</div>`
-      + (entries.length ? entries.map(([k, v], i) => bar(k, v.requests || 0, max, i)).join('') : `<div class="text-sm text-muted">${I18n.t('overview.rankings.empty')}</div>`)
+    // Model subline: success-rate (colored dot) · credits · p95 latency.
+    const modelSub = (v, model) => {
+      const req = v.requests || 0;
+      const rate = req > 0 ? (v.success / req) * 100 : null;
+      const credits = creditsByModel[model] || 0;
+      const p95 = v.p95Ms || 0;
+      const parts = [];
+      parts.push(`<span class="rank-chip"><span class="rank-chip-dot" style="background:${rateColor(rate)}"></span>${rate == null ? '—' : rate.toFixed(0) + '%'}</span>`);
+      if (credits > 0) parts.push(`<span class="rank-chip">${compact(credits)} ${I18n.t('overview.rankings.creditsUnit')}</span>`);
+      if (p95 > 0) parts.push(`<span class="rank-chip">p95 ${p95 >= 1000 ? (p95 / 1000).toFixed(1) + 's' : p95 + 'ms'}</span>`);
+      return parts.join('');
+    };
+    // Account subline: success-rate only (no credits/latency per-account).
+    const acctSub = (v) => {
+      const req = v.requests || 0;
+      const rate = req > 0 ? (v.success / req) * 100 : null;
+      return `<span class="rank-chip"><span class="rank-chip-dot" style="background:${rateColor(rate)}"></span>${rate == null ? '—' : rate.toFixed(0) + '%'}</span>`;
+    };
+    const col = (title, entries, max, subFn) => `<div><div class="text-sm text-muted" style="margin-bottom:8px;font-weight:600;">${title}</div>`
+      + (entries.length ? entries.map(([k, v], i) => bar(k, v.requests || 0, max, i, subFn(v, k))).join('') : `<div class="text-sm text-muted">${I18n.t('overview.rankings.empty')}</div>`)
       + `</div>`;
     const blocked = Number(s.policyBlockedCount) || 0;
     const limited = Number(s.rateLimitedCount) || 0;
@@ -4928,8 +4964,8 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
         + `</div>`
       : '';
     el.innerHTML = `<div style="display:grid;grid-template-columns:1fr 1fr;gap:16px;">`
-      + col(I18n.t('section.rankings.models'), models, maxM)
-      + col(I18n.t('section.rankings.accounts'), accts, maxA)
+      + col(I18n.t('section.rankings.models'), models, maxM, modelSub)
+      + col(I18n.t('section.rankings.accounts'), accts, maxA, acctSub)
       + `</div>${indicators}`;
     // Trigger the grow animation on next frame (width:0 → target %).
     requestAnimationFrame(() => {
@@ -5114,25 +5150,53 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
       return fr * exp;
     };
     const maxV = niceMax(rawMax);
+    // B4 (KiroStudio AreaTrendChart parity): converged Y floor. A pure
+    // zero-baseline flattens "high base, small variation" data (e.g. every hour
+    // 900–1000 req against a 0–1000 axis → a dead-flat line). When the relative
+    // swing is small, lift the floor so the variation is actually visible; keep
+    // the zero baseline for low/spiky data where it reads fine. `minV` is the
+    // floor the plot maps from (0 by default). Only engages with enough points
+    // and a genuinely narrow band, so sparse/zeroey data is untouched.
+    const nz = buckets.map(b => b.requests).filter(v => v > 0);
+    let minV = 0;
+    if (nz.length >= 4) {
+      const lo = Math.min(...nz);
+      // swing ratio: how much of the range is "noise" near the top
+      if (lo / rawMax > 0.55) {
+        // floor to ~15% below the lowest point (visualFrac lower bound), niceness
+        // not required for the floor (only the top label needs to be clean).
+        minV = Math.max(0, lo - (rawMax - lo) * 0.6 - rawMax * 0.05);
+      }
+    }
+    const span = Math.max(1, maxV - minV);
     const xAt = (i) => pad.l + (n <= 1 ? cW / 2 : (i / (n - 1)) * cW);
-    const yAt = (v) => pad.t + cH - (v / maxV) * cH;
+    const yAt = (v) => pad.t + cH - ((v - minV) / span) * cH;
     const yRate = (p) => pad.t + cH - (p / 100) * cH; // success-rate on 0..100
-    return { pad, cW, cH, n, maxV, xAt, yAt, yRate };
+    return { pad, cW, cH, n, maxV, minV, xAt, yAt, yRate };
   },
 
   _trendPaint(ctx, W, H, buckets, c, cursor, prog) {
     const p = (prog == null ? 1 : prog);
     const g = this._trendGeom(W, H, buckets);
-    const { pad, cW, cH, n, maxV, xAt, yAt, yRate } = g;
+    const { pad, cW, cH, n, maxV, minV, xAt, yAt, yRate } = g;
     const base = pad.t + cH;
     const yBounds = [pad.t, base];
-    const yA = (v) => base - (base - yAt(v)) * p;        // grow from baseline
-    const yR = (pc) => base - (base - yRate(pc)) * p;
+    // Clamp anchor Y to the plot band. The converged Y-floor (minV>0) maps any
+    // value BELOW the floor to a coord past `base` — for the low-magnitude errors
+    // overlay (values near 0 while the requests floor is lifted) that dives the
+    // line off-canvas and silently hides real errors. Pinning to [pad.t, base]
+    // keeps a sub-floor series flat on the baseline (truthful "at/below floor")
+    // instead of vanishing. Requests stay >= minV by construction, unaffected.
+    const clampY = (y) => Math.max(pad.t, Math.min(base, y));
+    const yA = (v) => clampY(base - (base - yAt(v)) * p);   // grow from baseline
+    const yR = (pc) => clampY(base - (base - yRate(pc)) * p);
     ctx.clearRect(0, 0, W, H);
     // Y gridlines + compact labels (4 rows, left axis = request volume)
     ctx.font = '10px var(--mono, monospace)'; ctx.textBaseline = 'middle';
     for (let k = 0; k <= 4; k++) {
-      const v = (maxV / 4) * k; const y = yAt(v);
+      // Gridline value spans the converged floor..ceiling (minV..maxV), not a
+      // fixed zero baseline — so labels match where the line actually sits.
+      const v = minV + ((maxV - minV) / 4) * k; const y = yAt(v);
       ctx.strokeStyle = c.grid; ctx.globalAlpha = 1; ctx.lineWidth = 1;
       ctx.beginPath(); ctx.moveTo(pad.l, y); ctx.lineTo(W - pad.r, y); ctx.stroke();
       ctx.fillStyle = c.dim; ctx.textAlign = 'right';
@@ -7607,7 +7671,20 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     const topCredits = Object.entries(creditsByModel).sort(([, a], [, b]) => b - a).slice(0, 5);
     const maxCredit = topCredits.length ? topCredits[0][1] : 0;
     const todayCredits = (d.creditsByDay || {})[new Date().toISOString().slice(0, 10)] || 0;
+    // Precise form for the small per-model bar values (fits in 48px).
     const fmtCredits = (n) => (Math.round(Number(n) * 100) / 100).toLocaleString(undefined, { maximumFractionDigits: 2 });
+    // Compact form for the big headline number (KiroStudio formatCredits parity):
+    // 0→"0", ≥10k→"3.9k" so a long "3,917.5" doesn't dominate the card; the exact
+    // value rides a title tooltip. No USD conversion — Windsurf retired credits
+    // (2026-03 → quota tiers) so there is no authoritative credit→$ rate.
+    const fmtCreditsCompact = (n) => {
+      const v = Number(n) || 0;
+      if (v === 0) return '0';
+      if (v >= 10000) return `${(v / 1000).toFixed(1)}k`;
+      return (Math.round(v * 100) / 100).toLocaleString(undefined, { maximumFractionDigits: 2 });
+    };
+    // Full precise string for tooltips (never abbreviated).
+    const fmtCreditsFull = (n) => (Number(n) || 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
     const creditsBars = topCredits.map(([m, c]) => {
       const pct = maxCredit > 0 ? Math.round((c / maxCredit) * 100) : 0;
       return `<div style="display:flex;align-items:center;gap:8px;margin-bottom:6px">
@@ -7631,11 +7708,31 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
           <div><div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em;">${I18n.t('card.tokens.legend.output')}</div><div style="font-size:18px;font-weight:600;">${fmtTok(tt.output)}</div></div>
         </div>
         ${this._tokenBreakdownBar(tt)}
-        <div class="card-sub" style="margin-top:8px;">${tokensCardSub}</div>
+        ${(() => {
+          // Cache efficiency: how much of the INPUT was served from cache
+          // (cache_read / (fresh_input + cache_read)). High = big credit savings,
+          // since cached input is discounted upstream. Fills the card's lower
+          // space with a genuinely useful signal instead of dead whitespace.
+          const cacheRead = tt.cache_read || 0;
+          const inputTotal = (tt.fresh_input || 0) + cacheRead;
+          if (inputTotal <= 0) return '';
+          const pct = Math.round((cacheRead / inputTotal) * 100);
+          const col = pct >= 50 ? 'var(--chart-succ, #4a9d6a)' : pct >= 20 ? 'var(--warn, #d9a257)' : 'var(--text-muted)';
+          return `<div style="margin-top:14px;">
+            <div style="display:flex;justify-content:space-between;align-items:baseline;margin-bottom:6px;">
+              <span style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em;">${I18n.t('card.tokens.cacheEfficiency')}</span>
+              <span style="font-size:15px;font-weight:600;color:${col};font-variant-numeric:tabular-nums;">${pct}%</span>
+            </div>
+            <div style="height:6px;border-radius:9999px;background:var(--surface-3, var(--paper-3));overflow:hidden;">
+              <div style="width:${pct}%;height:100%;border-radius:9999px;background:${col};transition:width 600ms cubic-bezier(.16,1,.3,1);"></div>
+            </div>
+          </div>`;
+        })()}
+        <div class="card-sub" style="margin-top:10px;">${tokensCardSub}</div>
       </div>
       <div class="card accent" style="grid-column: span 2;">
         <div class="card-header"><div class="card-title">${I18n.t('card.credits.title')}</div></div>
-        <div class="card-value" style="text-align:center">${fmtCredits(creditsTotal)}<span style="font-size:13px;font-weight:400;color:var(--text-muted);margin-left:6px">${I18n.t('card.credits.unit')}</span></div>
+        <div class="card-value" style="text-align:center" title="${fmtCreditsFull(creditsTotal)} ${I18n.t('card.credits.unit')}">${fmtCreditsCompact(creditsTotal)}<span style="font-size:13px;font-weight:400;color:var(--text-muted);margin-left:7px;letter-spacing:.01em">${I18n.t('card.credits.unit')}</span></div>
         <div style="margin-top:12px;">
           <div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em;margin-bottom:8px;">${I18n.t('card.credits.byModel')}</div>
           ${creditsBars}
@@ -7850,12 +7947,41 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     return a.y + (b.y - a.y) * f;
   },
 
+  // B3: index recentRequests[] ({ts, model, success}) into a per-hour model
+  // breakdown so the time-series can answer "which model was requested in this
+  // hour". hourlyBuckets has no model dimension, but recentRequests (bounded
+  // ring, ~500) does — bucket it by the same ISO-hour key the backend uses.
+  // Returns Map<hourKey, [[model, count], ...] sorted desc>. Cheap, memoized per
+  // render on the request array identity so hover repaints don't recompute.
+  _modelsByHour(recentRequests) {
+    if (!Array.isArray(recentRequests)) return new Map();
+    if (this._mbhCacheSrc === recentRequests && this._mbhCache) return this._mbhCache;
+    const byHour = new Map();
+    for (const r of recentRequests) {
+      if (!r || !r.ts || !r.model) continue;
+      const d = new Date(r.ts); d.setMinutes(0, 0, 0);
+      const hour = d.toISOString();
+      let m = byHour.get(hour);
+      if (!m) { m = new Map(); byHour.set(hour, m); }
+      m.set(r.model, (m.get(r.model) || 0) + 1);
+    }
+    const out = new Map();
+    for (const [hour, m] of byHour) {
+      out.set(hour, [...m.entries()].sort((a, b) => b[1] - a[1]));
+    }
+    this._mbhCacheSrc = recentRequests;
+    this._mbhCache = out;
+    return out;
+  },
+
   renderMainChart(d) {
     const canvas = document.getElementById('stats-canvas');
     const legend = document.getElementById('stats-legend');
     const rangeIndicator = document.getElementById('stats-range-indicator');
     if (!canvas) return;
 
+    // Per-hour model breakdown for the hover tooltip (B3). Stashed for _bindChartHover.
+    this._modelsByHourMap = this._modelsByHour(d.recentRequests);
     let buckets = this._filterBuckets(d.hourlyBuckets);
     const MAX_POINTS = 160;
     const originalLength = buckets.length;
@@ -8282,12 +8408,25 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
       const rate = b.requests > 0 ? ((b.success / b.requests) * 100).toFixed(1) : '—';
       const time = new Date(b.hour).toLocaleString();
       const c = this._chartColors;
+      // B3: which models were requested in this hour (top 4 from recentRequests).
+      // Only present for hours within the recentRequests window; older buckets
+      // omit the section rather than show a misleading empty one.
+      let modelsHtml = '';
+      const mm = this._modelsByHourMap && this._modelsByHourMap.get(b.hour);
+      if (mm && mm.length) {
+        const rows = mm.slice(0, 4).map(([model, n]) =>
+          `<div class="tt-row"><span class="tt-label" style="max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${this.esc(model)}">${this.esc(model)}</span><span class="tt-value">${n}</span></div>`
+        ).join('');
+        const more = mm.length > 4 ? `<div class="tt-row"><span class="tt-label" style="color:var(--text-dim)">${I18n.t('section.requestChart.tooltipMoreModels', { count: mm.length - 4 })}</span></div>` : '';
+        modelsHtml = `<div class="tt-sep"></div><div class="tt-subhead">${I18n.t('section.requestChart.tooltipByModel')}</div>${rows}${more}`;
+      }
       tipEl.innerHTML = `
         <div class="tt-time">${this.esc(time)}</div>
         <div class="tt-row"><span class="tt-dot" style="background:${c.requests}"></span><span class="tt-label">${I18n.t('section.requestChart.tooltipRequests')}</span><span class="tt-value">${b.requests}</span></div>
         <div class="tt-row"><span class="tt-dot" style="background:${c.success}"></span><span class="tt-label">${I18n.t('section.requestChart.tooltipSuccess')}</span><span class="tt-value">${b.success}</span></div>
         <div class="tt-row"><span class="tt-dot" style="background:${c.errors}"></span><span class="tt-label">${I18n.t('section.requestChart.tooltipErrors')}</span><span class="tt-value">${b.errors}</span></div>
         <div class="tt-row"><span class="tt-label">${I18n.t('section.requestChart.tooltipRate')}</span><span class="tt-value">${rate}%</span></div>
+        ${modelsHtml}
       `;
       tipEl.classList.add('show');
       // Follow the cursor toward its lower-right, clamped to the canvas-wrap box
@@ -8421,22 +8560,17 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
   // tokens so bars are cool by default (no warm amber "屎黄" base) and follow
   // the theme. hexToRgb tolerates #rgb/#rrggbb; token fallbacks are cool.
   _errorTintedColor(ratio) {
-    const clamp01 = (x) => Math.max(0, Math.min(1, x));
-    const r = clamp01(ratio);
-    const blue = this._cssColor('--chart-req', '#4c9aff');
-    if (r === 0) return blue;
-    const warn = this._cssColor('--warn', '#d9a257');
-    const red = this._cssColor('--chart-err', '#e0524a');
-    const mix = (c1, c2, t) => {
-      const p1 = this._hexToRgb(c1), p2 = this._hexToRgb(c2);
-      const rr = Math.round(p1.r + (p2.r - p1.r) * t);
-      const gg = Math.round(p1.g + (p2.g - p1.g) * t);
-      const bb = Math.round(p1.b + (p2.b - p1.b) * t);
-      const to2 = (n) => n.toString(16).padStart(2, '0');
-      return '#' + to2(rr) + to2(gg) + to2(bb);
-    };
-    if (r <= 0.3) return mix(blue, warn, r / 0.3);
-    return mix(warn, red, (r - 0.3) / 0.7);
+    // Discrete semantic buckets, NOT a continuous blue→amber→red mix. The old
+    // linear RGB interpolation between blue (#4c9aff) and amber (#d9a257) passed
+    // through dead GRAY (~#a09f9a) around an 18% error ratio — a high-error hour
+    // rendered as a washed-out gray bar that reads as "disabled/no data" instead
+    // of "errors". Buckets match the ranking success-dot + model-table color
+    // semantics (green healthy / amber warning / red bad) so the whole dashboard
+    // speaks one color language. Thresholds are on ERROR ratio (1 - success).
+    const r = Math.max(0, Math.min(1, ratio));
+    if (r < 0.05) return this._cssColor('--chart-req', '#4c9aff');   // healthy → brand blue
+    if (r < 0.20) return this._cssColor('--warn', '#d9a257');        // some errors → amber
+    return this._cssColor('--chart-err', '#e0524a');                 // high errors → red
   },
 
   _hexToRgb(h) {
