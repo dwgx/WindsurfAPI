@@ -48,3 +48,55 @@ describe('resolveConnectSelector', () => {
     assert.equal(r.mapped, true);
   });
 });
+
+describe('resolveConnectSelector — live catalog (audit 2026-07-12 snapshot staleness)', () => {
+  // The committed snapshot never live-synced, so selectors the upstream added
+  // after it was captured (proven on a live account 2026-07-12: qwen-3, glm-5,
+  // kimi-k2.5, deepseek-v3, minimax-*) were absent from CATALOG_SELECTORS and
+  // got mapped:false → 400'd by the strict gate despite being runnable. The live
+  // catalog set (populated from GetCliModelConfigs) fixes this as "snapshot ∪ live".
+  const STALE = ['qwen-3', 'glm-5', 'kimi-k2.5', 'deepseek-v3'];
+
+  it('cold start (no live sync): a genuinely-runnable-but-unsnapshotted selector is mapped:false', async () => {
+    // Fresh import so _liveSelectors starts empty (module-level Set).
+    const m = await import(`../src/devin-connect-models.js?fresh=${Date.now()}-a`);
+    assert.equal(m.hasLiveCatalog(), false, 'no live sync yet');
+    // qwen-3 is not in the frozen snapshot → without live catalog it degrades.
+    assert.equal(m.resolveConnectSelector('qwen-3').mapped, false);
+  });
+
+  it('after live sync: the same selectors resolve mapped:true to themselves', async () => {
+    const m = await import(`../src/devin-connect-models.js?fresh=${Date.now()}-b`);
+    // Simulate a GetCliModelConfigs sync feeding the decoded catalog shape.
+    m.setLiveCatalogSelectors(STALE.map(s => ({ selector: s })));
+    assert.equal(m.hasLiveCatalog(), true);
+    for (const s of STALE) {
+      const r = m.resolveConnectSelector(s);
+      assert.equal(r.mapped, true, `${s} must be recognized after live sync`);
+      assert.equal(r.selector, s, `${s} resolves to itself`);
+    }
+  });
+
+  it('live sync also folds in each entry alias (dotted client form)', async () => {
+    const m = await import(`../src/devin-connect-models.js?fresh=${Date.now()}-c`);
+    m.setLiveCatalogSelectors([{ selector: 'glm-5-2', alias: 'glm-5.2' }]);
+    // Both the canonical selector and the upstream alias are recognized.
+    assert.equal(m.resolveConnectSelector('glm-5-2').mapped, true);
+    assert.equal(m.resolveConnectSelector('glm-5.2').mapped, true);
+  });
+
+  it('a bad/empty sync never blanks out a good live set', async () => {
+    const m = await import(`../src/devin-connect-models.js?fresh=${Date.now()}-d`);
+    m.setLiveCatalogSelectors([{ selector: 'qwen-3' }]);
+    assert.equal(m.resolveConnectSelector('qwen-3').mapped, true);
+    m.setLiveCatalogSelectors([]);          // empty → no-op
+    m.setLiveCatalogSelectors(null);        // garbage → no-op
+    assert.equal(m.resolveConnectSelector('qwen-3').mapped, true, 'prior good set survives a bad sync');
+  });
+
+  it('genuine junk still degrades even with a live catalog present', async () => {
+    const m = await import(`../src/devin-connect-models.js?fresh=${Date.now()}-e`);
+    m.setLiveCatalogSelectors([{ selector: 'qwen-3' }]);
+    assert.equal(m.resolveConnectSelector('totally-fake-model-xyz').mapped, false);
+  });
+});

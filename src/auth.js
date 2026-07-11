@@ -572,6 +572,21 @@ async function fetchAndMergeModelCatalog() {
     const added = mergeCloudModels(configs);
     _modelCatalogSynced = true;
     log.info(`Model catalog: ${configs.length} cloud models, ${added} new entries merged`);
+    // Also refresh the DEVIN_CONNECT selector catalog (audit 2026-07-12): the
+    // committed snapshot never live-synced, so upstream-added selectors
+    // (qwen-3/glm-5/kimi/deepseek/minimax) were 400'd by the strict gate despite
+    // being runnable. GetCliModelConfigs is the connect-namespace source (distinct
+    // from Cascade's GetCascadeModelConfigs above). Best-effort + isolated: a
+    // connect-catalog failure must not fail the Cascade merge (already succeeded).
+    try {
+      const { fetchCatalog } = await import('./devin-connect-catalog.js');
+      const { setLiveCatalogSelectors } = await import('./devin-connect-models.js');
+      const connectModels = await fetchCatalog({ token: acct.apiKey });
+      setLiveCatalogSelectors(connectModels);
+      log.info(`DEVIN_CONNECT live catalog: ${connectModels.length} selectors merged into resolver`);
+    } catch (ce) {
+      log.warn(`DEVIN_CONNECT catalog sync failed (snapshot fallback stays in effect): ${ce.message}`);
+    }
     return true;
   } catch (e) {
     log.warn(`Model catalog fetch failed: ${e.message}`);
