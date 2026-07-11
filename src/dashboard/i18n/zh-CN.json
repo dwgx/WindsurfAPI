@@ -1255,7 +1255,8 @@
     "version": "版本",
     "langToggle": "切换语言",
     "langToggleToEn": "Switch to English",
-    "langToggleToZh": "切换到中文"
+    "langToggleToZh": "切换到中文",
+    "langToggleToKo": "한국어로 전환"
   },
   "theme": {
     "toggle": "切换深浅模式"

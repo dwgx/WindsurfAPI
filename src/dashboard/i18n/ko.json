@@ -1,0 +1,1449 @@
+{
+  "_meta": {
+    "name": "한국어",
+    "code": "ko"
+  },
+  "brand": {
+    "sub": "제어판"
+  },
+  "nav": {
+    "group": {
+      "overview": "개요",
+      "account": "계정",
+      "system": "시스템",
+      "about": "소개",
+      "usage": "사용량",
+      "settings": "설정"
+    },
+    "overview": "대시보드",
+    "stats": "통계",
+    "windsurf-login": "계정 로그인",
+    "accounts": "계정 풀",
+    "bans": "상태 점검",
+    "settings": "설정",
+    "models": "모델 제어",
+    "proxy": "프록시",
+    "logs": "로그",
+    "experimental": "실험적 기능",
+    "credits": "크레딧"
+  },
+  "page": {
+    "overview": "대시보드",
+    "stats": "통계",
+    "windsurf-login": "계정 로그인",
+    "accounts": "계정 풀",
+    "bans": "상태 점검",
+    "settings": "설정",
+    "models": "모델 제어",
+    "proxy": "프록시 설정",
+    "logs": "실행 로그",
+    "experimental": "실험적 기능",
+    "credits": "크레딧"
+  },
+  "pageTitle": {
+    "main": "WindsurfAPI bydwgx1337 제어판"
+  },
+  "pageSubtitle": {
+    "overview": "시스템 상태 및 주요 지표 개요",
+    "windsurf-login": "Google / GitHub / 이메일로 Windsurf에 로그인하여 API 키를 발급받으세요",
+    "accounts": "계정 풀을 관리하고 구독 등급과 사용 가능한 모델을 점검합니다",
+    "models": "모델 접근 정책을 구성하고 사용 가능한 모델 범위를 제한합니다",
+    "proxy": "전역 또는 계정별 아웃바운드 프록시를 설정합니다. 전용 프록시마다 독립된 Language Server 인스턴스가 생성됩니다",
+    "logs": "SSE 스트리밍으로 서버 로그를 실시간으로 수신합니다",
+    "stats": "요청량, 성공률, 지연 시간 백분위수 및 계정/모델별 통계",
+    "bans": "오류 계정 및 비정상 상태를 추적합니다",
+    "settings": "공유 환경설정 및 보안 임계값 — 사용자 지정 가능",
+    "experimental": "불안정한 최적화 기능입니다. 문제가 발생하면 언제든 비활성화하세요",
+    "credits": "PR을 제출하거나 코드를 감사하거나 이슈를 제보해 주신 기여자분들께 감사드립니다"
+  },
+  "button": {
+    "cancel": "취소",
+    "confirm": "확인",
+    "forceOverride": "강제 덮어쓰기 및 업데이트",
+    "save": "저장",
+    "restart": "재시작",
+    "updateAndRestart": "업데이트 및 재시작"
+  },
+  "aria": {
+    "increment": "증가",
+    "decrement": "감소",
+    "poolViewGroup": "풀 상태 보기",
+    "trendRangeGroup": "추세 기간",
+    "chartTypeGroup": "차트 유형",
+    "statsRangeGroup": "통계 기간",
+    "trendChart": "요청 및 오류 추세 차트",
+    "trendChartData": "추세 데이터: {{summary}}",
+    "statsChart": "요청량 시계열 차트",
+    "modelPieChart": "모델별 요청 비율 차트",
+    "dialog": "대화상자"
+  },
+  "action": {
+    "checkUpdate": "업데이트 확인",
+    "applyUpdate": "업데이트 및 재시작",
+    "updateLsBinary": "LS 업데이트",
+    "restart": "재시작",
+    "reset": "초기화",
+    "sendCode": "코드 전송",
+    "save": "저장",
+    "clearPool": "풀 비우기",
+    "login": "로그인",
+    "clear": "지우기",
+    "cancel": "취소",
+    "confirm": "확인",
+    "delete": "삭제",
+    "refresh": "새로고침",
+    "probe": "점검",
+    "probeTitle": "기능 점검",
+    "enable": "활성화",
+    "disable": "비활성화",
+    "copy": "복사",
+    "copyTitle": "클릭하여 복사",
+    "configure": "설정",
+    "test": "테스트",
+    "readClipboard": "클립보드 읽기",
+    "uploadJson": "JSON 업로드",
+    "clearFile": "파일 지우기",
+    "batchImport": "일괄 가져오기 및 로그인",
+    "paste": "붙여넣기",
+    "add": "추가",
+    "close": "닫기",
+    "edit": "수정",
+    "selectAll": "전체 선택",
+    "selectNone": "전체 해제",
+    "invert": "선택 반전",
+    "showPassword": "비밀번호 표시/숨기기",
+    "revealKey": "클릭하여 전체 API 키를 표시하고 복사",
+    "importLocal": "로컬 Windsurf에서 가져오기",
+    "importLocalTitle": "로컬 Windsurf 클라이언트에 로그인된 자격 증명을 읽어옵니다(로컬호스트에서만 접근 가능)",
+    "updateLsBinaryTitle": "최신 language_server 바이너리를 다운로드하고 인스턴스 풀을 재시작합니다",
+    "switchLang": "언어 전환",
+    "prev": "이전",
+    "next": "다음"
+  },
+  "reveal": {
+    "confirmPrompt": "이 키를 표시하려면 대시보드 비밀번호를 다시 입력하세요(대시보드 비밀번호가 설정되어 있지 않다면 API 키를 입력):",
+    "wrongPassword": "재인증 실패 — 비밀번호가 올바르지 않습니다. 키가 표시되지 않았습니다."
+  },
+  "status": {
+    "active": "활성",
+    "disabled": "비활성",
+    "error": "오류",
+    "healthLevel": {
+      "ok": "정상",
+      "watch": "주의",
+      "high": "높은 부하",
+      "limited": "제한됨"
+    },
+    "running": "실행 중",
+    "stopped": "중지됨",
+    "sending": "전송 중…",
+    "success": "성공",
+    "failed": "실패",
+    "pending": "대기 중",
+    "unknown": "알 수 없음",
+    "rateLimited": "속도 제한됨",
+    "loading": "로딩 중...",
+    "saving": "저장 중...",
+    "testing": "테스트 중...",
+    "updateAndRestartHint": "서비스를 업데이트하고 재시작합니다",
+    "proxySuccess": "✓ 연결됨. 아웃바운드 IP {{ip}} · {{latency}}ms",
+    "proxyFailed": "✗ 실패: {{error}} · {{latency}}ms",
+    "checkingUpdate": "업데이트 확인 중...",
+    "updateAvailable": "업데이트 가능",
+    "currentVersion": "현재:",
+    "remoteVersion": "원격:",
+    "upToDate": "✓ 최신 상태 ({{commit}}) · {{message}}",
+    "pullingRestarting": "가져오는 중 + 재시작 중...",
+    "cancelled": "취소됨",
+    "noUpdateNeeded": "이미 최신 상태이며 업데이트가 필요하지 않습니다",
+    "updateComplete": "업데이트 완료 {{before}} → {{after}}",
+    "restarting": "서비스가 백그라운드에서 재시작 중입니다. 약 8초 후 페이지가 자동으로 새로고침됩니다...",
+    "notGitRepo": "Git 저장소가 아닙니다",
+    "notGitRepoHint": "원클릭 업데이트를 위해 .git 디렉터리가 있는지 확인하세요",
+    "selfUpdateUnavailable": "이 배포 환경에서는 원클릭 업데이트를 사용할 수 없습니다",
+    "selfUpdateDockerHint": "업데이트하려면 호스트에서 docker compose pull && docker compose up -d 를 실행하세요. Docker 배포 환경에서 대시보드 내 원클릭 업데이트를 사용하려면 docker-compose.yml의 windsurf-api 서비스에 /var/run/docker.sock을 마운트하세요(주의: 컨테이너에 호스트 root 권한을 부여하므로 먼저 보안 위험을 검토하세요).",
+    "dockerSelfUpdateBlocked": "대시보드 Docker 업데이트가 현재 차단되었습니다: {{reason}} {{detail}}",
+    "dockerReady": "Docker 자체 업데이트 준비 완료",
+    "dockerImage": "이미지:",
+    "dockerProject": "Compose 프로젝트:",
+    "dockerUpdating": "업데이트 시작됨: {{image}} 가져오는 중; 배포 사이드카가 약 {{delay}}초 후 컨테이너를 재생성합니다…",
+    "dockerSidecarStarted": "배포 컨테이너 {{id}}가 시작되었습니다. 이 페이지는 자동으로 새로고침됩니다",
+    "workingDirDirty": "작업 디렉터리에 로컬 변경 사항이 있습니다",
+    "workingDirDirtyHint": "다음 파일들에 로컬 변경 사항이 있습니다:<br>{{files}}<br>계속하면 원격 버전으로 덮어씁니다.",
+    "notFetched": "가져오지 않음",
+    "fetchFailed": "가져오기 실패",
+    "clickToEditTier": "등급을 수동으로 편집하려면 클릭하세요(점검 실패 시 사용)"
+  },
+  "tier": {
+    "pro": "PRO",
+    "free": "FREE",
+    "expired": "만료됨",
+    "unknown": "알 수 없음",
+    "expiredLabel": "만료됨"
+  },
+  "creditsBar": {
+    "daily": "일일 할당량",
+    "weekly": "주간 할당량",
+    "monthly": "월간 할당량",
+    "prompt": "프롬프트 크레딧",
+    "dailyShort": "일",
+    "weeklyShort": "주",
+    "promptShort": "프",
+    "columnTitle": "할당량 사용량",
+    "columnTooltip": "두 개의 막대가 나타내는 것:\nD — 일일 프리미엄 요청 잔여 %\nW — 주간 프리미엄 요청 잔여 %(체험판 계정의 주요 지표)\n\n값이 높을수록 = 더 많이 남음 = 더 안전함\n각 막대에 마우스를 올리면 초기화 시각이 표시됩니다",
+    "dailyDetail": "일일 {{pct}}% 남음 ({{reset}}에 초기화)",
+    "weeklyDetail": "주간 {{pct}}% 남음 ({{reset}}에 초기화)",
+    "promptDetail": "프롬프트 크레딧 {{remain}} / {{limit}} 남음 ({{pct}}%)",
+    "dailyNA": "Windsurf에서 일일 할당량 데이터를 반환하지 않았습니다",
+    "weeklyNA": "Windsurf에서 주간 할당량 데이터를 반환하지 않았습니다",
+    "promptNA": "이 계정에는 프롬프트 크레딧 데이터가 없습니다",
+    "noResetTime": "초기화 시각 알 수 없음"
+  },
+  "section": {
+    "settings": {
+      "ux": { "title": "인터페이스 설정", "desc": "브라우저/기기 간 공유됨(서버에 저장)" },
+      "security": { "title": "보안 및 잠금", "desc": "로그인 실패 잠금 임계값과 지속 시간 — 조정 또는 해제 가능" },
+      "runtimeEnv": { "title": "런타임 백엔드", "desc": "이 스위치들은 배포 시 환경 변수로 설정되며 변경하려면 프로세스 재시작이 필요합니다. 여기서는 읽기 전용 상태로 표시됩니다" },
+      "breaker": { "title": "회로 차단기 및 속도 제한", "desc": "계정별 오류 차단기 + 자가 복구 백오프 임계값입니다. 즉시 편집 가능하며, 비워두면 환경 변수/기본값을 따릅니다." }
+    },
+    "nativeBridge": {
+      "title": "네이티브 브리지",
+      "desc": "라우팅 결정 및 그레이 게이트 가시성"
+    },
+    "banStatus": {
+      "title": "상태 현황",
+      "desc": "오류, 차단, 속도 제한으로 표시된 계정"
+    },
+    "lsStatus": {
+      "title": "Language Server",
+      "desc": "Language Server 인스턴스 상태"
+    },
+    "oauthLogin": {
+      "title": "빠른 로그인(권장)",
+      "desc": "버튼을 클릭하면 Windsurf 공식 로그인 페이지가 열립니다. Google/GitHub로 로그인한 후 반환된 토큰을 붙여넣어 계정을 추가하세요"
+    },
+    "emailLogin": {
+      "title": "이메일 및 비밀번호 로그인",
+      "desc": "이메일+비밀번호로 가입한 계정 전용입니다. 타사 로그인은 위 버튼을 사용하세요. 단일 로그인 또는 \"[proxy] email password\" 형식의 일괄 가져오기를 지원합니다."
+    },
+    "loginProxy": {
+      "title": "로그인 프록시(선택)",
+      "desc": "이 로그인 세션에 사용할 프록시를 지정하세요. 비워두면 전역 프록시를 사용합니다. 프록시가 적용되면 이후 채팅 요청도 이 프록시를 통해 나갑니다."
+    },
+    "loginHistory": {
+      "title": "로그인 기록",
+      "desc": "최근 50건의 로그인 작업에 대한 로컬 기록"
+    },
+    "addAccount": {
+      "title": "계정 추가",
+      "desc": "API 키와 Auth Token 방식을 모두 지원합니다",
+      "hint": "권장: Token 방식을 사용하세요. 로그인 후 {{link}}에 방문하여 Token을 복사한 뒤 아래에 붙여넣으세요. 모든 로그인 방식(이메일/Google/GitHub)에서 사용할 수 있습니다."
+    },
+    "smartImport": {
+      "title": "스마트 가져오기",
+      "desc": "붙여넣으면 자동으로 감지되며 일괄 처리도 지원합니다. Session Token / Auth1 / Firebase Refresh / 이메일-비밀번호 / 라벨이 붙은 쌍을 인식하며 혼합해서 사용할 수 있습니다.",
+      "placeholder": "devin-session-token$...  또는  auth1_...  또는  email----password  — 한 줄에 하나씩, 혼합 가능",
+      "button": "스마트 가져오기",
+      "empty": "먼저 토큰이나 계정을 붙여넣으세요",
+      "importing": "가져오는 중…",
+      "result": "추가됨 {{added}} · 건너뜀 {{skipped}} · 실패 {{failed}}",
+      "done": "{{added}}개 계정을 가져왔습니다"
+    },
+    "accountList": {
+      "title": "계정 목록",
+      "desc": "점검 버튼을 클릭하여 특정 계정의 기능 정보를 업데이트하세요"
+    },
+    "modelPolicy": {
+      "title": "접근 정책",
+      "desc": "\"전체 허용\"을 선택하면 제한이 없습니다. \"허용 목록\"은 목록에 있는 모델만 허용하고, \"차단 목록\"은 목록에 있는 모델을 차단합니다"
+    },
+    "modelList": {
+      "title": "모델 목록",
+      "titleAllow": "허용된 모델",
+      "titleBlock": "차단된 모델",
+      "descAllow": "선택한 모델만 허용되며, 선택하지 않은 모델은 403 오류를 반환합니다",
+      "descBlock": "선택한 모델은 차단되며, 선택하지 않은 모델은 정상적으로 작동합니다",
+      "search": "모델 검색...",
+      "provider": "제공자"
+    },
+    "globalProxy": {
+      "title": "전역 프록시",
+      "desc": "전용 프록시가 없는 계정은 이 설정을 사용합니다"
+    },
+    "accountProxy": {
+      "title": "계정별 프록시",
+      "desc": "특정 계정에 전용 프록시를 설정합니다. 전용 프록시마다 독립된 LS 인스턴스가 생성됩니다"
+    },
+    "identityInjection": {
+      "title": "모델 아이덴티티 주입",
+      "desc": "활성화하면 각 요청 시작 시 시스템 프롬프트를 주입하여 Cascade에 내장된 Windsurf 아이덴티티를 재정의합니다. 아래의 제공자별 템플릿은 사용자 지정이 가능하며 저장 후 즉시 적용됩니다."
+    },
+    "cascadeReuse": {
+      "title": "Cascade 대화 재사용",
+      "desc": "여러 턴에 걸친 대화에서 동일한 cascade_id를 재사용하여 최신 사용자 메시지만 Windsurf로 전송합니다. 서버가 컨텍스트 캐시를 유지하도록 하여, 캐시 적중 시 TTFB와 업로드량을 크게 줄입니다. 캐시 미스나 계정/LS 변경 시에는 자동으로 새 세션으로 전환됩니다. 클라이언트가 전체 기록을 보관하고 순서대로 추가해야 합니다(예: new-api, OpenWebUI). 참고: 이 스위치는 요청 간 cascade_id 재사용 여부만 제어하며 Cascade 사용 여부 자체는 제어하지 않습니다. 도구 에뮬레이션 요청(Claude Code / Cline / Cursor)은 매 턴마다 내용이 달라지므로 이 설정과 관계없이 자동으로 재사용을 건너뜁니다.",
+      "enable": "Cascade 대화 재사용 활성화",
+      "hint": "기본적으로 활성화되어 있습니다. 비활성화해도 Cascade는 계속 사용되지만 매 턴마다 새 세션이 생성됩니다. 현재 대화 풀에 즉시 적용됩니다."
+    },
+    "identityPrompt": {
+      "title": "모델 아이덴티티 프롬프트",
+      "desc": "각 요청 시작 시 모델 아이덴티티 시스템 프롬프트를 주입합니다.",
+      "enable": "모델 아이덴티티 주입 활성화",
+      "hint": "기본적으로 활성화되어 있습니다. 비활성화하면 아래 템플릿이 작동하지 않습니다.",
+      "templateHint": "제공자별 템플릿은 편집할 수 있습니다. {{model}} 자리표시자는 요청된 모델 이름으로 대체됩니다."
+    },
+    "systemPrompts": {
+      "title": "시스템 프롬프트",
+      "desc": "도구 주입, 대화 모드 등 내장 프롬프트 템플릿입니다. 변경 사항은 즉시 적용되며, \"초기화\"를 클릭하면 기본값으로 되돌립니다."
+    },
+    "credentials": {
+      "title": "자격 증명",
+      "desc": "런타임에 API_KEY와 대시보드 비밀번호를 교체합니다. runtime-config.json에 저장되어 즉시 적용되며 — 컨테이너 재시작이나 .env 다시 불러오기가 필요 없습니다. 다음 요청부터는 새 값을 사용해야 하며, 현재 세션은 다시 로그인해야 합니다."
+    },
+    "stickyByUser": {
+      "title": "사용자별 스티키 세션 바인딩",
+      "desc": "활성화하면 모델과 관계없이 동일한 사용자가 항상 동일한 업스트림 계정에 바인딩됩니다. 비활성화하면 (사용자, 모델) 쌍으로 바인딩되어 모델마다 다른 계정에 배정될 수 있습니다(계정에 모델별 제한이 있을 때 유용). STICKY_SESSION_ENABLED=1이 필요합니다.",
+      "enable": "모델 구분 무시",
+      "hint": "기본적으로 꺼져 있습니다. 켜면 user_a의 opus/haiku/gemini가 모두 하나의 바인딩을 공유합니다."
+    },
+    "stickyNoFallback": {
+      "title": "스티키 세션 폴백 없음",
+      "desc": "활성화하면 스티키 세션으로 바인딩된 계정이 속도 제한, 오류, 모델 사용 불가 상태가 되어도 프록시가 풀 내 다른 계정으로 폴백하지 않습니다 — 오류가 클라이언트에 그대로 반환됩니다. 이를 통해 각 사용자가 자신에게 바인딩된 계정의 할당량만 엄격히 소비하도록 보장합니다. STICKY_SESSION_ENABLED=1이 필요합니다.",
+      "enable": "계정 폴백 비활성화",
+      "hint": "기본적으로 꺼져 있습니다. 켜면 바인딩된 계정의 실패가 다른 계정의 할당량을 소비하지 않습니다."
+    },
+    "nativeToolCall": {
+      "title": "네이티브 tool_call",
+      "desc": "활성화하면 도구 정의가 프롬프트 에뮬레이션(<tool_call> 텍스트 마크업) 대신 네이티브 protobuf 와이어(보정된 #10 ToolDef + #6 ChatToolCall)를 사용합니다. 네이티브 경로는 도구가 많은 약한 모델(fable)에서 더 안정적이며 프롬프트 에뮬레이션의 빈 응답 제한을 받지 않습니다. 비활성화하면 프롬프트 에뮬레이션(현재 안정적인 기본값)으로 대체됩니다.",
+      "enable": "네이티브 tool_call 활성화",
+      "hint": "기본적으로 꺼져 있습니다. 활성화하기 전에 유료 계정으로 도구를 포함한 요청을 보내 왕복을 확인하세요."
+    },
+    "preflight": {
+      "title": "사전 할당량 점검",
+      "desc": "각 채팅 전에 server.codeium.com에서 남은 할당량을 점검하여 소진된 계정으로의 요청이 업스트림 429를 소모하는 대신 빠르게 실패하도록 합니다. 요청당 왕복이 한 번 추가됩니다.",
+      "enable": "사전 점검 활성화",
+      "hint": "기본적으로 꺼져 있습니다. 지연 시간이 늘어나므로 계정이 자주 소진될 때 활성화하세요."
+    },
+    "droughtRestrict": {
+      "title": "가뭄 상태에서 프리미엄 모델 차단",
+      "desc": "모든 활성 계정의 주간 할당량이 5% 미만이면 프리미엄 모델 요청(claude-opus / claude-sonnet 등)은 업스트림 429로 남은 할당량을 소모하는 대신 깔끔한 503으로 거부됩니다. 무료 등급 모델(gemini-2.5-flash 등)은 계속 통과됩니다. 비활성화하면 프리미엄 요청을 그대로 전달하고 업스트림 속도 제한을 감수합니다.",
+      "enable": "가뭄 모드 프리미엄 차단 활성화",
+      "hint": "기본적으로 켜져 있습니다. 가뭄 상태는 계정 풀에서 자동으로 감지됩니다(실시간 상태는 GET /dashboard/api/drought).",
+      "thresholdLabel": "가뭄 임계값(주간 할당량 %)",
+      "thresholdHint": "이 주간 할당량 % 미만인 계정은 가뭄 상태로 집계됩니다"
+    },
+    "skin": {
+      "title": "인터페이스 스타일",
+      "desc": "대시보드 외형입니다. Modern이 기본값이며, Sketch는 실험적인 단순화 레이아웃입니다. 전환 후 페이지가 새로고침됩니다."
+    },
+    "lsPool": {
+      "title": "Language Server 풀",
+      "desc": "LS 인스턴스 {{count}}개 · 전용 프록시당 프로세스 1개",
+      "sectionTitle": "Language Server 풀",
+      "sectionDesc": "Language Server 인스턴스 {{count}}개 · 전용 프록시당 프로세스 1개",
+      "port": "포트",
+      "defaultInstance": "기본 인스턴스",
+      "noProxy": "프록시 없음"
+    },
+    "modelStats": {
+      "title": "모델 사용 통계",
+      "desc": "모델별 집계: 요청 수, 성공 수, 오류 수, 성공률, 평균 소요 시간 및 p50/p95 지연 시간 백분위수"
+    },
+    "accountStats": {
+      "title": "계정별 통계",
+      "desc": "계정 ID(앞 8자)별 요청량 및 성공률"
+    },
+    "accountHealth": {
+      "title": "계정 상태"
+    },
+    "requestChart": {
+      "title": "요청량 시계열",
+      "subtitle": "차트 유형과 기간을 전환하세요 · 정확한 값은 마우스를 올려 확인",
+      "typeArea": "영역형",
+      "typeLine": "선형",
+      "typeBar": "막대형",
+      "typeStacked": "누적형",
+      "metricAll": "전체 지표",
+      "metricRequests": "요청",
+      "metricErrors": "오류",
+      "metricSuccess": "성공",
+      "legendRequests": "요청",
+      "legendSuccess": "성공",
+      "legendErrors": "오류",
+      "tooltipTime": "시간",
+      "tooltipRequests": "요청",
+      "tooltipErrors": "오류",
+      "tooltipSuccess": "성공",
+      "tooltipRate": "성공률",
+      "tooltipByModel": "이 시간대 모델별",
+      "tooltipMoreModels": "그 외 {{count}}개"
+    },
+    "modelPie": {
+      "title": "모델별 요청 분포",
+      "desc": "상위 8개 모델의 요청 비율"
+    },
+    "emailOtpLogin": {
+      "title": "이메일 코드 로그인",
+      "desc": "비밀번호가 필요 없습니다 — 이메일 인증 코드로 새 계정을 등록합니다. Cloudflare 사람 확인을 완료해야 합니다."
+    },
+    "poolHealth": {
+      "title": "계정 풀 상태",
+      "desc": "계정별 상태 신호를 나쁜 순서로 요약"
+    },
+    "connectMetrics": {
+      "title": "연결 자가 복구",
+      "desc": "실시간 복구 카운터 — 재로그인, 장애 조치, 스로틀링, 만료된 토큰"
+    },
+    "overviewTrend": {
+      "title": "요청 추세(24시간)",
+      "desc": "로컬 텔레메트리 기반 시간별 요청 및 오류"
+    },
+    "rankings": {
+      "title": "순위",
+      "models": "상위 모델",
+      "accounts": "상위 계정",
+      "desc": "요청량 기준(로컬 카운터만 해당)"
+    }
+  },
+  "help": {
+    "token": "권장: Token 방식을 사용하세요. 로그인 후 {{link}}에 방문하여 Token을 복사한 뒤 아래에 붙여넣으세요. 모든 로그인 방식(이메일/Google/GitHub)에서 사용할 수 있습니다.",
+    "tokenGuide": "권장: Token 방식을 사용하세요. ",
+    "tokenGuideEnd": "에 로그인 후 방문하여 Token을 복사한 뒤 아래에 붙여넣으세요. 모든 로그인 방식(이메일/Google/GitHub)에서 사용할 수 있습니다."
+  },
+  "skin": {
+    "modern": "모던",
+    "sketch": "스케치(실험적)",
+    "hint": "쿠키에 저장되며 즉시 새로고침됩니다"
+  },
+  "field": {
+    "email": {
+      "label": "이메일",
+      "placeholder": "your-email@example.com"
+    },
+    "password": {
+      "label": "비밀번호",
+      "placeholder": "••••••••"
+    },
+    "type": {
+      "label": "유형"
+    },
+    "tier": {
+      "label": "등급"
+    },
+    "provider": {
+      "label": "제공자",
+      "all": "모든 제공자"
+    },
+    "searchModel": {
+      "label": "모델 검색",
+      "placeholder": "필터링할 모델 이름 입력..."
+    },
+    "defaultModel": {
+      "label": "기본 모델",
+      "placeholder": "비워두면 목록에 없는 요청을 거부합니다",
+      "hint": "목록에 없는 모델에 대한 요청은 거부되는 대신 이 모델을 사용합니다. 비워두면 거부합니다(기본값)."
+    },
+    "proxyUser": {
+      "placeholder": "프록시 인증 사용자 이름"
+    },
+    "proxyPass": {
+      "placeholder": "프록시 인증 비밀번호"
+    },
+    "searchProvider": {
+      "placeholder": "제공자 검색..."
+    },
+    "host": {
+      "label": "호스트",
+      "placeholder": "proxy.example.com"
+    },
+    "port": {
+      "label": "포트",
+      "placeholder": "8080"
+    },
+    "username": {
+      "label": "사용자 이름",
+      "placeholder": "선택 사항"
+    },
+    "passwordProxy": {
+      "label": "비밀번호",
+      "placeholder": "선택 사항"
+    },
+    "key": {
+      "label": "키 / 토큰",
+      "placeholder": "Auth Token 붙여넣기"
+    },
+    "label": {
+      "label": "라벨",
+      "placeholder": "선택 사항"
+    },
+    "proxy": {
+      "label": "프록시",
+      "placeholder": "http://proxy:8080 또는 socks5://user:pass@host:port(선택 사항)",
+      "hint": "비워두면 전역 프록시 설정을 사용합니다"
+    },
+    "batchInput": {
+      "label": "일괄 가져오기",
+      "hint": "한 줄에 계정 하나씩 입력하세요. 지원 형식: email password, email----password, email|password, email,password, email:password. JSON 파일 업로드도 지원합니다. 프록시 지정(선택): [proxy] email password."
+    },
+    "proxyType": {
+      "label": "유형"
+    },
+    "proxyHost": {
+      "label": "호스트",
+      "placeholder": "비워두면 전역 설정 사용"
+    },
+    "providerFilter": {
+      "label": "제공자"
+    },
+    "logLevel": {
+      "label": "로그 레벨"
+    },
+    "identitySearch": {
+      "placeholder": "제공자 검색..."
+    },
+    "search": {
+      "label": "검색",
+      "placeholder": "검색..."
+    },
+    "autoScroll": "자동 스크롤",
+    "autoAdd": "로그인 후 풀에 자동 추가",
+    "storeCredential": "세션 만료 시 자동 갱신을 위해 비밀번호를 암호화하여 저장",
+    "storeCredentialHint": "DEVIN_CONNECT_CRED_KEY가 필요합니다. 공개 바인딩에서는 DEVIN_CONNECT_ALLOW_REMOTE_CRED_STORE=1도 필요합니다. 비밀번호는 AES-256-GCM으로 암호화되며 절대 로그에 기록되지 않습니다.",
+    "firstName": {
+      "label": "이름",
+      "placeholder": "John"
+    },
+    "otpCode": {
+      "label": "OTP 코드",
+      "hint": "이메일에서 6자리 코드를 확인하세요"
+    },
+    "lastName": {
+      "label": "성(선택 사항)",
+      "placeholder": "Doe"
+    }
+  },
+  "table": {
+    "header": {
+      "time": "시간",
+      "email": "이메일",
+      "status": "상태",
+      "proxy": "프록시",
+      "action": "작업",
+      "id": "ID",
+      "label": "라벨",
+      "tier": "등급",
+      "rpm": "RPM",
+      "credits": "크레딧",
+      "quota": "할당량",
+      "models": "사용 가능한 모델",
+      "error": "오류",
+      "lastUsed": "마지막 사용",
+      "key": "키",
+      "accountId": "계정 ID",
+      "account": "계정",
+      "requests": "요청",
+      "success": "성공",
+      "errors": "오류",
+      "successRate": "성공률",
+      "avg": "평균",
+      "p50": "p50",
+      "p95": "p95",
+      "errorCount": "오류 수",
+      "model": "모델",
+      "note": "메모"
+    },
+    "empty": {
+      "loginHistory": "로그인 기록이 없습니다",
+      "accounts": "아직 계정이 없습니다. 먼저 계정을 추가하세요",
+      "accountsProxy": "계정 없음",
+      "modelStats": "사용 가능한 모델 통계가 없습니다",
+      "accountStats": "사용 가능한 계정 통계가 없습니다",
+      "banList": "비정상 계정이 없습니다",
+      "models": "일치하는 모델이 없습니다",
+      "credits": "로딩 중...",
+      "accountNotFound": "계정을 찾을 수 없습니다",
+      "noValidAccounts": "라우팅에 사용할 수 있는 유효한 계정이 없습니다",
+      "probeFailed": "점검 실패",
+      "noRequestData": "요청 데이터가 없습니다",
+      "noAccountRequestData": "계정 단위 요청 데이터가 없습니다",
+      "noData": "데이터 없음"
+    }
+  },
+  "card": {
+    "activeAccounts": {
+      "title": "활성 계정",
+      "subtitle": "전체 {{total}}개 · 비정상 {{error}}개"
+    },
+    "poolBalance": {
+      "title": "풀 잔액",
+      "subtitle": "{{count}}개 계정 합산(온디맨드) · 공유 팀 풀은 중복 집계될 수 있음"
+    },
+    "totalRequests": {
+      "title": "총 요청 수",
+      "subtitle": "성공률 {{rate}}%"
+    },
+    "uptime": {
+      "title": "가동 시간",
+      "subtitle": "{{time}}에 시작됨"
+    },
+    "languageServer": {
+      "title": "Language Server",
+      "running": "실행 중",
+      "stopped": "중지됨",
+      "subtitle": "인스턴스 {{count}}개 · 포트 {{port}}"
+    },
+    "responseCache": {
+      "title": "응답 캐시",
+      "subtitle": "적중 {{hits}} / 미스 {{misses}} · {{size}}/{{max}} 항목"
+    },
+    "tokens": {
+      "title": "토큰 사용 내역",
+      "subtitle": {
+        "empty": "아직 사용 데이터가 없습니다"
+      },
+      "legend": {
+        "freshInput": "신규 입력",
+        "cacheRead": "캐시 읽기",
+        "cacheWrite": "캐시 쓰기",
+        "output": "출력"
+      },
+      "cacheEfficiency": "캐시 효율"
+    },
+    "credits": {
+      "title": "사용한 크레딧",
+      "unit": "크레딧",
+      "byModel": "모델별",
+      "subtitle": "오늘 {{today}} 크레딧",
+      "empty": "아직 기록된 사용량이 없습니다"
+    },
+    "banStats": {
+      "title": "상태 개요"
+    },
+    "abnormalAccounts": {
+      "title": "비정상 계정",
+      "subtitle": "총 {{count}}개 계정"
+    },
+    "disabled": {
+      "title": "비활성",
+      "subtitle": "오류로 인해 자동 비활성화됨"
+    },
+    "rateLimit": {
+      "title": "속도 제한됨",
+      "badge": "속도 제한됨",
+      "subtitle": "일시적으로 스케줄링에서 제외됨"
+    },
+    "stats": {
+      "title": "총 요청 수",
+      "subtitle": "{{time}} 동안 실행 중"
+    },
+    "success": {
+      "title": "성공",
+      "subtitle": "성공률 {{rate}}%"
+    },
+    "errors": {
+      "title": "오류",
+      "subtitle": "실패율 {{rate}}%"
+    },
+    "p95Latency": {
+      "title": "평균 p95 지연 시간",
+      "subtitle": "모델 {{count}}개"
+    },
+    "hitRate": {
+      "title": "적중률",
+      "subtitle": "적중 {{hits}} / 미스 {{misses}}"
+    },
+    "poolSize": {
+      "title": "풀 크기",
+      "subtitle": "최대 {{max}} · TTL {{ttl}}분"
+    },
+    "stores": {
+      "title": "저장소",
+      "subtitle": "만료됨 {{expired}} · 축출됨 {{evicted}}"
+    },
+    "tokenCacheRead": {
+      "title": "토큰 캐시 읽기",
+      "subtitle": "입력의 {{pct}}%가 캐시에서 제공됨",
+      "empty": "아직 토큰 사용량이 없습니다"
+    },
+    "defaultInstance": "기본 인스턴스",
+    "noProxy": "프록시 없음",
+    "restarts": "재시작",
+    "custom": "사용자 지정됨"
+  },
+  "login": {
+    "releaseNotes": "v{{version}} 릴리스 노트",
+    "title": "제어판 로그인",
+    "subtitle": "계속하려면 관리자 비밀번호를 입력하세요",
+    "passwordPlaceholder": "대시보드 비밀번호",
+    "lockedTitle": "대시보드 잠김",
+    "lockedDesc": "서버가 <code>DASHBOARD_PASSWORD</code> 없이 공개 호스트에 바인딩되었습니다. v2.0.55 fail-closed: API_KEY는 더 이상 대시보드 비밀번호를 대신하지 않습니다.",
+    "lockedFix": "해결 방법:",
+    "lockedDocs": "참고:",
+    "button": "로그인",
+    "checking": "확인 중…",
+    "wrong": "비밀번호가 올바르지 않습니다",
+    "empty": "비밀번호를 입력하세요",
+    "locked": "백엔드에 비밀번호가 설정되어 있지 않습니다 — DASHBOARD_PASSWORD 또는 API_KEY 환경 변수를 설정하고 재시작하세요",
+    "banned": "실패 횟수가 너무 많습니다 — 잠겼습니다. {{secs}}초 후 다시 시도하세요.",
+    "networkError": "서버에 연결할 수 없습니다"
+  },
+  "range": {
+    "6h": "6h",
+    "24h": "24h",
+    "72h": "72h",
+    "7d": "7d",
+    "30d": "30d",
+    "all": "전체",
+    "custom": "사용자 지정",
+    "customTitle": "사용자 지정 기간",
+    "customStart": "시작일",
+    "customEnd": "종료일",
+    "customApply": "적용",
+    "customCancel": "취소",
+    "customHint": "최근 30일까지 표시됩니다"
+  },
+  "poolView": {
+    "grid": "글로우 그리드",
+    "bars": "상태 막대"
+  },
+  "credits": {
+    "contributors": "핵심 기여자",
+    "history": "기여 · {{count}}",
+    "contributionDetails": "상세 정보",
+    "cta": {
+      "title": "이 목록에 이름을 올리고 싶으신가요?",
+      "desc": "GitHub에서 이슈나 풀 리퀘스트를 열어보세요 — 버그 수정, 새 모델 추가, UI 개선, 보안 발견 등 모두 여기에 기록됩니다.",
+      "issue": "이슈 열기",
+      "pr": "PR 열기"
+    }
+  },
+  "experimental": {
+    "enable": "활성화",
+    "disable": "비활성화",
+    "cascadeReuse": {
+      "title": "Cascade 대화 재사용 활성화",
+      "desc": "기본적으로 비활성화되어 있습니다. 활성화하면 현재 대화 풀에 즉시 적용됩니다.",
+      "enable": "Cascade 대화 재사용 활성화",
+      "hint": "기본적으로 비활성화되어 있습니다. 활성화하면 현재 대화 풀에 즉시 적용됩니다."
+    },
+    "identityPrompt": {
+      "title": "모델 아이덴티티 주입 활성화",
+      "desc": "기본적으로 활성화되어 있습니다. 비활성화하면 아래 템플릿이 작동하지 않습니다."
+    },
+    "templateHint": "제공자별 템플릿은 편집할 수 있습니다. {{model}} 자리표시자는 요청된 모델 이름(예: claude-opus-4.6)으로 대체됩니다.",
+    "clearPool": "대화 풀 비우기",
+    "refresh": "새로고침",
+    "noMatch": "일치하는 항목 없음",
+    "restoreDefault": "기본값 복원",
+    "save": "저장",
+    "default": "기본값",
+    "toolReinforcement": "도구 호출 형식 가이드",
+    "communicationWithTools": "도구 사용 시 커뮤니케이션",
+    "communicationNoTools": "도구 미사용 시 커뮤니케이션",
+    "promptEmpty": "템플릿을 비워둘 수 없습니다",
+    "missingPlaceholder": "{model} 자리표시자가 없습니다",
+    "missingPlaceholderDesc": "저장 후 프롬프트에서 제공자의 모델 이름이 대체되지 않습니다. 계속하시겠습니까?",
+    "restored": "복원됨"
+  },
+  "drought": {
+    "title": "할당량 가뭄:",
+    "body": "모든 활성 계정이 주간 할당량 임계값 미만입니다 — 계정을 추가하거나 초기화를 기다리세요",
+    "detail": "최소 주간={{weekly}}% · 최소 일일={{daily}}% · 확인된 계정 {{known}}/{{active}}"
+  },
+  "tooltip": {
+    "plan": "플랜: {{plan}}",
+    "trialEnds": "체험판 종료: {{date}} ({{days}}일 남음)",
+    "promptCredits": "프롬프트: {{used}}/{{total}}",
+    "flowCredits": "플로우: {{used}}/{{total}}",
+    "allowedModels": "허용된 cascade 모델: {{count}}개",
+    "fetchedAgo": "가져옴: {{mins}}분 전",
+    "help": {
+      "devinCliMode": "Devin CLI 전송 방식입니다. print: 일회성 모드 — 프롬프트를 보내고 출력된 응답을 읽습니다. 도구 호출이나 스트리밍이 없습니다. acp(Agent Client Protocol): 네이티브 도구 호출, 이미지/비전 입력, 스트리밍을 지원하는 지속적인 양방향 세션입니다. 도구를 사용하거나 멀티모달 모델에는 acp를, 단순 채팅에는 더 가벼운 print를 사용하세요.",
+      "devinConnect": "직접 클라우드 HTTP 백엔드입니다. 켜면 로컬 Devin CLI 프로세스를 구동하는 대신 요청이 HTTP로 Devin의 클라우드 API로 바로 전달됩니다. 배포 시점 스위치이며, 끄면 네이티브 CLI 도구를 사용할 수 없습니다.",
+      "devinOnly": "모든 요청을 Devin CLI 백엔드로만 라우팅하고 다른 모든 업스트림 제공자를 비활성화합니다. 단일하고 예측 가능한 백엔드를 원할 때 사용하세요.",
+      "allowClientTools": "클라이언트 측 도구 호출과 이미지/비전 입력이 모델에 도달하도록 허용합니다(DEVIN_CLI_ALLOW_CLIENT_TOOLS). 네이티브 도구 사용과 이미지 이해에 필요하며, 텍스트 전용 채팅이라면 꺼두세요.",
+      "loginHostFallback": "기본 로그인 호스트가 실패하면 Devin의 직접 로그인 엔드포인트로 대체합니다. 불안정한 네트워크에서 로그인 성공률을 높입니다.",
+      "autoRelogin": "요청 도중 세션이 끊기면 요청을 실패시키는 대신 계정을 자동으로 재인증합니다.",
+      "remoteCredStore": "서버가 원격 자가 복구 로그인을 위해 계정 비밀번호를 저장할 수 있는지 여부입니다. 보안 경계이므로 여기서는 읽기 전용입니다.",
+      "credStoreEnabled": "자격 증명 암호화 키(CRED_KEY)가 설정되어 저장된 자격 증명을 암호화된 상태로 보관할 수 있는지 여부입니다.",
+      "cascadeReuse": "Cascade 재사용은 여러 턴에 걸친 채팅에서 하나의 cascade_id를 유지하고 최신 메시지만 전송하여 서버가 컨텍스트를 서버 측에 보관하도록 합니다. 캐시 적중 시 TTFB와 업로드량이 줄어들며, 미스나 계정/LS 변경 시에는 조용히 새 세션으로 전환됩니다.",
+      "drought": "가뭄 모드: 모든 활성 계정의 주간 할당량이 임계값 아래로 떨어지면 자동으로 감지됩니다. 활성화되어 있는 동안 프리미엄 모델(opus/sonnet)은 남은 할당량을 업스트림 속도 제한으로 소모하지 않도록 503으로 차단될 수 있으며, 무료 등급 모델은 계속 사용할 수 있습니다.",
+      "stickySession": "스티키 세션은 사용자를 하나의 업스트림 계정에 고정하여 반복 요청이 동일한 할당량과 캐시를 재사용하도록 합니다. STICKY_SESSION_ENABLED=1이 필요합니다. 사용자별 바인딩은 모델 구분을 무시하며, 폴백 없음은 오류 발생 시 계정 전환을 거부합니다.",
+      "tier": "계정 등급은 Windsurf의 계정별 허용 모델 설정에서 읽어와 허용되는 모델을 결정합니다. 무료 계정도 GLM/SWE/Kimi를 포함하는 경우가 많습니다. 체험판이 잘못 감지될 경우 수동으로 pro로 설정하면 모든 모델의 잠금을 강제로 해제할 수 있습니다.",
+      "circuitBreaker": "회로 차단기는 일정 기간 내 반복적인 오류가 발생하면 계정을 비활성화한 후 지수 백오프로 다시 활성화합니다. 임계값은 즉시 편집 가능하며, 비워두면 환경 변수/기본값을 따릅니다.",
+      "tokenCache": "토큰 캐시 읽기 비율: 다시 업로드하는 대신 업스트림 컨텍스트 캐시에서 제공된 프롬프트 토큰의 비율입니다. 높을수록 더 저렴하고 빠르며, 재사용 여부는 cascade 재사용과 안정적인 세션에 달려 있습니다.",
+      "promptCredits": "프롬프트 크레딧은 플랜에 포함된 프롬프트 모델 요청용 월간 할당량으로, 잔여/한도로 표시됩니다. 소진되면 플랜에 따라 요청이 중단되거나 온디맨드(초과)로 넘어갑니다.",
+      "flowCredits": "플로우 크레딧(플렉스 크레딧이라고도 함)은 프롬프트 크레딧과 별개로 에이전트/플로우 작업에 포함된 월간 할당량이며, 잔여/한도로 표시됩니다.",
+      "overage": "온디맨드(초과) 잔액: 포함된 할당량을 초과하여 사용량 기준으로 청구되는 금액(USD)입니다. 포함된 크레딧이 소진된 후에만 발생합니다.",
+      "weeklyQuota": "주간 할당량 %: 계정의 이동 주간 할당량 중 소비된 비율입니다. 모든 계정에서 값이 낮으면 가뭄 모드가 발동됩니다.",
+      "poolHealthView": "글로우 그리드: 계정마다 상태에 따라 색이 입혀진 숨쉬는 코어가 하나씩 있습니다 — RPM이 포화되면 코어에 불이 붙고 요청이 흐를 때 반짝입니다. 상태 막대: 계정마다 RPM / 진행 중 / 성공·실패 / 마지막 사용을 보여주는 촘촘한 한 줄입니다. 계정에 마우스를 올리면 상세 정보를 볼 수 있습니다.",
+      "trendRange": "요청 추세 기간을 전환합니다: 24시간(시간별), 7일 또는 30일(일별 집계). 데이터는 로컬 텔레메트리이며 업스트림 호출이 없습니다."
+    }
+  },
+  "credentials": {
+    "apiKey": "API_KEY",
+    "dashboardPassword": "대시보드 비밀번호",
+    "apiKeyPlaceholder": "새 API_KEY(8자 이상; 비워두면 런타임 재정의 해제)",
+    "dashboardPwPlaceholder": "새 대시보드 비밀번호(8자 이상; 비워두면 런타임 재정의 해제)",
+    "show": "표시/숨기기",
+    "save": "저장",
+    "saved": "저장됨",
+    "set": "설정됨",
+    "unset": "설정 안 됨",
+    "apiKeyHint": "저장 후 모든 채팅 클라이언트는 새 KEY를 사용해야 합니다. 기존 KEY는 즉시 작동을 멈춥니다.",
+    "dashboardPwHint": "scrypt 해시로 저장됩니다. 현재 세션은 로그아웃되며 새 비밀번호로 다시 로그인해야 합니다.",
+    "bruteForceHint": "무차별 대입 방지: 동일 IP에서 대시보드 로그인 5회 실패 시 30분간 잠깁니다(v2.0.56부터).",
+    "confirmSave": "저장 후 기존 값은 즉시 작동을 멈춥니다. 계속하시겠습니까?",
+    "confirmClear": "런타임 재정의를 지우고 .env 값으로 되돌리시겠습니까?"
+  },
+  "confirm": {
+    "restartTitle": "Language Server 재시작",
+    "restartDesc": "진행 중인 요청이 실패합니다. 계속하시겠습니까?",
+    "updateLsTitle": "LS 바이너리 업데이트",
+    "updateLsDesc": "WindsurfAPI / Windsurf 데스크톱 LS / Exafunction GitHub 릴리스에서 최신 language_server를 다운로드하고 LS 풀을 재시작합니다. 진행 중인 요청은 한 번 실패합니다.",
+    "updateLsButton": "업데이트",
+    "restoreDefaultDesc": "기본값으로 복원하시겠습니까?",
+    "clearPoolDesc": "모든 활성 Cascade 세션이 지워집니다. 계속하시겠습니까?",
+    "clearProxyTitle": "전역 프록시 지우기",
+    "clearProxyDesc": "프록시를 다시 설정할 때까지 모든 아웃바운드 요청이 직접 전송됩니다. 계속하시겠습니까?",
+    "switchSkinTitle": "대시보드 스킨 전환",
+    "switchSkinDesc": "새 스킨을 적용하기 위해 대시보드가 새로고침됩니다. 계속하시겠습니까?",
+    "expToggleDesc": "이 설정은 실시간 라우팅 동작을 즉시 변경합니다. 계속하시겠습니까?"
+  },
+  "modal": {
+    "blockedModels": {
+      "title": "사용 가능한 모델 편집 — {{email}}",
+      "hint": "체크됨 = 사용 가능; 체크 해제 = 이 계정에서 비활성화",
+      "enabled": "활성화됨",
+      "saved": "저장됨: 활성화 {{enabled}} / 비활성화 {{disabled}}",
+      "saving": "저장 중...",
+      "total": "전체",
+      "search": "모델 검색...",
+      "noMatch": "검색과 일치하는 모델이 없습니다"
+    },
+    "restartLS": {
+      "title": "Language Server 재시작",
+      "desc": "진행 중인 요청이 실패합니다. 계속하시겠습니까?"
+    },
+    "deleteAccount": {
+      "title": "계정 삭제",
+      "desc": "이 작업은 되돌릴 수 없습니다. 이 계정을 삭제하시겠습니까?"
+    },
+    "resetStats": {
+      "title": "통계 초기화",
+      "desc": "모든 통계 데이터를 지우시겠습니까?"
+    },
+    "overrideTier": {
+      "title": "계정 등급 수동 설정",
+      "desc": "현재: {{current}}. 프록시는 Windsurf의 업스트림 cascade_allowed_models_config(계정별 — 무료 계정도 GLM / SWE / Kimi 등을 포함하는 경우가 많음)에 따라 라우팅합니다. Pro 체험판이 잘못 감지될 경우(issue #8) 수동으로 pro로 설정하면 모든 모델의 잠금을 강제로 해제할 수 있습니다.",
+      "options": {
+        "pro": "Pro(모든 모델 강제 잠금 해제)",
+        "free": "Free(업스트림 허용 목록에 따라 라우팅)",
+        "unknown": "Unknown(시스템이 다시 판단하도록 함)"
+      }
+    },
+    "applyUpdate": {
+      "title": "업데이트 및 재시작",
+      "desc": "git pull을 실행하고 서비스 프로세스를 재시작합니다. 재시작 중(약 5~10초) 대시보드를 잠시 사용할 수 없습니다. 계속하시겠습니까?"
+    },
+    "dirtyWorktree": {
+      "title": "작업 디렉터리에 로컬 변경 사항 있음",
+      "desc": "다음 파일이 수정되었지만 커밋되지 않았습니다:<br><br><code>{{files}}</code><br>계속하면 로컬 변경 사항이 원격 버전으로 덮어써집니다. Git을 사용하지 않는 배포(SFTP / zip)의 경우 강제 덮어쓰기를 클릭하세요.",
+      "forceUpdate": "강제 덮어쓰기 및 업데이트"
+    },
+    "configureProxy": {
+      "title": "계정 프록시 설정",
+      "desc": "{{label}} 계정에 전용 프록시 설정"
+    }
+  },
+  "oauth": {
+    "tryAnotherWay": "다른 방법 시도",
+    "google": "Google 로그인",
+    "github": "GitHub 로그인",
+    "copyAuthToken": "Auth Token 복사",
+    "pasteToken": "계정 관리에서 토큰 붙여넣기",
+    "inlineTokenTitle": "또는 Auth Token을 직접 붙여넣기(OAuth 전용 계정에 권장)",
+    "inlineTokenDesc": "왼쪽 버튼을 클릭해 새 탭에서 windsurf.com 열기 → Google/GitHub로 로그인 → 페이지에 Auth Token 표시 → 복사해서 오른쪽 입력란에 붙여넣기 → 추가 클릭",
+    "openWindsurfToken": "Token 발급을 위해 windsurf.com 열기",
+    "tokenPlaceholder": "Auth Token 붙여넣기...",
+    "urlOrTokenPlaceholder": "콜백 URL 또는 Auth Token 붙여넣기...",
+    "addWithToken": "Token으로 추가",
+    "step2Title": "② Windsurf가 제공한 토큰 붙여넣기",
+    "step2Desc": "새 탭에서 로그인하면 페이지에 토큰 문자열이 표시됩니다 — 여기에 복사한 뒤 추가를 클릭하세요.",
+    "openManually": "로그인 페이지가 열리지 않나요? 여기를 클릭하세요",
+    "status": {
+      "loading": "{{provider}}로 로그인 중...",
+      "success": "로그인 성공! {{email}}이(가) 풀에 추가되었습니다",
+      "codeium": "{{provider}} 인증 성공, Codeium에 등록 중...",
+      "firebaseError": "Firebase SDK 로드에 실패했습니다. 새로고침 후 다시 시도하세요",
+      "loggingIn": "{{label}}로 로그인 중...",
+      "codeiumRegistering": "{{label}} 인증 성공, Codeium 등록 중...",
+      "loginSuccess": "로그인 성공, {{email}}이(가) 풀에 추가되었습니다",
+      "loginFailed": "{{label}} 로그인 실패: {{error}}",
+      "opened": "새 탭에서 Windsurf {{label}} 로그인을 열었습니다 — 그곳에서 완료한 후 아래에 토큰을 복사하세요",
+      "popupBlocked": "브라우저가 팝업을 차단했습니다 — 아래 링크를 사용해 로그인 페이지를 수동으로 여세요",
+      "copied": "로그인 URL이 복사되었습니다 — {{label}} 계정으로 로그인된 브라우저에서 열고 아래에 콜백 URL을 붙여넣으세요",
+      "adding": "계정 추가 중...",
+      "originBlocked": "이 대시보드 출처에서는 Firebase에 의해 {{label}} OAuth가 차단되었습니다. windsurf.com/show-auth-token에서 Auth Token을 받아 계정 관리에서 추가하세요."
+    },
+    "chooser": {
+      "title": "{{label}}로 로그인",
+      "desc": "새 탭에서 Windsurf 로그인 페이지를 열거나, 이미 계정으로 로그인된 브라우저에서 열 수 있도록 로그인 URL을 복사하세요.",
+      "open": "로그인 페이지 열기",
+      "copy": "로그인 URL 복사",
+      "copied": "로그인 URL 복사됨",
+      "dontAsk": "다시 묻지 않기(설정에서 변경 가능)"
+    }
+  },
+  "update": {
+    "checking": "업데이트 확인 중...",
+    "newVersion": "새 버전 발견",
+    "current": "현재",
+    "remote": "원격",
+    "latest": "이미 최신 상태입니다",
+    "applying": "가져오는 중 + 재시작 중...",
+    "complete": "업데이트 완료",
+    "restarting": "서비스가 백그라운드에서 재시작 중입니다. 약 8초 후 페이지가 자동으로 새로고침됩니다...",
+    "cancelled": "취소됨",
+    "notGit": "Git 배포가 아닙니다 — 원클릭 업데이트를 사용할 수 없습니다",
+    "notGitDesc": "git clone으로 배포했다면 WindsurfAPI 소스에 .git 디렉터리가 있는지 확인하세요. SFTP / zip 업로드의 경우 파일을 수동으로 교체하고 pm2를 재시작하세요.",
+    "upToDate": "이미 최신 상태이며 업데이트가 필요하지 않습니다"
+  },
+  "proxy": {
+    "test": {
+      "button": "프록시 테스트",
+      "result": "결과"
+    },
+    "none": "없음(전역 사용)",
+    "direct": "직접 연결",
+    "global": "전역",
+    "current": "현재",
+    "notConfigured": "설정된 전역 프록시가 없습니다",
+    "placeholderSaved": "저장됨(비워두면 유지)",
+    "placeholderPassword": "프록시 인증 비밀번호",
+    "auth": "인증"
+  },
+  "localImport": {
+    "scanning": "로컬 Windsurf 클라이언트 검색 중…",
+    "empty": "로그인된 로컬 Windsurf 자격 증명을 찾을 수 없습니다",
+    "scannedPaths": "검색한 경로",
+    "found": "개 자격 증명",
+    "foundCount": "로컬 계정 {{count}}개를 찾았습니다 — 확인 후 가져오기를 클릭하세요",
+    "account": "계정",
+    "key": "API 키",
+    "source": "출처",
+    "importBtn": "가져오기",
+    "importSuccess": "{{email}} 가져옴",
+    "unavailable": "로컬호스트 배포에서만 사용할 수 있습니다 — 원격 서버의 \"로컬 Windsurf\"는 당신의 기기가 아니라 다른 사람의 기기에 속합니다."
+  },
+  "accounts": {
+    "tierFilter": {
+      "title": "등급별 필터",
+      "all": "모든 등급",
+      "pro": "Pro",
+      "free": "Free",
+      "unknown": "알 수 없음",
+      "expired": "만료됨"
+    },
+    "density": {
+      "title": "간격 밀집/여유 전환",
+      "label": "간격 좁게"
+    },
+    "export": {
+      "title": "모든 계정 내보내기(메타데이터만, 비밀 키 제외)",
+      "label": "내보내기",
+      "done": "계정 {{count}}개 내보냄",
+      "failed": "내보내기 실패"
+    }
+  },
+  "account": {
+    "tierManualBadge": "수동",
+    "balance": {
+      "label": "선불",
+      "tip": "온디맨드 선불 잔액(USD)입니다. 위에 표시된 일일/주간 포함 할당량과는 별개입니다."
+    },
+    "addSuccess": "계정이 추가되었습니다",
+    "deleteSuccess": "계정이 삭제되었습니다",
+    "enableSuccess": "계정이 활성화되었습니다",
+    "disableSuccess": "계정이 비활성화되었습니다",
+    "resetErrors": "오류가 초기화되었습니다",
+    "tierSet": "등급이 {{tier}}(으)로 설정되었습니다",
+    "editModels": "사용 가능한 모델 편집",
+    "spend": {
+      "title": "온디맨드 지출 정책",
+      "policy": "포함된 할당량이 소진되면",
+      "reserve": "잔액 보존액",
+      "reservePlaceholder": "전역 값 상속",
+      "saved": "정책이 저장되었습니다",
+      "opt": {
+        "inherit": "전역 기본값 상속",
+        "on": "온디맨드 잔액 사용(서비스 계속)",
+        "off": "소진 시 중단(잔액 소모 안 함)"
+      },
+      "effOn": "할당량이 소진되면 이 계정은 선불 잔액으로 계속 서비스하며, 최소 ${{reserve}}는 보존합니다.",
+      "effOff": "할당량이 소진되면 이 계정은 중단되며, 선불 잔액은 소비되지 않습니다.",
+      "state": {
+        "spending": "잔액 소비 중",
+        "cooled": "쿨다운(보호됨)",
+        "stopWhenDry": "소진 시 중단",
+        "ok": "할당량 정상"
+      }
+    },
+    "probe": {
+      "doing": "점검 중입니다. 약 10~30초 소요됩니다...",
+      "complete": "점검 완료: {{result}}",
+      "allDoing": "모든 계정을 점검 중입니다. 개수에 따라 1~3분 소요됩니다...",
+      "allComplete": "점검 완료: {{summary}}",
+      "probeAllComplete": "점검 완료: {{summary}}",
+      "probeComplete": "점검 완료: {{tier}}"
+    },
+    "credits": {
+      "refreshTitle": "크레딧 새로고침",
+      "refreshed": "크레딧이 새로고침되었습니다",
+      "refreshFailed": "새로고침 실패",
+      "allRefreshed": "모든 계정 크레딧 새로고침 완료: 성공 {{ok}} / 실패 {{fail}}",
+      "refreshing": "모든 계정 크레딧 새로고침 중...",
+      "refreshingAll": "모든 계정 크레딧 새로고침 중..."
+    },
+    "ls": {
+      "restarting": "Language Server 재시작 중..."
+    },
+    "detail": {
+      "toggle": "상세 정보 펼치기/접기",
+      "ago": "전",
+      "resetAt": "초기화",
+      "creditPerCall": "호출당 청구 크레딧",
+      "creditUnit": "",
+      "plan": {
+        "title": "구독",
+        "name": "플랜",
+        "tier": "등급",
+        "balance": "잔액",
+        "periodStart": "기간 시작",
+        "periodEnd": "기간 종료",
+        "start": "시작",
+        "end": "종료",
+        "overage": "초과 잔액"
+      },
+      "quota": {
+        "title": "할당량 사용량",
+        "daily": "일일",
+        "weekly": "주간",
+        "promptCredits": "프롬프트 크레딧",
+        "flexCredits": "플렉스 크레딧",
+        "used": "사용됨",
+        "fetchedAt": "가져온 시각",
+        "notApplicable": "이 플랜에는 해당되지 않습니다"
+      },
+      "models": {
+        "title": "사용 가능한 모델",
+        "available": "사용 가능",
+        "blocked": "차단됨"
+      },
+      "runtime": {
+        "title": "런타임",
+        "status": "상태",
+        "errors": "오류",
+        "rpm": "RPM",
+        "lastUsed": "마지막 사용",
+        "lastProbed": "마지막 점검",
+        "creditsFetched": "크레딧 새로고침됨",
+        "accountId": "계정 ID",
+        "apiKey": "API 키",
+        "lastError": "마지막 오류"
+      }
+    }
+  },
+  "batch": {
+    "pasteFirst": "먼저 일괄 계정을 붙여넣으세요",
+    "importing": "가져오는 중...",
+    "importingDesc": "{{count}}줄, 잠시만 기다려 주세요",
+    "importingFile": "{{name}} 파일 가져오는 중",
+    "complete": "일괄 가져오기 완료",
+    "importFailed": "일괄 가져오기 실패",
+    "importComplete": "일괄 가져오기 완료: 성공 {{success}} / 건너뜀 {{skipped}} / 실패 {{fail}}",
+    "success": "성공",
+    "skipped": "건너뜀",
+    "fail": "실패",
+    "formatError": "{{line}}번째 줄 형식 오류",
+    "fileNone": "선택된 JSON 파일이 없습니다",
+    "fileLoaded": "선택된 파일: {{name}}",
+    "fileReadFailed": "파일 읽기 실패: {{error}}"
+  },
+  "otp": {
+    "codeSent": "인증 코드가 전송되었습니다. 이메일을 확인하세요."
+  },
+  "toast": {
+    "dismiss": "클릭하여 닫기",
+    "requestFailed": "요청 실패(HTTP {{status}})",
+    "applyingSkin": "스킨 적용 중…",
+    "copied": "복사됨",
+    "saved": "저장됨",
+    "settingSaved": "설정이 저장되었습니다",
+    "turnstileFailed": "Turnstile 인증 실패",
+    "turnstileRequired": "Turnstile 인증을 완료하세요",
+    "turnstileExpired": "Turnstile 토큰이 만료되었습니다. 페이지를 새로고침하세요.",
+    "invalidRange": "잘못된 범위",
+    "loadCredentialsFailed": "자격 증명 로드 실패: {{error}}",
+    "saveFailed": "저장 실패: {{error}}",
+    "cleared": "지워짐",
+    "refresh": "새로고침",
+    "error": "오류",
+    "loading": "로딩 중...",
+    "exportOk": "{{filename}} 다운로드됨",
+    "exportFailed": "내보내기 실패",
+    "enterHostPort": "먼저 호스트와 포트를 입력하세요",
+    "experimentalEnabled": "실험적 기능이 활성화되었습니다",
+    "experimentalDisabled": "실험적 기능이 비활성화되었습니다",
+    "droughtThresholdSaved": "가뭄 임계값 저장됨: {{value}}%",
+    "toggleFailed": "전환 실패: {{error}}",
+    "modeUpdated": "모드가 업데이트되었습니다",
+    "defaultModelUpdated": "기본 모델이 업데이트되었습니다",
+    "noTierModels": "이 계정 등급에서 사용 가능한 모델이 없습니다",
+    "loginSuccess": "{{label}} 로그인 성공",
+    "loginFailed": "{{label}} 로그인 실패: {{error}}",
+    "loginSuccessAdded": "로그인 성공, 계정이 풀에 추가되었습니다",
+    "clipboardRead": "클립보드 읽음",
+    "clipboardEmpty": "클립보드가 비어 있습니다",
+    "clipboardUnsupported": "현재 환경은 클립보드 자동 읽기를 지원하지 않습니다. 수동으로 붙여넣으세요",
+    "clipboardError": "클립보드 읽기 실패: {{error}}",
+    "apiKeyCopied": "API 키가 복사되었습니다",
+    "copyFailed": "복사 실패, 수동으로 선택하세요",
+    "copyFailedError": "복사 실패: {{error}}",
+    "enterEmailPassword": "이메일과 비밀번호를 입력하세요",
+    "enterEmailFirstName": "이메일과 이름을 입력하세요",
+    "enterOtpCode": "인증 코드를 입력하세요",
+    "restarting": "Language Server 재시작 중...",
+    "lsBinaryUpdating": "LS 바이너리 업데이트 중…",
+    "lsBinaryUpdated": "LS 바이너리 업데이트됨({{before}} → {{after}}), 인스턴스 {{count}}개 재시작됨",
+    "lsBinaryUpdatedColdPool": "LS 바이너리 업데이트됨({{before}} → {{after}}), 실행 중인 인스턴스가 없어 다음 요청 시 새 바이너리가 로드됩니다",
+    "lsBinaryUpdatedWithErrors": "LS 바이너리 업데이트됨({{before}} → {{after}}), 인스턴스 {{count}}개 재시작됨({{errors}}개 실패)",
+    "lsBinaryAlreadyCurrent": "LS 바이너리가 이미 최신입니다(sha:{{sha}}), 업데이트가 필요하지 않습니다",
+    "lsBinaryUpdateFailed": "LS 업데이트 실패: {{error}}",
+    "lsBinaryUpdateRequestFailed": "LS 업데이트 요청 실패: {{error}}",
+    "lsBinaryUnreadable": "LS 바이너리를 읽을 수 없습니다: {{error}}",
+    "lsBinaryReadFailed": "LS 정보 읽기 실패: {{error}}",
+    "lsBinaryStat": "{{path}} · {{sizeMb}} MB · sha256:{{sha}} · {{age}}일 전 설치됨",
+    "proxyConfigured": "계정 프록시가 설정되었습니다",
+    "proxyCleared": "계정 프록시가 지워졌습니다",
+    "globalProxySaved": "전역 프록시가 저장되었습니다",
+    "globalProxyCleared": "전역 프록시가 지워졌습니다",
+    "enterProxyHost": "프록시 호스트를 입력하세요",
+    "statsReset": "통계가 초기화되었습니다",
+    "enterKeyOrToken": "키 또는 토큰을 입력하세요",
+    "addFailed": "추가 실패",
+    "probe": {
+      "doing": "점검 중입니다. 약 10~30초 소요됩니다...",
+      "probeComplete": "점검 완료: {{tier}}",
+      "allDoing": "모든 계정을 점검 중입니다. 개수에 따라 1~3분 소요됩니다...",
+      "probeAllComplete": "점검 완료: {{summary}}"
+    },
+    "probeComplete": "점검 완료: {{tier}}",
+    "probeAllComplete": "점검 완료: {{summary}}",
+    "credits": {
+      "refreshed": "크레딧이 새로고침되었습니다",
+      "refreshFailed": "크레딧 새로고침 실패",
+      "refreshing": "크레딧 새로고침 중...",
+      "allRefreshed": "모든 계정 크레딧 새로고침 완료: 성공 {{ok}} / 실패 {{fail}}"
+    }
+  },
+  "log": {
+    "empty": "아직 로그가 없습니다",
+    "emptyFiltered": "현재 필터와 일치하는 로그가 없습니다",
+    "streamFailed": "로그 스트림 연결이 끊겼습니다 — 패널을 다시 열어 재시도하세요",
+    "level": {
+      "all": "모든 레벨",
+      "debug": "디버그",
+      "info": "정보",
+      "warn": "경고",
+      "error": "오류"
+    },
+    "searchPlaceholder": "로그 내용 검색...",
+    "clearView": "화면 지우기",
+    "viaSSE": "SSE 실시간 스트리밍을 통해",
+    "export": {
+      "all": "전체 로그",
+      "api": "API 요청 로그",
+      "system": "시스템 실행 로그",
+      "txt": "일반 텍스트",
+      "btn": "로그 다운로드"
+    }
+  },
+  "model": {
+    "remove": "모델 제거",
+    "mode": {
+      "all": "전체 허용",
+      "allowlist": "허용 목록",
+      "blocklist": "차단 목록"
+    },
+    "provider": {
+      "all": "모든 제공자",
+      "anthropic": "Anthropic",
+      "openai": "OpenAI",
+      "google": "Google",
+      "deepseek": "DeepSeek",
+      "xai": "xAI",
+      "alibaba": "Alibaba",
+      "moonshot": "Moonshot",
+      "windsurf": "Windsurf"
+    },
+    "list": {
+      "current": "현재 목록({{count}})",
+      "empty": "목록이 비어 있습니다"
+    }
+  },
+  "error": {
+    "generic": "오류가 발생했습니다",
+    "unknown": "알 수 없는 오류",
+    "updateFailed": "업데이트 실패",
+    "apiError": "API 오류",
+    "loadFailed": "로드 실패",
+    "probeFailed": "점검 실패",
+    "accountNotFound": "계정을 찾을 수 없습니다",
+    "openFailed": "열기 실패",
+    "saveFailed": "저장 실패",
+    "deleteFailed": "삭제 실패",
+    "networkError": "네트워크 오류",
+    "authRequired": "먼저 로그인하세요",
+    "clipboardNotSupported": "현재 환경은 클립보드 자동 읽기를 지원하지 않습니다. 수동으로 붙여넣으세요",
+    "clipboardEmpty": "클립보드가 비어 있습니다",
+    "clipboardReadFailed": "클립보드 읽기 실패",
+    "firebaseLoadFailed": "Firebase SDK 로드에 실패했습니다. 새로고침 후 다시 시도하세요",
+    "ERR_EMAIL_PASSWORD_REQUIRED": "이메일과 비밀번호가 필요합니다",
+    "ERR_HOST_PORT_REQUIRED": "호스트와 포트가 필요합니다",
+    "ERR_SELF_UPDATE_UNAVAILABLE": "이 배포 환경에서는 원클릭 업데이트를 사용할 수 없습니다",
+    "pull-failed": "이미지 가져오기 실패",
+    "deployer-pull-failed": "배포 이미지(docker:24-cli) 가져오기 실패",
+    "deployer-create-failed": "배포 컨테이너 생성 실패",
+    "deployer-create-no-id": "배포 컨테이너가 생성되었지만 ID가 반환되지 않았습니다",
+    "deployer-start-failed": "배포 컨테이너 시작 실패",
+    "ERR_UNCOMMITTED_CHANGES": "작업 디렉터리에 커밋되지 않은 변경 사항이 있습니다. 강제로 덮어쓰시겠습니까?",
+    "ERR_ACCOUNTS_REQUIRED": "accounts 배열이 필요합니다",
+    "ERR_TEXT_REQUIRED": "텍스트 필드가 필요합니다",
+    "ERR_NO_VALID_LINES": "유효한 줄을 찾을 수 없습니다",
+    "ERR_FORMAT_INVALID": "형식이 올바르지 않습니다. 예상 형식: [proxy] email password",
+    "ERR_UNSUPPORTED_IMPORT_ITEM": "항목을 이메일/비밀번호, 토큰, API 키로 인식할 수 없습니다",
+    "ERR_JSON_INVALID": "JSON 형식이 올바르지 않습니다",
+    "ERR_JSON_FILE_REQUIRED": ".json 파일을 선택하세요",
+    "ERR_IDTOKEN_REQUIRED": "ID 토큰이 필요합니다",
+    "ERR_PROXY_PRIVATE_IP": "프록시는 사설/로컬 주소를 가리킬 수 없습니다",
+    "ERR_PROXY_FORMAT_INVALID": "프록시 형식이 올바르지 않습니다. 예상 형식: protocol://[user:pass@]host:port",
+    "ERR_PROXY_HTTP_ERROR": "프록시가 HTTP 오류를 반환했습니다",
+    "ERR_PROXY_PRIVATE_HOST": "사설/로컬 호스트는 허용되지 않습니다",
+    "ERR_CONNECTION_FAILED": "연결 실패",
+    "ERR_TIMEOUT": "제한 시간 초과(10초)",
+    "ERR_TLS_TUNNEL_ERROR": "TLS 터널은 연결되었지만 비정상적인 내용이 반환되었습니다",
+    "ERR_TLS_FAILED": "TLS 실패",
+    "ERR_LOGIN_FAILED": "로그인 실패",
+    "ERR_EMAIL_NOT_FOUND": "이메일이 비밀번호 로그인용으로 등록되어 있지 않습니다. Google/GitHub OAuth로 가입했다면 OAuth 버튼을 사용하거나 windsurf.com/show-auth-token에서 Auth Token을 복사하세요",
+    "ERR_INVALID_PASSWORD": "잘못된 비밀번호입니다",
+    "ERR_INVALID_CREDENTIALS": "이메일 또는 비밀번호가 올바르지 않습니다",
+    "ERR_NO_PASSWORD_SET": "이 계정에는 비밀번호가 설정되어 있지 않습니다. Google/GitHub OAuth를 사용하거나 windsurf.com/show-auth-token에서 Auth Token을 복사하세요",
+    "ERR_USER_DISABLED": "계정이 비활성화되었습니다",
+    "ERR_TOO_MANY_ATTEMPTS": "시도 횟수가 너무 많습니다. 나중에 다시 시도하세요",
+    "ERR_INVALID_EMAIL": "이메일 형식이 올바르지 않습니다",
+    "ERR_CODEIUM_REGISTER_FAILED": "Codeium 등록 실패",
+    "ERR_AUTH1_TOKEN_MISSING": "Auth1 응답에 토큰이 없습니다",
+    "ERR_POSTAUTH_FAILED": "Windsurf PostAuth 실패",
+    "ERR_TOKEN_FETCH_FAILED": "일회성 인증 토큰 가져오기 실패",
+    "ERR_FIREBASE_TOKEN_MISSING": "Firebase 응답에 idToken이 없습니다",
+    "ERR_LOCAL_IMPORT_LOOPBACK_ONLY": "로컬 가져오기는 127.0.0.1에서만 사용할 수 있습니다 — 공개 도메인이 아닌 호스트 머신 자체에서 대시보드를 여세요",
+    "ERR_LOCAL_IMPORT_FAILED": "로컬 Windsurf 자격 증명 검색 실패",
+    "ERR_INTERMEDIATE_CALLBACK": "이 페이지는 중간 콜백 페이지입니다 — 여기서는 로그인 코드를 교환할 수 없습니다. 브라우저가 show-auth-token 페이지에 도달할 때까지 기다린 후 거기에 표시된 토큰을 붙여넣으세요.",
+    "ERR_OAUTH_UPSTREAM": "로그인 제공자가 오류를 반환했습니다. 다시 로그인해 주세요."
+  },
+  "footer": {
+    "version": "버전",
+    "langToggle": "언어 전환",
+    "langToggleToEn": "Switch to English",
+    "langToggleToZh": "切换到中文",
+    "langToggleToKo": "한국어로 전환"
+  },
+  "theme": {
+    "toggle": "라이트/다크 모드 전환"
+  },
+  "placeholder": {
+    "noProxy": "프록시 없음"
+  },
+  "loginResult": {
+    "success": "✓ 로그인 성공",
+    "apiKeyGenerated": "API 키 생성됨{{autoAdd}}",
+    "fail": "✗ 로그인 실패",
+    "batchComplete": "일괄 가져오기 완료",
+    "batchDesc": "총 {{total}}개 계정, 성공 {{success}}개, 실패 {{fail}}개{{autoAdd}}",
+    "tryOther": "다른 방법 시도",
+    "oauthHint": "Google/GitHub OAuth로 가입했다면 비밀번호 로그인은 작동하지 않습니다. 위의 Google/GitHub 버튼을 사용하거나, {{link}}에 방문하여 Auth Token을 복사한 뒤 계정 풀 페이지에서 수동으로 추가하세요.",
+    "fields": {
+      "email": "이메일",
+      "name": "이름",
+      "apiKey": "API 키",
+      "accountId": "계정 ID"
+    },
+    "successTitle": "로그인 성공",
+    "addedToPool": "그리고 계정 풀에 추가됨"
+  },
+  "timeRange": {
+    "minutesAgo": "{{count}}분 전",
+    "hoursAgo": "{{count}}시간 전",
+    "daysAgo": "{{count}}일 전"
+  },
+  "time": {
+    "day": "일",
+    "hour": "시간",
+    "minute": "분",
+    "second": "초"
+  },
+  "prompt": {
+    "editor": {
+      "reset": "초기화",
+      "search": "제공자 검색...",
+      "templateHint": "{{model}} 자리표시자는 요청된 모델 이름으로 대체됩니다."
+    }
+  },
+  "ls": {
+    "defaultInstance": "기본 인스턴스",
+    "noProxy": "프록시 없음",
+    "port": "포트",
+    "pid": "PID",
+    "restartCount": "재시작 횟수"
+  },
+  "overview": {
+    "poolHealth": {
+      "healthy": "정상",
+      "throttled": "스로틀됨",
+      "error": "오류",
+      "dead": "만료된 토큰",
+      "quotaPressure": "할당량 압박",
+      "highRpm": "높은 RPM",
+      "verdictAllHealthy": "모든 계정이 정상입니다",
+      "verdictDegraded": "{{count}}개 계정에 주의가 필요합니다",
+      "verdictCritical": "풀 저하됨 — {{count}}개 사용 불가",
+      "empty": "풀 텔레메트리 없음",
+      "emptyHint": "계정을 추가하고 요청을 보내면 여기에 상태 신호가 표시됩니다.",
+      "unavailable": "풀 텔레메트리를 사용할 수 없습니다",
+      "unavailableHint": "/connect-metrics 엔드포인트가 응답하지 않았습니다. 이 패널은 15초마다 새로고침됩니다.",
+      "inflight": "진행 중",
+      "onFire": "과열 상태",
+      "hoverTier": "등급",
+      "hoverState": "상태",
+      "hoverOk": "정상",
+      "hoverErr": "오류",
+      "hoverLast": "마지막 사용",
+      "lastNever": "없음"
+    },
+    "connect": {
+      "reloginOk": "재로그인 성공",
+      "reloginFail": "재로그인 실패",
+      "failoverHops": "장애 조치 홉",
+      "deadTokens": "만료된 토큰",
+      "quotaExhausted": "할당량 소진",
+      "capacityThrottled": "용량 스로틀됨",
+      "upstreamInternal": "업스트림 내부 오류",
+      "transientReplays": "일시적 재시도",
+      "livenessRecovered": "생존 상태 복구됨",
+      "credDecryptFail": "자격 증명 복호화 실패",
+      "silentOk": "정상",
+      "empty": "연결 지표 없음"
+    },
+    "guard": {
+      "blocked": "가드 차단됨",
+      "ok": "가드 정상",
+      "unknown": "가드 상태 알 수 없음"
+    },
+    "nativeBridge": {
+      "title": "네이티브 도구 브리지",
+      "decisions": "결정",
+      "decisionsVal": "총 {{total}} · 켜짐 {{on}} · 꺼짐 {{off}}",
+      "lastReason": "마지막 사유",
+      "tools": "도구",
+      "gates": "게이트",
+      "topReasons": "주요 사유",
+      "none": "없음",
+      "defaultTools": "(기본값 Bash만)",
+      "empty": "아직 기록된 네이티브 브리지 라우팅 결정이 없습니다.",
+      "mapped": "매핑됨",
+      "unmapped": "매핑되지 않음"
+    },
+    "rankings": {
+      "reqUnit": "{{count}} 요청",
+      "creditsUnit": "크레딧",
+      "policyBlocked": "정책 차단됨: {{count}}",
+      "rateLimited": "속도 제한됨: {{count}}",
+      "empty": "순위 데이터 없음"
+    },
+    "trend": {
+      "requests": "요청",
+      "errors": "오류",
+      "successRate": "성공률",
+      "empty": "추세 데이터 없음",
+      "emptyHint": "트래픽이 발생하면 여기에 요청이 표시됩니다.",
+      "a11ySummary": "데이터 포인트 {{points}}개, 총 요청 {{requests}}건, 총 오류 {{errors}}건.",
+      "a11yColTime": "시간"
+    }
+  },
+  "settings": {
+    "search": {
+      "placeholder": "설정 필터링...",
+      "noMatch": "일치하는 설정이 없습니다"
+    },
+    "group": {
+      "normal": "일반",
+      "dangerous": "위험 · 주의해서 사용"
+    },
+    "loading": "로딩 중…",
+    "oauthSkipChooser": "Google/GitHub 로그인 시 \"열기/복사\" 선택 팝업을 건너뛰고 로그인 페이지를 바로 엽니다",
+    "emailLockThreshold": "이메일 잠금 임계값",
+    "emailLockThreshold.hint": "이 횟수만큼 로그인에 실패하면 이메일을 잠급니다(0 = 사용 안 함)",
+    "emailLockMinutes": "이메일 잠금 시간(분)",
+    "emailLockMinutes.hint": "잠긴 이메일이 유지되는 시간",
+    "ipLockThreshold": "대시보드 IP 잠금 임계값",
+    "ipLockThreshold.hint": "이 횟수만큼 대시보드 로그인에 실패하면 IP를 차단합니다(0 = 사용 안 함)",
+    "ipLockMinutes": "대시보드 IP 차단 시간(분)",
+    "ipLockMinutes.hint": "차단된 IP가 유지되는 시간",
+    "lockZeroHint": "임계값을 0으로 설정하면 해당 잠금이 비활성화됩니다",
+    "env": {
+      "on": "켜짐",
+      "off": "꺼짐",
+      "devinConnect": "DEVIN_CONNECT(직접 클라우드 HTTP 백엔드)",
+      "devinOnly": "DEVIN_ONLY(Devin CLI를 유일한 백엔드로 사용)",
+      "devinCliMode": "Devin CLI 모드(acp / print)",
+      "allowClientTools": "클라이언트 도구 / 비전(DEVIN_CLI_ALLOW_CLIENT_TOOLS)",
+      "loginHostFallback": "Devin 직접 로그인 폴백(LOGIN_HOST_FALLBACK)",
+      "autoRelogin": "세션 만료 시 자동 재로그인(AUTO_RELOGIN)",
+      "remoteCredStore": "원격 비밀번호 저장 허용(ALLOW_REMOTE_CRED_STORE)",
+      "credStoreEnabled": "자격 증명 저장 키 설정됨(CRED_KEY)",
+      "hint": "위의 라우팅 스위치들은 재배포 없이 실시간으로 전환할 수 있습니다. \"env\"로 표시된 스위치는 환경 변수/기본값을 따르고 있습니다. 재정의하려면 전환하고, 다시 따르게 하려면 초기화하세요. 자격 증명 저장 관련 두 항목은 보안 경계이므로 읽기 전용으로 유지됩니다.",
+      "srcEnv": "env",
+      "srcEnvHint": "환경 변수/기본값을 따르는 중(재정의 없음)",
+      "reset": "기본값으로 초기화",
+      "switched": "백엔드 스위치가 업데이트되었습니다",
+      "confirmTitle": "백엔드 라우팅 전환",
+      "confirmRouting": "이 스위치는 이후 모든 요청의 백엔드 라우팅에 영향을 미칩니다. 진행 중인 세션이 중단될 수 있습니다. 계속하시겠습니까?"
+    },
+    "breaker": {
+      "errorStreakThreshold": "오류 차단 임계값",
+      "errorStreakThreshold.hint": "이 기간 내 이 횟수만큼 오류가 발생하면 계정이 비활성화됩니다(기본값 3)",
+      "errorWindowMin": "오류 연속 발생 기간(분)",
+      "errorWindowMin.hint": "이 시간보다 오래된 오류는 연속 발생 횟수에서 제외됩니다(기본값 30)",
+      "internalErrorThreshold": "내부 오류 격리 임계값",
+      "internalErrorThreshold.hint": "격리되기 전까지 연속으로 허용되는 업스트림 내부 오류 횟수(기본값 2)",
+      "internalQuarantineMin": "내부 오류 격리 시간(분)",
+      "internalQuarantineMin.hint": "격리된 계정이 제외 상태를 유지하는 시간(기본값 2)",
+      "errorRecoveryMin": "반개방 복구 TTL(분)",
+      "errorRecoveryMin.hint": "오류가 발생한 계정이 반개방 재시도를 기다리는 시간(기본값 15)",
+      "enabled": "지수 백오프 확대",
+      "baseMin": "백오프 기준 시간(분)",
+      "baseMin.hint": "지수 단계의 기준 쿨다운 시간(기본값 = 복구 TTL)",
+      "factor": "백오프 배수",
+      "factor.hint": "반복 에피소드마다 곱해지는 쿨다운 배수(기본값 1.5, 1보다 커야 함)",
+      "maxMin": "백오프 상한(분)",
+      "maxMin.hint": "백오프 쿨다운의 최대 상한(기본값 60)",
+      "streakStart": "백오프 시작 연속 횟수",
+      "streakStart.hint": "확대가 시작되는 에피소드 횟수(기본값 2)",
+      "graceMin": "신규 계정 유예 기간(분)",
+      "graceMin.hint": "신규 계정은 이 시간 동안 확대 대상에서 제외됩니다. 0이면 비활성화(기본값 10)",
+      "lastAccountExempt": "마지막 계정 예외",
+      "newAccountBaseline": "신규 계정 LRU 기준값",
+      "retroHint": "임계값을 낮추면 다음 오류 발생 시 즉시 적용됩니다. errorCount는 계속 누적되므로 이미 한도에 가까운 계정은 임계값을 낮춘 직후 바로 트립될 수 있습니다."
+    }
+  }
+}

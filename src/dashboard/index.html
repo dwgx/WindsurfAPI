@@ -3432,15 +3432,20 @@ const I18n = {
       el.querySelector('.help-tip__pop').textContent = txt; // textContent avoids escaping
     });
 
-    // Update HTML lang attribute
-    document.documentElement.lang = this.locale === 'zh' || this.locale === 'zh-CN' ? 'zh-CN' : 'en';
-
-    // Update language indicator
+    // Update HTML lang attribute. Supports the 3-way locale cycle
+    // (zh-CN -> en -> ko -> zh-CN); anything not zh/zh-CN or ko falls back to en.
     const zhMode = this.locale === 'zh' || this.locale === 'zh-CN';
+    const koMode = this.locale === 'ko';
+    document.documentElement.lang = zhMode ? 'zh-CN' : (koMode ? 'ko' : 'en');
+
+    // Update language indicator + toggle tooltip (shows the *next* language in
+    // the cycle, written in that language's own name so it reads regardless
+    // of current locale).
     const indicator = document.getElementById('lang-indicator');
-    if (indicator) indicator.textContent = zhMode ? '中文' : 'English';
+    if (indicator) indicator.textContent = zhMode ? '中文' : (koMode ? '한국어' : 'English');
     const toggleBtn = document.getElementById('lang-toggle-btn');
-    if (toggleBtn) toggleBtn.title = I18n.t(zhMode ? 'footer.langToggleToEn' : 'footer.langToggleToZh');
+    const nextLangKey = zhMode ? 'footer.langToggleToEn' : (koMode ? 'footer.langToggleToZh' : 'footer.langToggleToKo');
+    if (toggleBtn) toggleBtn.title = I18n.t(nextLangKey);
   },
 
   async setLocale(lang) {
@@ -3456,7 +3461,7 @@ const I18n = {
   async init() {
     const saved = localStorage.getItem('lang');
     const browser = navigator.language;
-    const defaultLang = saved || (browser.startsWith('zh') ? 'zh' : 'en');
+    const defaultLang = saved || (browser.startsWith('zh') ? 'zh' : (browser.startsWith('ko') ? 'ko' : 'en'));
     await this.setLocale(defaultLang);
   }
 };
@@ -3602,7 +3607,11 @@ const App = {
   },
 
   async toggleLang() {
-    const newLang = I18n.locale === 'zh' || I18n.locale === 'zh-CN' ? 'en' : 'zh';
+    // 3-way cycle: zh-CN -> en -> ko -> zh-CN.
+    const CYCLE = ['zh-CN', 'en', 'ko'];
+    const cur = I18n.locale === 'zh' ? 'zh-CN' : I18n.locale;
+    const idx = CYCLE.indexOf(cur);
+    const newLang = CYCLE[(idx === -1 ? 0 : idx + 1) % CYCLE.length];
     await I18n.setLocale(newLang);
     this.lang = newLang;
     this.refreshActivePanelI18n();
@@ -3903,7 +3912,7 @@ const App = {
     // Initialize i18n first
     await I18n.init();
     this.initTheme();
-    this.lang = I18n.locale === 'zh-CN' ? 'zh' : 'en';
+    this.lang = I18n.locale === 'zh-CN' ? 'zh' : (I18n.locale === 'ko' ? 'ko' : 'en');
     const auth = await this.api('GET', '/auth');
     // v2.0.61 (#110): when DASHBOARD_PASSWORD isn't configured AND we're
     // bound to a public host, the backend returns `locked:true`. Show a
