@@ -192,7 +192,11 @@ async function main() {
     // children to PID 1, leaving them holding pool ports (42100, 42101…)
     // that the freshly-restarted replica then races (the H-4 orphan race).
     const finalize = async (reason) => {
-      try { saveAccountsSync(); } catch {}
+      // Best-effort flush of the pool on shutdown; a failure here (e.g. /data
+      // momentarily unwritable during SIGTERM) must not block the exit, but it
+      // was previously swallowed silently — log it so a lost final save is
+      // diagnosable rather than invisible. (audit NIT)
+      try { saveAccountsSync(); } catch (e) { log.warn(`Shutdown: saveAccountsSync failed (${reason}): ${e?.message || e}`); }
       try { await stopLanguageServerAndWait({ perProcessTimeoutMs: 1500 }); }
       catch { try { stopLanguageServer(); } catch {} }
       log.info(`Shutdown complete (${reason})`);

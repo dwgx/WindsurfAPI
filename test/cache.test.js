@@ -65,6 +65,16 @@ describe('cacheKey', () => {
     assert.notEqual(cacheKey({ ...base, seed: 1 }), cacheKey({ ...base, seed: 2 }));
   });
 
+  it('audit #9: top_k is part of the key (a live DEVIN_CONNECT sampling knob)', () => {
+    // Two requests differing only in top_k are different generations; without
+    // top_k in the key the second would get a reply sampled under the first's.
+    const base = { model: 'gpt-4o', messages: [{ role: 'user', content: 'hi' }] };
+    assert.notEqual(cacheKey({ ...base, top_k: 10 }), cacheKey({ ...base, top_k: 40 }));
+    assert.notEqual(cacheKey({ ...base, top_k: 10 }), cacheKey(base));
+    // identical top_k still collapses to one slot
+    assert.equal(cacheKey({ ...base, top_k: 20 }), cacheKey({ ...base, top_k: 20 }));
+  });
+
   it('O3: max_completion_tokens and equal max_tokens collapse to one slot', () => {
     // The two spellings are the same generation, so they must share a cache key —
     // otherwise a client migrating from max_tokens to max_completion_tokens would

@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { callerKeyFromRequest, extractBodyCallerSubKey, hasCallerScope } from '../src/caller-key.js';
+import { callerKeyFromRequest, extractBodyCallerSubKey } from '../src/caller-key.js';
 
 function fakeReq({ headers = {}, ip = '127.0.0.1' } = {}) {
   return { headers, socket: { remoteAddress: ip } };
@@ -22,6 +22,15 @@ describe('extractBodyCallerSubKey (v2.0.25 HIGH-3)', () => {
     const a = extractBodyCallerSubKey({ user: 'alice' });
     const b = extractBodyCallerSubKey({ user: 'bob' });
     assert.notEqual(a, b);
+  });
+
+  it('audit S6: surrounding whitespace does not split one user into two buckets', () => {
+    // usableSignal trims, so " alice " and "alice" map to the same tenant scope
+    // (previously the raw untrimmed value hashed into different :user: buckets).
+    assert.equal(extractBodyCallerSubKey({ user: ' alice ' }), extractBodyCallerSubKey({ user: 'alice' }));
+    assert.equal(extractBodyCallerSubKey({ user: '\talice\n' }), extractBodyCallerSubKey({ user: 'alice' }));
+    // whitespace-only is still no signal
+    assert.equal(extractBodyCallerSubKey({ user: '   ' }), '');
   });
 
   it('uses Responses-style previous_response_id when no user', () => {
@@ -116,9 +125,6 @@ describe('callerKeyFromRequest empty-user fail-closed (audit)', () => {
     assert.match(k, /^api:[a-f0-9]+:user:[a-f0-9]{16}$/);
   });
 
-  it('hasCallerScope stays false for an empty-user body with no other signal', () => {
-    assert.equal(hasCallerScope('api:abc', fakeReq({ headers: {} }), { user: '' }), false);
-  });
 });
 
 describe('callerKeyFromRequest with body', () => {
@@ -190,33 +196,6 @@ describe('callerKeyFromRequest with body', () => {
   });
 });
 
-describe('hasCallerScope', () => {
-  it('true for callerKey containing :user:', () => {
-    assert.equal(hasCallerScope('api:abc:user:xyz'), true);
-  });
-
-  it('true for callerKey containing :client: anywhere (v2.0.37 fallback)', () => {
-    // apiKey-mode now appends `:client:<ip+ua-hash>` — scope check
-    // must recognize the segment anywhere, not just as a prefix.
-    assert.equal(hasCallerScope('api:abc:client:xyz'), true);
-  });
-
-  it('true for session: prefix', () => {
-    assert.equal(hasCallerScope('session:abc'), true);
-  });
-
-  it('true for client: prefix', () => {
-    assert.equal(hasCallerScope('client:abc'), true);
-  });
-
-  it('false for bare api: without any subkey', () => {
-    // Should never happen in practice now (callerKeyFromRequest
-    // always tries to add a :client: or :user: subkey) but if some
-    // path fabricates a bare key, scope is still rejected.
-    assert.equal(hasCallerScope('api:abc'), false);
-  });
-
-  it('true when body carries a user signal even if callerKey is bare', () => {
-    assert.equal(hasCallerScope('api:abc', null, { user: 'alice' }), true);
-  });
-});
+// hasCallerScope() removed 2026-07-11 (audit S1): it was dead + diverged from
+// the live gate chat.js:hasPerUserScope. Scope-gate coverage lives with that
+// function; these tests exercised the dead twin and were removed with it.

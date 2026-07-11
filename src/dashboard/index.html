@@ -5867,7 +5867,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
         turnstileToken: this._turnstileToken,
       });
       if (r.success) {
-        status.innerHTML = `<span style="color:var(--success)">${r.message || 'Code sent'}</span>`;
+        status.innerHTML = `<span style="color:var(--success)">${this.esc(r.message || 'Code sent')}</span>`;
         document.getElementById('otp-complete-section').classList.remove('hidden');
         this.toast(I18n.t('otp.codeSent') || 'Verification code sent', 'success');
       } else {

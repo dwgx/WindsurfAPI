@@ -109,6 +109,12 @@ function normalize(body) {
     stream_options: body.stream_options || null,
     temperature: body.temperature ?? null,
     top_p: body.top_p ?? null,
+    // top_k is a live sampling knob on the DEVIN_CONNECT completion config
+    // (chat.js reads body.top_k → completionOverrides.topK; messages.js threads
+    // the Anthropic-side top_k through). Omitting it from the key meant two
+    // requests differing ONLY in top_k shared a cache slot → the second got a
+    // reply sampled under the first's top_k. (audit #9)
+    top_k: body.top_k ?? null,
     // O3: resolve max_completion_tokens (modern OpenAI spelling) with the same
     // precedence handleChatCompletions uses, so the two field names collapse to
     // one cache dimension — a request sending max_completion_tokens:N and one

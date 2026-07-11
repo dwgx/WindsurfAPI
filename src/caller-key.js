@@ -10,9 +10,12 @@ function sha256Hex(value) {
 // user:"" would otherwise hash to the constant sha256("") prefix
 // (e3b0c44298fc1c14...), collapsing every distinct end user of a shared key
 // into one :user: segment and re-enabling cross-tenant cascade/cache bleed.
-// Returns '' for anything that isn't a non-empty trimmed string.
+// Returns the TRIMMED non-empty string, else ''. Trimming matters: returning the
+// raw value made " alice " and "alice" hash into different :user: buckets, so the
+// same end user got split tenant scopes across requests with incidental
+// whitespace. (audit S6)
 function usableSignal(value) {
-  return typeof value === 'string' && value.trim() !== '' ? value : '';
+  return typeof value === 'string' && value.trim() !== '' ? value.trim() : '';
 }
 
 // Extract a per-user / per-session signal from the request body so two
@@ -123,22 +126,10 @@ export function callerKeyFromRequest(req, apiKey = '', body = null) {
   return bodySubKey ? `${base}:user:${bodySubKey}` : base;
 }
 
-// Returns true if we have any per-user signal beyond the bare API key.
-// chat.js consults this to decide whether to allow conversation reuse for a
-// shared API key with no user dimension — pre-v2.0.25 we did, which let two
-// concurrent end users on the same proxy key share each other's cascade
-// state. Now defaults to off; set CASCADE_REUSE_ALLOW_SHARED_API_KEY=1 to
-// restore the legacy permissive behavior.
-export function hasCallerScope(callerKey, req, body) {
-  if (typeof callerKey === 'string') {
-    if (callerKey.includes(':user:')) return true;
-    // Match :client: anywhere — apiKey-mode now appends `:client:<ip+ua>`
-    // as a fallback subkey when there's no body user signal, so the
-    // scope check has to look past the prefix.
-    if (callerKey.includes(':client:')) return true;
-    if (callerKey.startsWith('session:') || callerKey.startsWith('client:')) return true;
-  }
-  if (body && extractBodyCallerSubKey(body)) return true;
-  if (req?.headers?.['x-dashboard-session'] || req?.headers?.['x-session-id']) return true;
-  return false;
-}
+// NOTE: a `hasCallerScope()` export used to live here. It was DEAD (zero
+// production imports — grep) and had silently diverged from the LIVE gate
+// `hasPerUserScope()` in src/handlers/chat.js (the live one gates the guessed
+// `:client:` bucket behind SINGLE_TENANT_CACHE; this dead twin trusted it
+// unconditionally). Keeping a diverged, more-permissive copy exported was a
+// cross-tenant-cache landmine if anyone had imported it. Removed 2026-07-11
+// (audit S1). The authoritative scope gate is chat.js:hasPerUserScope.
