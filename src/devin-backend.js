@@ -18,6 +18,16 @@
  *   tests can mock the network and CI never touches app.devin.ai.
  * - Nothing here runs at import time and no function dials the network unless called.
  * - All values treated as data; no shell, no eval.
+ *
+ * ⚠️ STATUS (audit S3, 2026-07-11): this module is an intentional ROADMAP STUB —
+ * it has ZERO production importers (grep `from './devin-backend.js'` in src/ →
+ * none) and backend-router.selectBackend() NEVER returns BACKEND.DEVIN_REST, so
+ * no request path reaches this code. The dedicated unit tests
+ * (test/devin-backend*.test.js) were REMOVED because they inflated coverage on
+ * unreachable code (all fake-green: they exercised these helpers against a mock
+ * fetch, but nothing live calls them). Kept as the DEVIN_REST placeholder per
+ * product decision. If/when this is wired into selectBackend, re-add tests THEN,
+ * against the live route — not before. Do not "restore" the deleted tests.
  */
 
 import { VERSION } from './version.js';
