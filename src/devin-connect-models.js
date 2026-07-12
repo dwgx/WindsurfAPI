@@ -196,8 +196,20 @@ export function setLiveCatalogSelectors(catalog) {
   for (const it of items) {
     if (typeof it === 'string') { if (it.trim()) next.add(it.trim()); continue; }
     if (it && typeof it === 'object') {
+      // ONLY the canonical `selector` (the full, upstream-accepted form) goes into
+      // the live existence set. The catalog's `alias` is a FAMILY shortcut
+      // (e.g. selector "gpt-5-6-sol-medium" → alias "gpt-5.6-sol"; and multiple
+      // effort tiers of one family SHARE one alias — claude-opus-4-7-{low,medium,
+      // high,max} all alias to "claude-opus-4.7"). The upstream does NOT accept an
+      // alias as a model name — writing a bare family alias to GetChatMessageRequest
+      // #21 trips UPSTREAM_INTERNAL and burns the account (frame-proven: only the
+      // full "-medium" form 200s). Folding aliases in here made resolveConnectSelector
+      // return mapped:true for a family alias not covered by SELECTOR_MAP (e.g.
+      // "gpt-5.6-sol") and pass that bad form straight through. Aliases are handled
+      // by the hand-maintained SELECTOR_MAP (which resolves them to a real selector);
+      // an alias the map doesn't know must fail closed, not pass through raw.
+      // (ultracode review 2026-07-12; real-account confirmed gpt-5.6-sol regression)
       if (typeof it.selector === 'string' && it.selector.trim()) next.add(it.selector.trim());
-      if (typeof it.alias === 'string' && it.alias.trim()) next.add(it.alias.trim());
     }
   }
   if (!next.size) return; // never blank out a good set on a bad fetch

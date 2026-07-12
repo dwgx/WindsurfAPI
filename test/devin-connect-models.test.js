@@ -77,12 +77,29 @@ describe('resolveConnectSelector — live catalog (audit 2026-07-12 snapshot sta
     }
   });
 
-  it('live sync also folds in each entry alias (dotted client form)', async () => {
+  it('live sync recognizes the canonical selector but does NOT pass a family alias through raw (ultracode fix 2026-07-12)', async () => {
     const m = await import(`../src/devin-connect-models.js?fresh=${Date.now()}-c`);
+    // Real regression case: gpt-5-6-sol-medium is the upstream-accepted selector;
+    // "gpt-5.6-sol" is its FAMILY alias (and NOT in the hand-maintained SELECTOR_MAP).
+    m.setLiveCatalogSelectors([{ selector: 'gpt-5-6-sol-medium', alias: 'gpt-5.6-sol' }]);
+    // The canonical full selector IS recognized from the live catalog.
+    assert.equal(m.resolveConnectSelector('gpt-5-6-sol-medium').mapped, true);
+    // The family alias must NOT resolve mapped:true off the live set — folding it
+    // in made the gateway pass the bare family form to upstream #21 → UPSTREAM_INTERNAL
+    // (burns the account). Aliases are the SELECTOR_MAP's job; an unknown one fails
+    // closed (degrades to free / 400 under strict), it does NOT pass through raw.
+    const r = m.resolveConnectSelector('gpt-5.6-sol');
+    assert.equal(r.mapped, false, 'family alias not in SELECTOR_MAP must NOT be treated as a runnable selector');
+    assert.notEqual(r.selector, 'gpt-5.6-sol', 'must never emit the bare family alias as the upstream selector');
+  });
+
+  it('a known SELECTOR_MAP alias still resolves correctly (regression guard)', async () => {
+    const m = await import(`../src/devin-connect-models.js?fresh=${Date.now()}-c2`);
     m.setLiveCatalogSelectors([{ selector: 'glm-5-2', alias: 'glm-5.2' }]);
-    // Both the canonical selector and the upstream alias are recognized.
+    // glm-5.2 is in the hand-maintained SELECTOR_MAP → still resolves to glm-5-2,
+    // independent of the (now removed) alias fold.
     assert.equal(m.resolveConnectSelector('glm-5-2').mapped, true);
-    assert.equal(m.resolveConnectSelector('glm-5.2').mapped, true);
+    assert.equal(m.resolveConnectSelector('glm-5.2').selector, 'glm-5-2');
   });
 
   it('a bad/empty sync never blanks out a good live set', async () => {
