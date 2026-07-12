@@ -20,7 +20,9 @@ import {
   validateApiKey, isAuthenticated, getAccountList, getAccountCount,
   addAccountByEmail, addAccountByToken, addAccountByKey, removeAccount,
   configureBindHost, emitNoAuthWarnings, getDroughtSummary, ensureLsForAccount,
+  checkLockout, failedAuthAttempt, successfulAuthAttempt,
 } from './auth.js';
+import { trustedClientIp } from './net-safety.js';
 import { handleChatCompletions, normalizeOpenAIErrorBody } from './handlers/chat.js';
 import { handleMessages, handleCountTokens, validateMessagesRequest, validateCountTokensRequest } from './handlers/messages.js';
 import { handleGemini, parseGeminiPath } from './handlers/gemini.js';
@@ -373,12 +375,34 @@ async function route(req, res) {
   const isAccountMgmt = path === '/auth/accounts'
     || path.startsWith('/auth/accounts/')
     || (path === '/auth/login' && method === 'POST');
-  if (isAccountMgmt && !verifyAdminRequest(req)) {
-    return json(res, 403, { error: {
-      message: 'Account-pool management (list/add/delete accounts) requires operator authentication. Send the dashboard password via the `x-dashboard-password` header (set DASHBOARD_PASSWORD, or use the dashboard UI). A chat API key alone is not sufficient.',
-      type: 'auth_error',
-      code: 'admin_required',
-    } });
+  if (isAccountMgmt) {
+    // H-2 (ultracode audit 2026-07-13): these admin endpoints share the same
+    // operator credential as /dashboard/api/* but previously had NO brute-force
+    // lockout — an attacker holding a chat key could online-guess the operator
+    // password here unlimited times, while the same guessing on /dashboard/api/*
+    // gets banned after 5 tries. Wire the SAME lockout (same client-IP bucket,
+    // trustedClientIp) so the two endpoints can't be played against each other.
+    const clientIp = trustedClientIp(req);
+    const lock = checkLockout(clientIp);
+    if (lock.blocked) {
+      res.setHeader?.('Retry-After', String(Math.ceil(lock.retryAfterMs / 1000)));
+      return json(res, 429, { error: {
+        message: `Too many failed operator-auth attempts. IP banned for ${Math.ceil(lock.retryAfterMs / 1000)}s.`,
+        type: 'auth_error', code: 'locked_out',
+      } });
+    }
+    if (!verifyAdminRequest(req)) {
+      // Only count a real guess (non-empty password) toward the lockout, mirroring
+      // dashboard/api.js — an empty header is the normal "no creds" case.
+      if (String(req.headers['x-dashboard-password'] || '')) failedAuthAttempt(clientIp);
+      return json(res, 403, { error: {
+        message: 'Account-pool management (list/add/delete accounts) requires operator authentication. Send the dashboard password via the `x-dashboard-password` header (set DASHBOARD_PASSWORD, or use the dashboard UI). A chat API key alone is not sufficient.',
+        type: 'auth_error',
+        code: 'admin_required',
+      } });
+    }
+    // Authenticated operator — clear any failed-attempt streak for this IP.
+    successfulAuthAttempt(clientIp);
   }
 
   if (path === '/auth/accounts' && method === 'GET') {

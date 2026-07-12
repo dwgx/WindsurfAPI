@@ -42,7 +42,24 @@ function normalizeMessageContent(content) {
     if (part.type === 'input_text' || part.type === 'output_text' || part.type === 'text') {
       out.push({ type: 'text', text: part.text || '' });
     } else if (part.type === 'input_image') {
-      out.push(part.image_url ? { type: 'image_url', image_url: part.image_url } : part);
+      // H-1 (ultracode audit 2026-07-13): Responses API `input_image.image_url`
+      // is a STRING (a URL or a `data:` base64 URI). Downstream image extractors
+      // (image.js:568, devin-connect.js:210) read `block.image_url?.url`, so a
+      // bare string yields `.url === undefined` → 0 images extracted → the model
+      // is told "there's an image" (hasMultimodalContent is truthy on the
+      // non-empty string) but silently answers blind. Normalize to the standard
+      // Chat-Completions object shape `{ image_url: { url, detail? } }` so the
+      // whole vision chain works for both string and (defensively) object forms.
+      const raw = part.image_url;
+      const url = typeof raw === 'string' ? raw : (raw && typeof raw === 'object' ? (raw.url || '') : '');
+      if (url) {
+        const img = { url };
+        if (part.detail) img.detail = part.detail;
+        else if (raw && typeof raw === 'object' && raw.detail) img.detail = raw.detail;
+        out.push({ type: 'image_url', image_url: img });
+      } else {
+        out.push(part);
+      }
     } else {
       out.push(part);
     }

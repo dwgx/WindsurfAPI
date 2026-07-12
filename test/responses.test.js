@@ -639,3 +639,36 @@ describe('handleResponses streaming', () => {
     assert.equal(events.at(-1).data.response.output[0].type, 'reasoning');
   });
 });
+
+describe('H-1 (audit 2026-07-13): input_image string image_url normalizes to object shape', () => {
+  it('string image_url (data: URI) becomes { image_url: { url } } so downstream .url works', () => {
+    const { messages } = responsesToChat({
+      model: 'gpt-4o',
+      input: [{ type: 'message', role: 'user', content: [
+        { type: 'input_text', text: '描述这张图' },
+        { type: 'input_image', image_url: 'data:image/png;base64,AAAA' },
+      ] }],
+    });
+    const parts = messages.find(m => m.role === 'user').content;
+    const img = parts.find(p => p.type === 'image_url');
+    assert.ok(img, 'image part present');
+    assert.equal(typeof img.image_url, 'object', 'image_url must be an object, not a bare string');
+    assert.equal(img.image_url.url, 'data:image/png;base64,AAAA', 'downstream reads .url');
+  });
+
+  it('preserves detail and still handles object-form image_url defensively', () => {
+    const { messages } = responsesToChat({
+      model: 'gpt-4o',
+      input: [{ type: 'message', role: 'user', content: [
+        { type: 'input_image', image_url: 'https://x/y.png', detail: 'high' },
+        { type: 'input_image', image_url: { url: 'https://z/w.png' } },
+      ] }],
+    });
+    const parts = messages.find(m => m.role === 'user').content;
+    const imgs = parts.filter(p => p.type === 'image_url');
+    assert.equal(imgs.length, 2);
+    assert.equal(imgs[0].image_url.url, 'https://x/y.png');
+    assert.equal(imgs[0].image_url.detail, 'high');
+    assert.equal(imgs[1].image_url.url, 'https://z/w.png');
+  });
+});

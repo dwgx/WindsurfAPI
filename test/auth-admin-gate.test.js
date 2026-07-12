@@ -86,3 +86,20 @@ describe('H1: account-pool management requires operator auth', () => {
     assert.ok(Array.isArray(list.body?.accounts), 'returns the account list');
   });
 });
+
+describe('H-2 (audit 2026-07-13): /auth/* admin gate has brute-force lockout', () => {
+  it('repeated wrong operator passwords get locked out (429) like /dashboard/api/*', async () => {
+    server = startServer(); await waitListening(server);
+    const port = server.address().port;
+    // 5 wrong operator-password guesses (chat key valid, dashboard pw wrong) → 403 each,
+    // feeding the lockout; the 6th should be 429 locked_out.
+    let sawLock = false;
+    for (let i = 0; i < 7; i++) {
+      const r = await req(port, 'GET', '/auth/accounts',
+        { authorization: 'Bearer sk-chat-shared', 'x-dashboard-password': 'wrong-guess-' + i });
+      if (r.status === 429 && r.body?.error?.code === 'locked_out') { sawLock = true; break; }
+      assert.equal(r.status, 403, `attempt ${i} expected 403 before lock, got ${r.status}`);
+    }
+    assert.ok(sawLock, 'brute-force lockout must trigger 429 after repeated wrong operator passwords');
+  });
+});

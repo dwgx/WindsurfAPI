@@ -187,15 +187,34 @@ export function grpcUnary(port, csrfToken, path, body, timeout = 30000) {
     });
     req.on('data', (chunk) => chunks.push(chunk));
 
-    let grpcStatus = '0', grpcMessage = '';
+    let grpcStatus = '0', grpcMessage = '', httpStatus = 0;
+
+    // H-3 (ultracode audit 2026-07-13): a gRPC Trailers-Only response folds
+    // grpc-status into the FIRST HEADERS frame (END_STREAM, no DATA) — it arrives
+    // via the 'response' event, NOT 'trailers'. Without reading it, an immediate
+    // upstream error (grpc-status 14/8/12) or an HTTP :status 4xx/5xx left
+    // grpcStatus at '0' and was treated as an empty SUCCESS, blinding the account
+    // pool's error classification/failover. Capture status from the response
+    // headers too, then honour it in the end handler below.
+    req.on('response', (headers) => {
+      httpStatus = Number(headers[':status'] || 0);
+      if (headers['grpc-status'] != null) grpcStatus = String(headers['grpc-status']);
+      if (headers['grpc-message'] != null) grpcMessage = String(headers['grpc-message']);
+    });
 
     req.on('trailers', (trailers) => {
-      grpcStatus = String(trailers['grpc-status'] ?? '0');
-      grpcMessage = String(trailers['grpc-message'] ?? '');
+      // Trailers override/confirm; only take grpc-status when actually present so
+      // a Trailers-Only status captured from headers isn't reset to '0'.
+      if (trailers['grpc-status'] != null) grpcStatus = String(trailers['grpc-status']);
+      if (trailers['grpc-message'] != null) grpcMessage = String(trailers['grpc-message']);
     });
 
     req.on('end', () => {
       clearTimeout(timer);
+      if (!USE_CONNECT && httpStatus && (httpStatus < 200 || httpStatus >= 300)) {
+        done(reject, new Error(`upstream HTTP ${httpStatus}`));
+        return;
+      }
       if (!USE_CONNECT && grpcStatus !== '0') {
         const msg = grpcMessage ? decodeGrpcMessage(grpcMessage) : `gRPC status ${grpcStatus}`;
         done(reject, new Error(msg));
@@ -389,18 +408,31 @@ export function grpcStream(port, csrfToken, path, body, opts = {}) {
     }
   });
 
-  let grpcStatus = '0', grpcMessage = '';
+  let grpcStatus = '0', grpcMessage = '', httpStatus = 0;
+
+  // H-3 (ultracode audit 2026-07-13): capture Trailers-Only status from the
+  // HEADERS frame ('response' event) — same fix as grpcUnary. Without it a
+  // stream that errors immediately (Trailers-Only grpc-status, or HTTP :status
+  // 4xx/5xx, END_STREAM no DATA) produced zero chunks → onEnd → a silent empty
+  // assistant reply instead of an error the pool can classify.
+  req.on('response', (headers) => {
+    httpStatus = Number(headers[':status'] || 0);
+    if (headers['grpc-status'] != null) grpcStatus = String(headers['grpc-status']);
+    if (headers['grpc-message'] != null) grpcMessage = String(headers['grpc-message']);
+  });
 
   req.on('trailers', (trailers) => {
-    grpcStatus = String(trailers['grpc-status'] ?? '0');
-    grpcMessage = String(trailers['grpc-message'] ?? '');
+    if (trailers['grpc-status'] != null) grpcStatus = String(trailers['grpc-status']);
+    if (trailers['grpc-message'] != null) grpcMessage = String(trailers['grpc-message']);
   });
 
   req.on('end', () => {
     clearTimeout(timer);
     if (settled) return;
     settled = true;
-    if (!USE_CONNECT && grpcStatus !== '0') {
+    if (!USE_CONNECT && httpStatus && (httpStatus < 200 || httpStatus >= 300)) {
+      onError?.(new Error(`upstream HTTP ${httpStatus}`));
+    } else if (!USE_CONNECT && grpcStatus !== '0') {
       const msg = grpcMessage ? decodeGrpcMessage(grpcMessage) : `gRPC status ${grpcStatus}`;
       onError?.(new Error(msg));
     } else {
