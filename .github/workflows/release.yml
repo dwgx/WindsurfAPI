@@ -122,7 +122,11 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          # Match the pkg target (node22-win-x64). pkg-fetch 3.6.4 ships prebuilt
+          # base binaries for node22/24/26 but NOT node20 — a node20 target 404s
+          # then falls back to compiling Node from source (no VS toolchain on the
+          # runner → fails). node22 is LTS and has multiple prebuilts.
+          node-version: '22'
 
       # Build the single .exe with @yao-pkg/pkg. The Windows runner has the
       # network + toolchain to fetch (or, worst case, compile) the pkg base
@@ -133,7 +137,7 @@ jobs:
       - name: Build windsurfapi.exe
         run: |
           npm i -g @yao-pkg/pkg@6.21.0
-          pkg . --targets node20-win-x64 --output dist-windows/windsurfapi.exe
+          pkg . --targets node22-win-x64 --output dist-windows/windsurfapi.exe
 
       - name: Smoke-check the exe boots
         shell: pwsh

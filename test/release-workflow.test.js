@@ -31,7 +31,7 @@ describe('release workflow', () => {
     const winExe = jobBlock('windows-exe');
     assert.match(winExe, /\bneeds:\s*test\b/);
     assert.match(winExe, /runs-on:\s*windows-latest/);
-    assert.match(winExe, /pkg \. --targets node20-win-x64/);
+    assert.match(winExe, /pkg \. --targets node22-win-x64/);
     // Must smoke-check the exe actually boots + serves the dashboard, so a
     // broken asset bundle fails the release rather than shipping a dead exe.
     assert.match(winExe, /\/health/);
