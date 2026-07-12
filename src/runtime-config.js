@@ -426,32 +426,35 @@ const BREAKER_TUNABLES = {
   // client (Claude Code honours Retry-After for its auto-retry backoff), floor the
   // advertised Retry-After so the client waits a useful minimum instead of hot-
   // looping (a 1s hint = immediate re-hammer), and ceil it so an over-long upstream
-  // reset window can't freeze the client for minutes. def 0 for the floor keeps
-  // env-only deploys byte-identical (0 = "no floor", i.e. exact current behaviour);
-  // set it (e.g. 30000) to enable the mitigation. Ceil default 600000 (10min) is a
-  // pure safety clamp that only ever shortens an absurd hint.
-  rlClientBackoffFloorMs: { env: 'WINDSURFAPI_RL_CLIENT_BACKOFF_FLOOR_MS', kind: 'int', def: 0,      min: 0,    max: 600000 },
+  // reset window can't freeze the client for minutes. def 30000 (30s) as of
+  // 2026-07-12: the 429 mitigation is ON by default — a floor of 30s breaks the
+  // "immediate re-hammer → re-cooldown → lock" loop that benched the account pool
+  // under Claude Code / OpenCode auto-retry. Set 0 to disable the floor (revert to
+  // the old byte-identical behaviour). Ceil default 600000 (10min) is a pure safety
+  // clamp that only ever shortens an absurd hint.
+  rlClientBackoffFloorMs: { env: 'WINDSURFAPI_RL_CLIENT_BACKOFF_FLOOR_MS', kind: 'int', def: 30000,  min: 0,    max: 600000 },
   rlClientBackoffCeilMs:  { env: 'WINDSURFAPI_RL_CLIENT_BACKOFF_CEIL_MS',  kind: 'int', def: 600000, min: 1000, max: 86400000 },
   // F2 (2026-07-10): duration of the account-wide cooldown applied to a BARE 429
-  // (RATE_LIMITED with no upstream reset window). def 300000 (5min) = byte-
-  // identical to the historical hard-coded value. KiroStudio's production data
-  // (PLAN-RETRY-AMPLIFICATION-FIX-0708) showed bare bursts self-heal in seconds,
-  // so an operator can shorten this (e.g. 15000) to stop a transient burst from
-  // benching an account for 5 minutes. Left at the historical default because we
-  // have no WindsurfAPI-side evidence that Devin's bare 429s behave like Kiro's —
-  // this is a lever, not a blind behavioural change. A 429 WITH a parsed reset
-  // window still honours the upstream value (model-scoped), unaffected by this.
-  rlBurstMs:              { env: 'WINDSURFAPI_RL_BURST_MS',                kind: 'int', def: 300000, min: 1000, max: 86400000 },
+  // (RATE_LIMITED with no upstream reset window). def 15000 (15s) as of 2026-07-12
+  // — the historical value was 300000 (5min). KiroStudio's production data
+  // (PLAN-RETRY-AMPLIFICATION-FIX-0708) showed bare bursts self-heal in seconds, so
+  // benching an account for 5min on a transient burst was a small-pool sinkhole.
+  // The breaker's exponential backoff still lengthens the cooldown if the SAME
+  // account keeps tripping, so a genuine (non-transient) limit isn't under-served.
+  // Set 300000 to revert. A 429 WITH a parsed reset window still honours the
+  // upstream value (model-scoped), unaffected by this.
+  rlBurstMs:              { env: 'WINDSURFAPI_RL_BURST_MS',                kind: 'int', def: 15000,  min: 1000, max: 86400000 },
   // L2 (2026-07-10): degraded-serve fallback. When the hard account filter leaves
   // ZERO candidates (whole entitled pool transiently throttled), serve the least-
-  // bad transiently-cooled account instead of returning 429. def FALSE → byte-
-  // identical to current behaviour (return null → 429); set true to opt in. This
-  // is the architectural replacement for the isLastUsableAccount exemption patch:
-  // it covers a single-account pool AND any all-throttled pool without a special
-  // "last account" rule. STRICT scope (see pickDegradedFallback): only transient
-  // rateLimitedUntil qualifies — never quota dry-wells, dead accounts, or tier-
-  // ineligible ones, so it can't turn a real fault into a degraded gamble.
-  degradedServe:          { env: 'WINDSURFAPI_DEGRADED_SERVE',            kind: 'bool', def: false },
+  // bad transiently-cooled account instead of returning 429. def TRUE as of
+  // 2026-07-12 (the 429 mitigation is on): serving a slightly-cooled account beats
+  // blacking out the whole pool with a 429. This is the architectural replacement
+  // for the isLastUsableAccount exemption patch: it covers a single-account pool
+  // AND any all-throttled pool without a special "last account" rule. STRICT scope
+  // (see pickDegradedFallback): only transient rateLimitedUntil qualifies — never
+  // quota dry-wells, dead accounts, or tier-ineligible ones, so it can't turn a
+  // real fault into a degraded gamble. Set false to revert to hard fast-429.
+  degradedServe:          { env: 'WINDSURFAPI_DEGRADED_SERVE',            kind: 'bool', def: true },
 };
 const BREAKER_KEYS = new Set(Object.keys(BREAKER_TUNABLES));
 

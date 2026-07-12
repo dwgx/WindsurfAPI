@@ -202,9 +202,11 @@ describe('F3 — clientRetryAfterSeconds (client-replay backoff clamp)', () => {
     setBreakerTunables({ rlClientBackoffFloorMs: null, rlClientBackoffCeilMs: null });
   });
 
-  it('default (floor=0) is byte-identical to plain ceil(ms/1000) — no floor applied', () => {
-    // def floor=0 → no lengthening; def ceil=600000 → only clamps absurd values.
-    assert.equal(clientRetryAfterSeconds(1000), 1, '1s hint stays 1s when no floor set');
+  it('floor=0 (opt-out) is byte-identical to plain ceil(ms/1000) — no floor applied', () => {
+    // The default floor is now 30000 (429 mitigation on); set 0 to disable it and
+    // get the original no-floor behaviour. ceil=600000 → only clamps absurd values.
+    setBreakerTunables({ rlClientBackoffFloorMs: 0 });
+    assert.equal(clientRetryAfterSeconds(1000), 1, '1s hint stays 1s when floor disabled');
     assert.equal(clientRetryAfterSeconds(4500), 5, 'rounds up to whole seconds (ceil)');
     assert.equal(clientRetryAfterSeconds(0), 1, 'zero floored to the 1s header minimum');
   });

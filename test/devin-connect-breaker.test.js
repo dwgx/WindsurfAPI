@@ -592,7 +592,9 @@ describe('L2 — degraded-serve fallback (pool fully throttled)', () => {
 
   function cool(acct, ms) { markRateLimited(acct.apiKey, ms, null); } // account-wide transient
 
-  it('default OFF: a fully-throttled pool returns null (byte-identical → 429)', () => {
+  it('disabled (opt-out): a fully-throttled pool returns null → 429', () => {
+    // Default is now ON (429 mitigation); explicitly disable to get the hard fast-429.
+    setBreakerTunables({ degradedServe: false });
     const a = mk('l2-off');
     cool(a, 60_000);
     assert.equal(getApiKey([], null, ''), null, 'no degraded serve when disabled → null → 429');

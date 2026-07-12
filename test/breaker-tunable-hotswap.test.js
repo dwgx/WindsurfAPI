@@ -48,13 +48,14 @@ describe('breaker tunables — three-tier resolution (v3.0.3)', () => {
     assert.equal(getBreakerTunable('breakerEnabled'), true);
     assert.equal(getBreakerTunable('lastAccountExempt'), true);
     assert.equal(getBreakerTunable('newAccountBaseline'), true);
-    // F3/F2 defaults must be byte-identical to pre-change behaviour: floor=0 (no
-    // floor), ceil=600000 (safety only), burst=300000 (the old hard-coded 5min).
-    assert.equal(getBreakerTunable('rlClientBackoffFloorMs'), 0);
+    // 429 mitigation ON by default as of 2026-07-12: floor=30000 (30s min client
+    // backoff, breaks the re-hammer loop), ceil=600000 (safety only), burst=15000
+    // (bare-429 self-heals fast). Set env/tunable to revert any of these.
+    assert.equal(getBreakerTunable('rlClientBackoffFloorMs'), 30000);
     assert.equal(getBreakerTunable('rlClientBackoffCeilMs'), 600000);
-    assert.equal(getBreakerTunable('rlBurstMs'), 300000);
-    // L2 degraded-serve defaults OFF (byte-identical: return null → 429).
-    assert.equal(getBreakerTunable('degradedServe'), false);
+    assert.equal(getBreakerTunable('rlBurstMs'), 15000);
+    // L2 degraded-serve defaults ON (serve a slightly-cooled account beats a 429).
+    assert.equal(getBreakerTunable('degradedServe'), true);
   });
 
   it('env overrides the default; injected env is honored (env-only deploy path)', () => {

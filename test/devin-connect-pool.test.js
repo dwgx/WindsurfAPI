@@ -68,11 +68,11 @@ describe('finalizeConnectAccount', () => {
     ));
   });
 
-  // F2 (2026-07-10): a BARE 429 (no upstream reset window) applies an account-wide
-  // cooldown of `rlBurstMs`. Default 300000 = the historical 5min (byte-identical);
-  // an operator can shorten it so a transient burst does not bench the account for
-  // 5 minutes. A 429 WITH a reset window is unaffected (stays model-scoped).
-  it('F2: bare 429 default cools the account ~5min account-wide (byte-identical)', () => {
+  // F2: a BARE 429 (no upstream reset window) applies an account-wide cooldown of
+  // `rlBurstMs`. Default is 15000 (15s) as of 2026-07-12 (429 mitigation on) — the
+  // historical value was 300000 (5min). An operator can revert via the tunable. A
+  // 429 WITH a reset window is unaffected (stays model-scoped).
+  it('F2: bare 429 default cools the account ~15s account-wide', () => {
     const acct = seed('rl-bare-default');
     const t0 = Date.now();
     finalizeConnectAccount(
@@ -80,7 +80,7 @@ describe('finalizeConnectAccount', () => {
       { model: 'swe-1-6-slow', startTime: t0, err: Object.assign(new Error('rate limited'), { code: 'RATE_LIMITED' }) },
     );
     const until = acct.rateLimitedUntil || 0;
-    assert.ok(until > t0 + 4.5 * 60 * 1000 && until < t0 + 5.5 * 60 * 1000, `account-wide ~5min (got ${(until - t0) / 1000}s)`);
+    assert.ok(until > t0 + 10 * 1000 && until < t0 + 20 * 1000, `account-wide ~15s (got ${(until - t0) / 1000}s)`);
   });
 
   it('F2: rlBurstMs override shortens the bare-429 account-wide cooldown', () => {
