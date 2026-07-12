@@ -166,9 +166,19 @@ export const FREE_REACHABLE_SELECTORS = new Set(['swe-1-6-slow']);
 // exactly the single-source-of-truth principle converged on cross-project.
 // Empty until the first sync (cold start falls back to snapshot alone).
 const _liveSelectors = new Set();
+// Full decoded catalog rows ({ selector, label, provider, alias, ... }) from the
+// last good sync. Kept alongside _liveSelectors so /v1/models can synthesize
+// entries for live-only selectors that aren't in the hardcoded MODELS table
+// (audit 2026-07-12: the 37 upstream-added selectors — gpt-5-6-*/grok-4-5-*/
+// nemotron — run fine at /v1/chat/completions but were missing from /v1/models,
+// so Codex/clients couldn't discover them). Empty until the first sync.
+let _liveCatalog = [];
 
 /** True when at least one live catalog sync has populated the live set. */
 export function hasLiveCatalog() { return _liveSelectors.size > 0; }
+
+/** The full decoded live catalog rows from the last good sync (may be []). */
+export function getLiveCatalog() { return _liveCatalog; }
 
 /**
  * Replace the live DEVIN_CONNECT selector set from a fresh GetCliModelConfigs
@@ -193,6 +203,10 @@ export function setLiveCatalogSelectors(catalog) {
   if (!next.size) return; // never blank out a good set on a bad fetch
   _liveSelectors.clear();
   for (const s of next) _liveSelectors.add(s);
+  // Retain the full rows too (only when we were handed decoded objects, not a
+  // bare string/Set) so /v1/models can synthesize live-only entries.
+  const rows = items.filter((it) => it && typeof it === 'object' && typeof it.selector === 'string' && it.selector.trim());
+  if (rows.length) _liveCatalog = rows;
 }
 
 /** A selector exists if the frozen snapshot OR the live catalog knows it. */
