@@ -57,8 +57,6 @@ if (-not (Test-Path $envPath)) {
   $genMsg = "已生成并写入 .env:`n`n面板密码 (DASHBOARD_PASSWORD):`n  $pw`n`nAPI Key (API_KEY):`n  $apiKey`n`n请截图妥善保存。"
 }
 
-# PLACEHOLDER_TRAY_BODY
-
 # 从 .env 读 PORT / 密码 / API Key(勿硬编码)。每次启动都读,使"复制密码"菜单
 # 在非首次启动时也能用(不只首次生成那一刻)。
 $Port = 3003
@@ -133,8 +131,6 @@ function Stop-Node {
   if (Test-Path $PidFile) { Remove-Item $PidFile -Force -EA SilentlyContinue }
 }
 
-# PLACEHOLDER_TRAY_UI
-
 # ─── 托盘图标 ───
 $notify = New-Object System.Windows.Forms.NotifyIcon
 # 用系统图标(零资产依赖);有自带 .ico 则优先。
@@ -207,8 +203,6 @@ $miExit.Add_Click({
   $notify.Dispose()
   [System.Windows.Forms.Application]::Exit()
 })
-
-# PLACEHOLDER_TRAY_LOOP
 
 # ─── 监督定时器 ───
 # 消息泵下不能阻塞 WaitForExit(会冻结 UI),改用 1s 定时器轮询子进程是否退出,
