@@ -800,6 +800,12 @@
     "confirmClear": "Clear the runtime override and fall back to the .env value?"
   },
   "confirm": {
+    "saveDiffTitle": "Review changes before saving",
+    "saveDiffStat": "{{add}} added / {{del}} removed",
+    "saveDiffNoChange": "No changes to save.",
+    "saveDiffApply": "Apply changes",
+    "unsavedTitle": "Unsaved changes",
+    "unsavedDesc": "You have unsaved changes. Leave without saving?",
     "restartTitle": "Restart Language Server",
     "restartDesc": "In-progress requests will fail. Continue?",
     "updateLsTitle": "Update LS Binary",

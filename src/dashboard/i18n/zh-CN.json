@@ -800,6 +800,12 @@
     "confirmClear": "清除运行时覆盖，回退 .env 值？"
   },
   "confirm": {
+    "saveDiffTitle": "保存前确认改动",
+    "saveDiffStat": "新增 {{add}} 行 / 删除 {{del}} 行",
+    "saveDiffNoChange": "没有可保存的改动。",
+    "saveDiffApply": "应用改动",
+    "unsavedTitle": "有未保存改动",
+    "unsavedDesc": "你有未保存的改动。确定不保存就离开吗？",
     "restartTitle": "重启 Language Server",
     "restartDesc": "进行中的请求将会失败，确定要继续吗？",
     "updateLsTitle": "更新 LS Binary",

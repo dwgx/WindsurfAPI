@@ -1847,6 +1847,12 @@ tbody tr:hover td { background: var(--surface-2); }
 @keyframes tt-in { from{opacity:0;transform:translateX(-50%) translateY(4px)} to{opacity:1;transform:translateX(-50%) translateY(0)} }
 
 /* ─── Toast ───────────────────────────────────── */
+.diff-stat { font-size: 12px; color: var(--muted); margin-bottom: 8px; }
+.diff-box { max-height: 50vh; overflow: auto; font-family: var(--mono, monospace); font-size: 12px; line-height: 1.5; background: var(--bg-elev, rgba(0,0,0,.2)); border-radius: 8px; padding: 8px; margin: 0; }
+.diff-line { white-space: pre-wrap; word-break: break-all; padding: 0 6px; }
+.diff-add { background: rgba(74,222,128,.14); color: var(--success, #4ade80); }
+.diff-del { background: rgba(248,113,113,.14); color: var(--error, #f87171); }
+.diff-ctx { color: var(--muted); }
 .toast-stack {
   position: fixed;
   bottom: 24px;
@@ -4239,6 +4245,51 @@ docker compose up -d --force-recreate</pre>
     };
     this.pollGlobal('pool-events', tick, 20000);
     tick();  // prime immediately (silent first tick establishes baseline)
+  },
+
+  // ─── Config save-diff gate ────────────────────
+  // INLINE MIRROR of src/dashboard/diff.js (single-file constraint) —
+  // src/dashboard/check-inline-sync.js keeps them in sync; edit BOTH.
+  _diffToLines(value) {
+    if (value == null) return [];
+    const text = typeof value === 'string' ? value : JSON.stringify(value, null, 2);
+    return text.split('\n');
+  },
+  _lineDiff(before, after) {
+    const a = this._diffToLines(before), b = this._diffToLines(after);
+    const n = a.length, m = b.length;
+    const lcs = Array.from({ length: n + 1 }, () => new Array(m + 1).fill(0));
+    for (let i = n - 1; i >= 0; i--)
+      for (let j = m - 1; j >= 0; j--)
+        lcs[i][j] = a[i] === b[j] ? lcs[i + 1][j + 1] + 1 : Math.max(lcs[i + 1][j], lcs[i][j + 1]);
+    const out = []; let i = 0, j = 0;
+    while (i < n && j < m) {
+      if (a[i] === b[j]) { out.push({ op: 'ctx', text: a[i] }); i++; j++; }
+      else if (lcs[i + 1][j] >= lcs[i][j + 1]) { out.push({ op: 'del', text: a[i] }); i++; }
+      else { out.push({ op: 'add', text: b[j] }); j++; }
+    }
+    while (i < n) { out.push({ op: 'del', text: a[i] }); i++; }
+    while (j < m) { out.push({ op: 'add', text: b[j] }); j++; }
+    return out;
+  },
+  // Show a before→after diff modal for a dangerous write; commit only on confirm.
+  // Returns the api() result on apply, or null when the user cancels / no change.
+  async saveWithDiff({ before, after, method, path, body }) {
+    const diff = this._lineDiff(before, after);
+    const changed = diff.filter(d => d.op !== 'ctx');
+    if (!changed.length) { this.toast(I18n.t('confirm.saveDiffNoChange'), 'info'); return null; }
+    const add = changed.filter(d => d.op === 'add').length;
+    const del = changed.filter(d => d.op === 'del').length;
+    const rows = diff.map(d => {
+      const cls = d.op === 'add' ? 'diff-add' : (d.op === 'del' ? 'diff-del' : 'diff-ctx');
+      const sign = d.op === 'add' ? '+' : (d.op === 'del' ? '-' : ' ');
+      return `<div class="diff-line ${cls}">${this.esc(sign + ' ' + d.text)}</div>`;
+    }).join('');
+    const html = `<div class="diff-stat">${this.esc(I18n.t('confirm.saveDiffStat', { add, del }))}</div>
+      <pre class="diff-box">${rows}</pre>`;
+    const ok = await this.confirm(I18n.t('confirm.saveDiffTitle'), html, { html: true, wide: true, okText: I18n.t('confirm.saveDiffApply') });
+    if (!ok) return null;
+    return this.api(method, path, body);
   },
 
   // ─── Modal helpers ───────────────────────────
@@ -8940,6 +8991,8 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     const sp = await this.api('GET', '/system-prompts');
     const spHolder = document.getElementById('system-prompts-editor');
     if (!spHolder) return;
+    // Stash originals so saveSystemPrompt can diff before→after in the save gate.
+    this._systemPromptOriginals = { ...(sp.prompts || {}) };
     const labels = {
       toolReinforcement: I18n.t('experimental.toolReinforcement'),
       communicationWithTools: I18n.t('experimental.communicationWithTools'),
@@ -8971,9 +9024,16 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     // the key). Tell the user that's what happened, and reload so the textarea
     // shows the restored default rather than the blank they just typed.
     const wasEmpty = ta.value.trim() === '';
-    await this.api('PUT', '/system-prompts', { [key]: ta.value.trim() });
+    // System prompts drive every request's behaviour — show a before→after diff
+    // gate so an operator sees exactly what they're changing before it commits.
+    const before = (this._systemPromptOriginals || {})[key] || '';
+    const res = await this.saveWithDiff({
+      before, after: ta.value.trim(),
+      method: 'PUT', path: '/system-prompts', body: { [key]: ta.value.trim() },
+    });
+    if (res === null) return;  // cancelled or no change
     this.toast(`${key} ${wasEmpty ? I18n.t('experimental.restored') : I18n.t('toast.saved')}`, 'success');
-    if (wasEmpty) this.loadSystemPrompts();
+    this.loadSystemPrompts();  // reload → refreshes stashed originals + restored default
   },
 
   async resetSystemPrompt(key) {

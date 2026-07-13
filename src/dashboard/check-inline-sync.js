@@ -22,6 +22,7 @@ const root = path.resolve(__dirname, '..', '..');
 const RED = '\x1b[31m', GREEN = '\x1b[32m', RESET = '\x1b[0m';
 
 const moduleSrc = fs.readFileSync(path.join(root, 'src/dashboard/pool-events.js'), 'utf8');
+const diffSrc = fs.readFileSync(path.join(root, 'src/dashboard/diff.js'), 'utf8');
 const htmlSrc = fs.readFileSync(path.join(root, 'src/dashboard/index.html'), 'utf8');
 
 let fail = 0;
@@ -60,8 +61,18 @@ const htmlOrderOk = order(htmlSrc, orderToks);
 check('state-check order identical (module)', modOrderOk);
 check('state-check order identical (inline)', htmlOrderOk);
 
+// diff.js ↔ inline LCS mirror: the load-bearing DP recurrence + walk tokens.
+const diffTokens = [
+  `lcs[i + 1][j + 1] + 1`,
+  `Math.max(lcs[i + 1][j], lcs[i][j + 1])`,
+  `lcs[i + 1][j] >= lcs[i][j + 1]`,
+  `op: 'del'`, `op: 'add'`, `op: 'ctx'`,
+];
+const diffBoth = (tok) => diffSrc.includes(tok) && htmlSrc.includes(tok);
+check('LCS diff recurrence + walk present in both (diff.js ↔ inline)', diffTokens.every(diffBoth));
+
 if (fail) {
-  console.log(`\n${RED}Inline sync FAILED${RESET} — pool-event logic in index.html and pool-events.js disagree. Update both.`);
+  console.log(`\n${RED}Inline sync FAILED${RESET} — inline logic in index.html disagrees with its module. Update both.`);
   process.exit(1);
 }
 console.log(`\n${GREEN}Inline sync OK${RESET}`);
