@@ -483,6 +483,26 @@ code {
   margin-top: auto; /* pin the value block to a common baseline across the row */
 }
 .card-sub { font-size: 12px; color: var(--text-muted); margin-top: 4px; min-height: 15px; }
+/* Loading skeleton: pure-CSS shimmer placeholder shown before data arrives.
+   The universal reduced-motion rule above freezes the shimmer automatically. */
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: var(--surface, rgba(255,255,255,.04));
+  border-radius: 6px;
+  color: transparent !important;
+}
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, var(--border, rgba(255,255,255,.08)), transparent);
+  animation: skeleton-shimmer 1.4s ease-in-out infinite;
+}
+@keyframes skeleton-shimmer { 100% { transform: translateX(100%); } }
+.skeleton-line { height: 1em; margin: 6px 0; }
+.skeleton-card { height: 96px; }
 .card.accent .card-value { color: var(--accent); }
 .card.success .card-value { color: var(--success); }
 .card.warn .card-value { color: var(--warn); }
@@ -4169,6 +4189,47 @@ docker compose up -d --force-recreate</pre>
     setTimeout(dismiss, type === 'error' ? 8000 : 3000);
   },
 
+  // ─── KPI count-up ─────────────────────────────
+  // Smoothly interpolate a numeric KPI from its previous value to the new one
+  // via rAF. Honors reduced-motion (snaps to final). Preserves the element's
+  // prefix/suffix (e.g. "$", "%") so "$12.30" animates the number in place.
+  _animateNumber(el, to, { prefix = '', suffix = '', decimals = 0, ms = 600 } = {}) {
+    if (!el) return;
+    const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const fmt = (n) => prefix + (decimals ? n.toFixed(decimals) : Math.round(n).toLocaleString()) + suffix;
+    const from = Number(el.dataset.kpiVal);
+    const target = Number(to);
+    if (reduce || !Number.isFinite(from) || from === target) {
+      el.textContent = fmt(target); el.dataset.kpiVal = String(target); return;
+    }
+    const t0 = performance.now();
+    const step = (now) => {
+      const p = Math.min(1, (now - t0) / ms);
+      const eased = 1 - Math.pow(1 - p, 3);   // easeOutCubic
+      el.textContent = fmt(from + (target - from) * eased);
+      if (p < 1) requestAnimationFrame(step);
+      else { el.textContent = fmt(target); el.dataset.kpiVal = String(target); }
+    };
+    requestAnimationFrame(step);
+  },
+  // After an innerHTML re-render, run count-up on every [data-kpi] value using
+  // the value stashed on the previous element (kept in this._prevKpi by key).
+  _runKpiCountUp(root) {
+    this._prevKpi ||= {};
+    (root || document).querySelectorAll('[data-kpi]').forEach((el) => {
+      const key = el.dataset.kpi;
+      const to = Number(el.dataset.kpiTo);
+      if (!Number.isFinite(to)) return;
+      const prev = this._prevKpi[key];
+      if (Number.isFinite(prev)) el.dataset.kpiVal = String(prev);  // seed for animation
+      this._animateNumber(el, to, {
+        prefix: el.dataset.kpiPrefix || '', suffix: el.dataset.kpiSuffix || '',
+        decimals: Number(el.dataset.kpiDecimals) || 0,
+      });
+      this._prevKpi[key] = to;
+    });
+  },
+
   // ─── Pool-event notifications ─────────────────
   // INLINE MIRROR of src/dashboard/pool-events.js (single-file "just open it"
   // constraint). src/dashboard/check-inline-sync.js asserts the two stay in sync —
@@ -5506,6 +5567,13 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     this._overviewLoadGeneration = generation;
     const isCurrent = () => this._overviewLoadGeneration === generation
       && document.getElementById('p-overview')?.classList.contains('active');
+    // First paint only: show shimmer skeleton cards while the initial fetch runs,
+    // so the KPI row isn't a blank gap. Subsequent polls keep the live values.
+    const ocEl = document.getElementById('overview-cards');
+    if (ocEl && !ocEl.dataset.loaded) {
+      ocEl.innerHTML = Array.from({ length: 4 }, () =>
+        `<div class="card"><div class="skeleton skeleton-line" style="width:55%"></div><div class="skeleton skeleton-card" style="margin-top:10px"></div></div>`).join('');
+    }
     // Cockpit data: fetch /overview (primary) plus /stats and /connect-metrics in
     // parallel for the trend/rankings/pool-health/self-healing panels. The two
     // extras are best-effort — a 401/failure on either renders that panel's empty
@@ -5563,7 +5631,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
         <div class="card-header"><div class="card-title">${I18n.t('card.activeAccounts.title')}</div>
           <svg class="card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
         </div>
-        <div class="card-value">${d.accounts?.active || 0}</div>
+        <div class="card-value" data-kpi="activeAccounts" data-kpi-to="${d.accounts?.active || 0}">${d.accounts?.active || 0}</div>
         <div class="card-sub">${I18n.t('card.activeAccounts.subtitle', { total: d.accounts?.total || 0, error: d.accounts?.error || 0 })}</div>
       </div>
       ${d.poolBalance && d.poolBalance.accounts > 0 ? `
@@ -5571,14 +5639,14 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
         <div class="card-header"><div class="card-title">${I18n.t('card.poolBalance.title')}${this._helpTip('overage')}</div>
           <svg class="card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
         </div>
-        <div class="card-value">$${Number(d.poolBalance.total).toFixed(2)}</div>
+        <div class="card-value" data-kpi="poolBalance" data-kpi-to="${Number(d.poolBalance.total)}" data-kpi-prefix="$" data-kpi-decimals="2">$${Number(d.poolBalance.total).toFixed(2)}</div>
         <div class="card-sub">${I18n.t('card.poolBalance.subtitle', { count: d.poolBalance.accounts })}</div>
       </div>` : ''}
       <div class="card info">
         <div class="card-header"><div class="card-title">${I18n.t('card.totalRequests.title')}</div>
           <svg class="card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
         </div>
-        <div class="card-value">${d.totalRequests || 0}</div>
+        <div class="card-value" data-kpi="totalRequests" data-kpi-to="${d.totalRequests || 0}">${d.totalRequests || 0}</div>
         <div class="card-sub">${I18n.t('card.totalRequests.subtitle', { rate: d.successRate || 0 })}</div>
       </div>
       <div class="card">
@@ -5598,6 +5666,10 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
       </div>
       ${this._tokenCacheKpiCard(s)}
     `;
+    const _oc = document.getElementById('overview-cards');
+    if (_oc) _oc.dataset.loaded = '1';  // skeleton only shows before first real paint
+    // Count-up the KPI numbers from their previous values (reduced-motion snaps).
+    this._runKpiCountUp(_oc);
     // Cockpit panels (best-effort, independent skeletons): pool health, connect
     // self-healing metrics, request trend, and rankings. Each renders its own
     // empty state when its data source is missing. Idempotent full-innerHTML
