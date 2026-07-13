@@ -5,7 +5,7 @@
 
 import { createHash, randomUUID } from 'crypto';
 import { WindsurfClient, contentToString, isCascadeTransportError } from '../client.js';
-import { getApiKey, acquireAccountByKey, releaseAccountById, currentApiKeyForId, getAccountAvailability, reportError, reportSuccess, markRateLimited, markQuotaExhausted, reportInternalError, reportDeadToken, updateCapability, getAccountList, isAllRateLimited, isAllTemporarilyUnavailable, refundReservation, looksLikeBanSignal, reportBanSignal, clearBanSignals, isModelBlockedByDrought, getDroughtSummary, reLoginAccount, getAccountCount, hasConnectEntitledAccount } from '../auth.js';
+import { getApiKey, acquireAccountByKey, releaseAccountById, currentApiKeyForId, getAccountAvailability, reportError, reportSuccess, markRateLimited, markQuotaExhausted, reportInternalError, reportDeadToken, updateCapability, getAccountList, isAllRateLimited, isAllTemporarilyUnavailable, refundReservation, looksLikeBanSignal, reportBanSignal, clearBanSignals, isModelBlockedByDrought, getDroughtSummary, reLoginAccount, getAccountCount, hasConnectEntitledAccount, recordAccountSpend } from '../auth.js';
 import { isStickyEnabled, setStickyBinding } from '../account/sticky-session.js';
 import { resolveModel, getModelInfo, pickRateLimitFallback } from '../models.js';
 import { getLsFor, ensureLs } from '../langserver.js';
@@ -17,6 +17,7 @@ import { isModelAllowed } from '../dashboard/model-access.js';
 import { cacheKey, cacheGet, cacheSet } from '../cache.js';
 import { isExperimentalEnabled, getBreakerTunable } from '../runtime-config.js';
 import { neutralizeClientIdentity } from './identity-neutralize.js';
+import { normalizeStop, applyStop, StopSequenceGate } from '../stop-sequences.js';
 import { checkMessageRateLimit } from '../windsurf-api.js';
 import { getEffectiveProxy } from '../dashboard/proxy-config.js';
 import {
@@ -2431,7 +2432,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
     if (context.signal) connectParams.signal = context.signal;
     // O1: honor stream_options.include_usage on the connect path too — the
     // trailing usage frame is emitted only when the caller opted in.
-    const connectMeta = { id: ccId, created: ccCreated, displayModel: reqModelName, emulateTools, includeUsage: body.stream_options?.include_usage === true };
+    const connectMeta = { id: ccId, created: ccCreated, displayModel: reqModelName, emulateTools, includeUsage: body.stream_options?.include_usage === true, stop: body.stop ?? null };
     // Shared failover bookkeeping for both stream + non-stream paths. triedKeys
     // accumulates every session token burned this request so getApiKey never
     // re-picks a known-dead account when we hop to the next pool member.
@@ -2529,6 +2530,8 @@ async function _handleChatCompletionsInner(body, context = {}) {
               // (the return value carries the terminal usage). Was discarded
               // before → "Token 用量分布" empty on connect deployments.
               try { recordTokenUsage(_sr?.usage); } catch {}
+              // K8: attribute the spend to THIS account (per-account lifetime total).
+              try { recordAccountSpend(a?.apiKey, _sr?.usage); } catch {}
               finalizeConnectAccount(a, { model: reqModelName, startTime: ccStart, err: null });
               return { kind: 'ok' };
             } catch (err) {
@@ -2544,6 +2547,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
                 try {
                   const _sr2 = await streamChatCompletion(params, send, connectMeta);
                   try { recordTokenUsage(_sr2?.usage); } catch {}
+                  try { recordAccountSpend(a?.apiKey, _sr2?.usage); } catch {}
                   finalizeConnectAccount(a, { model: reqModelName, startTime: ccStart, err: null });
                   return { kind: 'ok' };
                 } catch (retryErr) {
@@ -2566,6 +2570,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
                   try {
                     const _sr3 = await streamChatCompletion({ ...connectParams, token: freshKey }, send, connectMeta);
                     try { recordTokenUsage(_sr3?.usage); } catch {}
+                    try { recordAccountSpend(currentApiKeyForId(a.id, a.apiKey), _sr3?.usage); } catch {}
                     finalizeConnectAccount(a, { model: reqModelName, startTime: ccStart, err: null });
                     return { kind: 'ok' };
                   } catch (retryErr) {
@@ -2718,6 +2723,8 @@ async function _handleChatCompletionsInner(body, context = {}) {
         // card stayed empty on connect-only deployments (homecloud). Safe no-op
         // when usage is absent (recordTokenUsage guards null).
         try { recordTokenUsage(r.out?.body?.usage); } catch {}
+        // K8: per-account lifetime spend (non-stream connect path).
+        try { recordAccountSpend(acct ? currentApiKeyForId(acct.id, acct.apiKey) : null, r.out?.body?.usage); } catch {}
         return r.out;
       }
       if (r.kind === 'error') {
@@ -4112,6 +4119,8 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
     // v2.0.69 (#118): feed bucket totals into stats so dashboard can show
     // fresh_input vs cache_read vs cache_write breakdown.
     try { recordTokenUsage(usage); } catch {}
+    // K8: per-account lifetime spend (Cascade non-stream path).
+    try { recordAccountSpend(apiKey, usage); } catch {}
     const finishReason = toolCalls.length ? 'tool_calls' : 'stop';
     return {
       status: 200,

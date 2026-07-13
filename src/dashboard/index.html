@@ -6459,7 +6459,8 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
              ${blockedCount > 0 ? `<span class="badge warn" style="margin-left:4px">-${blockedCount}</span>` : ''}
            </button>`
         : `<span class="text-xs text-dim">-</span>`;
-      const rateLimitBadge = a.rateLimited ? ` <span class="badge warn">${I18n.t('card.rateLimit.badge')}</span>` : '';
+      const rateLimitBadge = a.rateLimited ? ` <span class="badge warn">${I18n.t('card.rateLimit.badge')}</span>`
+        : (a.capacityThrottled ? ` <span class="badge" style="background:var(--info-bg,rgba(96,165,250,.15));color:var(--info,#60a5fa)" title="${this.esc(I18n.t('card.capacity.tip'))}">${I18n.t('card.capacity.badge')}</span>` : '');
       const rpmUsed = a.rpmUsed ?? 0;
       const rpmLimit = a.rpmLimit ?? 0;
       const rpmPct = rpmLimit > 0 ? Math.min(100, Math.round((rpmUsed / rpmLimit) * 100)) : 0;
@@ -6783,7 +6784,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
           <div class="detail-card-head"><span class="dot" style="background:var(--info)"></span>${T('runtime.title')}</div>
           <div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:20px">
             <div class="detail-kv">
-              <span class="k">${T('runtime.status')}</span><span class="v"><span class="badge ${a.status}">${a.status}</span>${a.rateLimited ? ` <span class="badge warn">${I18n.t('card.rateLimit.badge')}</span>` : ''}</span>
+              <span class="k">${T('runtime.status')}</span><span class="v"><span class="badge ${a.status}">${a.status}</span>${a.rateLimited ? ` <span class="badge warn">${I18n.t('card.rateLimit.badge')}</span>` : ''}${!a.rateLimited && a.capacityThrottled ? ` <span class="badge" style="background:var(--info-bg,rgba(96,165,250,.15));color:var(--info,#60a5fa)" title="${this.esc(I18n.t('card.capacity.tip'))}">${I18n.t('card.capacity.badge')}</span>` : ''}</span>
               <span class="k">${T('runtime.errors')}</span><span class="v" style="color:${a.errorCount > 0 ? 'var(--error)' : 'inherit'}">${a.errorCount || 0}</span>
               <span class="k">${T('runtime.rpm')}</span><span class="v">${a.rpmUsed ?? 0} / ${a.rpmLimit ?? 0}</span>
             </div>
@@ -6797,6 +6798,17 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
               <span class="k">${T('runtime.apiKey')}</span><span class="v"><code>${this.esc(a.apiKey_masked || a.keyPrefix || '')}</code></span>
               ${cr.lastError ? `<span class="k">${T('runtime.lastError')}</span><span class="v" style="color:var(--error);font-size:11px">${this.esc(cr.lastError).slice(0, 80)}</span>` : ''}
             </div>
+            ${(() => {
+              // K8: lifetime spend — helps decide which account to rotate/retire.
+              const sp = a.totalSpend || { requests: 0, totalTokens: 0, creditCost: 0 };
+              const fmt = (n) => (Number(n) || 0).toLocaleString();
+              const credits = Number(sp.creditCost) || 0;
+              return `<div class="detail-kv">
+              <span class="k">${T('runtime.spendRequests')}</span><span class="v" style="font-variant-numeric:tabular-nums">${fmt(sp.requests)}</span>
+              <span class="k">${T('runtime.spendTokens')}</span><span class="v" style="font-variant-numeric:tabular-nums">${fmt(sp.totalTokens)}</span>
+              ${credits > 0 ? `<span class="k">${T('runtime.spendCredits')}</span><span class="v" style="font-variant-numeric:tabular-nums">${(Math.round(credits * 100) / 100).toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>` : ''}
+            </div>`;
+            })()}
           </div>
         </div>
       </div>

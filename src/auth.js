@@ -420,6 +420,8 @@ function _serializeAccounts() {
     // disable state) so a restart doesn't reset a repeat-offender's ladder to
     // zero; losing it is harmless (backoff just restarts) so it's best-effort.
     _breakerStreak: a._breakerStreak || 0,
+    // K8: persist the lifetime spend accumulator (monotonic across restarts).
+    _totalSpend: a._totalSpend || { requests: 0, totalTokens: 0, promptTokens: 0, completionTokens: 0, creditCost: 0 },
     // C5: persisted rolling-hour health window (pruned at save time so the
     // file never carries stale/out-of-window events across restarts).
     _health: Array.isArray(a._health) ? pruneHealthWindow(a, Date.now()) : [],
@@ -555,6 +557,19 @@ function _deserializeAccount(a, now = Date.now()) {
     spendOnDemand: typeof a.spendOnDemand === 'boolean' ? a.spendOnDemand : null,
     onDemandReserve: Number.isFinite(Number(a.onDemandReserve)) ? Number(a.onDemandReserve) : null,
     _breakerStreak: a._breakerStreak || 0,
+    // K8: per-account lifetime spend accumulator. Monotonic, survives log
+    // rotation and restarts. `?? 0` so an older accounts.json (written before
+    // this field existed) loads as zero rather than NaN. Shape:
+    // { requests, totalTokens, promptTokens, completionTokens, creditCost }.
+    _totalSpend: (a._totalSpend && typeof a._totalSpend === 'object')
+      ? {
+          requests: Number(a._totalSpend.requests) || 0,
+          totalTokens: Number(a._totalSpend.totalTokens) || 0,
+          promptTokens: Number(a._totalSpend.promptTokens) || 0,
+          completionTokens: Number(a._totalSpend.completionTokens) || 0,
+          creditCost: Number(a._totalSpend.creditCost) || 0,
+        }
+      : { requests: 0, totalTokens: 0, promptTokens: 0, completionTokens: 0, creditCost: 0 },
     // C5: restore the rolling health window; drop anything already out of
     // the 1h window at load so a long-stopped process starts clean.
     _health: Array.isArray(a._health)
@@ -2138,6 +2153,38 @@ export function reportSuccess(apiKey) {
 }
 
 /**
+ * K8: accumulate one request's usage onto the account's lifetime spend counter.
+ * Called after a completed chat (both Cascade and DEVIN_CONNECT paths) with the
+ * OpenAI-shaped usage object. Monotonic and independent of the rolling stats
+ * window / log rotation, so the dashboard can show "which account burns fastest"
+ * and drive rotation/retirement decisions. Lazy-persisted via markDirty (the
+ * periodic flush writes it — no hot-path fsync). creditCost only accrues when a
+ * paid token surfaced billing (DEVIN_CONNECT_BILLING_TAGS calibrated).
+ *
+ * @param {string} apiKey
+ * @param {object|null} usage  { prompt_tokens, completion_tokens, total_tokens }
+ * @param {object} [opts]      { creditCost?: number }
+ */
+export function recordAccountSpend(apiKey, usage, { creditCost = 0 } = {}) {
+  if (!apiKey) return;
+  const account = accounts.find(a => a.apiKey === apiKey);
+  if (!account) return;
+  if (!account._totalSpend || typeof account._totalSpend !== 'object') {
+    account._totalSpend = { requests: 0, totalTokens: 0, promptTokens: 0, completionTokens: 0, creditCost: 0 };
+  }
+  const s = account._totalSpend;
+  const prompt = Number(usage?.prompt_tokens) || 0;
+  const completion = Number(usage?.completion_tokens) || 0;
+  const total = Number(usage?.total_tokens) || (prompt + completion);
+  s.requests += 1;
+  s.promptTokens += prompt;
+  s.completionTokens += completion;
+  s.totalTokens += total;
+  s.creditCost += Number(creditCost) || 0;
+  markDirty();
+}
+
+/**
  * Report an upstream "internal error occurred (error ID: ...)" from Windsurf.
  * These are account-specific backend errors — a given key will keep hitting
  * them until we stop using it. Quarantine the key for 5 minutes after 2
@@ -2391,6 +2438,12 @@ function publicAccount(a, now, { view = 'full' } = {}) {
     balance: cr?.balance ?? null,
     periodStart: cr?.periodStart ?? null,
     periodEnd: cr?.periodEnd ?? null,
+    // CAPACITY vs RATE_LIMITED distinction (user-facing). `rateLimited` (above) is
+    // an ACCOUNT-wide throttle — switching accounts helps. `capacityThrottled` is
+    // a MODEL being temporarily overloaded (short, model-scoped _modelRateLimits) —
+    // switching accounts does NOT help (the model itself is busy). Surfacing both
+    // lets an operator tell "change account" from "wait / try another model".
+    capacityThrottled: !!(a._modelRateLimits && Object.values(a._modelRateLimits).some(until => until > now)),
   };
   if (view === 'summary') return base;
 
@@ -2398,6 +2451,17 @@ function publicAccount(a, now, { view = 'full' } = {}) {
   const lsAdmission = getLsAdmissionStatus(proxy);
   return {
     ...base,
+    // K8: lifetime spend (monotonic; independent of the rolling stats window).
+    // `?? 0`-guarded so an account loaded from a pre-K8 accounts.json reads zero.
+    totalSpend: a._totalSpend
+      ? {
+          requests: a._totalSpend.requests || 0,
+          totalTokens: a._totalSpend.totalTokens || 0,
+          promptTokens: a._totalSpend.promptTokens || 0,
+          completionTokens: a._totalSpend.completionTokens || 0,
+          creditCost: a._totalSpend.creditCost || 0,
+        }
+      : { requests: 0, totalTokens: 0, promptTokens: 0, completionTokens: 0, creditCost: 0 },
     capabilities: a.capabilities || {},
     modelRateLimits: a._modelRateLimits ? Object.fromEntries(
       Object.entries(a._modelRateLimits).filter(([, v]) => v > now)

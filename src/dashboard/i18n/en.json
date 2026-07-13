@@ -631,6 +631,10 @@
       "badge": "Rate Limited",
       "subtitle": "Temporarily excluded from scheduling"
     },
+    "capacity": {
+      "badge": "Model Busy",
+      "tip": "The MODEL is temporarily overloaded (\"high demand\"), not this account. Switching accounts won't help — wait a moment or try another model. Auto-recovers in seconds."
+    },
     "stats": {
       "title": "Total Requests",
       "subtitle": "Running {{time}}"
@@ -1049,7 +1053,11 @@
         "creditsFetched": "Credits refreshed",
         "accountId": "Account ID",
         "apiKey": "API Key",
-        "lastError": "Last error"
+        "lastError": "Last error",
+        "spendTitle": "Lifetime spend",
+        "spendRequests": "Requests",
+        "spendTokens": "Total tokens",
+        "spendCredits": "Credit cost"
       }
     }
   },

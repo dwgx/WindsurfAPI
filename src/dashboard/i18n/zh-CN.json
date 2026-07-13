@@ -631,6 +631,10 @@
       "badge": "限流中",
       "subtitle": "暂时不参与调度"
     },
+    "capacity": {
+      "badge": "模型繁忙",
+      "tip": "是这个「模型」临时过载（\"high demand\" 高需求），不是这个账号的问题。换账号没用——稍等片刻或换个模型即可，通常几秒内自动恢复。"
+    },
     "stats": {
       "title": "总请求",
       "subtitle": "运行 {{time}}"
@@ -1049,7 +1053,11 @@
         "creditsFetched": "额度刷新",
         "accountId": "账号 ID",
         "apiKey": "API Key",
-        "lastError": "上次错误"
+        "lastError": "上次错误",
+        "spendTitle": "累计花费",
+        "spendRequests": "请求数",
+        "spendTokens": "总 token 数",
+        "spendCredits": "信用花费"
       }
     }
   },
