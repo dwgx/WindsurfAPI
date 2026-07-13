@@ -16,16 +16,26 @@ Add-Type -AssemblyName System.Windows.Forms
 Add-Type -AssemblyName System.Drawing
 __trace 'assemblies loaded'
 
-$Root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+# 双模式:同目录有 windsurfapi.exe → EXE 模式(零依赖,启单 exe,不需 Node/源码,
+# 用于解压即用的 Windows 分发包);否则 → 源码模式(启 node src\index.js,需本机
+# Node,用于 clone 仓库开发)。EXE 模式下 .env/logs 都在 exe 旁(与 config.js 的
+# dirname(process.execPath) 一致,密码/数据同目录),$Root 即脚本目录。
+$ExePath = Join-Path $PSScriptRoot 'windsurfapi.exe'
+$script:ExeMode = Test-Path $ExePath
+if ($script:ExeMode) {
+  $Root = $PSScriptRoot
+} else {
+  $Root = (Resolve-Path (Join-Path $PSScriptRoot '..\..')).Path
+}
 Set-Location $Root
-__trace "root=$Root"
+__trace "root=$Root mode=$(if($script:ExeMode){'exe'}else{'source'})"
 $LogDir = Join-Path $Root 'logs'
 if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Path $LogDir -Force | Out-Null }
 $PidFile = Join-Path $LogDir 'windsurfapi.pid'
 
-# 预检 Node
-if (-not (Get-Command node -ErrorAction SilentlyContinue)) {
-  [System.Windows.Forms.MessageBox]::Show('未检测到 Node.js。请从 https://nodejs.org 安装 Node 20+ 后重试。', 'WindsurfAPI', 'OK', 'Error') | Out-Null
+# 预检:源码模式需要 Node;EXE 模式自带运行时,跳过。
+if (-not $script:ExeMode -and -not (Get-Command node -ErrorAction SilentlyContinue)) {
+  [System.Windows.Forms.MessageBox]::Show('未检测到 Node.js。请从 https://nodejs.org 安装 Node 20+ 后重试。（或改用解压即用的 Windows 单 exe 分发包，无需安装 Node）', 'WindsurfAPI', 'OK', 'Error') | Out-Null
   exit 1
 }
 
@@ -89,13 +99,20 @@ function Write-Sup([string]$m) {
 $script:nodeEvents = @()
 function Start-Node {
   $psi = New-Object System.Diagnostics.ProcessStartInfo
-  $psi.FileName = 'node'
-  $psi.Arguments = 'src\index.js'
+  if ($script:ExeMode) {
+    $psi.FileName = $ExePath           # 单 exe 自带 Node 运行时
+    $psi.Arguments = ''
+  } else {
+    $psi.FileName = 'node'
+    $psi.Arguments = 'src\index.js'
+  }
   $psi.WorkingDirectory = $Root
   $psi.UseShellExecute = $false
   $psi.RedirectStandardOutput = $true
   $psi.RedirectStandardError = $true
   $psi.CreateNoWindow = $true
+  # 托盘自己负责首次开面板,禁掉子进程再开一次(避免双开浏览器)。
+  $psi.EnvironmentVariables['WINDSURFAPI_NO_OPEN'] = '1'
   $p = New-Object System.Diagnostics.Process
   $p.StartInfo = $psi
   $sink = { if ($null -ne $EventArgs.Data) { Add-Content -Path $Event.MessageData -Value $EventArgs.Data -Encoding UTF8 } }
@@ -106,7 +123,7 @@ function Start-Node {
   $p.BeginOutputReadLine()
   $p.BeginErrorReadLine()
   Set-Content -Path $PidFile -Value $p.Id -Encoding ASCII
-  Write-Sup "node started (pid=$($p.Id))"
+  Write-Sup "$(if($script:ExeMode){'exe'}else{'node'}) started (pid=$($p.Id))"
   return $p
 }
 

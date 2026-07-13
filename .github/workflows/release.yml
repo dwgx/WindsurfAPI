@@ -168,11 +168,61 @@ jobs:
           if (-not $dashOk) { Write-Error 'exe did not serve /dashboard (asset bundling broken?)'; exit 1 }
           Write-Host 'exe smoke OK: /health 200 + /dashboard served from snapshot assets'
 
+      # Assemble the "解压即用" zip: the exe + the tray launcher scripts + icon,
+      # all in ONE flat folder. tray.ps1 auto-detects the sibling windsurfapi.exe
+      # and switches to EXE mode (no Node, no source tree). Double-click tray.vbs
+      # → system-tray icon; or double-click windsurfapi.exe → console window.
+      # Both are zero-dependency (the exe carries its own Node runtime).
+      - name: Package Windows zip (exe + tray)
+        shell: pwsh
+        run: |
+          $stage = "$env:RUNNER_TEMP\wa-zip"
+          New-Item -ItemType Directory -Path $stage -Force | Out-Null
+          Copy-Item dist-windows\windsurfapi.exe $stage\
+          Copy-Item deploy\windows\tray.vbs      $stage\
+          Copy-Item deploy\windows\tray.ps1      $stage\
+          Copy-Item deploy\windows\tray.bat      $stage\
+          Copy-Item deploy\windows\windsurfapi.ico $stage\ -ErrorAction SilentlyContinue
+          $readme = @(
+            'WindsurfAPI - Windows 免安装分发包',
+            '====================================',
+            '',
+            '两种启动方式（都无需安装 Node.js、无需源码）：',
+            '',
+            '1) 系统托盘（推荐）：双击 tray.vbs',
+            '   -> 右下角系统匣出现图标，右键可【打开面板 / 复制面板密码 /',
+            '      复制 API Key / 状态 / 重启 / 退出】。无黑窗。',
+            '',
+            '2) 控制台：双击 windsurfapi.exe',
+            '   -> 弹出一个控制台窗口显示日志。',
+            '',
+            '首次启动会自动生成 API_KEY 与 DASHBOARD_PASSWORD 并写入本目录的',
+            '.env，同时自动打开后台面板 http://127.0.0.1:3003/dashboard 。',
+            '在面板里贴上 Devin session token 即可上号，其余免配置。',
+            '',
+            '默认仅本机访问（HOST=127.0.0.1）。要对外提供服务，编辑 .env 把',
+            'HOST 改成 0.0.0.0 并保留一个强 API_KEY。'
+          ) -join "`r`n"
+          Set-Content -Path "$stage\启动说明.txt" -Value $readme -Encoding UTF8
+          $zipPath = "$PWD\dist-windows\windsurfapi-windows.zip"
+          Get-ChildItem -Path $stage | Compress-Archive -DestinationPath $zipPath -Force
+          Write-Host "--- zip contents ---"
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          $zr = [System.IO.Compression.ZipFile]::OpenRead($zipPath)
+          $have = $zr.Entries.FullName
+          $have | ForEach-Object { Write-Host $_ }
+          $zr.Dispose()
+          $must = @('windsurfapi.exe','tray.vbs','tray.ps1','tray.bat')
+          foreach ($m in $must) { if ($have -notcontains $m) { Write-Error "zip missing $m"; exit 1 } }
+          Write-Host 'zip OK: exe + tray scripts present'
+
       - name: Upload exe artifact
         uses: actions/upload-artifact@v4
         with:
           name: windsurfapi-windows-exe
-          path: dist-windows/windsurfapi.exe
+          path: |
+            dist-windows/windsurfapi.exe
+            dist-windows/windsurfapi-windows.zip
           if-no-files-found: error
 
   release:
@@ -223,4 +273,6 @@ jobs:
           generate_release_notes: ${{ steps.notes.outputs.found != 'true' }}
           draft: false
           prerelease: ${{ contains(github.ref_name, '-') }}
-          files: dist-windows/windsurfapi.exe
+          files: |
+            dist-windows/windsurfapi.exe
+            dist-windows/windsurfapi-windows.zip

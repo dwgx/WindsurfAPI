@@ -15,6 +15,9 @@
 **B. 源码 + 脚本(需装 Node 20+,零 npm 依赖)** —— 开发/自更新首选,`git pull` 即拉最新。
 双击 `start.bat`(见下),它生成 `.env` + 打印密钥 + 前台监督循环。
 
+**C. 系统匣托盘(推荐,零黑窗)** —— 双击 `tray.vbs`,右下角系统匣出现图标,右键菜单【打开面板 / 复制面板密码 / 复制 API Key / 状态 / 重启 / 退出】。
+`tray.ps1` **自动双模式**:同目录有 `windsurfapi.exe` → 启单 exe(零依赖,无需 Node);否则 → 启 `node src\index.js`(源码模式)。CI 打的 `windsurfapi-windows.zip` 就是「exe + 托盘脚本」同目录打包,解压双击 `tray.vbs` 即用。`.env`/`logs` 落在脚本(exe)同目录,与 `config.js` 的 `dirname(process.execPath)` 一致,密钥/数据同处。托盘内建崩溃监督(退出码 75/0 重启、连续 5 次异常停并弹窗)。
+
 ## 快速开始(源码方式)
 
 1. **首次引导**:双击 `start.bat`。它会:
@@ -39,6 +42,8 @@
 | `status.bat` / `status.ps1` | 状态(RUNNING/STOPPED + PID + 端口 + 日志尾) |
 | `restart.bat` | 重启 |
 | `update.bat` | `git pull --ff-only` 拉新码(解释执行不锁文件,无需先停) |
+| `tray.vbs` / `tray.ps1` / `tray.bat` | 系统匣托盘(双模式:同目录有 exe 启 exe,否则启 node)+ 右键复制密码/API Key |
+| `gen-icon.ps1` / `windsurfapi.ico` | 托盘 W 波浪图标(生成脚本 + 成品) |
 
 ## 退出码语义(⚠️ 与 KiroStudio 相反)
 

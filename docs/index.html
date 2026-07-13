@@ -920,13 +920,15 @@ footer{border-top:1px solid var(--rule);padding:3rem 0 2.5rem;margin-top:2rem}
       <div class="deploy-content" id="tab-windows">
         <div class="deploy-steps">
           <div class="step"><div class="step-num"></div><div class="step-body">
-            <h3>下載單一 <code>.exe</code></h3>
-            <div class="note">到 <a href="https://github.com/dwgx/WindsurfAPI/releases/latest" target="_blank" rel="noopener">GitHub Releases</a> 下載 <code>windsurfapi.exe</code>（約 60 MB，內建 Node 執行環境）。<strong>零依賴、免安裝 Node、免 clone 原始碼</strong>——單檔即完整服務。</div>
+            <h3>到 Releases 下載</h3>
+            <div class="note">到 <a href="https://github.com/dwgx/WindsurfAPI/releases/latest" target="_blank" rel="noopener">GitHub Releases</a> 下載，兩種任選（都<strong>零依賴、免裝 Node、免 clone</strong>，exe 內建 Node 執行環境）：<br>
+            · <code>windsurfapi-windows.zip</code> —— 系統匣托盤版（推薦）<br>
+            · <code>windsurfapi.exe</code> —— 純控制台單檔（約 60 MB）</div>
           </div></div>
 
           <div class="step"><div class="step-num"></div><div class="step-body">
-            <h3>雙擊啟動，縮進系統匣</h3>
-            <div class="note">雙擊 <code>windsurfapi.exe</code> 即啟動，沒有黑窗。<strong>首次執行自動產生</strong> <code>API_KEY</code> 與 <code>DASHBOARD_PASSWORD</code>（寫入 exe 旁的 <code>.env</code>），並自動開啟後台面板。服務常駐在 Windows 系統匣（右下角）。</div>
+            <h3>雙擊啟動</h3>
+            <div class="note">解壓 zip 後<strong>雙擊 <code>tray.vbs</code></strong>：無黑窗，右下角<strong>系統匣</strong>出現圖示；或直接雙擊 <code>windsurfapi.exe</code>：彈出控制台視窗顯示日誌。<strong>首次執行自動產生</strong> <code>API_KEY</code> 與 <code>DASHBOARD_PASSWORD</code>（寫入同目錄 <code>.env</code>）並自動開啟後台面板。</div>
           </div></div>
 
           <div class="step"><div class="step-num"></div><div class="step-body">
@@ -1013,7 +1015,7 @@ client = OpenAI(
       </details>
       <details class="faq-item">
         <summary>可以在 Windows 上跑嗎？</summary>
-        <div class="a">可以，而且最省事——到 <a href="https://github.com/dwgx/WindsurfAPI/releases/latest" target="_blank" rel="noopener">Releases</a> 下載單一 <code>windsurfapi.exe</code>（內建 Node，免安裝、免 clone），雙擊即啟動並縮進系統匣，首次自動生成金鑰與後台密碼，右鍵可一鍵複製密碼 / API Key、開面板、重啟。當然也能照手動 / Docker 方式跑：預設的 Devin 雲端路徑（<code>DEVIN_CONNECT=1</code>）是純 HTTP，不依賴平台專屬二進位，Windows / macOS / Linux 通吃，只有選用的傳統語言伺服器路徑仍限 Linux。</div>
+        <div class="a">可以，而且最省事——到 <a href="https://github.com/dwgx/WindsurfAPI/releases/latest" target="_blank" rel="noopener">Releases</a> 下載 <code>windsurfapi-windows.zip</code>（內建 Node，免安裝、免 clone），解壓後雙擊 <code>tray.vbs</code> 即縮進系統匣，首次自動生成金鑰與後台密碼，右鍵可一鍵複製密碼 / API Key、開面板、重啟；只想要單檔也可下裸 <code>windsurfapi.exe</code>（控制台視窗版）。當然也能照手動 / Docker 方式跑：預設的 Devin 雲端路徑（<code>DEVIN_CONNECT=1</code>）是純 HTTP，不依賴平台專屬二進位，Windows / macOS / Linux 通吃，只有選用的傳統語言伺服器路徑仍限 Linux。</div>
       </details>
       <details class="faq-item">
         <summary>看不到最新模型怎麼辦？</summary>

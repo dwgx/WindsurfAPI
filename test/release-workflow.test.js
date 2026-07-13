@@ -40,9 +40,15 @@ describe('release workflow', () => {
     assert.match(winExe, /\/health/);
     assert.match(winExe, /\/dashboard/);
     assert.match(winExe, /upload-artifact/);
+    // Packages a zero-dependency zip (exe + tray launcher scripts) so Windows
+    // users get a KiroStudio-style "unzip → double-click" distribution.
+    assert.match(winExe, /windsurfapi-windows\.zip/);
+    assert.match(winExe, /tray\.vbs/);
     const release = jobBlock('release');
     assert.match(release, /download-artifact/);
-    assert.match(release, /files:\s*dist-windows\/windsurfapi\.exe/);
+    // Both the bare exe and the tray zip are attached to the release.
+    assert.match(release, /dist-windows\/windsurfapi\.exe/);
+    assert.match(release, /dist-windows\/windsurfapi-windows\.zip/);
   });
 
   it('uses the bounded release test gate in CI', () => {
