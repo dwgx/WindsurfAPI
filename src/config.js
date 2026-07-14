@@ -2,6 +2,7 @@ import { readFileSync, existsSync, mkdirSync, writeFileSync, appendFileSync } fr
 import { resolve, dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { randomBytes } from 'crypto';
+import net from 'net';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(__dirname, '..');
@@ -89,6 +90,18 @@ if (IS_PACKAGED) {
       _generatedCreds = { ...gen, envPath: null, persistError: err.code || err.message };
     }
   }
+}
+
+// Disable Node's Happy Eyeballs (autoSelectFamily). On hosts where DNS returns
+// an unroutable IPv6 (e.g. ULA fd00:696e:: for server.codeium.com) before the
+// working IPv4, Node 20+ tries IPv6 first and the whole attempt dies with
+// ETIMEDOUT in ~270ms — no IPv4 fallback. curl survives via Happy Eyeballs,
+// but Node's implementation does not fall back when the IPv6 connect hangs.
+// Disabling autoSelectFamily makes DNS return IPv4 first (default order),
+// which connects cleanly. Zero-cost on hosts with no IPv6 — the flag only
+// changes the address-selection strategy, not the DNS query itself.
+if (typeof net.setDefaultAutoSelectFamily === 'function') {
+  net.setDefaultAutoSelectFamily(false);
 }
 
 // `sharedDataDir` is the cluster-shared root: a single accounts.json lives

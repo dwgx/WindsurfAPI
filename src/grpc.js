@@ -50,11 +50,16 @@ export function decodeGrpcMessage(grpcMessage) {
 const _sessionPool = new Map();
 
 function getSession(port) {
-  const key = `localhost:${port}`;
+  const key = `127.0.0.1:${port}`;
   let session = _sessionPool.get(key);
   if (session && !session.destroyed && !session.closed) return session;
 
-  session = http2.connect(`http://localhost:${port}`);
+  // Use 127.0.0.1 (not "localhost") so the HTTP/2 client always connects via
+  // IPv4 — the LS listens on 127.0.0.1, and on macOS "localhost" resolves to
+  // ::1 first. With autoSelectFamily=false (set in config.js to fix ETIMEDOUT
+  // on remote server.codeium.com connections), Node only tries the first DNS
+  // result (::1) and gets ECONNREFUSED instead of falling back to 127.0.0.1.
+  session = http2.connect(`http://127.0.0.1:${port}`);
   session.on('error', (err) => {
     log.debug(`HTTP/2 session error on port ${port}: ${err.message}`);
     if (_sessionPool.get(key) === session) _sessionPool.delete(key);
@@ -75,7 +80,7 @@ function getSession(port) {
  * the port).
  */
 export function closeSessionForPort(port) {
-  const key = `localhost:${port}`;
+  const key = `127.0.0.1:${port}`;
   const session = _sessionPool.get(key);
   if (session) {
     try { session.close(); } catch {}

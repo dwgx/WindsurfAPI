@@ -1069,7 +1069,9 @@ function isPortInUse(port) {
 
 export function probeLanguageServerPort(port, timeoutMs = 1500) {
   return new Promise((resolve) => {
-    const client = http2.connect(`http://localhost:${port}`);
+    // 127.0.0.1 (not "localhost") — see grpc.js getSession() for the
+    // autoSelectFamily=false rationale.
+    const client = http2.connect(`http://127.0.0.1:${port}`);
     let settled = false;
     let req = null;
     const finish = (ok) => {
@@ -1114,7 +1116,7 @@ async function waitPortReady(port, timeoutMs = 20000) {
   while (Date.now() - start < timeoutMs) {
     try {
       await new Promise((resolve, reject) => {
-        const client = http2.connect(`http://localhost:${port}`);
+        const client = http2.connect(`http://127.0.0.1:${port}`);
         const timer = setTimeout(() => { try { client.close(); } catch {} reject(new Error('timeout')); }, 2000);
         client.on('connect', () => { clearTimeout(timer); client.close(); resolve(); });
         client.on('error', (e) => { clearTimeout(timer); try { client.close(); } catch {} reject(e); });
