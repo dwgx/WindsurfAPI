@@ -1545,19 +1545,50 @@ export function shouldLiftCallerEnv(modelKey, { emulateTools, env = process.env 
   return true;
 }
 
+// Inject a tool-description preamble into the system prompt of a message
+// list. DEVIN_CONNECT has no proto tool_calling_section slot, so the
+// description-only preamble (buildToolPreambleForProto with
+// nativeStructured:true — descriptions without the text-emulation protocol
+// header) must ride the system prompt to give the model tool-selection
+// context the stripped native #10 ToolDef cannot. If a system message
+// already exists the preamble is prepended (separated by a blank line); if
+// not, a new system message is inserted at the front. The list is not
+// mutated in place — a shallow copy is returned so the caller's `messages`
+// reference stays stable.
+export function injectPreambleIntoSystemPrompt(messages, preamble) {
+  if (!preamble || typeof preamble !== 'string' || !preamble.trim()) return messages;
+  if (!Array.isArray(messages)) return messages;
+  const idx = messages.findIndex(m => m?.role === 'system');
+  if (idx >= 0) {
+    const cur = messages[idx];
+    const curContent = typeof cur.content === 'string' ? cur.content
+      : Array.isArray(cur.content) ? cur.content.filter(p => p?.type === 'text').map(p => p.text || '').join('\n')
+      : '';
+    const merged = curContent && curContent.trim()
+      ? `${preamble.trim()}\n\n${curContent}`
+      : preamble.trim();
+    const out = messages.slice();
+    out[idx] = { ...cur, content: merged };
+    return out;
+  }
+  return [{ role: 'system', content: preamble.trim() }, ...messages];
+}
+
 export function applyToolPreambleBudget(tools, toolChoice, callerEnv = '', opts = {}) {
   const modelKey = opts.modelKey || null;
   const provider = opts.provider || null;
   const route = opts.route || null;
+  const nativeStructured = opts.nativeStructured === true;
   const softBytes = opts.softBytes ?? parseInt(process.env.TOOL_PREAMBLE_SOFT_BYTES || '24000', 10);
   const hardBytes = opts.hardBytes ?? parseInt(process.env.TOOL_PREAMBLE_HARD_BYTES || '48000', 10);
+  const tierOpts = nativeStructured ? { nativeStructured: true } : {};
   const tiers = [
     { tier: 'full', build: buildToolPreambleForProto },
     { tier: 'schema-compact', build: buildSchemaCompactToolPreambleForProto },
     { tier: 'skinny', build: buildSkinnyToolPreambleForProto },
     { tier: 'names-only', build: buildCompactToolPreambleForProto },
   ];
-  const full = tiers[0].build(tools || [], toolChoice, callerEnv, modelKey, provider, route);
+  const full = tiers[0].build(tools || [], toolChoice, callerEnv, modelKey, provider, route, tierOpts);
   if (!full) {
     return { ok: true, preamble: '', fullBytes: 0, finalBytes: 0, compacted: false, tier: 'empty', softBytes, hardBytes };
   }
@@ -1568,7 +1599,7 @@ export function applyToolPreambleBudget(tools, toolChoice, callerEnv = '', opts 
   // names-only and let the hard-cap check decide whether to reject.
   let chosen = { tier: 'full', preamble: full, bytes: fullBytes };
   for (const t of tiers) {
-    const text = t.tier === 'full' ? full : t.build(tools || [], toolChoice, callerEnv, modelKey, provider, route);
+    const text = t.tier === 'full' ? full : t.build(tools || [], toolChoice, callerEnv, modelKey, provider, route, tierOpts);
     const bytes = Buffer.byteLength(text, 'utf8');
     chosen = { tier: t.tier, preamble: text, bytes };
     if (bytes <= softBytes) break;
@@ -2295,7 +2326,14 @@ async function _handleChatCompletionsInner(body, context = {}) {
     // correct. Do NOT enable in production: with unverified inner tags the frame
     // may be misread. Normal path keeps the preamble unless both gates are on.
     const soloProbe = nativeDefsOn && String(process.env.DEVIN_CONNECT_TOOL_DEF_SOLO || '') === '1';
-    const suppressPreamble = soloProbe || (nativeDefsOn && nativeCallsOn);
+    // HYBRID (2026-07-13): keep the prompt preamble ON even when native #10
+    // ToolDef + #6 ChatToolCall are both engaged. The preamble carries full
+    // human-readable tool descriptions (which upstream's MCP-gate does NOT
+    // scan — it only fingerprints the protobuf #10 fields), so the model
+    // keeps its tool-selection context while we still get reliable native
+    // tool-call decode. Only the SOLO calibration probe suppresses the
+    // preamble (it needs #10 to be the ONLY tool signal to verify tags).
+    const suppressPreamble = soloProbe;
     if (soloProbe) log.info(`Chat[${reqId}]: DEVIN_CONNECT TOOL_DEF SOLO probe — preamble suppressed, native #10 is the only tool signal`);
     // Native tool_call observability: surface gate state so a paid probe can
     // confirm the native path actually engaged (flag on + tags resolved) vs
@@ -2320,6 +2358,48 @@ async function _handleChatCompletionsInner(body, context = {}) {
         const neut = neutralizeClientIdentity(m.content);
         return neut === m.content ? m : { ...m, content: neut };
       });
+    }
+    // HYBRID native path: DEVIN_CONNECT has no proto tool_calling_section
+    // slot, so the description-only preamble (buildToolPreambleForProto with
+    // nativeStructured:true) is never built by normalizeMessagesForCascade —
+    // its user-message fallback (buildToolPreamble) returns '' for
+    // nativeStructured. Without this injection the model gets ONLY the
+    // stripped native #10 ToolDef (names + schemas, no descriptions) and
+    // loses tool-selection context. Build the description-only preamble via
+    // applyToolPreambleBudget and inject it into the system prompt so the
+    // model keeps full human-readable tool descriptions (which upstream's
+    // MCP-gate does NOT scan — it only fingerprints the protobuf #10
+    // fields) while still calling tools through the native function-calling
+    // interface. The preamble has NO text-emulation protocol header
+    // (nativeStructured strips it), so there is no conflict with native
+    // #6 ChatToolCall. SOLO probe mode (suppressPreamble) skips this too —
+    // it needs #10 to be the ONLY tool signal.
+    if (nativeStructured && !suppressPreamble && Array.isArray(connectMessages)) {
+      const callerEnv = extractCallerEnvironment(messages);
+      const descBudget = applyToolPreambleBudget(connectTools, tool_choice, callerEnv, {
+        modelKey: reqModelName,
+        provider: null,
+        route: 'devin_connect',
+        nativeStructured: true,
+      });
+      if (!descBudget.ok) {
+        log.warn(`Chat[${reqId}]: DEVIN_CONNECT native desc preamble ${Math.round(descBudget.finalBytes / 1024)}KB exceeds hard cap ${Math.round(descBudget.hardBytes / 1024)}KB after ${descBudget.tier} tier; rejecting (${connectTools.length} tools)`);
+        return {
+          status: 400,
+          body: {
+            error: {
+              message: `Tool definitions are too large (${Math.round(descBudget.finalBytes / 1024)}KB > ${Math.round(descBudget.hardBytes / 1024)}KB after ${descBudget.tier} compaction). Reduce the number of tools or shorten tool names.`,
+              type: 'invalid_request_error',
+              param: 'tools',
+              code: 'tool_preamble_too_large',
+            },
+          },
+        };
+      }
+      if (descBudget.preamble) {
+        connectMessages = injectPreambleIntoSystemPrompt(connectMessages, descBudget.preamble);
+        log.info(`Chat[${reqId}]: DEVIN_CONNECT native desc preamble injected into system prompt (${descBudget.tier} tier, ${Math.round(descBudget.finalBytes / 1024)}KB, ${connectTools.length} tools)`);
+      }
     }
     log.info(`Chat[${reqId}]: DEVIN_CONNECT ${reqModelName} -> selector=${selector}${mapped ? '' : ' [unmapped→free-tier]'} stream=${!!stream}${emulateTools ? ` tools=${connectTools.length}` : ''}`);
     const ccId = genId();

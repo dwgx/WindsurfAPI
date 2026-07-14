@@ -152,11 +152,11 @@ describe('buildGetChatMessageRequest', () => {
     assert.equal(getField(parseFields(proto), 2, 2).value.toString('utf8'), 'be nice');
   });
 
-  // ★ 2026-07-10: tool-description length cap. Verified live — a Claude-family
-  // native request with a very long tool description (Claude Code's TaskOutput,
-  // 1080 chars) returns upstream "internal error"; capped it passes. We truncate
-  // the description (a model hint) without touching name/schema.
-  it('caps a very long tool description in the encoded #10 ToolDef', () => {
+  // ★ 2026-07-13: native ToolDef descriptions are replaced with the tool name.
+  // Live A/B against Cursor's real 21-tool inventory proved upstream fingerprints
+  // both top-level and parameter descriptions as an "MCP configuration issue".
+  // Name, schema structure, types, required fields and enums remain native.
+  it('replaces a very long tool description with the name in #10 ToolDef', () => {
     const longDesc = 'x'.repeat(1200);
     const proto = buildGetChatMessageRequest({
       token: TOKEN, model: 'claude-opus-4-8-medium',
@@ -169,12 +169,12 @@ describe('buildGetChatMessageRequest', () => {
     assert.ok(td, 'has #10 ToolDef');
     const inner = parseFields(td.value);
     const desc = getField(inner, 2, 2).value.toString('utf8');
-    assert.ok(desc.length <= 500, `description capped to <=500 (got ${desc.length})`);
+    assert.equal(desc, 'edit');
     // name (#1) still intact
     assert.equal(getField(inner, 1, 2).value.toString('utf8'), 'edit');
   });
 
-  it('leaves a short tool description untouched', () => {
+  it('replaces a short tool description with the name', () => {
     const proto = buildGetChatMessageRequest({
       token: TOKEN, model: 'claude-opus-4-8-medium',
       messages: [{ role: 'system', content: 'sys' }, { role: 'user', content: 'hi' }],
@@ -182,7 +182,7 @@ describe('buildGetChatMessageRequest', () => {
       nativeToolCall: true,
     });
     const inner = parseFields(getField(parseFields(proto), 10, 2).value);
-    assert.equal(getField(inner, 2, 2).value.toString('utf8'), 'edit a file');
+    assert.equal(getField(inner, 2, 2).value.toString('utf8'), 'edit');
   });
 
   it('embeds the SINGLE token in ClientMetadata #3 (header doubling is separate)', () => {
@@ -1011,7 +1011,7 @@ describe('native tool defs in the request (gated)', () => {
       assert.equal(toolFields.length, 1, 'one ToolDef emitted at #10');
       const td = parseFields(toolFields[0].value);
       assert.equal(getField(td, 1, 2).value.toString('utf8'), 'get_weather');
-      assert.equal(getField(td, 2, 2).value.toString('utf8'), 'Get weather');
+      assert.equal(getField(td, 2, 2).value.toString('utf8'), 'get_weather');
       assert.deepEqual(JSON.parse(getField(td, 3, 2).value.toString('utf8')), TOOLS[0].function.parameters);
     } finally {
       if (prev === undefined) delete process.env.DEVIN_CONNECT_TOOL_DEF_TAGS;
@@ -1634,16 +1634,156 @@ describe('normalizeToolSchema', () => {
     assert.equal(normalizeToolSchema({ type: 'object', properties: {}, required: 'a' }).required, undefined);
     assert.equal(normalizeToolSchema({ type: 'object', properties: { a: {} }, required: ['ghost'] }).required, undefined);
   });
-  it('preserves real schema content (properties, descriptions, nested)', () => {
-    const src = { type: 'object', properties: { path: { type: 'string', description: 'file path' }, n: { type: 'integer' } }, required: ['path'] };
+  it('strips schema annotations but preserves structure and a parameter named description', () => {
+    const src = {
+      type: 'object',
+      description: 'root hint',
+      properties: {
+        path: { type: 'string', description: 'file path' },
+        description: { type: 'string', description: 'parameter hint' },
+        nested: { type: 'object', description: 'nested hint', properties: { value: { type: 'integer', description: 'value hint' } } },
+      },
+      required: ['path', 'description'],
+    };
     const r = normalizeToolSchema(src);
-    assert.deepEqual(r.properties, src.properties);
-    assert.deepEqual(r.required, ['path']);
+    assert.deepEqual(r, {
+      type: 'object',
+      properties: {
+        path: { type: 'string' },
+        description: { type: 'string' },
+        nested: { type: 'object', properties: { value: { type: 'integer' } } },
+      },
+      required: ['path', 'description'],
+    });
   });
   it('does not mutate the caller object', () => {
     const src = { $schema: 'x', type: 'string', properties: {} };
     normalizeToolSchema(src);
     assert.equal(src.$schema, 'x');
     assert.equal(src.type, 'string');
+  });
+  it('strips description from oneOf/anyOf/allOf nested schemas', () => {
+    const src = {
+      type: 'object',
+      properties: {
+        mode: {
+          oneOf: [
+            { type: 'string', description: 'string mode' },
+            { type: 'object', description: 'object mode', properties: { value: { type: 'string', description: 'inner' } } },
+          ],
+        },
+        filter: {
+          anyOf: [
+            { type: 'string', description: 'filter by name' },
+            { type: 'integer', description: 'filter by id' },
+          ],
+        },
+        combine: {
+          allOf: [
+            { type: 'string', description: 'part a' },
+            { type: 'string', enum: ['x', 'y'], description: 'part b' },
+          ],
+        },
+      },
+    };
+    const r = normalizeToolSchema(src);
+    // oneOf: descriptions stripped, structure preserved
+    assert.equal(r.properties.mode.oneOf[0].description, undefined);
+    assert.equal(r.properties.mode.oneOf[1].description, undefined);
+    assert.equal(r.properties.mode.oneOf[1].properties.value.type, 'string');
+    assert.equal(r.properties.mode.oneOf[1].properties.value.description, undefined);
+    // anyOf: descriptions stripped
+    assert.equal(r.properties.filter.anyOf[0].description, undefined);
+    assert.equal(r.properties.filter.anyOf[1].description, undefined);
+    // allOf: descriptions stripped, enum preserved
+    assert.equal(r.properties.combine.allOf[0].description, undefined);
+    assert.equal(r.properties.combine.allOf[1].description, undefined);
+    assert.deepEqual(r.properties.combine.allOf[1].enum, ['x', 'y']);
+  });
+  it('strips description from array items and additionalProperties schemas', () => {
+    const src = {
+      type: 'object',
+      properties: {
+        files: {
+          type: 'array',
+          description: 'list of files',
+          items: { type: 'string', description: 'a file path' },
+        },
+        meta: {
+          type: 'object',
+          description: 'metadata bag',
+          additionalProperties: { type: 'string', description: 'any string value' },
+        },
+      },
+    };
+    const r = normalizeToolSchema(src);
+    assert.equal(r.properties.files.description, undefined);
+    assert.equal(r.properties.files.type, 'array');
+    assert.equal(r.properties.files.items.type, 'string');
+    assert.equal(r.properties.files.items.description, undefined);
+    assert.equal(r.properties.meta.description, undefined);
+    assert.equal(r.properties.meta.additionalProperties.type, 'string');
+    assert.equal(r.properties.meta.additionalProperties.description, undefined);
+  });
+  it('preserves const, format, and enum while stripping description annotations', () => {
+    const src = {
+      type: 'object',
+      properties: {
+        kind: { type: 'string', const: 'fixed', description: 'the kind' },
+        date: { type: 'string', format: 'date-time', description: 'when' },
+        level: { type: 'string', enum: ['low', 'high'], description: 'severity' },
+        withDefault: { type: 'string', default: 'auto', description: 'default val', examples: ['auto', 'manual'] },
+      },
+    };
+    const r = normalizeToolSchema(src);
+    assert.equal(r.properties.kind.const, 'fixed');
+    assert.equal(r.properties.kind.description, undefined);
+    assert.equal(r.properties.date.format, 'date-time');
+    assert.equal(r.properties.date.description, undefined);
+    assert.deepEqual(r.properties.level.enum, ['low', 'high']);
+    assert.equal(r.properties.level.description, undefined);
+    // default and examples are NOT description annotations → preserved
+    assert.equal(r.properties.withDefault.default, 'auto');
+    assert.deepEqual(r.properties.withDefault.examples, ['auto', 'manual']);
+    assert.equal(r.properties.withDefault.description, undefined);
+    assert.equal(r.properties.withDefault.type, 'string');
+  });
+  it('handles deeply nested objects (5 levels) without losing structure', () => {
+    const src = {
+      type: 'object',
+      properties: {
+        a: { type: 'object', description: 'a', properties: { b: { type: 'object', description: 'b', properties: { c: { type: 'object', description: 'c', properties: { d: { type: 'object', description: 'd', properties: { e: { type: 'string', description: 'e' } } } } } } } } },
+      },
+    };
+    const r = normalizeToolSchema(src);
+    const a = r.properties.a;
+    assert.equal(a.description, undefined);
+    assert.equal(a.type, 'object');
+    const b = a.properties.b;
+    assert.equal(b.description, undefined);
+    const c = b.properties.c;
+    assert.equal(c.description, undefined);
+    const d = c.properties.d;
+    assert.equal(d.description, undefined);
+    const e = d.properties.e;
+    assert.equal(e.type, 'string');
+    assert.equal(e.description, undefined);
+  });
+  it('preserves a parameter named "description" with its type and enum', () => {
+    // Regression guard: the MCP-gate fix strips description ANNOTATIONS, not
+    // parameters that happen to be named "description".
+    const src = {
+      type: 'object',
+      properties: {
+        description: { type: 'string', description: 'a human-readable description', enum: ['short', 'long'] },
+      },
+      required: ['description'],
+    };
+    const r = normalizeToolSchema(src);
+    assert.ok(r.properties.description, 'parameter named "description" must survive');
+    assert.equal(r.properties.description.type, 'string');
+    assert.deepEqual(r.properties.description.enum, ['short', 'long']);
+    assert.equal(r.properties.description.description, undefined, 'annotation stripped');
+    assert.deepEqual(r.required, ['description']);
   });
 });

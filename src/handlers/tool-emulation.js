@@ -163,8 +163,15 @@ export function trimToolsForWeakModel(tools, modelKey, opts = {}) {
   return { tools: kept, trimmed: true, kept: kept.length, dropped: tools.length - kept.length };
 }
 
-export function buildToolPreamble(tools, toolChoice = 'auto', modelKey = null, provider = null, route = null) {
+export function buildToolPreamble(tools, toolChoice = 'auto', modelKey = null, provider = null, route = null, opts = {}) {
   if (!Array.isArray(tools) || tools.length === 0) return '';
+  // nativeStructured: when native #10 ToolDef + #6 ChatToolCall are engaged,
+  // this user-message fallback would CONFLICT with the native function-calling
+  // interface (it teaches the model to emit text-format tool calls). Return
+  // empty — the native ToolDef already declares the tools, and the proto-level
+  // buildToolPreambleForProto (with nativeStructured:true) carries the
+  // descriptions without the text-emulation protocol.
+  if (opts.nativeStructured) return '';
   const dialect = pickToolDialect(modelKey, provider, route);
   const names = [];
   for (const t of tools) {
@@ -497,11 +504,19 @@ function resolveToolChoice(tc) {
  * X, not /tmp/windsurf-workspace" in a way that survives Cascade's
  * authoritative workspace prior. (#54 follow-up.)
  */
-export function buildToolPreambleForProto(tools, toolChoice, environment, modelKey = null, provider = null, route = null) {
+export function buildToolPreambleForProto(tools, toolChoice, environment, modelKey = null, provider = null, route = null, opts = {}) {
   if (!Array.isArray(tools) || tools.length === 0) return '';
   const { mode, forceName } = resolveToolChoice(toolChoice);
   const dialect = pickToolDialect(modelKey, provider, route);
-  const protocol = protocolHeaderForTools(dialect, mode, forceName, true);
+  // nativeStructured: when native #10 ToolDef + #6 ChatToolCall are engaged,
+  // the protocol header (which teaches the model to emit text-format tool
+  // calls) would CONFLICT with the native function-calling interface. Skip
+  // it — the native ToolDef already declares the tools as function
+  // definitions, and the model should call them through function-calling,
+  // not text emulation. Only the "Available functions" descriptions stay,
+  // giving the model tool-selection context it can't get from the stripped
+  // #10 description field.
+  const protocol = opts.nativeStructured ? '' : protocolHeaderForTools(dialect, mode, forceName, true);
 
   const lines = [];
   if (environment && typeof environment === 'string' && environment.trim()) {
@@ -514,8 +529,10 @@ export function buildToolPreambleForProto(tools, toolChoice, environment, modelK
     lines.push('');
   }
   lines.push(WORKSPACE_PATH_HINT);
-  lines.push('');
-  lines.push(protocol);
+  if (protocol) {
+    lines.push('');
+    lines.push(protocol);
+  }
   const specificRules = toolSpecificRules(tools);
   if (specificRules.length) {
     lines.push('');
@@ -616,11 +633,11 @@ function paramSignature(parameters) {
  * Schema-compact preamble: same shape as full, but strips schema docs and
  * minifies JSON. Saves ~40-60% with no loss of tool-call correctness.
  */
-export function buildSchemaCompactToolPreambleForProto(tools, toolChoice, environment, modelKey = null, provider = null, route = null) {
+export function buildSchemaCompactToolPreambleForProto(tools, toolChoice, environment, modelKey = null, provider = null, route = null, opts = {}) {
   if (!Array.isArray(tools) || tools.length === 0) return '';
   const { mode, forceName } = resolveToolChoice(toolChoice);
   const dialect = pickToolDialect(modelKey, provider, route);
-  const protocol = protocolHeaderForTools(dialect, mode, forceName, true);
+  const protocol = opts.nativeStructured ? '' : protocolHeaderForTools(dialect, mode, forceName, true);
   const lines = [];
   if (environment && typeof environment === 'string' && environment.trim()) {
     lines.push('## Environment facts');
@@ -632,8 +649,10 @@ export function buildSchemaCompactToolPreambleForProto(tools, toolChoice, enviro
     lines.push('');
   }
   lines.push(WORKSPACE_PATH_HINT);
-  lines.push('');
-  lines.push(protocol);
+  if (protocol) {
+    lines.push('');
+    lines.push(protocol);
+  }
   const specificRules = toolSpecificRules(tools);
   if (specificRules.length) {
     lines.push('');
@@ -661,11 +680,11 @@ export function buildSchemaCompactToolPreambleForProto(tools, toolChoice, enviro
  * stop before names-only — keeps enough for the model to know which
  * params each tool needs without paying the schema serialization cost.
  */
-export function buildSkinnyToolPreambleForProto(tools, toolChoice, environment, modelKey = null, provider = null, route = null) {
+export function buildSkinnyToolPreambleForProto(tools, toolChoice, environment, modelKey = null, provider = null, route = null, opts = {}) {
   if (!Array.isArray(tools) || tools.length === 0) return '';
   const { mode, forceName } = resolveToolChoice(toolChoice);
   const dialect = pickToolDialect(modelKey, provider, route);
-  const protocol = protocolHeaderForTools(dialect, mode, forceName, true);
+  const protocol = opts.nativeStructured ? '' : protocolHeaderForTools(dialect, mode, forceName, true);
   const lines = [];
   if (environment && typeof environment === 'string' && environment.trim()) {
     lines.push('## Environment facts');
@@ -675,8 +694,10 @@ export function buildSkinnyToolPreambleForProto(tools, toolChoice, environment, 
     lines.push('');
   }
   lines.push(WORKSPACE_PATH_HINT);
-  lines.push('');
-  lines.push(protocol);
+  if (protocol) {
+    lines.push('');
+    lines.push(protocol);
+  }
   const specificRules = toolSpecificRules(tools);
   if (specificRules.length) {
     lines.push('');
@@ -710,11 +731,11 @@ export function buildSkinnyToolPreambleForProto(tools, toolChoice, environment, 
  * because the alternative is the request failing with panel_state_missing
  * retries until the proxy gives up.
  */
-export function buildCompactToolPreambleForProto(tools, toolChoice, environment, modelKey = null, provider = null, route = null) {
+export function buildCompactToolPreambleForProto(tools, toolChoice, environment, modelKey = null, provider = null, route = null, opts = {}) {
   if (!Array.isArray(tools) || tools.length === 0) return '';
   const { mode, forceName } = resolveToolChoice(toolChoice);
   const dialect = pickToolDialect(modelKey, provider, route);
-  const protocol = protocolHeaderForTools(dialect, mode, forceName, true);
+  const protocol = opts.nativeStructured ? '' : protocolHeaderForTools(dialect, mode, forceName, true);
   const names = [];
   for (const t of tools) {
     if (t?.type !== 'function' || !t.function?.name) continue;
@@ -733,8 +754,10 @@ export function buildCompactToolPreambleForProto(tools, toolChoice, environment,
     lines.push('');
   }
   lines.push(WORKSPACE_PATH_HINT);
-  lines.push('');
-  lines.push(protocol);
+  if (protocol) {
+    lines.push('');
+    lines.push(protocol);
+  }
   const specificRules = toolSpecificRules(tools);
   if (specificRules.length) {
     lines.push('');
@@ -743,7 +766,9 @@ export function buildCompactToolPreambleForProto(tools, toolChoice, environment,
   }
   lines.push('');
   lines.push(`Available functions: ${names.join(', ')}.`);
-  lines.push('Parameter schemas are omitted in this preamble due to total tool-list size. Match each <tool_call> to the function name; the calling agent will validate argument shapes when it executes the call.');
+  lines.push(opts.nativeStructured
+    ? 'Parameter schemas are omitted in this preamble due to total tool-list size; the calling agent validates argument shapes when it executes the call.'
+    : 'Parameter schemas are omitted in this preamble due to total tool-list size. Match each <tool_call> to the function name; the calling agent will validate argument shapes when it executes the call.');
   return lines.join('\n');
 }
 
@@ -982,7 +1007,7 @@ export function normalizeMessagesForCascade(messages, tools, options = {}) {
   // confused prose with zero tool_calls and hit max_wait. Skipping the
   // preamble on tool_result turns lets Opus stay in tool-using mode for
   // the full conversation, matching native-Anthropic-API behaviour.
-  const preamble = buildToolPreamble(tools, toolChoice, modelKey, provider, route);
+  const preamble = buildToolPreamble(tools, toolChoice, modelKey, provider, route, { nativeStructured: options.nativeStructured === true });
   if (preamble && injectUserPreamble) {
     for (let i = out.length - 1; i >= 0; i--) {
       if (out[i].role !== 'user') continue;
