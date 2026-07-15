@@ -45,6 +45,9 @@ import { discoverWindsurfCredentials, isLoopbackAddress } from './local-windsurf
 import { parseAccountText, classifyToken } from './account-text-parser.js';
 import { detectDockerSelfUpdate, runDockerSelfUpdate } from './docker-self-update.js';
 import { BatchImportParseError, parseBatchImportInput } from './import-parser.js';
+import { detectSupervisor, gracefulRestart } from '../restart.js';
+import { getActiveServer } from '../server-registry.js';
+import { abortActiveSse } from '../sse-registry.js';
 
 function shouldPrewarmLsOnAccountAdd() {
   return process.env.LS_PREWARM_ON_ACCOUNT_ADD === '1' || process.env.LS_PREWARM_PROXIES === '1';
@@ -824,20 +827,25 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
       // backstop, but stopping cleanly here means the next process won't
       // even need cleanup most of the time.
       if (changed) {
-        setTimeout(async () => {
-          log.info('self-update: stopping LS pool before exit');
-          try {
-            // v2.0.88 (audit H-4): use the await-and-wait variant so
-            // SIGTERM has time to land before process.exit reparents
-            // surviving children to init. Otherwise the newly spawned
-            // process races with an orphan LS holding the same port.
-            const m = await import('../langserver.js');
-            await m.stopLanguageServerAndWait({ perProcessTimeoutMs: 1500 });
-          } catch (e) {
-            log.warn(`self-update: stopLanguageServer failed: ${e.message}`);
-          }
+        setTimeout(() => {
+          // v3.4.x: drain in-flight requests before the LS stop + exit, via the
+          // shared gracefulRestart path. The HTTP server handle is now reachable
+          // from api.js through server-registry.js (registered in index.js), so
+          // self-update no longer exits abruptly mid-request. Behaviour is
+          // otherwise unchanged: same await-and-wait LS stop (audit H-4 — SIGTERM
+          // lands before exit reparents surviving children to init) and the same
+          // EX_TEMPFAIL exit code the supervisor relaunches on. If the server
+          // handle is somehow unregistered, gracefulRestart simply skips the
+          // drain step and still stops the LS and exits.
           log.info('self-update: exiting with restart-requested status for service supervisor');
-          process.exit(selfUpdateRestartExitCode());
+          void gracefulRestart({
+            reason: 'self-update',
+            drainMs: 10000,
+            server: getActiveServer(),
+            abortSse: abortActiveSse,
+            stopLs: () => stopLanguageServerAndWait({ perProcessTimeoutMs: 1500 }),
+            exitCode: selfUpdateRestartExitCode(),
+          });
         }, 800);
       }
       return json(res, 200, {
@@ -871,6 +879,42 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
       }
       return json(res, 200, { ok: false, error: err.message });
     }
+  }
+
+  // ─── One-click restart ────────────────────────────────
+  // Gracefully drain in-flight requests then exit with the supervisor-relaunch
+  // code (75, same as self-update) so systemd/PM2/docker restart us. This sits
+  // under the same ambient dashboard-auth gate as /self-update (the checkAuth()
+  // guard at the top of this handler covers every non-/auth mutation) — a
+  // mutating operator action, so a chat API key alone is not enough.
+  if (subpath === '/restart' && method === 'POST') {
+    // Precheck: refuse to exit if no supervisor will relaunch us. Exiting into
+    // nothing would take the gateway down permanently on one dashboard click.
+    const sup = detectSupervisor();
+    if (!sup.supervised) {
+      return json(res, 200, {
+        ok: false,
+        error: 'ERR_NO_SUPERVISOR',
+        message: 'No process supervisor (systemd/PM2/docker) detected. Restart would stop the gateway without relaunch. Run under a supervisor or set WINDSURFAPI_RESTART_SUPERVISED=1.',
+      });
+    }
+    // Respond FIRST so the client sees the ack before we start tearing down,
+    // THEN trigger the drain+exit on a short delay so the response flushes —
+    // mirrors how /self-update schedules its exit via setTimeout.
+    log.info(`restart: dashboard requested restart (supervisor=${sup.kind})`);
+    setTimeout(() => {
+      void gracefulRestart({
+        reason: `dashboard /restart (supervisor=${sup.kind})`,
+        drainMs: 10000,
+        server: getActiveServer(),
+        abortSse: abortActiveSse,
+        // await-and-wait variant so SIGTERM lands before process.exit reparents
+        // surviving LS children to init (the H-4 orphan race).
+        stopLs: () => stopLanguageServerAndWait({ perProcessTimeoutMs: 1500 }),
+        exitCode: selfUpdateRestartExitCode(),
+      });
+    }, 500);
+    return json(res, 200, { ok: true, restarting: true, supervisor: sup.kind });
   }
 
   // ─── Cache ────────────────────────────────────────────

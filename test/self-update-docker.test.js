@@ -53,7 +53,14 @@ describe('Source self-update supervisor restart', () => {
     assert.notEqual(api.selfUpdateRestartExitCode(), 0);
 
     const source = readFileSync(new URL('../src/dashboard/api.js', import.meta.url), 'utf8');
-    assert.match(source, /process\.exit\(selfUpdateRestartExitCode\(\)\)/);
+    // Self-update now exits via the shared gracefulRestart() drain path (which
+    // aborts SSE + drains in-flight before the LS stop) rather than a bare
+    // process.exit, but it must still exit with the supervisor-relaunch code.
+    // Accept either the historical literal call or the gracefulRestart wiring.
+    assert.match(
+      source,
+      /(?:process\.exit\(selfUpdateRestartExitCode\(\)\)|exitCode:\s*selfUpdateRestartExitCode\(\))/,
+    );
   });
 });
 

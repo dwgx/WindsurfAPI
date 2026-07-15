@@ -11,6 +11,7 @@ import { dirname, join } from 'path';
 import { fileURLToPath } from 'url';
 import { VERSION, BRAND } from './version.js';
 import { abortActiveSse } from './sse-registry.js';
+import { registerServer } from './server-registry.js';
 export { VERSION, BRAND };
 
 // v2.0.146 (audit F-1): last-resort process safety nets. This service must
@@ -176,6 +177,10 @@ async function main() {
   }
 
   const server = startServer();
+  // Expose the live server so dashboard-triggered restart / self-update paths
+  // in api.js can drain in-flight requests before exiting (they otherwise have
+  // no reference to it). Mirrors the sse-registry pattern.
+  registerServer(server);
 
   // Packaged first-run: print the auto-generated credentials prominently (like
   // start.ps1 does for the source install) so the user can log in / call the
