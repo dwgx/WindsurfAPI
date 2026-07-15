@@ -2206,7 +2206,10 @@ export function reportInternalError(apiKey) {
       log.warn(`Account ${safeAccountRef(account)} hit ${account.internalErrorStreak} consecutive upstream internal errors but is the LAST usable account — NOT quarantined (single-account exemption)`);
       return;
     }
-    account.rateLimitedUntil = now + getBreakerTunable('internalQuarantineMs');
+    // cool-01: Math.max so a shorter internal-error quarantine never SHORTENS a
+    // longer existing cooldown (e.g. a 3h RATE_LIMITED reset window). Mirrors the
+    // guard at markRateLimited (:1726) and the backoff path (:2117).
+    account.rateLimitedUntil = Math.max(account.rateLimitedUntil || 0, now + getBreakerTunable('internalQuarantineMs'));
     log.warn(`Account ${safeAccountRef(account)} quarantined after ${account.internalErrorStreak} consecutive upstream internal errors`);
   }
 }

@@ -456,6 +456,35 @@ describe('RB2 — mother-theme guards (transients must not be escalated)', () =>
     assert.equal(__isRateLimitedForModel(acct, 'gpt-5.5', now), false);
     assert.ok(!acct.quotaResetAt && (!acct.rateLimitedUntil || acct.rateLimitedUntil <= now));
   });
+
+  it('cool-01: internal-error quarantine must NOT shorten a longer existing cooldown', () => {
+    // reportInternalError quarantines for internalQuarantineMs (default 2min). If
+    // the account already sits under a MUCH longer cooldown (e.g. a 3h RATE_LIMITED
+    // reset window), a bare `rateLimitedUntil = now + quarantine` assignment would
+    // SHORTEN it and reopen a still-throttled account early. The fix uses Math.max.
+    const acct = mk('cool01', { aged: true });
+    const longUntil = Date.now() + 3 * 60 * 60 * 1000;   // 3h hard rate limit
+    acct.rateLimitedUntil = longUntil;
+    // Need a healthy peer so the last-usable-account exemption doesn't skip the
+    // quarantine branch (single-account pools are exempt by design).
+    const peer = mk('cool01-peer'); reportSuccess(peer.apiKey);
+    // internalErrorThreshold default = 2 → two hits trigger the quarantine branch.
+    reportInternalError(acct.apiKey);
+    reportInternalError(acct.apiKey);
+    assert.equal(acct.rateLimitedUntil, longUntil,
+      'the pre-existing 3h cooldown must survive — quarantine (2min) must not shorten it');
+  });
+
+  it('cool-01: internal-error quarantine still EXTENDS when no/shorter cooldown exists', () => {
+    const acct = mk('cool01-extend', { aged: true });
+    const peer = mk('cool01-extend-peer'); reportSuccess(peer.apiKey);
+    const before = Date.now();
+    acct.rateLimitedUntil = 0;   // no existing cooldown
+    reportInternalError(acct.apiKey);
+    reportInternalError(acct.apiKey);
+    assert.ok(acct.rateLimitedUntil > before,
+      'with no prior cooldown, the quarantine window is applied');
+  });
 });
 
 describe('RB2/B2 — quota dimension is consistent across pool-status helpers', () => {
