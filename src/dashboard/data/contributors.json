@@ -341,6 +341,24 @@
       "mergedAt": "2026-07-06",
       "title": "fix: retry cloud model catalog sync when first account becomes active",
       "summary": "根因修复 + 带全套测试，一次到位。fetchAndMergeModelCatalog() 只在 initAuth() 启动时跑一次：如果那一刻池里没有活跃账号，云端 catalog 同步就被整个跳过、再也不重试 —— 后来才加进来的账号永远触发不了 re-sync，导致新上线的上游模型（比如 2026-07-01 重新部署的 Claude Fable 5）不手动重启就不出现在 /v1/models。clarezoe 加了 _modelCatalogSynced 标志 + trySyncModelCatalog() 这个会合并并发调用的 fire-and-forget 包装，并把它挂到每一条账号激活路径上：addAccountByKey / addAccountByToken / addAccountByEmail / setAccountStatus(active) / resetAccountErrors / reportSuccess / maybeRecoverErrorAccount —— 加号、登录、手动改状态、错误重置、成功自愈、半开恢复,任意一条让账号变活都会补触发同步；四道 guard(已同步 / 同步进行中 / 无活跃账号 / 否则后台 fire)避免重复和并发风暴。PR 本身还捎带了 opus-4-8 全 effort 梯队、reasoning_effort 替换、以及从 thinking 里提取 tool_call（这块正好治 #178 那类工具不被调用）。+392/-32 跨 auth / chat / models / server 五个源文件 + 四个测试文件。作者已 rebase 手动合进 master(d4c7259..baa8524),去重一处路由 + 一行调试日志,其余原样保留,全量测试绿。"
+    },
+    {
+      "login": "warelik",
+      "pr": 216,
+      "weight": "S",
+      "weightLabel": "MCP-gate 中和 + native 工具 preamble · 工具链路能不能用的分水岭",
+      "mergedAt": "2026-07-15",
+      "title": "fix: neutralize MCP-gate + inject native tool preamble",
+      "summary": "两个耦合的根因修复，把 native tool-def 路从\"一批工具被上游拒\"救回来。① MCP-gate:上游 server.codeium.com 会对工具描述做指纹匹配(#10 顶层 description + 参数 schema 的 description 注解),命中已知工具签名就把整个请求 permission_denied 掉,且是顶层+参数描述组合触发、单删一个不够。warelik 用 Cursor 真实 21 工具做 A/B,精确定位到 8 个中招(AskQuestion/Glob/Grep/Read/ReadLints/Shell/WebFetch/WebSearch)。修法:encodeToolDef 把顶层描述换成工具名,normalizeToolSchema 末尾加递归 stripSchemaDescriptions 剥参数 schema 的描述注解 —— 关键是精准区分\"schema 注解 description\"(剥)和\"字面叫 description 的参数\"(留,如 Cursor Task 工具),schema 结构(types/required/enum/嵌套/oneOf/anyOf)全保留,21/21 全过。② native preamble:描述被剥后模型丢了选工具上下文,给 4 个 preamble tier 加 nativeStructured 选项 —— native 模式去掉会和 native #6 ChatToolCall 冲突的 text-emulation 协议头,但保留 Available functions 描述,通过新增 injectPreambleIntoSystemPrompt 注入 system prompt(gate 不扫 prompt);suppressPreamble 从 soloProbe||(defsOn&&callsOn) 改成只 soloProbe(HYBRID:native 也保留描述 preamble)。+13 回归测试(5 schema edge-case + 8 nativeStructured),schema 剥离逻辑经维护者独立复现验证正确。对 Cline 这类工具巨多的 agentic 场景是\"能不能用\"的分水岭 —— 它补的正是工具链路的入口侧(工具定义能不能过上游 gate),和网关出口侧的 Cline 兼容(参数归一/finish_reason)合起来才是完整链路。"
+    },
+    {
+      "login": "warelik",
+      "pr": 215,
+      "weight": "A",
+      "weightLabel": "IPv6 Happy Eyeballs ETIMEDOUT 根因修复 · 网络层",
+      "mergedAt": "2026-07-15",
+      "title": "fix: disable Happy Eyeballs + use 127.0.0.1 for local HTTP/2",
+      "summary": "网络层根因修复。DNS 把 server.codeium.com 解析到一个不可路由的 IPv6 ULA、排在可用的 IPv4 前面;Node 20+ 默认开 Happy Eyeballs(autoSelectFamily),但它的实现在 IPv6 connect 挂起时不回退 IPv4 —— 整个请求约 270ms 后 ETIMEDOUT 死掉(curl 靠 Happy Eyeballs 能活,Node 的实现不行)。修法:config.js 里 net.setDefaultAutoSelectFamily(false) 让 DNS 按默认顺序 IPv4 优先。这连带必须把所有本地 HTTP/2 连接从 localhost 换成 127.0.0.1(grpc.js/langserver.js):macOS 上 localhost 先解析成 ::1,而 autoSelectFamily=false 时 Node 只试第一个结果(::1)→ ECONNREFUSED(LS 只听 127.0.0.1 IPv4),不换会有 9 个测试回归。3 源文件精准改动,耦合关系在注释里讲清,零新依赖。"
     }
   ]
 }

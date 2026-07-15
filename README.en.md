@@ -460,6 +460,8 @@ Huge thanks to the following folks who sent pull requests or systematically audi
   Made malformed JSON sent to the dashboard API return HTTP 400 instead of a 200 response with `ok:false`, so UI and automation callers can rely on status-code semantics for bad request bodies.
 - [@brandonedley](https://github.com/brandonedley) — [PR #201](https://github.com/dwgx/WindsurfAPI/pull/201)
   Added GLM 5.2 and Kimi K2.7 catalog entries while keeping README, README.en, package metadata, generated model docs checks, and catalog tests in sync.
+- [@warelik](https://github.com/warelik) — [PR #216](https://github.com/dwgx/WindsurfAPI/pull/216) + [PR #215](https://github.com/dwgx/WindsurfAPI/pull/215)
+  Neutralized the upstream MCP-gate: server.codeium.com fingerprints tool descriptions and rejected 8 of Cursor's 21 tools with permission_denied. The fix replaces the native #10 ToolDef top-level description with the tool name and recursively strips `description` annotations from the parameter schema (preserving structure and parameters literally named `description`), then injects a description-only preamble into the system prompt to restore tool-selection context — 21/21 tools pass (#216). Also fixed Node 20+ IPv6 Happy Eyeballs ETIMEDOUT by disabling autoSelectFamily and switching local HTTP/2 to 127.0.0.1 (#215).
 
 Want to be on this list? Open an [issue](https://github.com/dwgx/WindsurfAPI/issues) or a [pull request](https://github.com/dwgx/WindsurfAPI/pulls). The dashboard has a Credits panel on the left that shows the same info.
 
