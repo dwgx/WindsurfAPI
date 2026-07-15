@@ -1156,7 +1156,11 @@ describe('special-agent streaming correctness', () => {
     assert.doesNotMatch(res.joined(), /"finish_reason":"stop"/);
   });
 
-  it('H7: tool stop_reason maps to finish_reason=tool_calls', async () => {
+  it('cline-01: tool stop_reason on a TEXT-ONLY ACP response maps to finish_reason=stop (not tool_calls)', async () => {
+    // The ACP/print runner is text-only — it never emits tool_calls. Reporting
+    // finish_reason:"tool_calls" with no tool_calls array is the exact shape that
+    // makes Cline's @ai-sdk client retry to death (cline#9622). So a tool-ish
+    // upstream stop_reason must degrade to "stop" here.
     process.env.WINDSURFAPI_SPECIAL_AGENT_BACKEND = 'devin-cli';
     process.env.DEVIN_CLI_MODE = 'acp';
     process.env.DEVIN_CLI_USE_ACCOUNT_POOL = '0';
@@ -1168,7 +1172,8 @@ describe('special-agent streaming correctness', () => {
     });
     const res = streamRes();
     await result.handler(res);
-    assert.match(res.joined(), /"finish_reason":"tool_calls"/);
+    assert.match(res.joined(), /"finish_reason":"stop"/);
+    assert.doesNotMatch(res.joined(), /"finish_reason":"tool_calls"/);
   });
 
   it('H3/H7: non-stream response carries real usage and mapped finish_reason', async () => {

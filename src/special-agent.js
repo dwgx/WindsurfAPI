@@ -249,15 +249,25 @@ function pickUsage(rawUsage, messages, completionText) {
 // hardcoding 'stop' (which made truncation / tool-call / refusal all look like
 // a clean completion). Unknown reasons fall back to 'stop' so well-behaved
 // completions are unaffected.
-function mapFinishReason(stopReason) {
+//
+// cline-01: never report finish_reason:'tool_calls' unless tool_calls were
+// actually emitted. Cline's @ai-sdk client treats a 'tool_calls' finish with no
+// tool_calls array as a broken response and retries to death (cline#9622). The
+// ACP/print runners in this file are TEXT-ONLY (chatCompletionBody /
+// streamFromText never populate message.tool_calls), so a tool-ish upstream
+// stop_reason here must degrade to 'stop', not lie about a tool call that was
+// never sent. hasToolCalls defaults false so every existing text-only call site
+// is corrected; a future tool-capable ACP path passes true to keep 'tool_calls'.
+function mapFinishReason(stopReason, hasToolCalls = false) {
   const r = String(stopReason || '').toLowerCase();
   if (!r) return 'stop';
   if (r.includes('max_tokens') || r.includes('max_token') || r.includes('length') || r.includes('truncat')) return 'length';
-  if (r.includes('tool')) return 'tool_calls';
+  if (r.includes('tool')) return hasToolCalls ? 'tool_calls' : 'stop';
   if (r.includes('filter') || r.includes('content') || r.includes('safety') || r.includes('refus')) return 'content_filter';
   if (r.includes('end_turn') || r.includes('stop') || r.includes('complete') || r.includes('eos')) return 'stop';
   return 'stop';
 }
+export { mapFinishReason };
 
 function errorResponse(status, type, message, extra = {}) {
   return {
