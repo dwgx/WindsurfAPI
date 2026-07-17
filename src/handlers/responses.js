@@ -204,6 +204,22 @@ function flattenResponseTool(tool, inheritedNamespace = '') {
   return [];
 }
 
+// Canonical (key-order-independent) JSON serialization. Two objects that are
+// semantically equal but whose keys were emitted in a different order (e.g. a
+// tool mirrored across top-level `tools` and `input[].additional_tools`, each
+// side built by a different serializer) MUST compare equal here — otherwise the
+// dedup below would flag them as a name conflict and reject a legitimate request
+// with a 400. `flattenResponseTool` passes `parameters` through by reference, so
+// its inner key order is NOT normalized upstream; we normalize it at comparison
+// time by recursively sorting object keys. Arrays keep their order (significant).
+function stableStringify(value) {
+  if (Array.isArray(value)) return '[' + value.map(stableStringify).join(',') + ']';
+  if (value && typeof value === 'object') {
+    return '{' + Object.keys(value).sort().map(k => JSON.stringify(k) + ':' + stableStringify(value[k])).join(',') + '}';
+  }
+  return JSON.stringify(value);
+}
+
 function flattenResponseTools(tools = []) {
   if (!Array.isArray(tools)) return [];
   const flattened = tools.flatMap(tool => flattenResponseTool(tool));
@@ -211,7 +227,9 @@ function flattenResponseTools(tools = []) {
   const seen = new Map();
   for (const tool of flattened) {
     const name = tool.function?.name || tool.name || '';
-    const serialized = JSON.stringify(tool);
+    // Compare canonical forms so cosmetic key-order differences don't masquerade
+    // as a genuine same-name/different-definition conflict.
+    const serialized = stableStringify(tool);
     if (seen.has(name)) {
       if (seen.get(name) !== serialized) throw new Error(`Ambiguous Responses tool name after flattening: ${name}`);
       continue;

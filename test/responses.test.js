@@ -184,6 +184,27 @@ describe('responsesToChat', () => {
     assert.deepEqual(out.tools.map(entry => entry.function.name), ['wait']);
   });
 
+  it('deduplicates a mirrored tool even when its parameters key order differs (no false 400)', () => {
+    // Regression for the key-order false-positive: the SAME tool mirrored across
+    // top-level and additional_tools, but with parameters object keys emitted in
+    // a different order by each side, is semantically identical and must dedup —
+    // NOT be rejected as an ambiguous name conflict (400). Canonical comparison.
+    const topLevel = {
+      type: 'function', name: 'wait',
+      parameters: { type: 'object', properties: { a: { type: 'string' }, b: { type: 'integer' } } },
+    };
+    const mirrored = {
+      type: 'function', name: 'wait',
+      // same schema, keys in a DIFFERENT order (properties b before a; type last)
+      parameters: { properties: { b: { type: 'integer' }, a: { type: 'string' } }, type: 'object' },
+    };
+    let out;
+    assert.doesNotThrow(() => {
+      out = responsesToChat({ tools: [topLevel], input: [{ type: 'additional_tools', tools: [mirrored] }] });
+    }, 'key-order-only difference must not be treated as a conflict');
+    assert.deepEqual(out.tools.map(entry => entry.function.name), ['wait']);
+  });
+
   it('fails closed when flattened Responses tool names collide', () => {
     assert.throws(() => responsesToChat({
       tools: [{ type: 'function', name: 'mcp__ads__query', parameters: { type: 'object', properties: {} } }],
