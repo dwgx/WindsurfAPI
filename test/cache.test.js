@@ -151,6 +151,26 @@ describe('cacheKey', () => {
     assert.equal(cacheKey(a), cacheKey(b), 'permuted-but-equal logit_bias must share a slot');
   });
 
+  it('tool schema key order does not split the cache slot (same fix as logit_bias)', () => {
+    // A tool with the same schema but different key order in `parameters` (two
+    // clients / SDKs serialize object keys differently) must share a cache slot,
+    // not split it. Regression for the tools/tool_choice/response_format/thinking
+    // /stream_options fields that were passed through by reference (not sorted).
+    const base = { model: 'gpt-4o', messages: [{ role: 'user', content: 'hi' }] };
+    const a = { ...base, tools: [{ type: 'function', function: { name: 'q', parameters: { type: 'object', properties: { a: { type: 'string' }, b: { type: 'integer' } } } } }] };
+    const b = { ...base, tools: [{ type: 'function', function: { name: 'q', parameters: { properties: { b: { type: 'integer' }, a: { type: 'string' } }, type: 'object' } } }] };
+    assert.equal(cacheKey(a), cacheKey(b), 'permuted-but-equal tool schema must share a slot');
+  });
+
+  it('genuinely different tool schema still keys apart', () => {
+    const base = { model: 'gpt-4o', messages: [{ role: 'user', content: 'hi' }] };
+    assert.notEqual(
+      cacheKey({ ...base, tools: [{ type: 'function', function: { name: 'q', parameters: { type: 'object', properties: { a: { type: 'string' } } } } }] }),
+      cacheKey({ ...base, tools: [{ type: 'function', function: { name: 'q', parameters: { type: 'object', properties: { a: { type: 'number' } } } } }] }),
+      'different param type is a different tool → must key apart',
+    );
+  });
+
   it('audit #10: genuinely different logit_bias still keys apart', () => {
     // The normalization must not over-collapse — a different bias value is a
     // different generation and must still miss.

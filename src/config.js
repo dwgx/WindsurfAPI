@@ -176,7 +176,14 @@ export const config = {
   astraflowApiKeyCn: process.env.ASTRAFLOW_CN_API_KEY || '',
   astraflowApiUrl: 'https://api-us-ca.umodelverse.ai/v1',
   astraflowApiUrlCn: 'https://api.modelverse.cn/v1',
-  defaultModel: process.env.DEFAULT_MODEL || 'claude-4.5-sonnet-thinking',
+  // Fallback model when a request omits `model`. MUST be a name that resolves to
+  // a live DEVIN_CONNECT catalog selector (mapped:true) — the old
+  // 'claude-4.5-sonnet-thinking' is a legacy word-order alias that resolveModel
+  // accepts but resolveConnectSelector maps to `{mapped:false}`, so on a
+  // DEVIN_CONNECT deployment an omitted-model request was rejected 400 (strict
+  // mode) or silently downgraded to the free tier. 'claude-sonnet-4.6' maps to
+  // the live `claude-sonnet-4-6-thinking` selector. Override with DEFAULT_MODEL.
+  defaultModel: process.env.DEFAULT_MODEL || 'claude-sonnet-4.6',
   maxTokens: parseInt(process.env.MAX_TOKENS || '8192', 10),
   logLevel: process.env.LOG_LEVEL || 'info',
 

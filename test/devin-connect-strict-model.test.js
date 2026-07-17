@@ -76,3 +76,29 @@ describe('DEVIN_CONNECT strict model whitelist (P1)', () => {
     );
   });
 });
+
+// Regression: the server-side default model (used when a request omits `model`)
+// MUST resolve to a live DEVIN_CONNECT selector, or every omitted-model request
+// on a DEVIN_CONNECT deployment hits the strict guard above → 400 / free downgrade.
+// The old default 'claude-4.5-sonnet-thinking' was mapped:false and did exactly
+// that. This locks the default to a mapped name so a future edit can't regress it.
+describe('config.defaultModel must be mapped on the DEVIN_CONNECT path', () => {
+  it('resolveConnectSelector(config.defaultModel) is mapped:true', async () => {
+    const { config } = await import('../src/config.js');
+    const { resolveConnectSelector } = await import('../src/devin-connect-models.js');
+    const r = resolveConnectSelector(config.defaultModel);
+    assert.equal(r.mapped, true, `default model "${config.defaultModel}" must map to a live selector (got ${JSON.stringify(r)})`);
+  });
+
+  it('an omitted-model request is NOT rejected by the strict whitelist guard', async () => {
+    process.env.DEVIN_CONNECT = '1';
+    withAccount('strict-default');
+    const body = { messages: [{ role: 'user', content: 'hi' }] }; // no model → server default
+    const result = await handleChatCompletions(body);
+    assert.notEqual(
+      result.status === 400 && result.body?.error?.code === 'model_not_found',
+      true,
+      'omitting model must fall through to a usable server default, not a 400',
+    );
+  });
+});

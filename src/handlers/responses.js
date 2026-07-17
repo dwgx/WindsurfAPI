@@ -211,11 +211,22 @@ function flattenResponseTool(tool, inheritedNamespace = '') {
 // dedup below would flag them as a name conflict and reject a legitimate request
 // with a 400. `flattenResponseTool` passes `parameters` through by reference, so
 // its inner key order is NOT normalized upstream; we normalize it at comparison
-// time by recursively sorting object keys. Arrays keep their order (significant).
-function stableStringify(value) {
-  if (Array.isArray(value)) return '[' + value.map(stableStringify).join(',') + ']';
+// time by recursively sorting object keys. Arrays normally keep their order
+// (significant), EXCEPT JSON-Schema keys whose array value is semantically
+// UNORDERED — `required` and `enum`. Two tools identical except for the order of
+// their `required`/`enum` entries are the same tool; without sorting them, the
+// dedup below would flag them as a name conflict and 400 a legitimate request
+// (the array-order residue of the #217 key-order fix). Sorting here only affects
+// the equality comparison, never the schema actually forwarded upstream.
+const UNORDERED_SCHEMA_ARRAY_KEYS = new Set(['required', 'enum']);
+function stableStringify(value, parentKey = '') {
+  if (Array.isArray(value)) {
+    const parts = value.map(v => stableStringify(v));
+    if (UNORDERED_SCHEMA_ARRAY_KEYS.has(parentKey)) parts.sort();
+    return '[' + parts.join(',') + ']';
+  }
   if (value && typeof value === 'object') {
-    return '{' + Object.keys(value).sort().map(k => JSON.stringify(k) + ':' + stableStringify(value[k])).join(',') + '}';
+    return '{' + Object.keys(value).sort().map(k => JSON.stringify(k) + ':' + stableStringify(value[k], k)).join(',') + '}';
   }
   return JSON.stringify(value);
 }
@@ -227,8 +238,8 @@ function flattenResponseTools(tools = []) {
   const seen = new Map();
   for (const tool of flattened) {
     const name = tool.function?.name || tool.name || '';
-    // Compare canonical forms so cosmetic key-order differences don't masquerade
-    // as a genuine same-name/different-definition conflict.
+    // Compare canonical forms so cosmetic key-order (and required/enum array-order)
+    // differences don't masquerade as a genuine same-name/different-definition conflict.
     const serialized = stableStringify(tool);
     if (seen.has(name)) {
       if (seen.get(name) !== serialized) throw new Error(`Ambiguous Responses tool name after flattening: ${name}`);
@@ -374,8 +385,16 @@ export function responsesToChat(body) {
       if (!item || typeof item !== 'object') continue;
       if (item.type === 'message') {
         flushToolCalls.flush();
+        // `developer` is the OpenAI o-series / Codex system channel (its primary
+        // instruction role, e.g. AGENTS.md / environment context). Map it to
+        // `system` so it keeps system priority downstream AND passes through
+        // neutralizeClientIdentity (which only inspects role:'system') — otherwise
+        // a developer message carrying competitor-identity / policy wording would
+        // both lose priority and bypass the 529 fingerprint gate. Matches kiro's
+        // Codex developer→system mapping.
+        const role = item.role === 'developer' ? 'system' : (item.role || 'user');
         messages.push({
-          role: item.role || 'user',
+          role,
           content: normalizeMessageContent(item.content),
         });
       } else if (item.type === 'function_call') {

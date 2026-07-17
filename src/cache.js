@@ -117,9 +117,14 @@ function normalize(body) {
   return {
     model: body.model || '',
     messages: normalizeBinary(body.messages || []),
-    tools: body.tools || null,
-    tool_choice: body.tool_choice || null,
-    response_format: body.response_format || null,
+    // tools / tool_choice / response_format / thinking / stream_options are
+    // nested objects whose inner JSON-Schema key order is not canonical across
+    // clients. Sort keys (same fix as logit_bias below, audit #10) so two
+    // semantically-identical requests differing only in key order share a cache
+    // slot instead of splitting it (a miss, never wrong data). Arrays keep order.
+    tools: body.tools ? stableClone(body.tools) : null,
+    tool_choice: body.tool_choice ? stableClone(body.tool_choice) : null,
+    response_format: body.response_format ? stableClone(body.response_format) : null,
     // cache-01: resolve the reasoning effort the SAME way the router does
     // (chat.js mergeReasoningEffortIntoModel: reasoning_effort || reasoning.effort).
     // The nested `reasoning:{effort}` form (codex CLI, OpenAI Responses) merges
@@ -127,8 +132,8 @@ function normalize(body) {
     // only the flat field collapsed two different reasoning tiers into one slot →
     // the second request got the first's wrong-tier answer.
     reasoning_effort: (body.reasoning_effort ?? body.reasoning?.effort) ?? null,
-    thinking: body.thinking || null,
-    stream_options: body.stream_options || null,
+    thinking: body.thinking ? stableClone(body.thinking) : null,
+    stream_options: body.stream_options ? stableClone(body.stream_options) : null,
     temperature: body.temperature ?? null,
     top_p: body.top_p ?? null,
     // top_k is a live sampling knob on the DEVIN_CONNECT completion config

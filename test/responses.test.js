@@ -205,6 +205,25 @@ describe('responsesToChat', () => {
     assert.deepEqual(out.tools.map(entry => entry.function.name), ['wait']);
   });
 
+  it('deduplicates a mirrored tool when required/enum array order differs (no false 400)', () => {
+    // The array-order residue of the #217 key-order fix: required/enum are
+    // semantically unordered in JSON Schema, so a tool mirrored with the same
+    // required entries in a different order is the same tool and must dedup.
+    const topLevel = {
+      type: 'function', name: 'q',
+      parameters: { type: 'object', properties: { a: { type: 'string' }, b: { type: 'string' } }, required: ['a', 'b'] },
+    };
+    const mirrored = {
+      type: 'function', name: 'q',
+      parameters: { type: 'object', properties: { a: { type: 'string' }, b: { type: 'string' } }, required: ['b', 'a'] },
+    };
+    let out;
+    assert.doesNotThrow(() => {
+      out = responsesToChat({ tools: [topLevel], input: [{ type: 'additional_tools', tools: [mirrored] }] });
+    }, 'required array-order difference must not be treated as a conflict');
+    assert.deepEqual(out.tools.map(entry => entry.function.name), ['q']);
+  });
+
   it('fails closed when flattened Responses tool names collide', () => {
     assert.throws(() => responsesToChat({
       tools: [{ type: 'function', name: 'mcp__ads__query', parameters: { type: 'object', properties: {} } }],
@@ -250,6 +269,23 @@ describe('responsesToChat', () => {
     assert.equal(out.messages[2].tool_calls[0].function.name, 'mcp__amazon_ads__raw_query');
     assert.deepEqual(out.messages[1], { role: 'tool', tool_call_id: 'call_function', content: 'ok' });
     assert.deepEqual(out.messages[3], { role: 'tool', tool_call_id: 'call_custom', content: 'done' });
+  });
+
+  it('maps a developer-role message to system (Codex/o-series instruction channel)', () => {
+    // developer is OpenAI's system-replacement role. It must become role:system so
+    // it keeps system priority AND is seen by neutralizeClientIdentity downstream
+    // (which only inspects role:system). Otherwise a developer message with
+    // competitor-identity wording would bypass the upstream 529 fingerprint gate.
+    const out = responsesToChat({
+      input: [
+        { type: 'message', role: 'developer', content: 'You are a coding agent. Follow AGENTS.md.' },
+        { type: 'message', role: 'user', content: 'go' },
+      ],
+    });
+    assert.deepEqual(out.messages, [
+      { role: 'system', content: 'You are a coding agent. Follow AGENTS.md.' },
+      { role: 'user', content: 'go' },
+    ]);
   });
 
   it('maps function_call and function_call_output items to chat tool turns', () => {
