@@ -206,7 +206,39 @@ function flattenResponseTool(tool, inheritedNamespace = '') {
 
 function flattenResponseTools(tools = []) {
   if (!Array.isArray(tools)) return [];
-  return tools.flatMap(tool => flattenResponseTool(tool));
+  const flattened = tools.flatMap(tool => flattenResponseTool(tool));
+  const unique = [];
+  const seen = new Map();
+  for (const tool of flattened) {
+    const name = tool.function?.name || tool.name || '';
+    const serialized = JSON.stringify(tool);
+    if (seen.has(name)) {
+      if (seen.get(name) !== serialized) throw new Error(`Ambiguous Responses tool name after flattening: ${name}`);
+      continue;
+    }
+    seen.set(name, serialized);
+    unique.push(tool);
+  }
+  return unique;
+}
+
+function responseLiteClientTool(tool) {
+  if (!tool || typeof tool !== 'object') return null;
+  if (tool.type === 'function' || tool.type === 'custom') return tool;
+  if (tool.type !== 'namespace') return null;
+  const childKey = ['tools', 'children', 'functions', 'items'].find(key => Array.isArray(tool[key]));
+  const children = childKey ? tool[childKey].map(responseLiteClientTool).filter(Boolean) : [];
+  return { ...tool, [childKey || 'tools']: children };
+}
+
+function collectResponseTools(body) {
+  const tools = Array.isArray(body?.tools) ? [...body.tools] : [];
+  if (!Array.isArray(body?.input)) return tools;
+  for (const item of body.input) {
+    if (item?.type !== 'additional_tools' || !Array.isArray(item.tools)) continue;
+    tools.push(...item.tools.map(responseLiteClientTool).filter(Boolean));
+  }
+  return tools;
 }
 
 function responseItemToolName(item) {
@@ -217,11 +249,11 @@ function normalizeResponseToolChoice(toolChoice) {
   if (toolChoice === 'auto' || toolChoice === 'required' || toolChoice === 'none') return toolChoice;
   if (typeof toolChoice !== 'object') return toolChoice;
   if (toolChoice.type === 'web_search' || toolChoice.type === 'tool_search') return 'auto';
-  if (toolChoice.type === 'function' && toolChoice.function?.name) {
+  if (toolChoice.type === 'function' && (toolChoice.function?.name || toolChoice.name)) {
     return {
       type: 'function',
       function: {
-        name: encodeToolName(toolChoice.function.name, toolChoice.function.namespace || toolChoice.namespace || ''),
+        name: encodeToolName(toolChoice.function?.name || toolChoice.name, toolChoice.function?.namespace || toolChoice.namespace || ''),
       },
     };
   }
@@ -300,7 +332,7 @@ export function responsesToChat(body) {
           id: item.call_id || item.id || `call_${randomUUID().slice(0, 8)}`,
           type: 'function',
           function: {
-            name: item.name || item.function?.name || 'unknown',
+            name: responseItemToolName(item),
             arguments: stringifyMaybe(item.arguments ?? item.function?.arguments ?? ''),
           },
         });
@@ -341,6 +373,7 @@ export function responsesToChat(body) {
         flushToolCalls.add({
           id: item.call_id || item.id,
           name: item.name,
+          namespace: item.namespace,
           arguments: JSON.stringify({ input: stringifyMaybe(item.input) }),
         });
       } else if (item.type === 'custom_tool_call_output') {
@@ -355,7 +388,7 @@ export function responsesToChat(body) {
     flushToolCalls.flush();
   }
 
-  const tools = flattenResponseTools(body.tools || []);
+  const tools = flattenResponseTools(collectResponseTools(body));
   const responseFormat = normalizeResponseTextFormat(body.text?.format);
   const forwardedToolChoice = body.tool_choice != null
     ? pruneResponseToolChoice(body.tool_choice, tools)

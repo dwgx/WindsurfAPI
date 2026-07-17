@@ -139,6 +139,98 @@ describe('responsesToChat', () => {
     });
   });
 
+  it('collects Responses Lite additional_tools without creating a message', () => {
+    const out = responsesToChat({
+      input: [
+        {
+          type: 'additional_tools',
+          role: 'developer',
+          tools: [
+            { type: 'custom', name: 'exec', description: 'Run code.' },
+            { type: 'function', name: 'wait', parameters: { type: 'object', properties: { id: { type: 'string' } } } },
+            { type: 'tool_search', description: 'Deferred tool discovery is not bridged by this adapter.' },
+            {
+              type: 'namespace',
+              name: 'mcp__amazon_ads',
+              tools: [
+                { type: 'function', name: 'query_campaigns', parameters: { type: 'object', properties: { days: { type: 'integer' } } } },
+              ],
+            },
+          ],
+        },
+        { type: 'message', role: 'user', content: 'Run it' },
+      ],
+      tools: [
+        { type: 'function', name: 'top_level', parameters: { type: 'object', properties: {} } },
+      ],
+    });
+    assert.deepEqual(out.messages, [{ role: 'user', content: 'Run it' }]);
+    assert.deepEqual(out.tools.map(tool => tool.function.name), [
+      'top_level',
+      'exec',
+      'wait',
+      'mcp__amazon_ads__query_campaigns',
+    ]);
+    assert.deepEqual(out.tools[1].__response_tool, { type: 'custom', namespace: '', originalName: 'exec' });
+    assert.deepEqual(out.tools[3].__response_tool, { type: 'namespace', namespace: 'mcp__amazon_ads', originalName: 'query_campaigns' });
+  });
+
+  it('deduplicates the same tool mirrored across top-level and additional_tools', () => {
+    const tool = { type: 'function', name: 'wait', parameters: { type: 'object', properties: { id: { type: 'string' } } } };
+    const out = responsesToChat({
+      tools: [tool],
+      input: [{ type: 'additional_tools', tools: [{ ...tool }] }],
+    });
+    assert.deepEqual(out.tools.map(entry => entry.function.name), ['wait']);
+  });
+
+  it('fails closed when flattened Responses tool names collide', () => {
+    assert.throws(() => responsesToChat({
+      tools: [{ type: 'function', name: 'mcp__ads__query', parameters: { type: 'object', properties: {} } }],
+      input: [{
+        type: 'additional_tools',
+        tools: [{
+          type: 'namespace',
+          name: 'mcp__ads',
+          tools: [{ type: 'function', name: 'query', parameters: { type: 'object', properties: { days: { type: 'integer' } } } }],
+        }],
+      }],
+    }), /ambiguous Responses tool name/i);
+  });
+
+  it('normalizes a flat namespaced function tool_choice from Responses Lite', () => {
+    const out = responsesToChat({
+      input: [{
+        type: 'additional_tools',
+        tools: [{
+          type: 'namespace',
+          name: 'mcp__amazon_ads',
+          tools: [{ type: 'function', name: 'query_campaigns', parameters: { type: 'object', properties: {} } }],
+        }],
+      }],
+      tool_choice: { type: 'function', name: 'query_campaigns', namespace: 'mcp__amazon_ads' },
+    });
+    assert.deepEqual(out.tool_choice, {
+      type: 'function',
+      function: { name: 'mcp__amazon_ads__query_campaigns' },
+    });
+  });
+
+  it('encodes namespace metadata on function and custom history items', () => {
+    const out = responsesToChat({
+      input: [
+        { type: 'function_call', call_id: 'call_function', name: 'query_campaigns', namespace: 'mcp__amazon_ads', arguments: '{"days":7}' },
+        { type: 'function_call_output', call_id: 'call_function', output: 'ok' },
+        { type: 'custom_tool_call', call_id: 'call_custom', name: 'raw_query', namespace: 'mcp__amazon_ads', input: 'SELECT 1' },
+        { type: 'custom_tool_call_output', call_id: 'call_custom', output: 'done' },
+      ],
+    });
+    assert.equal(out.messages[0].tool_calls[0].function.name, 'mcp__amazon_ads__query_campaigns');
+    assert.equal(out.messages[2].tool_calls[0].function.name, 'mcp__amazon_ads__raw_query');
+    assert.deepEqual(out.messages[1], { role: 'tool', tool_call_id: 'call_function', content: 'ok' });
+    assert.deepEqual(out.messages[3], { role: 'tool', tool_call_id: 'call_custom', content: 'done' });
+  });
+
   it('maps function_call and function_call_output items to chat tool turns', () => {
     const out = responsesToChat({
       input: [
@@ -287,6 +379,62 @@ describe('chatToResponse', () => {
     assert.equal(response.output[2].type, 'function_call');
     assert.equal(response.output[2].name, 'read_file');
     assert.equal(response.output[2].namespace, 'mcp__desktop_commander');
+  });
+
+  it('round-trips Responses Lite additional_tools metadata', async () => {
+    const result = await handleResponses({
+      model: 'claude-sonnet-4.6',
+      input: [
+        {
+          type: 'additional_tools',
+          tools: [
+            { type: 'custom', name: 'exec', description: 'Run code.' },
+            {
+              type: 'namespace',
+              name: 'mcp__amazon_ads',
+              tools: [{ type: 'function', name: 'query_campaigns', parameters: { type: 'object', properties: {} } }],
+            },
+          ],
+        },
+        { type: 'message', role: 'user', content: 'Run it' },
+      ],
+      tool_choice: { type: 'function', name: 'query_campaigns', namespace: 'mcp__amazon_ads' },
+    }, {
+      async handleChatCompletions(body) {
+        assert.deepEqual(body.messages, [{ role: 'user', content: 'Run it' }]);
+        assert.deepEqual(body.tools.map(tool => tool.function.name), ['exec', 'mcp__amazon_ads__query_campaigns']);
+        assert.deepEqual(body.tool_choice, {
+          type: 'function',
+          function: { name: 'mcp__amazon_ads__query_campaigns' },
+        });
+        return {
+          status: 200,
+          body: {
+            created: 123,
+            model: body.model,
+            choices: [{
+              index: 0,
+              message: {
+                role: 'assistant',
+                content: null,
+                tool_calls: [
+                  { id: 'call_exec', type: 'function', function: { name: 'exec', arguments: '{"input":"echo hi"}' } },
+                  { id: 'call_query', type: 'function', function: { name: 'mcp__amazon_ads__query_campaigns', arguments: '{"days":7}' } },
+                ],
+              },
+              finish_reason: 'tool_calls',
+            }],
+          },
+        };
+      },
+    });
+    assert.equal(result.status, 200);
+    assert.equal(result.body.output[0].type, 'custom_tool_call');
+    assert.equal(result.body.output[0].name, 'exec');
+    assert.equal(result.body.output[0].input, 'echo hi');
+    assert.equal(result.body.output[1].type, 'function_call');
+    assert.equal(result.body.output[1].name, 'query_campaigns');
+    assert.equal(result.body.output[1].namespace, 'mcp__amazon_ads');
   });
 
   it('maps non-stream reasoning_content to a reasoning output item', () => {
