@@ -383,7 +383,12 @@ export function responsesToChat(body) {
   } else if (Array.isArray(body.input)) {
     for (const item of body.input) {
       if (!item || typeof item !== 'object') continue;
-      if (item.type === 'message') {
+      // OpenAI Responses API input items may be bare {role, content} objects
+      // (no explicit `type: "message"`) — Codex sends them this way. Treat any
+      // item carrying a `role` (and no tool-oriented `type`) as a message so it
+      // isn't silently dropped (which produced an empty messages array upstream
+      // → UPSTREAM_INTERNAL).
+      if (item.type === 'message' || (item.role && !item.type)) {
         flushToolCalls.flush();
         // `developer` is the OpenAI o-series / Codex system channel (its primary
         // instruction role, e.g. AGENTS.md / environment context). Map it to
@@ -998,7 +1003,7 @@ export async function handleResponses(body, deps = {}) {
   const requestedTools = chatBody.tools || [];
 
   if (!body.stream) {
-    const result = await chatHandler({ ...chatBody, stream: false, __route: 'responses' }, context);
+    const result = await chatHandler({ ...chatBody, stream: false, __route: 'messages' }, context);
     if (result.status !== 200) return result;
     return { status: 200, body: chatToResponse(result.body, requestedModel, responseId, genMessageId(), requestedTools) };
   }
@@ -1009,7 +1014,7 @@ export async function handleResponses(body, deps = {}) {
   // Responses client sent — the Responses API reports usage on its own terminal
   // event, not via an OpenAI-style stream_options toggle.
   const streamResult = await chatHandler(
-    { ...chatBody, stream: true, __route: 'responses', stream_options: { ...(chatBody.stream_options || {}), include_usage: true } },
+    { ...chatBody, stream: true, __route: 'messages', stream_options: { ...(chatBody.stream_options || {}), include_usage: true } },
     context,
   );
   if (!streamResult.stream) return streamResult;
