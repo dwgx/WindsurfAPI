@@ -124,6 +124,11 @@ async function* streamChatWithEmptyRetry(params, { env = process.env, rescueThin
   // bounded retry, where an empty is more likely genuine capacity jitter.
   const weak = isWeakEmulationModel(params?.model || '');
   const max = (retryOnEmptyEnabled(env) && !weak) ? retryOnEmptyMax(env) : 0;
+  // NOTE: rescue retries share the `attempt` counter with empty retries (the
+  // `continue` below increments it), so the two budgets drain each other —
+  // RETRY_ON_EMPTY_MAX=0 still allows rescueMax rescues, and a large
+  // DEVIN_CONNECT_RESCUE_MAX eats into empty-retry budget. Bounded either way
+  // (≤ 1 + rescueMax upstream calls); documented per dwgx's PR #238 review.
   const rescueMax = Number(env.DEVIN_CONNECT_RESCUE_MAX ?? 2);
   let attemptParams = params;
   let rescueAttempt = 0;
@@ -284,9 +289,13 @@ export async function toChatCompletion(params, { id = newId(), created = nowSeco
     }
   }
 
-  // Fallback promotion: promote reasoning to content when no tool calls and no content exist
-  // so plain prompts never return an empty visible answer to clients.
-  if (!toolCalls.length && !content && reasoning) content = reasoning;
+  // Fallback promotion: when no tool calls and no content exist, the reasoning IS
+  // the answer — MOVE it to content (not copy): re-sending it as reasoning_content
+  // would return the same text twice (PR #238 review, M1).
+  if (!toolCalls.length && !content && reasoning) {
+    content = reasoning;
+    reasoning = '';
+  }
 
   // OpenAI convention: content is a string (may be empty), never undefined.
   const message = { role: 'assistant', content: content || '' };
@@ -458,11 +467,16 @@ export async function streamChatCompletion(params, send, { id = newId(), created
     finishReason = 'tool_calls';
   }
 
-  // Fallback promotion: promote reasoning to content when no tool calls and no content exist
-  // so plain prompts never return an empty visible answer to clients.
+  // Thinking-only finish fallback: the reasoning deltas already streamed live as
+  // thinking — re-emitting them as content duplicates the text verbatim in strict
+  // clients (PR #238 review, M1) and pollutes replayed history (reasoning-as-answer
+  // drives kimi/DeepSeek-family models into self-reflection loops). Instead emit a
+  // short visible handoff so strict clients still get a valid non-empty text block;
+  // the reasoning itself stays readable in the thinking block it already streamed.
   if (!content && !collectedToolCalls.length && !nativeToolCalls.length && reasoning && !stopHit) {
-    sendContent(reasoning);
-    content = reasoning;
+    const handoff = '(Reasoning completed without a visible answer — see the thinking output above.)';
+    sendContent(handoff);
+    content = handoff;
   }
 
   // 4. Terminal finish chunk. Reaching here means streamChat drained cleanly

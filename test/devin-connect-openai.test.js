@@ -44,14 +44,14 @@ describe('toChatCompletion (non-stream)', () => {
     assert.equal(body.model, 'claude-sonnet-4-6');
   });
 
-  it('promotes reasoning to content when the model returns no answer text', async () => {
+  it('moves reasoning to content when the model returns no answer text', async () => {
     __setStreamChatForTest(fakeStream([
       { type: 'reasoning', text: 'hmm' },
       { type: 'finish', reason: 'stop', usage: null },
     ]));
     const { body } = await toChatCompletion({ model: 'm', messages: [] });
     assert.equal(body.choices[0].message.content, 'hmm');
-    assert.equal(body.choices[0].message.reasoning_content, 'hmm');
+    assert.equal(body.choices[0].message.reasoning_content, undefined);
   });
 
   it('omits usage when the upstream gave none', async () => {
@@ -625,7 +625,9 @@ describe('retry-on-empty (fable capacity-jitter self-heal)', () => {
     });
     const { body } = await toChatCompletion({ model: 'swe-1-6-slow', messages: [] });
     assert.equal(calls, 1);
-    assert.equal(body.choices[0].message.reasoning_content, 'thinking…');
+    // reasoning-only answer is moved to content, not duplicated (PR #238, M1)
+    assert.equal(body.choices[0].message.content, 'thinking…');
+    assert.equal(body.choices[0].message.reasoning_content, undefined);
   });
 
   it('treats a stop with no usage (free tier) + no content as empty and heals it', async () => {
@@ -768,7 +770,7 @@ describe('thinking-only rescue & promotion', () => {
     assert.equal(callCount, 1);
   });
 
-  it('promotes reasoning to content in toChatCompletion when content is empty and no tool calls', async () => {
+  it('moves (not copies) reasoning to content in toChatCompletion when content is empty and no tool calls', async () => {
     __setStreamChatForTest(fakeStream([
       { type: 'reasoning', text: 'standalone reasoning answer' },
       { type: 'finish', reason: 'stop', usage: null },
@@ -776,9 +778,10 @@ describe('thinking-only rescue & promotion', () => {
 
     const { body } = await toChatCompletion({ model: 'swe-1-7', messages: [] }, { emulateTools: false });
     assert.equal(body.choices[0].message.content, 'standalone reasoning answer');
+    assert.equal(body.choices[0].message.reasoning_content, undefined);
   });
 
-  it('promotes reasoning to content in streamChatCompletion when content is empty and no tool calls', async () => {
+  it('emits a short handoff (not the reasoning dupe) in streamChatCompletion on thinking-only finish', async () => {
     __setStreamChatForTest(fakeStream([
       { type: 'reasoning', text: 'streamed reasoning answer' },
       { type: 'finish', reason: 'stop', usage: null },
@@ -788,12 +791,14 @@ describe('thinking-only rescue & promotion', () => {
     const send = (frame) => frames.push(frame);
 
     const result = await streamChatCompletion({ model: 'swe-1-7', messages: [] }, send, { emulateTools: false });
-    assert.equal(result.content, 'streamed reasoning answer');
+    assert.ok(result.content);
+    assert.notEqual(result.content, 'streamed reasoning answer');
     const contentDeltas = frames
       .flatMap((f) => f.choices || [])
       .map((c) => c.delta?.content)
       .filter(Boolean);
-    assert.ok(contentDeltas.includes('streamed reasoning answer'));
+    assert.ok(contentDeltas.length > 0);
+    assert.ok(!contentDeltas.includes('streamed reasoning answer'));
   });
 });
 
