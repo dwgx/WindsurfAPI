@@ -21,6 +21,7 @@ import { randomUUID } from 'crypto';
 import { streamChat as realStreamChat, isRetryable, messageText } from './devin-connect.js';
 import { ToolCallStreamParser, parseToolCallsFromText, isWeakEmulationModel } from './handlers/tool-emulation.js';
 import { log } from './config.js';
+import { leakTraceEnabled, thinkMarkersIn, leakSample } from './leak-trace.js';
 import { systemFingerprint } from './system-fingerprint.js';
 import { applyStop, StopSequenceGate } from './stop-sequences.js';
 import { normalizeToolCallArgs, recordArgRepair } from './handlers/cline-compat.js';
@@ -124,7 +125,7 @@ function isEmptyCompletion(finishEv, sawContent) {
 // guard aimed at it guards code that cannot be reached (the exact shape of the v3.9.13 medium
 // defect). If a caller ever genuinely needs to opt out, add the option back THEN, with a test
 // that passes `false` — that test is what makes it a knob rather than decoration.
-async function* streamChatWithEmptyRetry(params, { env = process.env } = {}) {
+async function* streamChatWithEmptyRetry(params, { env = process.env } = {}, opts = {}) {
   // Weak models (fable) return DETERMINISTIC empties on complex multi-turn / large
   // system — paid E2E (2026-07-08, 27/27) proved retry never heals them, it only
   // triples the upstream load and burns the account into a 3h rate limit. So for
@@ -222,6 +223,16 @@ async function* streamChatWithEmptyRetry(params, { env = process.env } = {}) {
             sawReasoning = true;
             sawReasoningText += ev.text;
           }
+        }
+        if (leakTraceEnabled(env)) {
+          log.info('LEAK_TRACE stream-event', {
+            channel: ev.type,
+            think: thinkMarkersIn(ev.text),
+            sample: leakSample(ev.text),
+            len: ev.text ? ev.text.length : 0,
+            reqId: opts?.reqId ?? null,
+            account: opts?.account ?? null,
+          });
         }
         yield ev;
       } else if (ev.type === 'finish') {
@@ -322,7 +333,8 @@ function nowSeconds() {
  *                                      tool_calls (text-emulation, swe-1.6 etc).
  * @returns {Promise<{status:number, body:object}>}
  */
-export async function toChatCompletion(params, { id = newId(), created = nowSeconds(), displayModel, maxRetries = 2, retryBaseMs = 400, emulateTools = false, stop = null, clineCompat = false } = {}) {
+export async function toChatCompletion(params, opts = {}) {
+  const { id = newId(), created = nowSeconds(), displayModel, maxRetries = 2, retryBaseMs = 400, emulateTools = false, stop = null, clineCompat = false } = opts;
   const model = displayModel || params.model;
 
   // Non-stream path buffers the whole answer, so a transient failure (network
@@ -345,7 +357,7 @@ export async function toChatCompletion(params, { id = newId(), created = nowSeco
   for (let attempt = 0; ; attempt++) {
     try {
       content = ''; reasoning = ''; finishReason = 'stop'; usage = null; nativeToolCalls = [];
-      for await (const ev of streamChatWithEmptyRetry(params)) {
+      for await (const ev of streamChatWithEmptyRetry(params, undefined, opts)) {
         // A rescue attempt REPLACES the previous one; drop what it produced or the
         // client is handed every attempt concatenated.
         if (ev.type === 'attempt_reset') { content = ''; reasoning = ''; nativeToolCalls = []; billing = null; continue; }
@@ -494,7 +506,8 @@ export async function toChatCompletion(params, { id = newId(), created = nowSeco
  * @returns {Promise<{content:string, reasoning:string, finish_reason:string, usage:object|null}>}
  *          the assembled result, so callers can cache it after streaming.
  */
-export async function streamChatCompletion(params, send, { id = newId(), created = nowSeconds(), displayModel, emulateTools = false, includeUsage = false, stop = null, clineCompat = false } = {}) {
+export async function streamChatCompletion(params, send, opts = {}) {
+  const { id = newId(), created = nowSeconds(), displayModel, emulateTools = false, includeUsage = false, stop = null, clineCompat = false } = opts;
   const model = displayModel || params.model;
   const base = { id, object: OBJECT_CHUNK, created, model, system_fingerprint: systemFingerprint(model) };
 
@@ -570,7 +583,7 @@ export async function streamChatCompletion(params, send, { id = newId(), created
     }
   };
 
-  for await (const ev of streamChatWithEmptyRetry(params)) {
+  for await (const ev of streamChatWithEmptyRetry(params, undefined, opts)) {
     // A rescue attempt REPLACES the previous one. The deltas already sent cannot be
     // retracted (documented at the promotion site below), but the accumulators must
     // not keep the abandoned attempt — otherwise `content` ends up holding every
