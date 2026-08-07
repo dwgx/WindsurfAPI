@@ -381,6 +381,11 @@ export function pickToolDialect(modelKey, provider, route = null) {
     }
     return 'openai_json_xml';
   }
+  // SWE-1.X use the same <|tool_call_begin|> / <|tool_call_end|> dialect as
+  // Kimi K2 — observed in production traffic 2026-08-07.
+  if (normalizedModelKey.startsWith('swe')) {
+    return 'kimi_k2';
+  }
   // v2.0.62 (#115) — GPT family + Codex/Responses route uses bare-JSON
   // dialect. GPT-5.x routinely refuses the <tool_call> XML protocol on
   // OpenAI-spec tools, responding "please paste the file" instead. The

@@ -221,6 +221,19 @@ describe('ToolCallStreamParser', () => {
     }
   });
 
+  it('routes all SWE family models to Kimi K2 vLLM dialect', () => {
+    // SWE-1.5 / SWE-1.6 / SWE-1.7 and their tier variants share the
+    // same section-token tool-call format as Kimi K2.
+    assert.equal(pickToolDialect('swe-1.5'), 'kimi_k2');
+    assert.equal(pickToolDialect('swe-1.5-fast'), 'kimi_k2');
+    assert.equal(pickToolDialect('swe-1.5-thinking'), 'kimi_k2');
+    assert.equal(pickToolDialect('swe-1.6'), 'kimi_k2');
+    assert.equal(pickToolDialect('swe-1.6-fast'), 'kimi_k2');
+    assert.equal(pickToolDialect('swe-1-7'), 'kimi_k2');
+    assert.equal(pickToolDialect('swe-1-7-lightning'), 'kimi_k2');
+    assert.equal(pickToolDialect('swe-1-7-medium'), 'kimi_k2');
+  });
+
   it('emits text before and after tool calls', () => {
     const parser = new ToolCallStreamParser();
     const r = parser.feed(
