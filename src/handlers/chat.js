@@ -10,6 +10,7 @@ import { isStickyEnabled, setStickyBinding, peekStickyBinding } from '../account
 import { resolveModel, getModelInfo, pickRateLimitFallback } from '../models.js';
 import { getLsFor, ensureLs } from '../langserver.js';
 import { config, log } from '../config.js';
+import { leakTraceEnabled, thinkMarkersIn, leakSample } from '../leak-trace.js';
 import { safeAccountRef, safeKeyRef, safeLogValue } from '../log-safety.js';
 import { recordRequest, recordTokenUsage, recordPolicyBlocked, recordRateLimited } from '../dashboard/stats.js';
 import { extractIntentFromNarrative, detectToolIntentInNarrative, maskNonActionableRegions } from './intent-extractor.js';
@@ -3223,7 +3224,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
     const connectDisplayModel = mapped ? reqModelName : connectParams.model;
     // O1: honor stream_options.include_usage on the connect path too — the
     // trailing usage frame is emitted only when the caller opted in.
-    const connectMeta = { id: ccId, created: ccCreated, displayModel: connectDisplayModel, emulateTools, includeUsage: body.stream_options?.include_usage === true, stop: body.stop ?? null, clineCompat: clineCompatActive };
+    const connectMeta = { id: ccId, created: ccCreated, displayModel: connectDisplayModel, emulateTools, includeUsage: body.stream_options?.include_usage === true, stop: body.stop ?? null, clineCompat: clineCompatActive, reqId, account: ccAcct ? safeAccountRef(ccAcct) : null };
     // Shared failover bookkeeping for both stream + non-stream paths. triedKeys
     // accumulates every session token burned this request so getApiKey never
     // re-picks a known-dead account when we hop to the next pool member.
@@ -3417,6 +3418,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
           };
           try {
             let acct = ccAcct;
+            let lastOkSr = null;
             for (let hops = 0; ; hops++) {
               // Client gone (disconnect or shutdown abort): stop before touching
               // another pooled account. Without this the failover loop keeps
@@ -3445,6 +3447,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
               if (acct) triedKeys.push(acct.apiKey);
               const r = await attemptStream(acct);
               if (r.kind === 'ok') {
+                lastOkSr = r.sr;
                 // Pin this conversation to the account that just served it, so the
                 // next turn reads the prompt cache back instead of re-writing it.
                 // Complementary to the pair-chain commit below: that keeps the
@@ -3509,6 +3512,24 @@ async function _handleChatCompletionsInner(body, context = {}) {
               log.info(`Chat[${reqId}]: DEVIN_CONNECT failover hop ${hops + 1} → next pooled account`);
               bumpConnect('failover_hops');
               acct = next;
+            }
+            if (leakTraceEnabled()) {
+              log.info('LEAK_TRACE settle', {
+                reqId,
+                model: connectDisplayModel,
+                provider: null,
+                // Why the fields are empty matters on the failure exits: this
+                // log runs on EVERY loop exit, including error and abort paths
+                // where lastOkSr never got set. An all-empty row without the
+                // outcome reads as "traced, nothing found" — it is not.
+                outcome: lastOkSr ? 'ok' : (abortController.signal.aborted ? 'client-abort' : 'upstream-error'),
+                contentChars: (lastOkSr?.content ?? '').length,
+                reasoningChars: (lastOkSr?.reasoning ?? '').length,
+                rerouted: false,
+                thinkInContent: thinkMarkersIn(lastOkSr?.content),
+                sample: leakSample(lastOkSr?.content),
+                durationMs: Date.now() - ccStart,
+              });
             }
             // If the client already disconnected, don't try to write to a dead
             // socket — that can leave the handler stuck on a closed connection.
@@ -5938,18 +5959,33 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
             // `modelKey` param (caller passes routingModelKey there);
             // wantThinking comes through deps because body isn't in
             // scope here (#93 follow-up zhangzhang-bit).
-            if (shouldFallbackThinkingToText({
+            const thinkingPromotedToText = shouldFallbackThinkingToText({
               routingModelKey: modelKey,
               wantThinking: deps.wantThinking,
               accText,
               accThinking,
               hasToolCalls: collectedToolCalls.length > 0,
-            })) {
+            });
+            if (thinkingPromotedToText) {
               log.info(`Chat[${reqId}]: thinking-only stream from non-reasoning model ${modelKey}; promoting ${accThinking.length}c thinking → content`);
               send({ id, object: 'chat.completion.chunk', created, model,
                 choices: [{ index: 0, delta: { content: accThinking }, finish_reason: null }] });
               accText = accThinking;
               accThinking = '';
+            }
+            if (leakTraceEnabled()) {
+              log.info('LEAK_TRACE settle', {
+                reqId,
+                model,
+                modelKey,
+                provider,
+                contentChars: accText.length,
+                reasoningChars: accThinking.length,
+                rerouted: thinkingPromotedToText,
+                thinkInContent: thinkMarkersIn(accText),
+                sample: leakSample(accText),
+                durationMs: Date.now() - startTime,
+              });
             }
             const finalReason = collectedToolCalls.length ? 'tool_calls' : 'stop';
             // OpenAI spec: the finish_reason chunk carries NO usage, then a

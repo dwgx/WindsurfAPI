@@ -14,6 +14,7 @@
 import { createHash, randomUUID } from 'crypto';
 import { handleChatCompletions, connectErrorToHttp } from './chat.js';
 import { log } from '../config.js';
+import { leakTraceEnabled, thinkMarkersIn, leakSample } from '../leak-trace.js';
 
 function genMsgId() {
   return 'msg_' + randomUUID().replace(/-/g, '').slice(0, 24);
@@ -980,10 +981,14 @@ function buildAnthropicUsage(usage, cachePolicy = null) {
 // ─── Streaming translator: intercepts OpenAI SSE, emits Anthropic SSE ──
 
 class AnthropicStreamTranslator {
-  constructor(res, msgId, model, cachePolicy = null, inputEstimate = 0, stopSequences = null) {
+  constructor(res, msgId, model, cachePolicy = null, inputEstimate = 0, stopSequences = null, reqId = null, conversationId = null) {
     this.res = res;
     this.msgId = msgId;
     this.model = model;
+    // Stage E leak-trace identifiers (WINDSURFAPI_LEAK_TRACE): null unless the
+    // caller threads them in — log fields only, no behavior.
+    this.reqId = reqId;
+    this.conversationId = conversationId;
     // Local cache-prefix estimate from extractCachePolicy; used by finish() to
     // fill cache_creation_input_tokens when upstream reports none (see
     // buildAnthropicUsage). null when the request had no cache_control markers.
@@ -1092,6 +1097,16 @@ class AnthropicStreamTranslator {
       index: this.blockIndex,
       content_block,
     });
+    if (leakTraceEnabled()) {
+      log.info('LEAK_TRACE block-start', {
+        blockType: type,
+        channel: type === 'thinking' ? 'reasoning' : 'content',
+        msgId: this.msgId,
+        reqId: this.reqId,
+        conversationId: this.conversationId,
+        model: this.model,
+      });
+    }
   }
 
   closeCurrentBlock() {
@@ -1243,12 +1258,42 @@ class AnthropicStreamTranslator {
     const choice = chunk.choices?.[0];
     if (choice) {
       const delta = choice.delta || {};
-      if (delta.reasoning_content) this.emitThinkingDelta(delta.reasoning_content);
+      if (delta.reasoning_content) {
+        if (leakTraceEnabled()) {
+          log.info('LEAK_TRACE classify', {
+            channel: 'reasoning',
+            blockType: this.current?.type ?? null,
+            think: thinkMarkersIn(delta.reasoning_content),
+            sample: leakSample(delta.reasoning_content),
+            len: delta.reasoning_content.length,
+            msgId: this.msgId,
+            reqId: this.reqId,
+            conversationId: this.conversationId,
+            model: this.model,
+          });
+        }
+        this.emitThinkingDelta(delta.reasoning_content);
+      }
       // Forward-compat: if a future upstream attaches a real encrypted signature
       // to the reasoning stream, capture it so closeCurrentBlock round-trips the
       // genuine value instead of the empty-string placeholder.
       if (delta.reasoning_signature) this.pendingThinkingSignature = delta.reasoning_signature;
-      if (delta.content) this.emitTextDelta(delta.content);
+      if (delta.content) {
+        if (leakTraceEnabled()) {
+          log.info('LEAK_TRACE classify', {
+            channel: 'content',
+            blockType: this.current?.type ?? null,
+            think: thinkMarkersIn(delta.content),
+            sample: leakSample(delta.content),
+            len: delta.content.length,
+            msgId: this.msgId,
+            reqId: this.reqId,
+            conversationId: this.conversationId,
+            model: this.model,
+          });
+        }
+        this.emitTextDelta(delta.content);
+      }
       if (Array.isArray(delta.tool_calls)) {
         for (const tc of delta.tool_calls) this.emitToolCallDelta(tc);
       }
@@ -1590,7 +1635,7 @@ export async function handleMessages(body, context = {}) {
       'X-Accel-Buffering': 'no',
     },
     async handler(realRes) {
-      const translator = new AnthropicStreamTranslator(realRes, msgId, requestedModel, cachePolicy, inputEstimate, body.stop_sequences);
+      const translator = new AnthropicStreamTranslator(realRes, msgId, requestedModel, cachePolicy, inputEstimate, body.stop_sequences, context.reqId, context.conversation_id);
       const captureRes = createCaptureRes(translator, realRes);
 
       // Forward client disconnect so the upstream cascade is cancelled.

@@ -1,0 +1,62 @@
+{
+  "tests": ["test/leak-trace.test.js"],
+  "expectBaselinePass": 6,
+  "mutations": [
+    {
+      "name": "gate inverted — tracing never fires",
+      "file": "src/leak-trace.js",
+      "anchor": "  return String(env[LEAK_TRACE_ENV] ?? '').trim() === '1';",
+      "replacement": "  return String(env[LEAK_TRACE_ENV] ?? '').trim() === '0';",
+      "expectCaught": true
+    },
+    {
+      "name": "gate removed — tracing always on",
+      "file": "src/leak-trace.js",
+      "anchor": "  return String(env[LEAK_TRACE_ENV] ?? '').trim() === '1';",
+      "replacement": "  return true;",
+      "expectCaught": true
+    },
+    {
+      "name": "think-marker detection neutered",
+      "file": "src/leak-trace.js",
+      "anchor": "  return found.length ? found : null;",
+      "replacement": "  return null;",
+      "expectCaught": true
+    },
+    {
+      "name": "stream-event channel field dropped",
+      "file": "src/devin-connect-openai.js",
+      "anchor": "            channel: ev.type,",
+      "replacement": "            channelKind: ev.type,",
+      "expectCaught": true
+    },
+    {
+      "name": "classify log demoted to debug",
+      "file": "src/handlers/messages.js",
+      "anchor": "          log.info('LEAK_TRACE classify', {\n            channel: 'reasoning',",
+      "replacement": "          log.debug('LEAK_TRACE classify', {\n            channel: 'reasoning',",
+      "expectCaught": true
+    },
+    {
+      "name": "settle log demoted to debug",
+      "file": "src/handlers/chat.js",
+      "anchor": "              log.info('LEAK_TRACE settle', {\n                reqId,\n                model: connectDisplayModel,",
+      "replacement": "              log.debug('LEAK_TRACE settle', {",
+      "expectCaught": true
+    },
+    {
+      "name": "<think> dialect dropped from the marker table — the trace no longer recognizes the very dialect #250 is named by",
+      "file": "src/leak-trace.js",
+      "anchor": "export const THINK_MARKERS = ['<think>', '</think>', '<thinking>', '</thinking>', '◁think▷'];",
+      "replacement": "export const THINK_MARKERS = ['<thinking>', '</thinking>', '◁think▷'];",
+      "expectCaught": true
+    },
+    {
+      "name": "settle outcome hardcoded ok — error/abort exits again log an unexplained all-empty row",
+      "file": "src/handlers/chat.js",
+      "anchor": "outcome: lastOkSr ? 'ok' : (abortController.signal.aborted ? 'client-abort' : 'upstream-error'),",
+      "replacement": "outcome: 'ok',",
+      "expectCaught": true
+    }
+  ]
+}
