@@ -35,6 +35,12 @@ function mapStopReason(finishReason) {
   return STOP_REASON_MAP[finishReason] || 'end_turn';
 }
 
+// Item 1 (loop break) classifier moved to the connect layer: leading think-tagged
+// CONTENT is now reclassified into the reasoning channel at the stream-event level
+// in devin-connect-openai.js (streamChatWithEmptyRetry), BEFORE the #238 rescue
+// decision — see docs/GOAL-2026-08-06-PR-REWORK.md. The egress translators here stay
+// passive: they render whatever channel the events arrive on.
+
 // B5: Anthropic sets stop_reason:'stop_sequence' AND echoes the matched string
 // in stop_sequence when generation halts on a caller-supplied stop sequence.
 // The internal OpenAI path reports finish_reason:'stop' for both a natural
@@ -837,6 +843,10 @@ export function openAIToAnthropic(result, model, msgId, cachePolicy = null, stop
       });
     }
   } else {
+    // Invariant: the text block is ALWAYS present, even when empty. The think-tag
+    // reroute lives in the connect layer now (devin-connect-openai.js), so by the
+    // time a completion reaches this translator the content channel carries no
+    // think markers — a reasoning-only turn arrives as reasoning_content only.
     content.push({ type: 'text', text: choice?.message?.content || '' });
   }
   // B5: resolve stop_reason (incl. content_filter→refusal) and back-fill

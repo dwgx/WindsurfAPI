@@ -1,0 +1,27 @@
+{
+  "tests": [
+    "test/response-classifier.test.js",
+    "test/messages.test.js"
+  ],
+  "expectBaselinePass": 90,
+  "mutations": [
+    {
+      "name": "leading-marker reroute disabled entirely — think-tagged content is never rerouted",
+      "file": "src/response-classifier.js",
+      "anchor": "      if (this.pending.slice(0, oi).trim() === '') {",
+      "replacement": "      if (false) {"
+    },
+    {
+      "name": "unterminated think span silently dropped at flush instead of delivered as text",
+      "file": "src/response-classifier.js",
+      "anchor": "    const out = this.pending;\n    this.pending = '';\n    this.mode = 'text';\n    return out;",
+      "replacement": "    const out = this.pending;\n    this.pending = '';\n    this.mode = 'text';\n    return '';"
+    },
+    {
+      "name": "think-mode buffering removed — think content leaks to the text channel mid-span",
+      "file": "src/response-classifier.js",
+      "anchor": "    return { text: '', thinking: '' }; // buffer until the close marker proves it",
+      "replacement": "    return { text: delta, thinking: '' }; // buffer until the close marker proves it"
+    }
+  ]
+}

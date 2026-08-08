@@ -1,4 +1,4 @@
-import { afterEach, describe, it } from 'node:test';
+import { afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   toChatCompletion,
@@ -1292,6 +1292,137 @@ describe('thinking-only rescue & promotion', () => {
     assert.equal(message.content, 'the answer is 255');
     assert.equal(message.reasoning_content, 'let me think',
       'a genuine reasoning trace must survive alongside a real answer');
+  });
+});
+
+// Pin tests — GOAL-2026-08-06-PR-REWORK item 3. The leading think-tag reroute
+// moved from the messages.js egress translators into the connect layer, at the
+// stream-event level (streamChatWithEmptyRetry), BEFORE the #238 rescue
+// decision. These pin the combined behavior: reclassification + rescue + the
+// egress invariant "text block always present".
+describe('think-text reroute (connect layer, DEVIN_CONNECT_THINKTEXT_REROUTE)', () => {
+  const OPEN = '<' + 'think' + '>';
+  const CLOSE = '<' + '/' + 'think' + '>';
+  const SAMPLE_TOOLS = [{ type: 'function', function: { name: 'read_file' } }];
+  let prev;
+  beforeEach(() => { prev = process.env.DEVIN_CONNECT_THINKTEXT_REROUTE; process.env.DEVIN_CONNECT_THINKTEXT_REROUTE = '1'; });
+  afterEach(() => { if (prev === undefined) delete process.env.DEVIN_CONNECT_THINKTEXT_REROUTE; else process.env.DEVIN_CONNECT_THINKTEXT_REROUTE = prev; });
+
+  it('(a) whole turn = think block: the #238 rescue fires and the client gets an answer', async () => {
+    // Attempt 1 is an ENTIRE turn on the content channel, think-tagged. With the
+    // classifier at the event level this decodes to reasoning-only, so sawText
+    // stays false and the rescue fires naturally — it never did before the move:
+    // the egress reroute ran AFTER the rescue had already given up, leaving a
+    // reasoning-only finish (#238 form, APIEmptyResponseError on strict clients).
+    let callCount = 0;
+    let lastParams = null;
+    __setStreamChatForTest(async function* (params) {
+      callCount++;
+      lastParams = params;
+      if (callCount === 1) {
+        yield { type: 'content', text: OPEN + 'Let me think through the whole request. ' + CLOSE };
+        yield { type: 'finish', reason: 'stop', usage: null };
+      } else {
+        yield { type: 'content', text: 'Here is the answer.' };
+        yield { type: 'finish', reason: 'stop', usage: null };
+      }
+    });
+    const frames = [];
+    const result = await streamChatCompletion(
+      { model: 'swe-1-7', messages: [{ role: 'user', content: 'hi' }], tools: SAMPLE_TOOLS },
+      (f) => frames.push(f),
+      { emulateTools: true },
+    );
+    assert.equal(callCount, 2, 'the #238 rescue must fire for a whole-think turn');
+    assert.ok(
+      lastParams.messages.at(-1).content.includes('Stop reasoning. Emit the tool call markup now.'),
+      'the rescue nudge reaches the second attempt',
+    );
+    // The rescued attempt's answer is what reaches the client — the abandoned
+    // think-only attempt is not concatenated onto it.
+    assert.equal(result.content, 'Here is the answer.');
+  });
+
+  it('(a) whole-think turn without tools: promotion keeps a visible answer (no empty message)', async () => {
+    // No tools -> no rescue (plain chat legitimately ends in reasoning/text). The
+    // think-only content must still reach the client as the visible answer via
+    // the existing reasoning->content promotion, so the anthropic egress below
+    // (openAIToAnthropic) always has a text block to push.
+    __setStreamChatForTest(fakeStream([
+      { type: 'content', text: OPEN + 'reasoning only, no tools. ' + CLOSE },
+      { type: 'finish', reason: 'stop', usage: null },
+    ]));
+    const { body } = await toChatCompletion({ model: 'swe-1-7', messages: [] });
+    const msg = body.choices[0].message;
+    assert.equal(msg.content, 'reasoning only, no tools. ', 'promoted into the visible content');
+    assert.equal(msg.reasoning_content, undefined, 'promotion moves, not copies');
+  });
+
+  it('(b) think + answer still splits into thinking and text', async () => {
+    __setStreamChatForTest(fakeStream([
+      { type: 'content', text: OPEN + 'inner reasoning. ' + CLOSE },
+      { type: 'content', text: 'The answer.' },
+      { type: 'finish', reason: 'stop', usage: null },
+    ]));
+    const { body } = await toChatCompletion({ model: 'swe-1-7', messages: [] });
+    const msg = body.choices[0].message;
+    assert.equal(msg.reasoning_content, 'inner reasoning. ', 'think span lands on the reasoning channel');
+    assert.equal(msg.content, 'The answer.', 'the answer stays on the content channel');
+  });
+
+  it('(c) stream variant: think + answer renders as reasoning_content deltas then content deltas', async () => {
+    __setStreamChatForTest(fakeStream([
+      { type: 'content', text: OPEN + 'inner reasoning. ' + CLOSE },
+      { type: 'content', text: 'The answer.' },
+      { type: 'finish', reason: 'stop', usage: null },
+    ]));
+    const frames = [];
+    const result = await streamChatCompletion(
+      { model: 'swe-1-7', messages: [] },
+      (f) => frames.push(f),
+      {},
+    );
+    assert.equal(result.reasoning, 'inner reasoning. ');
+    assert.equal(result.content, 'The answer.');
+    const reasoningDeltas = frames.filter((f) => f.choices?.[0]?.delta?.reasoning_content).map((f) => f.choices[0].delta.reasoning_content).join('');
+    assert.equal(reasoningDeltas, 'inner reasoning. ');
+    const contentDeltas = frames.filter((f) => f.choices?.[0]?.delta?.content).map((f) => f.choices[0].delta.content).join('');
+    assert.equal(contentDeltas, 'The answer.');
+  });
+
+  it('respects the gate: with DEVIN_CONNECT_THINKTEXT_REROUTE off, think-tagged content stays text', async () => {
+    process.env.DEVIN_CONNECT_THINKTEXT_REROUTE = '0';
+    __setStreamChatForTest(fakeStream([
+      { type: 'content', text: OPEN + 'inner reasoning. ' + CLOSE + 'The answer.' },
+      { type: 'finish', reason: 'stop', usage: null },
+    ]));
+    const { body } = await toChatCompletion({ model: 'swe-1-7', messages: [] });
+    const msg = body.choices[0].message;
+    assert.equal(msg.content, OPEN + 'inner reasoning. ' + CLOSE + 'The answer.');
+    assert.equal(msg.reasoning_content, undefined);
+  });
+
+  it('history isolation: a leading think block inside an INBOUND history message is forwarded upstream untouched, even with the gate on', async () => {
+    // The classifier runs ONLY on live upstream output events. Caller-pasted
+    // content (a quoted transcript, a literal "what does the tag mean") rides
+    // the inbound message list and must never be reclassified — that would
+    // lose attribution, the mirror image of the leak this feature fixes.
+    process.env.DEVIN_CONNECT_THINKTEXT_REROUTE = '1';
+    let captured = null;
+    __setStreamChatForTest(async function* (params) {
+      captured = params;
+      yield { type: 'content', text: 'ok' };
+      yield { type: 'finish', reason: 'stop', usage: null };
+    });
+    const history = [
+      { role: 'user', content: 'what does ' + OPEN + CLOSE + ' mean?' },
+      { role: 'assistant', content: OPEN + 'quoted from a log' + CLOSE + ' and here is my real answer' },
+      { role: 'user', content: 'go on' },
+    ];
+    const { status, body } = await toChatCompletion({ model: 'swe-1-7', messages: history });
+    assert.equal(status, 200);
+    assert.deepEqual(captured.messages, history);
+    assert.equal(body.choices[0].message.content, 'ok');
   });
 });
 

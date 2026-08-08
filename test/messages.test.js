@@ -1,4 +1,4 @@
-import { afterEach, describe, it } from 'node:test';
+import { afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { annotateRiskyReadToolResult, extractCallerSubKey, handleMessages, handleCountTokens, toAnthropicError } from '../src/handlers/messages.js';
 import { applyJsonResponseHint, extractRequestedJsonKeys, isExplicitJsonRequested, stabilizeJsonPayload } from '../src/handlers/chat.js';
@@ -1674,5 +1674,142 @@ describe('Anthropic count_tokens', () => {
     const b = handleCountTokens({ messages: [{ role: 'user', content: mixed }] });
     assert.equal(a.body.input_tokens, b.body.input_tokens, 'deterministic for the same input');
     assert.ok(a.body.input_tokens >= 1);
+  });
+});
+
+// Item 1 (loop break) reroute MOVED to the connect layer: leading think-tagged
+// content is reclassified at the stream-event level in devin-connect-openai.js
+// (streamChatWithEmptyRetry), BEFORE the #238 rescue decision. The egress
+// translators here are passive — they render whatever channel the events arrive
+// on — and the one invariant they must keep is: the text block is always present.
+describe('think-text reroute (egress is passive; text block always present)', () => {
+  const OPEN = '<' + 'think' + '>';
+  const CLOSE = '<' + '/' + 'think' + '>';
+
+  it('stream: think-tagged content arrives on the content channel and renders as text (reroute lives below)', async () => {
+    const result = await handleMessages({
+      model: 'claude-sonnet-4.6',
+      stream: true,
+      messages: [{ role: 'user', content: 'hi' }],
+    }, {
+      async handleChatCompletions() {
+        return {
+          status: 200,
+          stream: true,
+          async handler(res) {
+            res.write(chatChunk({ choices: [{ index: 0, delta: { role: 'assistant', content: OPEN + 'inner reasoning. ' + CLOSE }, finish_reason: null }] }));
+            res.write(chatChunk({ choices: [{ index: 0, delta: { content: 'The answer.' }, finish_reason: null }] }));
+            res.write(chatChunk({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] }));
+            res.write(chatChunk({ choices: [], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } }));
+            res.end('data: [DONE]\n\n');
+          },
+        };
+      },
+    });
+    const res = fakeRes();
+    await result.handler(res);
+    const events = parseAnthropicEvents(res.body);
+    const blocks = events.filter(e => e.event === 'content_block_start').map(e => e.data.content_block.type);
+    assert.deepEqual(blocks, ['text'], 'egress translator is passive: no thinking block at this layer');
+    const textDeltas = events.filter(e => e.event === 'content_block_delta' && e.data.delta?.type === 'text_delta').map(e => e.data.delta.text).join('');
+    assert.equal(textDeltas, OPEN + 'inner reasoning. ' + CLOSE + 'The answer.');
+  });
+
+  it('non-stream: think-tagged content stays in the text block (invariant: text block always present)', async () => {
+    const result = await handleMessages({
+      model: 'claude-sonnet-4.6',
+      stream: false,
+      messages: [{ role: 'user', content: 'hi' }],
+    }, {
+      async handleChatCompletions() {
+        return {
+          status: 200,
+          body: {
+            choices: [{ index: 0, message: { role: 'assistant', content: OPEN + 'inner reasoning. ' + CLOSE + 'The answer.' }, finish_reason: 'stop' }],
+            usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+          },
+        };
+      },
+    });
+    const blocks = result.body.content;
+    assert.equal(blocks.length, 1);
+    assert.equal(blocks[0].type, 'text');
+    assert.equal(blocks[0].text, OPEN + 'inner reasoning. ' + CLOSE + 'The answer.');
+  });
+
+  it('invariant: a reasoning-only completion (reasoning_content, empty content) still yields a text block', async () => {
+    const result = await handleMessages({
+      model: 'claude-sonnet-4.6',
+      stream: false,
+      messages: [{ role: 'user', content: 'hi' }],
+    }, {
+      async handleChatCompletions() {
+        return {
+          status: 200,
+          body: {
+            choices: [{ index: 0, message: { role: 'assistant', content: '', reasoning_content: 'deep thoughts' }, finish_reason: 'stop' }],
+            usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+          },
+        };
+      },
+    });
+    const blocks = result.body.content;
+    assert.equal(blocks[0].type, 'thinking');
+    assert.equal(blocks[0].thinking, 'deep thoughts');
+    assert.equal(blocks[1].type, 'text', 'the text block is ALWAYS present, even when empty');
+    assert.equal(blocks[1].text, '');
+  });
+
+  it('non-stream: with reasoning_content present, content is left untouched (no second thinking block)', async () => {
+    const result = await handleMessages({
+      model: 'claude-sonnet-4.6',
+      stream: false,
+      messages: [{ role: 'user', content: 'hi' }],
+    }, {
+      async handleChatCompletions() {
+        return {
+          status: 200,
+          body: {
+            choices: [{ index: 0, message: { role: 'assistant', content: OPEN + 'x' + CLOSE, reasoning_content: 'real reasoning' }, finish_reason: 'stop' }],
+            usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 },
+          },
+        };
+      },
+    });
+    const blocks = result.body.content;
+    // one thinking block (from reasoning_content), content untouched
+    const thinkingBlocks = blocks.filter(b => b.type === 'thinking');
+    assert.equal(thinkingBlocks.length, 1);
+    assert.equal(thinkingBlocks[0].thinking, 'real reasoning');
+    const textBlock = blocks.find(b => b.type === 'text');
+    assert.equal(textBlock.text, OPEN + 'x' + CLOSE);
+  });
+
+  it('with plain content, everything still flows as text on the stream path', async () => {
+    const result = await handleMessages({
+      model: 'claude-sonnet-4.6',
+      stream: true,
+      messages: [{ role: 'user', content: 'hi' }],
+    }, {
+      async handleChatCompletions() {
+        return {
+          status: 200,
+          stream: true,
+          async handler(res) {
+            res.write(chatChunk({ choices: [{ index: 0, delta: { role: 'assistant', content: 'Just a normal reply.' }, finish_reason: null }] }));
+            res.write(chatChunk({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] }));
+            res.write(chatChunk({ choices: [], usage: { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 } }));
+            res.end('data: [DONE]\n\n');
+          },
+        };
+      },
+    });
+    const res = fakeRes();
+    await result.handler(res);
+    const events = parseAnthropicEvents(res.body);
+    const blocks = events.filter(e => e.event === 'content_block_start').map(e => e.data.content_block.type);
+    assert.deepEqual(blocks, ['text']);
+    const textDeltas = events.filter(e => e.event === 'content_block_delta' && e.data.delta?.type === 'text_delta').map(e => e.data.delta.text).join('');
+    assert.equal(textDeltas, 'Just a normal reply.');
   });
 });

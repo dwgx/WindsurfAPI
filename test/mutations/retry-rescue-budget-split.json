@@ -3,7 +3,7 @@
     "test/retry-rescue-budget-split.test.js",
     "test/devin-connect-openai.test.js"
   ],
-  "expectBaselinePass": 81,
+  "expectBaselinePass": 87,
   "mutations": [
     {
       "name": "the original defect: the empty arm reads the shared loop counter again",

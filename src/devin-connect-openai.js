@@ -24,6 +24,15 @@ import { log } from './config.js';
 import { systemFingerprint } from './system-fingerprint.js';
 import { applyStop, StopSequenceGate } from './stop-sequences.js';
 import { normalizeToolCallArgs, recordArgRepair } from './handlers/cline-compat.js';
+import { ThinkTextClassifier } from './response-classifier.js';
+
+// Gate for the leading think-tag reroute (Item 1, loop break). The classifier
+// lives HERE, in the connect layer, so the DEVIN_CONNECT_ prefix is accurate:
+// only the connect backend's streams are reclassified. Default OFF — the
+// reroute is a behavior change and must be opted into per deployment.
+function thinkTextRerouteEnabled() {
+  return String(process.env.DEVIN_CONNECT_THINKTEXT_REROUTE || '') === '1';
+}
 
 // Apply the Cline compat tool-arg shim when active: normalize an arguments
 // string @ai-sdk/openai-compatible would reject (empty / whitespace / non-JSON)
@@ -213,8 +222,38 @@ async function* streamChatWithEmptyRetry(params, { env = process.env } = {}) {
     let sawReasoning = false;
     let sawReasoningText = '';
     let finishEv = null;
+    // Item 1 (loop break): leading think-tagged CONTENT is reclassified into the
+    // reasoning channel HERE, at the stream-event level, BEFORE the rescue
+    // decision below. A whole turn of ` thinking…` therefore stays a
+    // reasoning-only stream.
+    // Honest rescue interplay (corrected after review): such a turn does NOT
+    // fire the #238 rescue — the :284 nudge path requires tools, and
+    // isEmptyCompletion reads sawContent, which the thinking branch below sets
+    // at :238. The real outcome: reasoning delivered as thinking blocks, text
+    // empty, no retry. That is accepted: the reasoning is not lost (the client
+    // receives thinking blocks, not the #238 whole-turn vanish), and sawContent
+    // genuinely means "upstream said something", which is true here.
+    // Deliberately NOT teaching isEmptyCompletion to read sawText — that would
+    // redraw the #238/#241 rescue boundary for a cosmetic gain.
+    // (Known limitation: only the ` thinking`…` dialect is recognized; Kimi K2's
+    // family uses `◁think▷…◁/think▷` — extending the classifier to that dialect
+    // is left for a future PR.)
+    const thinkClassifier = thinkTextRerouteEnabled() ? new ThinkTextClassifier() : null;
     for await (const ev of streamChatImpl(attemptParams)) {
-      if (ev.type === 'content' || ev.type === 'reasoning') {
+      if (ev.type === 'content' && thinkClassifier) {
+        const routed = thinkClassifier.feed(ev.text);
+        if (routed.thinking) {
+          sawContent = true;
+          sawReasoning = true;
+          sawReasoningText += routed.thinking;
+          yield { type: 'reasoning', text: routed.thinking };
+        }
+        if (routed.text) {
+          sawContent = true;
+          sawText = true;
+          yield { type: 'content', text: routed.text };
+        }
+      } else if (ev.type === 'content' || ev.type === 'reasoning') {
         if (ev.text) {
           sawContent = true;
           if (ev.type === 'content') sawText = true;
@@ -228,6 +267,17 @@ async function* streamChatWithEmptyRetry(params, { env = process.env } = {}) {
         finishEv = ev; // hold: decide retry after the stream drains
       } else {
         yield ev;
+      }
+    }
+    // Flush anything the classifier still holds BEFORE the rescue decision: an
+    // unterminated/undecided tail is delivered as text (visible beats dropped),
+    // and it must count as real text for the rescue gate above.
+    if (thinkClassifier) {
+      const rest = thinkClassifier.flush();
+      if (rest) {
+        sawContent = true;
+        sawText = true;
+        yield { type: 'content', text: rest };
       }
     }
     // swe-1-7 (Kimi K2 fine-tune) intermittently spends the whole turn in reasoning
