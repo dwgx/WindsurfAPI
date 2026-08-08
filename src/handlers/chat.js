@@ -58,7 +58,7 @@ import { resolveConnectSelector } from '../devin-connect-models.js';
 import { isRetryable as isConnectRetryable, getToolDefTags, parseToolCallTagMap } from '../devin-connect.js';
 import { isRouterModel, assignModel as _assignModel } from '../devin-connect-catalog.js';
 import { bumpConnect } from '../devin-connect-metrics.js';
-import { resolveSessionId as resolveConnectSessionId, commitAfterResponse as commitConnectSession } from '../session-continuity.js';
+import { resolveSessionId as resolveConnectSessionId, commitAfterResponse as commitConnectSession, getSessionModelConfig as getSessionConnectModelConfig, getSessionReasoningTrail as getSessionConnectReasoningTrail } from '../session-continuity.js';
 import { newTraceId, traceClientRequest, traceRouting, traceClientResponse, traceEnabled } from '../trace.js';
 import { sanitizeText, sanitizeToolCall, PathSanitizeStream } from '../sanitize.js';
 import { systemFingerprint } from '../system-fingerprint.js';
@@ -3121,10 +3121,29 @@ async function _handleChatCompletionsInner(body, context = {}) {
     // history; returns null (⇒ fresh per-request uuid, byte-identical to today) when
     // the gate is off. Uses connectMessages so the fingerprint reflects exactly what
     // rides the wire.
+    // T2 (Thinking-core): incoming reasoning as fallback continuity source —
+    // anthropic-in thinking rides the body as __incomingThinking (messages.js
+    // captures it before the drop); openai/responses-in still carry
+    // reasoning_content on the last assistant turn here, before tool-emulation
+    // rebuilds the history.
+    let incomingConnectReasoning = body?.__incomingThinking || null;
+    if (!incomingConnectReasoning) {
+      for (let i = connectMessages.length - 1; i >= 0; i--) {
+        const im = connectMessages[i];
+        if (im?.role === 'assistant') {
+          incomingConnectReasoning = im.reasoning_content || im.reasoning || null;
+          break;
+        }
+      }
+    }
     const connectSessionId = resolveConnectSessionId(callerKey || '', connectMessages);
     if (connectSessionId) {
       connectParams.sessionId = connectSessionId;
-      log.info(`Chat[${reqId}]: DEVIN_CONNECT session reuse active → session_id=${connectSessionId}`);
+      const modelCfg = getSessionConnectModelConfig(callerKey || '', connectMessages);
+      if (modelCfg) connectParams.sessionModelConfig = { id: modelCfg.configId, turn: modelCfg.turn };
+      const reasoningTrail = getSessionConnectReasoningTrail(callerKey || '', connectMessages);
+      if (reasoningTrail) connectParams.continuityTrail = reasoningTrail;
+      log.info(`Chat[${reqId}]: DEVIN_CONNECT session reuse active → session_id=${connectSessionId}${modelCfg ? ` model_config=stable turn=${modelCfg.turn}` : ''}`);
     }
     if (ccAcct) {
       connectParams.token = ccAcct.apiKey;
@@ -3465,7 +3484,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
                     content: r.sr?.content || '',
                     ...(tc?.length ? { tool_calls: tc.map((t, idx) => ({ id: t.id || `tc_${idx}`, function: { name: t.name, arguments: t.argumentsJson || t.arguments || '' } })) } : {}),
                   }];
-                  commitConnectSession(callerKey || '', commitMsgs);
+                  commitConnectSession(callerKey || '', commitMsgs, undefined, { reasoning: r.sr?.reasoning || incomingConnectReasoning });
                 } catch { /* session commit is best-effort */ }
                 break;
               }
@@ -3608,7 +3627,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
             content: msg?.content || '',
             ...(msg?.tool_calls ? { tool_calls: msg.tool_calls } : {}),
           }];
-          commitConnectSession(callerKey || '', commitMsgs);
+          commitConnectSession(callerKey || '', commitMsgs, undefined, { reasoning: msg?.reasoning_content || incomingConnectReasoning });
         } catch { /* session commit is best-effort */ }
         return r.out;
       }

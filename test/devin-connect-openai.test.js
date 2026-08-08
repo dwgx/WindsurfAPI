@@ -24,6 +24,18 @@ const SAMPLE = [
 ];
 
 describe('toChatCompletion (non-stream)', () => {
+  it('keeps both when reasoning and content differ', async () => {
+    __setStreamChatForTest(fakeStream([
+      { type: 'reasoning', text: 'the deliberation' },
+      { type: 'content', text: 'the answer' },
+      { type: 'finish', reason: 'stop', usage: null },
+    ]));
+    const { body } = await toChatCompletion({ model: 'swe-1-6-slow', messages: [] });
+    const msg = body.choices[0].message;
+    assert.equal(msg.content, 'the answer');
+    assert.equal(msg.reasoning_content, 'the deliberation');
+  });
+
   it('assembles a chat.completion with separated content and reasoning', async () => {
     __setStreamChatForTest(fakeStream(SAMPLE));
     const { status, body } = await toChatCompletion({ model: 'swe-1-6-slow', messages: [] });

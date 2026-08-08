@@ -118,6 +118,53 @@ describe('buildGetChatMessageRequest', () => {
     assert.ok(!getField(fields, 22, 2), '#22 request_id is absent on a turn-1 request');
   });
 
+  // ★ 2026-08-05: ModelConfig #15 parity with genuine devin.exe. Captures show
+  // #15.1 stable per session and #15.2 monotonic; the stateless default stays
+  // {fresh uuid, 1, 4} (turn-1 wire req009). sessionModelConfig opts into the
+  // stable shape when session-continuity resolved a session (DEVIN_CONNECT_
+  // MODEL_CONFIG_STABLE).
+  it('ModelConfig #15 stateless default: fresh uuid, turn 1, const 4', () => {
+    const proto = buildGetChatMessageRequest({ token: TOKEN, model: 'm', messages: [{ role: 'user', content: 'hi' }] });
+    const sub = parseFields(getField(parseFields(proto), 15, 2).value);
+    assert.match(getField(sub, 1, 2).value.toString('utf8'), /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i, '#15.1 is a uuid by default');
+    assert.equal(getField(sub, 2, 0).value, 1, '#15.2 defaults to turn 1');
+    assert.equal(getField(sub, 3, 0).value, 4, '#15.3 stays the calibrated constant 4');
+  });
+
+  it('ModelConfig #15 rides devin.exe shape when sessionModelConfig is passed', () => {
+    const proto = buildGetChatMessageRequest({
+      token: TOKEN, model: 'm', messages: [{ role: 'user', content: 'hi' }],
+      sessionModelConfig: { id: 'cfg-stable-session-1', turn: 7 },
+    });
+    const sub = parseFields(getField(parseFields(proto), 15, 2).value);
+    assert.equal(getField(sub, 1, 2).value.toString('utf8'), 'cfg-stable-session-1', '#15.1 carries the stable session config id');
+    assert.equal(getField(sub, 2, 0).value, 7, '#15.2 carries the session turn counter');
+    assert.equal(getField(sub, 3, 0).value, 4, '#15.3 unchanged');
+  });
+
+  // ★ 2026-08-05: T1 reasoning continuity — the checkpoint block rides as a
+  // system-prompt suffix inside tag #2. Byte-compatible: only longer.
+  it('continuityTrail appends to the system prompt inside #2', () => {
+    const trail = '\n\n[Continuity checkpoint — prior analysis trace, may be stale]\nr1\n[End]';
+    const proto = buildGetChatMessageRequest({
+      token: TOKEN, model: 'm',
+      messages: [{ role: 'system', content: 'BASE SYSTEM' }, { role: 'user', content: 'hi' }],
+      continuityTrail: trail,
+    });
+    const sys = getField(parseFields(proto), 2, 2).value.toString('utf8');
+    assert.ok(sys.startsWith('BASE SYSTEM'), 'client system kept verbatim');
+    assert.ok(sys.endsWith('[End]'), 'trail appended after the client system');
+    assert.ok(sys.includes('[Continuity checkpoint'));
+  });
+
+  it('without continuityTrail the system prompt is byte-identical to pre-feature', () => {
+    const proto = buildGetChatMessageRequest({
+      token: TOKEN, model: 'm',
+      messages: [{ role: 'system', content: 'BASE SYSTEM' }, { role: 'user', content: 'hi' }],
+    });
+    assert.equal(getField(parseFields(proto), 2, 2).value.toString('utf8'), 'BASE SYSTEM');
+  });
+
   // ★ 2026-07-10: empty-system + tools guard. Verified from live devin.exe capture
   // + boundary experiment: Devin's upstream returns "internal error occurred" for a
   // Claude-family request that declares tools (#10) but has an EMPTY/absent system

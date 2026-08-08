@@ -781,7 +781,7 @@ function buildCompletionConfig({ maxTokens, temperature, topK, topP, contextWind
  * @param {object}   [params.completion]  CompletionConfig overrides
  * @returns {Buffer} raw protobuf (un-enveloped)
  */
-export function buildGetChatMessageRequest({ token, messages, model, sessionId, completion, tools, nativeToolCall = false, deviceSeed, env = process.env } = {}) {
+export function buildGetChatMessageRequest({ token, messages, model, sessionId, completion, tools, nativeToolCall = false, deviceSeed, env = process.env, sessionModelConfig, continuityTrail } = {}) {
   if (!token) throw new Error('DEVIN_CONNECT: missing session token');
   if (!model) throw new Error('DEVIN_CONNECT: missing model selector');
 
@@ -908,20 +908,30 @@ export function buildGetChatMessageRequest({ token, messages, model, sessionId, 
   if (!systemPrompt && Array.isArray(tools) && tools.length > 0) {
     systemPrompt = 'You are a helpful assistant. Use the available tools when appropriate.';
   }
+  // T1 reasoning continuity (Thinking-core): append the prior-analysis checkpoint
+  // block to the system prompt — the only wire position where context rides without
+  // becoming an assistant turn (self-reflection-loop anti-pattern). Byte-compatible:
+  // tag #2 just gets longer; absent when the gate is off or the queue is empty.
+  //
+  // ORDERING vs identity-neutralize (cf. #219 preamble ordering): the neutralize
+  // pass rewrites system-role message content in chat.js BEFORE this wire builder
+  // runs; this trail is appended here, AFTER it — so the a4-a7 rules never see the
+  // trail and the digest reaches the upstream verbatim. That is intentional: the
+  // trail's whole purpose is letting the next turn see the prior reasoning as-is.
+  if (continuityTrail) systemPrompt += continuityTrail;
 
   // ModelConfig #15. RE-CALIBRATED FROM THE FULL CAPTURE SET (not just req022):
   // decoding all 9 GetChatMessage requests of one live session (9501aa2c) shows
   //   #15.1 = a STABLE per-session config UUID (same across every turn),
   //   #15.2 = a MONOTONIC per-session turn counter (req009→022: 1,2,3,4,5,6,7,8),
   //   #15.3 = 4 (constant).
-  // The earlier "req022 → #15.2 == 8, so hardcode 8" reading mistook the 8th
-  // turn's counter for a constant. Our gateway is stateless (a fresh session_id
-  // per request, #16), so every request is legitimately turn 1 → #15.2 = 1 is the
-  // correct value and MUST stay 1, not 8. Verified against turn-1 capture req009
-  // (swe-1-6-fast, which the real CLI chats fine): #15 == {1:uuid, 2:1, 3:4}.
-  const modelConfig = Buffer.concat([
-    writeStringField(1, randomUUID()),
-    writeVarintField(2, 1),
+  // Stateless default (fresh uuid, turn 1) matches turn-1 capture req009. Since
+  // PR #226 the gateway CAN hold a stable session (#16); when it does and the
+  // DEVIN_CONNECT_MODEL_CONFIG_STABLE gate is on, chat.js passes the session's
+  // {id, turn} via sessionModelConfig so #15 matches devin.exe's shape too.
+  const modelConfigBuf = Buffer.concat([
+    writeStringField(1, sessionModelConfig?.id || randomUUID()),
+    writeVarintField(2, sessionModelConfig?.turn || 1),
     writeVarintField(3, 4),
   ]);
 
@@ -933,7 +943,7 @@ export function buildGetChatMessageRequest({ token, messages, model, sessionId, 
   parts.push(
     writeVarintField(7, 5),
     writeMessageField(8, buildCompletionConfig(completion)),
-    writeMessageField(15, modelConfig),
+    writeMessageField(15, modelConfigBuf),
     writeStringField(16, sessionId || randomUUID()),
     writeVarintField(20, 1),
     writeStringField(21, model),
@@ -1930,7 +1940,7 @@ export function resolveFinishReason(finish, usage, maxTokens, env = process.env)
 export async function* streamChat({
   messages, model, sessionId, completion, tools,
   token, signal, timeoutMs, deadlineMs, host, env = process.env, nativeToolCall = false, traceId = null,
-  deviceSeed,
+  deviceSeed, sessionModelConfig, continuityTrail,
 } = {}) {
   // Idle timeout: socket inactivity. Absolute deadline: total wall-clock from
   // request start — this is the one that catches a stream that keeps dribbling
@@ -1968,7 +1978,7 @@ export async function* streamChat({
     ? tools.map((t) => t?.function?.name || t?.name).filter(Boolean)
     : null;
 
-  const proto = buildGetChatMessageRequest({ token: sessionToken, messages, model, sessionId, completion, tools, nativeToolCall, deviceSeed, env });
+  const proto = buildGetChatMessageRequest({ token: sessionToken, messages, model, sessionId, completion, tools, nativeToolCall, deviceSeed, env, sessionModelConfig, continuityTrail });
   // Request envelope is sent UNCOMPRESSED (flag 0). The live calibration showed
   // the server rejects a gzipped request frame with an opaque "internal" error;
   // it still streams gzipped frames back, which the parser handles.

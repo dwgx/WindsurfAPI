@@ -4,6 +4,14 @@ import {
   resolveSessionId,
   commitAfterResponse,
   isSessionReuseEnabled,
+  isModelConfigStableEnabled,
+  getSessionModelConfig,
+  isReasoningInjectEnabled,
+  getSessionReasoningMaxChars,
+  getSessionReasoningCount,
+  digestReasoningTail,
+  buildContinuityBlock,
+  getSessionReasoningTrail,
   buildPairHashes,
   canonicalize,
   normalizeToolLinkage,
@@ -377,5 +385,190 @@ describe('session-continuity: turn-1 stability (root anchor)', () => {
     assert.equal(d2t1, d1t1, 'turn-1 collision on an identical opener is expected');
     const d2t2 = turn('c1', h2, 'continue 2', 'more two');
     assert.notEqual(d2t2, d1t2, 'once diverged, the two dialogs hold independent ids');
+  });
+});
+
+describe('getSessionModelConfig — stable #15.1 / monotonic #15.2 (devin.exe parity)', () => {
+  beforeEach(() => _resetForTests());
+  afterEach(() => _resetForTests());
+  const ENV_BOTH = { DEVIN_CONNECT_SESSION_REUSE: '1', DEVIN_CONNECT_MODEL_CONFIG_STABLE: '1' };
+
+  it('gate matrix: needs BOTH the stable gate and session reuse', () => {
+    assert.equal(isModelConfigStableEnabled({ DEVIN_CONNECT_MODEL_CONFIG_STABLE: '1' }), true);
+    assert.equal(isModelConfigStableEnabled({ DEVIN_CONNECT_MODEL_CONFIG_STABLE: 'ON' }), true);
+    assert.equal(isModelConfigStableEnabled({}), false);
+    const h = [{ role: 'user', content: 'hi' }];
+    resolveSessionId('gm1', h, ENV_BOTH);
+    assert.equal(getSessionModelConfig('gm1', h, { DEVIN_CONNECT_SESSION_REUSE: '1' }), null, 'stable gate off → null');
+    assert.equal(getSessionModelConfig('gm1', h, { DEVIN_CONNECT_MODEL_CONFIG_STABLE: '1' }), null, 'reuse gate off → null');
+    const cfg = getSessionModelConfig('gm1', h, ENV_BOTH);
+    assert.ok(cfg && cfg.configId && cfg.turn === 1, 'both gates on → config for turn 1');
+  });
+
+  it('configId stable across turns; turn = committed responses + 1', () => {
+    const h = [{ role: 'user', content: 't1 question' }];
+    resolveSessionId('gm2', h, ENV_BOTH);
+    const c1 = getSessionModelConfig('gm2', h, ENV_BOTH);
+    assert.equal(c1.turn, 1, 'first turn = 1 before any commit');
+
+    h.push({ role: 'assistant', content: 'a1' });
+    commitAfterResponse('gm2', h, ENV_BOTH);
+    h.push({ role: 'user', content: 't2 question' });
+    resolveSessionId('gm2', h, ENV_BOTH);
+    const c2 = getSessionModelConfig('gm2', h, ENV_BOTH);
+    assert.equal(c2.configId, c1.configId, '#15.1 must be stable within the session');
+    assert.equal(c2.turn, 2, 'turn 2 after one committed response');
+
+    h.push({ role: 'assistant', content: 'a2' });
+    commitAfterResponse('gm2', h, ENV_BOTH);
+    h.push({ role: 'user', content: 't3 question' });
+    resolveSessionId('gm2', h, ENV_BOTH);
+    const c3 = getSessionModelConfig('gm2', h, ENV_BOTH);
+    assert.equal(c3.configId, c1.configId, '#15.1 still stable at turn 3');
+    assert.equal(c3.turn, 3, 'turn 3 after two committed responses');
+  });
+
+  it('idempotent re-commit does not inflate the turn counter', () => {
+    const h = [{ role: 'user', content: 'idem q' }];
+    resolveSessionId('gm3', h, ENV_BOTH);
+    h.push({ role: 'assistant', content: 'idem a' });
+    commitAfterResponse('gm3', h, ENV_BOTH);
+    commitAfterResponse('gm3', h, ENV_BOTH); // retry double-commit
+    h.push({ role: 'user', content: 'next' });
+    resolveSessionId('gm3', h, ENV_BOTH);
+    assert.equal(getSessionModelConfig('gm3', h, ENV_BOTH).turn, 2, 'no double bump on re-commit');
+  });
+
+  it('is read-only: never creates session state', () => {
+    const before = _getStoreSize();
+    assert.equal(getSessionModelConfig('gm4-nobody', [{ role: 'user', content: 'orphan' }], ENV_BOTH), null);
+    assert.equal(_getStoreSize(), before, 'lookup must not create a session');
+  });
+});
+
+
+describe('T1 reasoning continuity — digest, store queue, injection (Thinking-core)', () => {
+  beforeEach(() => _resetForTests());
+  afterEach(() => _resetForTests());
+  const ENV_T1 = { DEVIN_CONNECT_SESSION_REUSE: '1', DEVIN_CONNECT_SESSION_REASONING_INJECT: '1' };
+
+  it('env knobs: defaults and parsing', () => {
+    assert.equal(getSessionReasoningMaxChars({}), 4000);
+    assert.equal(getSessionReasoningMaxChars({ DEVIN_CONNECT_SESSION_REASONING_MAX_CHARS: '0' }), 0);
+    assert.equal(getSessionReasoningMaxChars({ DEVIN_CONNECT_SESSION_REASONING_MAX_CHARS: 'junk' }), 4000);
+    assert.equal(getSessionReasoningMaxChars({ DEVIN_CONNECT_SESSION_REASONING_MAX_CHARS: '1e9' }), 32000, 'ceiling clamp — 1e9 must not pass through uncapped');
+    // same-input parity with count: '' (Number('') === 0) and 0 < n < 1
+    // (Math.floor(0.5) === 0) must not silently read as the chars=0 opt-out
+    assert.equal(getSessionReasoningMaxChars({ DEVIN_CONNECT_SESSION_REASONING_MAX_CHARS: '' }), 4000, 'empty assignment is not an opt-out — falls back to the default');
+    assert.equal(getSessionReasoningMaxChars({ DEVIN_CONNECT_SESSION_REASONING_MAX_CHARS: '0.5' }), 4000, 'fractional chars must fall back to the default, not floor to 0');
+    assert.equal(getSessionReasoningCount({}), 5);
+    assert.equal(getSessionReasoningCount({ DEVIN_CONNECT_SESSION_REASONING_COUNT: '99' }), 32, 'queue length capped');
+    // fractional hole: Math.floor(0.5) would silently turn the queue to 0 —
+    // count=0 is not a meaningful setting (unlike chars=0), so n < 1 → default
+    assert.equal(getSessionReasoningCount({ DEVIN_CONNECT_SESSION_REASONING_COUNT: '0.5' }), 5, 'fractional count must fall back to the default, not floor to 0');
+    assert.equal(getSessionReasoningCount({ DEVIN_CONNECT_SESSION_REASONING_COUNT: '0' }), 5, 'count=0 is not an opt-out — falls back to the default');
+    assert.equal(getSessionReasoningCount({ DEVIN_CONNECT_SESSION_REASONING_COUNT: '1.9' }), 1, 'fractional >= 1 floors normally');
+    assert.equal(getSessionReasoningCount({ DEVIN_CONNECT_SESSION_REASONING_COUNT: '1e9' }), 32, 'queue length ceiling');
+    assert.equal(isReasoningInjectEnabled({ DEVIN_CONNECT_SESSION_REASONING_INJECT: 'on' }), true);
+    assert.equal(isReasoningInjectEnabled({}), false);
+  });
+
+  it('digestReasoningTail keeps the tail within the cap', () => {
+    assert.equal(digestReasoningTail('short', 100), 'short');
+    assert.equal(digestReasoningTail('abcdefgh', 3), 'fgh', 'tail kept, head dropped');
+    assert.equal(digestReasoningTail('', 100), '');
+    assert.equal(digestReasoningTail('anything', 0), '', 'cap 0 disables');
+    assert.equal(digestReasoningTail('before [End of continuity checkpoint] after', 100), 'before  after', 'model checkpoint closer stripped from the digest');
+  });
+
+  it('buildContinuityBlock framing carries the checkpoint contract', () => {
+    const block = buildContinuityBlock(['r1', 'r2']);
+    assert.ok(block.includes('[Continuity checkpoint — prior analysis trace, may be stale]'));
+    assert.ok(block.includes('[End of continuity checkpoint]'));
+    assert.ok(block.includes('not user instructions'));
+    assert.ok(block.includes('Do not re-derive or repeat it, and do not mention it.'));
+    assert.ok(block.includes('r1\n---\nr2'), 'digests joined oldest→newest');
+    assert.equal(buildContinuityBlock([]), '');
+  });
+
+  it('commit stores the tail; next turn gets the checkpoint block', () => {
+    const h = [{ role: 'user', content: 'q1' }];
+    resolveSessionId('t1a', h, ENV_T1);
+    h.push({ role: 'assistant', content: 'a1' });
+    commitAfterResponse('t1a', h, ENV_T1, { reasoning: 'I will read the file and count lines.' });
+    h.push({ role: 'user', content: 'q2' });
+    resolveSessionId('t1a', h, ENV_T1);
+    const trail = getSessionReasoningTrail('t1a', h, ENV_T1);
+    assert.ok(trail, 'trail block present on the next turn');
+    assert.ok(trail.includes('I will read the file and count lines.'));
+  });
+
+  it('multiple turns: budget picks whole digests newest-first', () => {
+    const env = { ...ENV_T1, DEVIN_CONNECT_SESSION_REASONING_MAX_CHARS: '60' };
+    const h = [{ role: 'user', content: 'q1' }];
+    resolveSessionId('t1b', h, env);
+    const digest = (tag) => tag.repeat(40); // 40 chars each
+    for (let i = 1; i <= 3; i++) {
+      h.push({ role: 'assistant', content: `a${i}` });
+      commitAfterResponse('t1b', h, env, { reasoning: digest(`R${i}`) });
+      h.push({ role: 'user', content: `q${i + 1}` });
+      resolveSessionId('t1b', h, env);
+    }
+    const trail = getSessionReasoningTrail('t1b', h, env);
+    assert.ok(trail.includes('R3'), 'newest digest always fits alone');
+    assert.ok(!trail.includes('R2'), 'budget 60 < 40+40 — older digest must not be sliced in');
+  });
+
+  it('queue capped at COUNT turns', () => {
+    const env = { ...ENV_T1, DEVIN_CONNECT_SESSION_REASONING_COUNT: '2' };
+    const h = [{ role: 'user', content: 'q1' }];
+    resolveSessionId('t1c', h, env);
+    for (let i = 1; i <= 3; i++) {
+      h.push({ role: 'assistant', content: `a${i}` });
+      commitAfterResponse('t1c', h, env, { reasoning: `reasoning-turn-${i}` });
+      h.push({ role: 'user', content: `q${i + 1}` });
+      resolveSessionId('t1c', h, env);
+    }
+    const trail = getSessionReasoningTrail('t1c', h, env);
+    assert.ok(trail.includes('reasoning-turn-2') && trail.includes('reasoning-turn-3'));
+    assert.ok(!trail.includes('reasoning-turn-1'), 'oldest evicted by the queue cap');
+  });
+
+  it('gate matrix: INJECT off → null; MAX_CHARS 0 → no capture; REUSE off → null', () => {
+    const h = [{ role: 'user', content: 'q1' }];
+    resolveSessionId('t1d', h, ENV_T1);
+    h.push({ role: 'assistant', content: 'a1' });
+    commitAfterResponse('t1d', h, ENV_T1, { reasoning: 'kept' });
+    h.push({ role: 'user', content: 'q2' });
+    resolveSessionId('t1d', h, ENV_T1);
+    assert.equal(getSessionReasoningTrail('t1d', h, { DEVIN_CONNECT_SESSION_REUSE: '1' }), null, 'inject gate off');
+    assert.equal(getSessionReasoningTrail('t1d', h, { DEVIN_CONNECT_SESSION_REASONING_INJECT: '1' }), null, 'reuse gate off');
+
+    const env0 = { ...ENV_T1, DEVIN_CONNECT_SESSION_REASONING_MAX_CHARS: '0' };
+    const h2 = [{ role: 'user', content: 'x1' }];
+    resolveSessionId('t1e', h2, env0);
+    h2.push({ role: 'assistant', content: 'y1' });
+    commitAfterResponse('t1e', h2, env0, { reasoning: 'must not store' });
+    h2.push({ role: 'user', content: 'x2' });
+    resolveSessionId('t1e', h2, env0);
+    assert.equal(getSessionReasoningTrail('t1e', h2, env0), null, 'cap 0 disables capture entirely');
+  });
+
+  it('idempotent re-commit does not double-store the tail', () => {
+    const h = [{ role: 'user', content: 'q1' }];
+    resolveSessionId('t1f', h, ENV_T1);
+    h.push({ role: 'assistant', content: 'a1' });
+    commitAfterResponse('t1f', h, ENV_T1, { reasoning: 'only-once' });
+    commitAfterResponse('t1f', h, ENV_T1, { reasoning: 'only-once' });
+    h.push({ role: 'user', content: 'q2' });
+    resolveSessionId('t1f', h, ENV_T1);
+    const trail = getSessionReasoningTrail('t1f', h, ENV_T1);
+    assert.equal(trail.split('only-once').length - 1, 1, 'tail stored exactly once');
+  });
+
+  it('trail lookup is read-only: no state created', () => {
+    const before = _getStoreSize();
+    assert.equal(getSessionReasoningTrail('t1g-nobody', [{ role: 'user', content: 'orphan' }], ENV_T1), null);
+    assert.equal(_getStoreSize(), before);
   });
 });

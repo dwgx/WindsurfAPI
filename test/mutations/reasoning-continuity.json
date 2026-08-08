@@ -1,0 +1,78 @@
+{
+  "tests": [
+    "test/session-continuity.test.js",
+    "test/devin-connect.test.js",
+    "test/messages-incoming-thinking.test.js",
+    "test/devin-connect-openai.test.js",
+    "test/session-continuity-commit-fallback.test.js"
+  ],
+  "expectBaselinePass": 289,
+  "mutations": [
+    {
+      "name": "T1 store: the overlap-target commit path stops saving the reasoning tail",
+      "file": "src/session-continuity.js",
+      "anchor": "    target.state.commitKey = commitKey;\n    target.state.turnCount = (target.state.turnCount || 0) + 1;\n    pushReasoningTail(target.state, opts.reasoning, env);",
+      "replacement": "    target.state.commitKey = commitKey;\n    target.state.turnCount = (target.state.turnCount || 0) + 1;"
+    },
+    {
+      "name": "T1 digest keeps the head instead of the tail — intent/conclusions live at the end",
+      "file": "src/session-continuity.js",
+      "anchor": "  return s.length <= maxChars ? s : s.slice(-maxChars);",
+      "replacement": "  return s.length <= maxChars ? s : s.slice(0, maxChars);"
+    },
+    {
+      "name": "T1 budget knob loses the ceiling clamp — 1e9 rides whole reasoning into the system prompt",
+      "file": "src/session-continuity.js",
+      "anchor": "  if (n === 0) return 0;\n  return Math.min(Math.floor(n), SESSION_REASONING_MAX_CHARS_CEILING);",
+      "replacement": "  return Math.floor(n);"
+    },
+    {
+      "name": "T1 inject gate defaults ON — would change every existing deploy's wire",
+      "file": "src/session-continuity.js",
+      "anchor": "export function isReasoningInjectEnabled(env = process.env) {\n  const v = String(env.DEVIN_CONNECT_SESSION_REASONING_INJECT ?? '').trim().toLowerCase();\n  return v === '1' || v === 'true' || v === 'yes' || v === 'on';\n}",
+      "replacement": "export function isReasoningInjectEnabled(env = process.env) {\n  return true;\n}"
+    },
+    {
+      "name": "T1 wire: continuity trail never reaches the system prompt",
+      "file": "src/devin-connect.js",
+      "anchor": "  if (continuityTrail) systemPrompt += continuityTrail;",
+      "replacement": ""
+    },
+    {
+      "name": "T1 block framing loses the join between digests",
+      "file": "src/session-continuity.js",
+      "anchor": "    tails.join('\\n---\\n') +",
+      "replacement": "    tails.join('\\n') +"
+    },
+    {
+      "name": "T2 anthropic-in: incoming thinking no longer captured before the drop",
+      "file": "src/handlers/messages.js",
+      "anchor": "        } else if (block.type === 'thinking') {\n          if (typeof block.thinking === 'string' && block.thinking) msgThinking.push(block.thinking);",
+      "replacement": "        } else if (block.type === 'thinking') {"
+    },
+    {
+      "name": "T2 stream commit fallback dropped — outbound-empty reasoning no longer falls back to the inbound captured thinking (caught by test/session-continuity-commit-fallback.test.js stream fixture)",
+      "file": "src/handlers/chat.js",
+      "anchor": "commitConnectSession(callerKey || '', commitMsgs, undefined, { reasoning: r.sr?.reasoning || incomingConnectReasoning });",
+      "replacement": "commitConnectSession(callerKey || '', commitMsgs, undefined, { reasoning: r.sr?.reasoning });"
+    },
+    {
+      "name": "T2 non-stream commit fallback dropped — same conjunction on the second call site (caught by the non-stream fixture)",
+      "file": "src/handlers/chat.js",
+      "anchor": "commitConnectSession(callerKey || '', commitMsgs, undefined, { reasoning: msg?.reasoning_content || incomingConnectReasoning });",
+      "replacement": "commitConnectSession(callerKey || '', commitMsgs, undefined, { reasoning: msg?.reasoning_content });"
+    },
+    {
+      "name": "count clamp fractional hole — n=0.5 must fall back to the default 5, not Math.floor to a silent 0 (queue empty, digests gone)",
+      "file": "src/session-continuity.js",
+      "anchor": "if (!Number.isFinite(n) || n < 1) return 5;",
+      "replacement": "if (!Number.isFinite(n) || n <= 0) return 5;"
+    },
+    {
+      "name": "chars clamp fractional hole — 0 < n < 1 must fall back to the default 4000, not Math.floor to a silent 0",
+      "file": "src/session-continuity.js",
+      "anchor": "if (!Number.isFinite(n) || n < 0 || (n > 0 && n < 1)) return 4000;",
+      "replacement": "if (!Number.isFinite(n) || n < 0) return 4000;"
+    }
+  ]
+}
