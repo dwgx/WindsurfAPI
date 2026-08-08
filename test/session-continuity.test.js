@@ -379,3 +379,139 @@ describe('session-continuity: turn-1 stability (root anchor)', () => {
     assert.notEqual(d2t2, d1t2, 'once diverged, the two dialogs hold independent ids');
   });
 });
+
+describe('session-continuity: compaction survival (root fallback)', () => {
+  beforeEach(() => _resetForTests());
+  afterEach(() => _resetForTests());
+
+  // Drive resolve → commit → resolve exactly as the handler does, chaining the
+  // real assistant reply into the next turn's history.
+  function turn(caller, historyRef, userText, assistantText) {
+    historyRef.push({ role: 'user', content: userText });
+    const id = resolveSessionId(caller, historyRef, ENV);
+    historyRef.push({ role: 'assistant', content: assistantText });
+    commitAfterResponse(caller, historyRef, ENV);
+    return id;
+  }
+
+  it('a compacted history with rewritten pairs still resolves the committed session via the root anchor', () => {
+    const h = [{ role: 'system', content: 'sys' }];
+    const id1 = turn('c1', h, 'build a parser', 'ok');
+    const id2 = turn('c1', h, 'add error handling', 'done');
+    const id3 = turn('c1', h, 'add tests', 'done');
+    assert.equal(id1, id2);
+    assert.equal(id2, id3);
+
+    // Client compaction: the retained tail is rewritten so 0 of the committed
+    // pairs survive byte-for-byte, BUT the dialog's FIRST input turn survives
+    // verbatim (the root anchor). Pair evidence is gone → root fallback fires.
+    const compacted = [
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: 'build a parser' },
+      { role: 'assistant', content: 'ok (compressed summary)' },
+      { role: 'user', content: 'add tests' },
+    ];
+    const before = _getStoreSize();
+    const resolved = resolveSessionId('c1', compacted, ENV);
+    assert.equal(resolved, id3, 'compacted history must re-associate through the root anchor');
+    assert.equal(_getStoreSize(), before, 'a clean root re-association must not grow the store');
+  });
+
+  it('two live states sharing the root anchor with no pair evidence are ambiguous → a NEW id forms (no hijack)', () => {
+    const h1 = [];
+    const d1t1 = turn('c1', h1, 'same opener', 'reply one');
+    const d1t2 = turn('c1', h1, 'continue 1', 'more one');
+    const h2 = [];
+    const d2t1 = turn('c1', h2, 'same opener', 'reply two');
+    const d2t2 = turn('c1', h2, 'continue 2', 'more two');
+    assert.equal(d1t1, d2t1, 'identical openers collide on turn 1 (same root anchor)');
+    assert.notEqual(d1t2, d2t2, 'the two dialogs must have forked at turn 2');
+
+    // A compacted resolve whose rewritten pairs match no stored index and whose
+    // root anchor is shared by BOTH live states → ambiguous → assign to none.
+    const compacted = [
+      { role: 'user', content: 'same opener' },
+      { role: 'assistant', content: 'reply one (compressed summary)' },
+      { role: 'user', content: 'continue 1' },
+    ];
+    const resolved = resolveSessionId('c1', compacted, ENV);
+    assert.notEqual(resolved, d1t2, 'ambiguous root must not be assigned to dialog 1');
+    assert.notEqual(resolved, d2t2, 'ambiguous root must not be assigned to dialog 2');
+  });
+
+  it('an EXPIRED state is evicted by the root fallback — a stale dialog does not resurrect through compaction', () => {
+    const h = [];
+    const id1 = turn('c1', h, 'stale opener', 'old reply');
+    const id2 = turn('c1', h, 'stale followup', 'old more');
+    assert.equal(id1, id2);
+
+    // Busy-wait past a 1ms TTL so the stored state is stale on the next resolve.
+    const env = { ...ENV, DEVIN_CONNECT_SESSION_TTL_MS: '1' };
+    const spinUntil = Date.now() + 5;
+    while (Date.now() < spinUntil) { /* let the TTL lapse */ }
+
+    // Pair evidence wiped by compaction; the root anchor survives — but the only
+    // candidate is expired, so the fallback must evict it and form a NEW id.
+    const compacted = [
+      { role: 'user', content: 'stale opener' },
+      { role: 'assistant', content: 'old reply (compressed summary)' },
+      { role: 'user', content: 'next turn after the lapse' },
+    ];
+    const resolved = resolveSessionId('c1', compacted, env);
+    assert.notEqual(resolved, id2, 'a TTL-expired session must not resurrect through the root fallback');
+  });
+});
+
+describe('session-continuity: tail-anchored overlap', () => {
+  beforeEach(() => _resetForTests());
+  afterEach(() => _resetForTests());
+
+  function turn(caller, historyRef, userText, assistantText) {
+    historyRef.push({ role: 'user', content: userText });
+    const id = resolveSessionId(caller, historyRef, ENV);
+    historyRef.push({ role: 'assistant', content: assistantText });
+    commitAfterResponse(caller, historyRef, ENV);
+    return id;
+  }
+
+  it('a divergent dialog sharing only an early pair does NOT resolve to the committed session (prefix-only run scores 0)', () => {
+    const h = [];
+    turn('c1', h, 'A1', 'O1');
+    turn('c1', h, 'A2', 'O2');
+    const committedId = turn('c1', h, 'A3', 'O3');
+
+    // Shares the opener + first pair (a PREFIX-only run), then answers A2
+    // differently. Tail-anchored overlap must score 0 → no claim on the session.
+    const divergent = [
+      { role: 'user', content: 'A1' }, { role: 'assistant', content: 'O1' },
+      { role: 'user', content: 'A2' }, { role: 'assistant', content: 'an unrelated answer' },
+      { role: 'user', content: 'A3' },
+    ];
+    const before = _getStoreSize();
+    const divId = resolveSessionId('c1', divergent, ENV);
+    assert.notEqual(divId, committedId, 'a prefix-only run must never hijack the committed session');
+    assert.ok(_getStoreSize() > before, 'the divergent dialog must fork its own state');
+  });
+
+  it('the true continuation (suffix/tail match) resolves back to its own session — and the fork stays stable on its own id', () => {
+    const h = [];
+    turn('c1', h, 'A1', 'O1');
+    turn('c1', h, 'A2', 'O2');
+    const committedId = turn('c1', h, 'A3', 'O3');
+
+    // True continuation: the full history replayed + a fresh user turn — the
+    // committed tail (suffix) matches the incoming tail → resolves to ITS session.
+    const contId = resolveSessionId('c1', [...h, { role: 'user', content: 'A4' }], ENV);
+    assert.equal(contId, committedId, 'the suffix/tail match must resolve to the committed session');
+
+    // The divergent fork is a session of its own: it keeps ITS id on the next turn.
+    const divergent = [
+      { role: 'user', content: 'A1' }, { role: 'assistant', content: 'O1' },
+      { role: 'user', content: 'A2' }, { role: 'assistant', content: 'an unrelated answer' },
+      { role: 'user', content: 'A3' },
+    ];
+    const divId = resolveSessionId('c1', divergent, ENV);
+    const divNext = resolveSessionId('c1', [...divergent, { role: 'user', content: 'A4' }], ENV);
+    assert.equal(divNext, divId, 'the divergent fork must stay stable on its own id');
+  });
+});

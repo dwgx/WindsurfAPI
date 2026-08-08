@@ -1,0 +1,27 @@
+{
+  "tests": [
+    "test/session-continuity.test.js",
+    "test/chat-reuse-log.test.js"
+  ],
+  "expectBaselinePass": 35,
+  "mutations": [
+    {
+      "name": "root fallback fires even when pair evidence exists — a live session gets re-associated through the root",
+      "file": "src/session-continuity.js",
+      "anchor": "  if (seen.size === 0) {\n  const rootKey = rootAnchorKey(scopeId, analysis);",
+      "replacement": "  if (true) {\n  const rootKey = rootAnchorKey(scopeId, analysis);"
+    },
+    {
+      "name": "ambiguity rule dropped — two live states on one root: the first one wins instead of a refused re-association",
+      "file": "src/session-continuity.js",
+      "anchor": "      if (live.length === 1) {\n        const state = live[0];",
+      "replacement": "      if (live.length >= 1) {\n        const state = live[0];"
+    },
+    {
+      "name": "TTL eviction skipped in the root fallback — an evicted state resurrects through compaction survival",
+      "file": "src/session-continuity.js",
+      "anchor": "        if (now - state.lastSeen > ttl) { evictState(stateId); continue; }",
+      "replacement": "        if (false) { evictState(stateId); continue; }"
+    }
+  ]
+}

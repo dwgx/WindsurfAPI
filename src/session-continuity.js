@@ -279,8 +279,11 @@ export function buildPairHashes(callerKey, messages) {
 // ─── Resolver ──────────────────────────────────────────────────────────────
 
 /**
- * Overlap score: how many of the candidate's hashes appear as a contiguous
- * subsequence within incoming (anchored at the last stored hash).
+ * Overlap score: the contiguous run of candidate-window hashes ending at the
+ * candidate's LAST hash (a retained tail is always a SUFFIX of the committed
+ * chain — compaction cuts the head, never the tail). Anchoring at the tail is
+ * what keeps a divergent dialog that merely shares an early pair from
+ * hijacking the session: a prefix-only run scores 0 here.
  */
 function overlapScore(incoming, candidateWindow) {
   if (!candidateWindow.length || !incoming.length) return 0;
@@ -471,6 +474,40 @@ export function resolveSessionId(callerKey, messages, env = process.env) {
     return best.sessionId;
   }
 
+  // Root fallback (compaction survival). Measured on a real kimi compaction:
+  // 0 of 31 retained pairs survive byte-for-byte or canonically — the client
+  // rewrites the retained tail — BUT the dialog's first input turn survives
+  // verbatim. States are indexed by that rootKey at creation, so re-associate
+  // through it when pair evidence is gone. Several live candidates with no pair
+  // evidence = ambiguous -> assign to none (collision rule), let a new id form.
+  // Guard: only when NO incoming hash matched any stored index (seen empty) — a
+  // divergent dialog whose prefix pair still hits the index must NOT be
+  // re-associated through the root (pair evidence exists; it just scores 0).
+  if (seen.size === 0) {
+  const rootKey = rootAnchorKey(scopeId, analysis);
+  if (rootKey) {
+    const rootSet = pairIndex.get(rootKey);
+    if (rootSet) {
+      const live = [];
+      for (const stateId of rootSet) {
+        const state = statesById.get(stateId);
+        if (!state) continue;
+        if (now - state.lastSeen > ttl) { evictState(stateId); continue; }
+        live.push(state);
+      }
+      if (live.length === 1) {
+        const state = live[0];
+        state.lastSeen = now;
+        const newWindow = hashes.slice(-PAIR_WINDOW_SIZE);
+        state.pairWindow = newWindow;
+        indexState(state.stateId, state);
+        state.pairRecords = postBarrierRecords.slice(-PAIR_WINDOW_SIZE);
+        return state.sessionId;
+      }
+    }
+  }
+  }
+
   // No match — create new state
   clearExpired(env);
   enforceCapacity(env);
@@ -575,10 +612,19 @@ export function commitAfterResponse(callerKey, messagesWithResponse, env = proce
   const sessionId = crypto.randomUUID();
   const stateId = crypto.randomUUID();
   const dialogAnchor = pairWindow[0]?.slice(0, 16) || null;
-  const state = { stateId, scopeId, sessionId, pairWindow, pairRecords: postBarrierRecords.slice(-PAIR_WINDOW_SIZE), lastSeen: now, commitKey, dialogAnchor };
+  // Root-index the fork too: a forked dialog shares its opener's root anchor, so
+  // a later compacted resolve must see it as a SECOND live root candidate —
+  // otherwise the root fallback would re-associate the fork into the ORIGINAL
+  // session (hijack). The fallback's ambiguity rule (several live -> assign to
+  // none) only works when every root-sharing state is visible under the anchor.
+  const state = { stateId, scopeId, sessionId, pairWindow, pairRecords: postBarrierRecords.slice(-PAIR_WINDOW_SIZE), lastSeen: now, commitKey, dialogAnchor, rootKey };
   statesById.set(stateId, state);
   commitIndex.set(commitKey, stateId);
   indexState(stateId, state);
+  if (rootKey) {
+    if (!pairIndex.has(rootKey)) pairIndex.set(rootKey, new Set());
+    pairIndex.get(rootKey).add(stateId);
+  }
   return sessionId;
 }
 

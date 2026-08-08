@@ -3124,7 +3124,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
     const connectSessionId = resolveConnectSessionId(callerKey || '', connectMessages);
     if (connectSessionId) {
       connectParams.sessionId = connectSessionId;
-      log.info(`Chat[${reqId}]: DEVIN_CONNECT session reuse active → session_id=${connectSessionId}`);
+      log.info(`Chat[${reqId}]: DEVIN_CONNECT session reuse active → session_id=${connectSessionId} acct=${ccAcct?.account?.id || 'env-token'}`);
     }
     if (ccAcct) {
       connectParams.token = ccAcct.apiKey;
