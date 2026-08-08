@@ -24,9 +24,12 @@ export function leakTraceEnabled(env = process.env) {
 }
 
 // Marker strings that indicate model reasoning present in a text channel.
-// DeepSeek wraps reasoning in <thinking>…</thinking>; Kimi K2 emits ◁think▷.
-// Extend here when another model ships a different marker.
-export const THINK_MARKERS = ['<thinking>', '</thinking>', '◁think▷'];
+// DeepSeek wraps reasoning in <thinking>…</thinking>; Kimi K2 emits ◁think▷;
+// <think>…</think> is the dialect #250 is named by and the one the #243
+// classifier (THINK_OPEN) is built on — the trace must recognize the dialect
+// it is deployed to catch. Extend here when another model ships a different
+// marker.
+export const THINK_MARKERS = ['<think>', '</think>', '<thinking>', '</thinking>', '◁think▷'];
 
 export function thinkMarkersIn(text) {
   const found = THINK_MARKERS.filter((m) => String(text ?? '').includes(m));

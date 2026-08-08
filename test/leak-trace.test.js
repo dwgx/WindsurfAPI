@@ -12,6 +12,7 @@ import { log } from '../src/config.js';
 import { handleChatCompletions, __resetConnectDeps, __setConnectDeps } from '../src/handlers/chat.js';
 import { handleMessages } from '../src/handlers/messages.js';
 import { toChatCompletion, __setStreamChatForTest } from '../src/devin-connect-openai.js';
+import { thinkMarkersIn } from '../src/leak-trace.js';
 
 let captured = [];
 const originalInfo = log.info;
@@ -57,6 +58,15 @@ afterEach(() => {
   delete process.env.WINDSURFAPI_LEAK_TRACE;
   delete process.env.DEVIN_CONNECT;
   delete process.env.DEVIN_CONNECT_RETRY_ON_EMPTY_MS;
+});
+
+// --- leak-trace.js: marker table unit checks ---
+
+it('thinkMarkersIn recognizes the <think> dialect — the one #250 is named by and the #243 classifier is built on', () => {
+  assert.deepEqual(thinkMarkersIn('<think>reasoning</think> and text'), ['<think>', '</think>']);
+  assert.deepEqual(thinkMarkersIn('<thinking>x</thinking>'), ['<thinking>', '</thinking>']);
+  assert.deepEqual(thinkMarkersIn('◁think▷y'), ['◁think▷']);
+  assert.equal(thinkMarkersIn('plain text'), null);
 });
 
 // --- devin-connect-openai.js: raw stream events at the channel boundary ---
@@ -152,6 +162,33 @@ it('gate ON: chat.js streamResponse settle log with content/reasoning sizes', as
     assert.ok(settle.includes('"reasoningChars":14'), `reasoning size 14 (deep reasoning), got: ${settle}`);
     assert.ok(settle.includes('"rerouted":false'), 'reroute flag false');
     assert.ok(settle.includes('"reqId":'), 'reqId in settle fields');
+    assert.ok(settle.includes('"outcome":"ok"'), 'success exit records outcome ok');
+  } finally {
+    removeAccount(acct.id);
+  }
+});
+
+it('gate ON: settle log on an UPSTREAM-ERROR exit records the outcome, not an all-empty row', async () => {
+  process.env.WINDSURFAPI_LEAK_TRACE = '1';
+  process.env.DEVIN_CONNECT = '1';
+  const key = `leak-trace-token-${Math.random().toString(36).slice(2)}`;
+  const acct = addAccountByKey(key, 'leak-trace');
+  try {
+    __setConnectDeps({
+      streamChatCompletion: async () => {
+        throw Object.assign(new Error('dead'), { status: 401 });
+      },
+    });
+    const result = await handleChatCompletions(
+      { model: 'swe-1-6-slow', stream: true, messages: [{ role: 'user', content: 'hi' }] },
+      { callerKey: '' },
+    );
+    const res = fakeStreamRes();
+    await result.handler(res);
+    const settle = leakLines().find((l) => l.includes('LEAK_TRACE settle'));
+    assert.ok(settle, 'settle log present even on the error exit');
+    assert.ok(settle.includes('"outcome":"upstream-error"'), `error exit must say why the fields are empty, got: ${settle}`);
+    assert.ok(settle.includes('"contentChars":0'), 'empty fields are expected here — and now explained');
   } finally {
     removeAccount(acct.id);
   }

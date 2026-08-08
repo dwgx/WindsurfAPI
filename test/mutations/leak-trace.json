@@ -1,6 +1,6 @@
 {
   "tests": ["test/leak-trace.test.js"],
-  "expectBaselinePass": 4,
+  "expectBaselinePass": 6,
   "mutations": [
     {
       "name": "gate inverted — tracing never fires",
@@ -42,6 +42,20 @@
       "file": "src/handlers/chat.js",
       "anchor": "              log.info('LEAK_TRACE settle', {\n                reqId,\n                model: connectDisplayModel,",
       "replacement": "              log.debug('LEAK_TRACE settle', {",
+      "expectCaught": true
+    },
+    {
+      "name": "<think> dialect dropped from the marker table — the trace no longer recognizes the very dialect #250 is named by",
+      "file": "src/leak-trace.js",
+      "anchor": "export const THINK_MARKERS = ['<think>', '</think>', '<thinking>', '</thinking>', '◁think▷'];",
+      "replacement": "export const THINK_MARKERS = ['<thinking>', '</thinking>', '◁think▷'];",
+      "expectCaught": true
+    },
+    {
+      "name": "settle outcome hardcoded ok — error/abort exits again log an unexplained all-empty row",
+      "file": "src/handlers/chat.js",
+      "anchor": "outcome: lastOkSr ? 'ok' : (abortController.signal.aborted ? 'client-abort' : 'upstream-error'),",
+      "replacement": "outcome: 'ok',",
       "expectCaught": true
     }
   ]

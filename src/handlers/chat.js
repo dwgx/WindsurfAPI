@@ -3518,6 +3518,11 @@ async function _handleChatCompletionsInner(body, context = {}) {
                 reqId,
                 model: connectDisplayModel,
                 provider: null,
+                // Why the fields are empty matters on the failure exits: this
+                // log runs on EVERY loop exit, including error and abort paths
+                // where lastOkSr never got set. An all-empty row without the
+                // outcome reads as "traced, nothing found" — it is not.
+                outcome: lastOkSr ? 'ok' : (abortController.signal.aborted ? 'client-abort' : 'upstream-error'),
                 contentChars: (lastOkSr?.content ?? '').length,
                 reasoningChars: (lastOkSr?.reasoning ?? '').length,
                 rerouted: false,
