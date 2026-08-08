@@ -1,0 +1,50 @@
+{
+  "tests": [
+    "test/reasoning-dedup.test.js"
+  ],
+  "expectBaselinePass": 13,
+  "mutations": [
+    {
+      "name": "prefix check replaced by unconditional true — content NEVER diverges, every chunk is held and the whole response is silently dropped at settle() (the old silent-hold content-loss defect)",
+      "file": "src/reasoning-dedup.js",
+      "anchor": "if (seenReasoning.startsWith(candidate)) {",
+      "replacement": "if (true) {"
+    },
+    {
+      "name": "hold branch cleared instead of accumulated — nothing is ever held, so the verbatim duplicate always reaches the client and settle() never suppresses",
+      "file": "src/reasoning-dedup.js",
+      "anchor": "held = candidate;",
+      "replacement": "held = '';"
+    },
+    {
+      "name": "divergence not latched — after the first mismatch the stream keeps comparing against the reasoning and can re-hold matching chunks, so the mid-stream release is split across frames again",
+      "file": "src/reasoning-dedup.js",
+      "anchor": "diverged = true;\n    const release = held + text;",
+      "replacement": "diverged = false;\n    const release = held + text;"
+    },
+    {
+      "name": "strict equality relaxed back to a prefix check — a STRICT-PREFIX answer (content shorter than the reasoning, stream ends) is suppressed at settle() and the client gets an EMPTY reply",
+      "file": "src/reasoning-dedup.js",
+      "anchor": "const suppress = held === seenReasoning && wantThinking;",
+      "replacement": "const suppress = seenReasoning.startsWith(held);"
+    },
+    {
+      "name": "wantThinking gate dropped from settle() — full identity when wantThinking is false is suppressed anyway, leaving standard OpenAI SDK clients with an empty answer",
+      "file": "src/reasoning-dedup.js",
+      "anchor": "const suppress = held === seenReasoning && wantThinking;",
+      "replacement": "const suppress = held === seenReasoning;"
+    },
+    {
+      "name": "held cap doubled — a >1 MiB verbatim duplicate is held instead of flushed, re-opening the unbounded-buffer shape on the default-on path",
+      "file": "src/reasoning-dedup.js",
+      "anchor": "if (candidate.length > HELD_CAP) {",
+      "replacement": "if (candidate.length > 2 * HELD_CAP) {"
+    },
+    {
+      "name": "release() emptied — the failure path (stream error/abort) silently drops the held tail, the exact loss settle() is forbidden from causing",
+      "file": "src/reasoning-dedup.js",
+      "anchor": "function release() {\n    const out = held;",
+      "replacement": "function release() {\n    const out = '';"
+    }
+  ]
+}
