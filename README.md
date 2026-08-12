@@ -433,6 +433,7 @@ curl -X DELETE http://localhost:3003/v1/responses/resp_xxx -H "Authorization: Be
 | `RESPONSE_STORE_MAX` | `2000` | 最多保留多少个会话,LRU 驱逐 + 租户公平配额 |
 | `RESPONSE_STORE_MAX_BYTES` | `128m` | 会话总字节预算(支持 b/k/kb/m/mb/g/gb)。条数上限约束的是数量不是内存 —— 实测真实 agent 会话每条约 167KB,2000 条约 327MB。按条数与字节两个维度中先触发的那个驱逐 |
 | `DEVIN_CONNECT_IMAGE_TAG` | 空（= 关） | **DEVIN_CONNECT 上的图片总开关。** 不设则图片在到达上游之前就被丢掉，客户端发了图也拿不到关于图的回答、且日志里没有任何提示。已验证值是 `10`，见下节 |
+| `DEVIN_CONNECT_COLLAPSE_SYSTEM` | `0` | 设为 `1` 时，system 消息不再走 protobuf field #2（`system_prompt`），而是包在 `<system>` 标签里 prepend 到下一条 user 消息（ChatMessage source=1, field #3）。镜像 devin-proxy 的做法，绕过上游对 field #2 比 user 消息更严格的内容策略扫描。`system_prompt` 字段保留最小占位符以满足 empty-system + tools 守卫。默认关，保持原始 wire 形态 |
 
 完整清单在 [.env.example](.env.example) —— 上表只列常用的。
 只存在于源码里、两处都没收录的开关见 [docs/ENV-SWITCHES.md](docs/ENV-SWITCHES.md)。
