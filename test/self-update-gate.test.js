@@ -11,9 +11,11 @@ import { handleDashboardApi, setGitExecFileForTest } from '../src/dashboard/api.
 // Version gate (tag) + rollback endpoint for OTA self-update.
 //
 // Gate semantics:
-//   - target (origin/<branch>) must be a descendant of (or equal to) the
-//     latest release tag, else ERR_UNRELEASED and NO pull is executed.
-//   - target behind current HEAD => ERR_DOWNGRADE.
+//   - normal OTA targets the latest release tag, never an untagged branch HEAD;
+//   - commits after that tag may exist on origin/<branch> (release notes,
+//     generated assets, or work for the next release) without blocking an
+//     older deployment from installing the published release;
+//   - forceUpdate is the explicit escape hatch that follows origin/<branch>.
 //   - rollback POST resets to the persisted before-commit (requires a prior
 //     /self-update that wrote data/self-update-before.json).
 // ---------------------------------------------------------------------------
@@ -61,8 +63,11 @@ function gitStub(map) {
   setGitExecFileForTest((bin, args, opts, cb) => {
     const key = args.join(' ');
     gitCalls.push(key);
-    if (Object.prototype.hasOwnProperty.call(map, key)) {
-      const v = typeof map[key] === 'function' ? map[key]() : map[key];
+    const matchedKey = Object.prototype.hasOwnProperty.call(map, key)
+      ? key
+      : Object.keys(map).find(candidate => candidate.endsWith('*') && key.startsWith(candidate.slice(0, -1)));
+    if (matchedKey) {
+      const v = typeof map[matchedKey] === 'function' ? map[matchedKey]() : map[matchedKey];
       cb(null, String(v) + '\n', '');
     } else {
       const err = new Error('unexpected git: ' + key);
@@ -81,10 +86,16 @@ function updateScript(extra) {
     'rev-parse HEAD': HEAD,
     'rev-parse --abbrev-ref HEAD': 'master',
     'fetch --quiet origin': '',
+    'fetch --quiet origin master --tags': '',
     'rev-parse origin/master': REMOTE,
     'log -1 --pretty=format:%s': 'local msg',
     'status --porcelain -uno': '',
     'tag --list --sort=-v:refname --merged origin/master': 'v3.9.21',
+    'rev-parse v3.9.21': TAG,
+    ['rev-list --count v3.9.21..' + REMOTE]: '0',
+    ['rev-list --count ' + HEAD + '..' + TAG]: '1',
+    ['rev-list --count ' + TAG + '..' + HEAD]: '0',
+    ['log -1 --pretty=format:%s ' + TAG]: 'released msg',
   };
   return Object.assign(m, extra || {});
 }
@@ -96,19 +107,18 @@ function postUpdate(req) {
 }
 
 describe('self-update version gate (tag)', () => {
-  it('refuses pull when remote has unreleased commits (ERR_UNRELEASED)', async () => {
+  it('installs the latest tag even when remote has post-tag unreleased commits', async () => {
     openAuth();
-    let pullRan = false;
+    let releaseMergeRan = false;
     gitStub(updateScript({
       ['rev-list --count v3.9.21..' + REMOTE]: '3',
-      'pull origin master --ff-only': () => { pullRan = true; return ''; },
+      ['merge --ff-only ' + TAG]: () => { releaseMergeRan = true; return 'Fast-forward'; },
     }));
     const r = await postUpdate({});
-    assert.equal(r.ok, false, JSON.stringify(r));
-    assert.equal(r.error, 'ERR_UNRELEASED');
-    assert.equal(r.latestTag, 'v3.9.21');
-    assert.equal(r.unreleased, 3);
-    assert.equal(pullRan, false, 'pull must NOT run when the gate refuses');
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.equal(releaseMergeRan, true, 'OTA must fast-forward to the released tag');
+    assert.equal(gitCalls.includes('pull origin master --ff-only'), false,
+      'normal OTA must not pull the untagged branch HEAD');
   });
 
   it('allows pull when remote IS the latest tag (published)', async () => {
@@ -116,40 +126,101 @@ describe('self-update version gate (tag)', () => {
     gitStub(updateScript({
       'rev-parse origin/master': TAG,
       ['rev-list --count v3.9.21..' + TAG]: '0',
-      ['rev-list --count v3.9.21..' + HEAD]: '0',
-      'pull origin master --ff-only': 'Fast-forward',
-      'log -1 --pretty=format:%s bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb': 'remote msg',
+      ['merge --ff-only ' + TAG]: 'Fast-forward',
     }));
     const r = await postUpdate({});
     assert.equal(r.ok, true, JSON.stringify(r));
   });
 
-  it('refuses downgrade when target is behind HEAD', async () => {
+  it('does not downgrade a checkout that already contains the latest release', async () => {
     openAuth();
-    const stub = updateScript({
-      'rev-parse origin/master': TAG,
-      ['rev-list --count v3.9.21..' + TAG]: '0',
-      ['rev-list --count ' + TAG + '..HEAD']: '2',
-    });
-    gitStub(stub);
+    let mergeRan = false;
+    gitStub(updateScript({
+      ['rev-list --count ' + HEAD + '..' + TAG]: '0',
+      ['rev-list --count ' + TAG + '..' + HEAD]: '2',
+      ['merge --ff-only ' + TAG]: () => { mergeRan = true; return ''; },
+    }));
     const r = await postUpdate({});
-    assert.equal(r.ok, false, JSON.stringify(r));
-    assert.equal(r.error, 'ERR_DOWNGRADE');
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.equal(r.changed, false);
+    assert.equal(mergeRan, false, 'an ahead checkout must not be reset/merged back to the tag');
   });
 
-  it('forceUpdate bypasses the tag gate', async () => {
+  it('forceUpdate explicitly follows the untagged remote head', async () => {
     openAuth();
+    let remoteMergeRan = false;
     gitStub(updateScript({
       ['rev-list --count v3.9.21..' + REMOTE]: '2',
-      'pull origin master --ff-only': 'Fast-forward',
+      ['rev-list --count ' + HEAD + '..' + REMOTE]: '3',
+      ['rev-list --count ' + REMOTE + '..' + HEAD]: '0',
+      ['merge --ff-only ' + REMOTE]: () => { remoteMergeRan = true; return 'Fast-forward'; },
     }));
     const r = await postUpdate({ forceUpdate: true });
     assert.equal(r.ok, true, JSON.stringify(r));
+    assert.equal(remoteMergeRan, true);
+  });
+
+  it('falls back to the remote branch head when the repository has no release tags', async () => {
+    openAuth();
+    let remoteMergeRan = false;
+    gitStub(updateScript({
+      'tag --list --sort=-v:refname --merged origin/master': '',
+      ['rev-list --count ' + HEAD + '..' + REMOTE]: '1',
+      ['rev-list --count ' + REMOTE + '..' + HEAD]: '0',
+      ['merge --ff-only ' + REMOTE]: () => { remoteMergeRan = true; return 'Fast-forward'; },
+    }));
+    const r = await postUpdate({});
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.equal(remoteMergeRan, true);
+  });
+
+  it('uses master as the update branch for a detached tag checkout', async () => {
+    openAuth();
+    gitStub(updateScript({
+      'rev-parse --abbrev-ref HEAD': 'HEAD',
+      ['merge --ff-only ' + TAG]: 'Fast-forward',
+    }));
+    const r = await postUpdate({});
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.equal(gitCalls.some(call => call.includes('origin/HEAD')), false);
+    assert.equal(gitCalls.includes('fetch --quiet origin master --tags'), true);
+  });
+
+  it('refuses a non-fast-forward update when current and release target diverged', async () => {
+    openAuth();
+    let mergeRan = false;
+    gitStub(updateScript({
+      ['rev-list --count ' + HEAD + '..' + TAG]: '1',
+      ['rev-list --count ' + TAG + '..' + HEAD]: '1',
+      ['merge --ff-only ' + TAG]: () => { mergeRan = true; return ''; },
+    }));
+    const r = await postUpdate({});
+    assert.equal(r.ok, false, JSON.stringify(r));
+    assert.equal(r.error, 'ERR_DIVERGED');
+    assert.equal(mergeRan, false);
+  });
+
+  it('forceReset cleans a dirty checkout past the release without downgrading it', async () => {
+    openAuth();
+    let resetTarget = '';
+    gitStub(updateScript({
+      'status --porcelain -uno': ' M src/index.js',
+      ['rev-list --count ' + HEAD + '..' + TAG]: '0',
+      ['rev-list --count ' + TAG + '..' + HEAD]: '2',
+      'fetch origin master': '',
+      'rev-list --count origin/master..HEAD': '0',
+      'stash push --include-untracked -m self-update-forceReset *': '',
+      ['reset --hard ' + HEAD]: () => { resetTarget = HEAD; return ''; },
+    }));
+    const r = await postUpdate({ forceReset: true });
+    assert.equal(r.ok, true, JSON.stringify(r));
+    assert.equal(resetTarget, HEAD);
+    assert.equal(gitCalls.includes('reset --hard ' + TAG), false);
   });
 });
 
 describe('gitStatus published field', () => {
-  it('reports published=false with unreleasedCount when tag is behind remote', async () => {
+  it('offers the released tag while reporting newer untagged remote commits', async () => {
     openAuth();
     gitStub(updateScript({
       ['rev-list --count v3.9.21..' + REMOTE]: '5',
@@ -158,9 +229,26 @@ describe('gitStatus published field', () => {
     await handleDashboardApi('GET', '/self-update/check', {}, { headers: {}, socket: { remoteAddress: '127.0.0.1' } }, res);
     const body = res.json();
     assert.equal(body.ok, true);
-    assert.equal(body.published, false);
+    assert.equal(body.published, true);
+    assert.equal(body.behind, true);
+    assert.equal(body.remoteCommit, TAG.slice(0, 7));
+    assert.equal(body.remoteHeadCommit, REMOTE.slice(0, 7));
     assert.equal(body.unreleasedCount, 5);
     assert.equal(body.latestTag, 'v3.9.21');
+  });
+
+  it('reports a diverged release target instead of claiming up to date', async () => {
+    openAuth();
+    gitStub(updateScript({
+      ['rev-list --count ' + HEAD + '..' + TAG]: '1',
+      ['rev-list --count ' + TAG + '..' + HEAD]: '1',
+    }));
+    const res = fakeRes();
+    await handleDashboardApi('GET', '/self-update/check', {}, { headers: {}, socket: { remoteAddress: '127.0.0.1' } }, res);
+    const body = res.json();
+    assert.equal(body.ok, true);
+    assert.equal(body.behind, false);
+    assert.equal(body.diverged, true);
   });
 });
 

@@ -825,39 +825,25 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
   if (subpath === '/self-update' && method === 'POST') {
     try {
       const before = await gitStatus();
-      // M1: 版本门禁必须在任何写操作（forceReset 的 reset）之前——门禁失败时
-      // 工作树必须保持原样（只读 rev-list 校验）。
-      const safeBranchGate = /^[\w.\-\/]+$/.test(before.branch || '') ? before.branch : 'master';
-      const latestTag = await latestReleaseTag(safeBranchGate);
-      if (latestTag) {
-        try {
-          // 堵 fetch 失败瞬态窗口：门禁前确保 ref 最新
-          try { await runGit(['fetch', '--quiet', 'origin', safeBranchGate]); } catch {}
-          const forceGate = !!(body && body.forceUpdate);
-          const target = (await runGit(['rev-parse', `origin/${safeBranchGate}`])).trim();
-          const unreleased = parseInt((await runGit(['rev-list', '--count', `${latestTag}..${target}`])).trim(), 10) || 0;
-          if (unreleased > 0 && !forceGate) {
-            return json(res, 200, {
-              ok: false,
-              error: 'ERR_UNRELEASED',
-              latestTag,
-              unreleased,
-              message: `Remote has ${unreleased} commit(s) newer than the latest release tag ${latestTag} — not published yet. Tag a release first, or use forceUpdate to override.`,
-            });
-          }
-          // 防降级：目标落后于当前 HEAD → 拒绝
-          const downgrade = parseInt((await runGit(['rev-list', '--count', `${target}..HEAD`])).trim(), 10) || 0;
-          if (downgrade > 0 && !forceGate) {
-            return json(res, 200, {
-              ok: false,
-              error: 'ERR_DOWNGRADE',
-              message: `Target ${target.slice(0,7)} is behind current HEAD by ${downgrade} commit(s) — refusing downgrade.`,
-            });
-          }
-        } catch (err) {
-          if (isSelfUpdateUnavailableError(err)) throw err;
-          // tag 校验失败（无 tag 仓库等）不阻塞——视为无门禁
-        }
+      // M1: resolve the update target before any write (including forceReset).
+      // Normal OTA follows the newest RELEASE TAG, not origin/<branch> HEAD:
+      // release notes, generated assets, and next-release work commonly land
+      // after a tag. Treating any such commit as ERR_UNRELEASED made the
+      // published release itself impossible to install as soon as the first
+      // post-tag commit landed. forceUpdate remains the explicit escape hatch
+      // for operators who intentionally want the untagged branch head.
+      const safeBranch = safeUpdateBranch(before.branch);
+      try { await runGit(['fetch', '--quiet', 'origin', safeBranch, '--tags']); } catch {}
+      const forceGate = !!(body && body.forceUpdate);
+      const targetState = await releaseUpdateState(safeBranch, before.commitFull, {
+        followUnreleased: forceGate,
+      });
+      if (targetState.diverged) {
+        return json(res, 200, {
+          ok: false,
+          error: 'ERR_DIVERGED',
+          message: `Current HEAD and update target ${targetState.targetCommit.slice(0, 7)} have diverged; refusing a non-fast-forward update.`,
+        });
       }
       // Guard: working tree must be clean (ignoring untracked files like
       // accounts.json, stats.json, runtime-config.json which live in the
@@ -880,7 +866,6 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
         // doesn't spawn a shell so metacharacters can't break out — the
         // regex is kept as defence-in-depth so a malformed ref can't feed
         // a bogus `origin/xxx` spec to `git fetch`.
-        const safeBranch = /^[\w.\-\/]+$/.test(before.branch || '') ? before.branch : 'master';
         await runGit(['fetch', 'origin', safeBranch]);
         // AUTH-1: `git reset --hard origin/<branch>` is destructive. forceReset
         // covers the dirty working tree the operator explicitly chose to drop,
@@ -911,22 +896,35 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
         } catch (e) {
           log.warn(`self-update: pre-reset stash failed (continuing): ${e.message}`);
         }
-        await runGit(['reset', '--hard', `origin/${safeBranch}`]);
+        // A checkout can legitimately be past the latest release tag (for
+        // example a maintainer running a release-notes or generated-assets
+        // commit that is already on origin). forceReset is permission to
+        // clean the working tree, not permission to silently downgrade that
+        // checkout. Only move HEAD when the selected update target is ahead,
+        // or when the separate hard-reset opt-in explicitly authorizes
+        // dropping local commits.
+        const resetTarget = targetState.updateAvailable || (ahead > 0 && allowHardReset)
+          ? targetState.targetCommit
+          : before.commitFull;
+        await runGit(['reset', '--hard', resetTarget]);
       }
-      const safeBranch = /^[\w.\-\/]+$/.test(before.branch || '') ? before.branch : 'master';
       // execFile can't do `2>&1`; use child_process stderr merge via
       // combining stdout+stderr explicitly. runGit already pipes stderr
       // into the Error message on failure, so for success we get just
       // stdout, which is what the UI displays.
       const beforeCommitFull = before.commitFull;
-      const afterTarget = (await runGit(['rev-parse', `origin/${safeBranch}`]).catch(() => '')).trim() || beforeCommitFull;
+      const afterTarget = targetState.targetCommit || beforeCommitFull;
       try {
         const { mkdir, writeFile } = await import('node:fs/promises');
         await mkdir(join(process.cwd(), 'data'), { recursive: true });
         await writeFile(join(process.cwd(), 'data', 'self-update-before.json'),
           JSON.stringify({ commit: beforeCommitFull, after: afterTarget, ts: Date.now() }), 'utf8');
       } catch (e) { log.warn(`self-update: failed to persist rollback point: ${e.message}`); }
-      const pull = dirty ? 'hard-reset applied' : await runGit(['pull', 'origin', safeBranch, '--ff-only']);
+      const pull = dirty
+        ? 'hard-reset applied'
+        : targetState.updateAvailable
+          ? await runGit(['merge', '--ff-only', targetState.targetCommit])
+          : `Already at latest published release ${targetState.latestTag || targetState.targetCommit.slice(0, 7)}`;
       const after = await gitStatus();
       const changed = before.commit !== after.commit;
       // Schedule process exit so the service supervisor restarts us. This is
@@ -2426,42 +2424,80 @@ async function latestReleaseTag(branch) {
   } catch { return ''; }
 }
 
+function safeUpdateBranch(branch) {
+  const candidate = String(branch || '').trim();
+  // `git rev-parse --abbrev-ref HEAD` returns the literal "HEAD" for a
+  // detached checkout, which is normal for tag-based deployments. origin/HEAD
+  // is not guaranteed to exist locally, so use this repository's canonical
+  // release branch instead.
+  return candidate !== 'HEAD' && /^[\w.\-\/]+$/.test(candidate) ? candidate : 'master';
+}
+
+async function releaseUpdateState(branch, currentCommit, { followUnreleased = false } = {}) {
+  const remoteRef = `origin/${branch}`;
+  const remoteHead = (await runGit(['rev-parse', remoteRef])).trim();
+  const latestTag = await latestReleaseTag(branch);
+  const releasedCommit = latestTag
+    ? (await runGit(['rev-parse', latestTag])).trim()
+    : remoteHead;
+  const targetCommit = followUnreleased ? remoteHead : releasedCommit;
+
+  let unreleasedCount = 0;
+  if (latestTag) {
+    unreleasedCount = parseInt((await runGit([
+      'rev-list', '--count', `${latestTag}..${remoteHead}`,
+    ])).trim(), 10) || 0;
+  }
+
+  const commitsToTarget = parseInt((await runGit([
+    'rev-list', '--count', `${currentCommit}..${targetCommit}`,
+  ])).trim(), 10) || 0;
+  const commitsPastTarget = parseInt((await runGit([
+    'rev-list', '--count', `${targetCommit}..${currentCommit}`,
+  ])).trim(), 10) || 0;
+
+  return {
+    remoteHead,
+    latestTag,
+    releasedCommit,
+    targetCommit,
+    unreleasedCount,
+    commitsToTarget,
+    commitsPastTarget,
+    updateAvailable: commitsToTarget > 0 && commitsPastTarget === 0,
+    diverged: commitsToTarget > 0 && commitsPastTarget > 0,
+  };
+}
+
 async function gitStatus() {
   const commit = (await runGit(['rev-parse', 'HEAD'])).trim();
   const branch = (await runGit(['rev-parse', '--abbrev-ref', 'HEAD'])).trim();
-  let remote = '';
+  let update = null;
   try {
     await runGit(['fetch', '--quiet', 'origin']);
-    remote = (await runGit(['rev-parse', `origin/${branch}`])).trim();
+    update = await releaseUpdateState(safeUpdateBranch(branch), commit);
   } catch {}
   const localMsg = (await runGit(['log', '-1', '--pretty=format:%s'])).trim();
-  const behind = remote && remote !== commit;
-  const remoteMsg = behind ? (await runGit(['log', '-1', '--pretty=format:%s', remote]).catch(() => '')).trim() : '';
-  // 版本门禁：最新 release tag + 远端目标是否已发布（tag 后代）
-  let latestTag = '';
-  let published = true;
-  let unreleasedCount = 0;
-  if (remote) {
-    latestTag = await latestReleaseTag(branch);
-    if (latestTag) {
-      try {
-        const cnt = (await runGit(['rev-list', '--count', `${latestTag}..${remote}`])).trim();
-        unreleasedCount = parseInt(cnt, 10) || 0;
-        published = unreleasedCount === 0;
-      } catch { /* tag 不可比时按已发布处理 */ }
-    }
-  }
+  const target = update?.targetCommit || '';
+  const remoteMsg = update?.updateAvailable
+    ? (await runGit(['log', '-1', '--pretty=format:%s', target]).catch(() => '')).trim()
+    : '';
   return {
     commit: commit.slice(0, 7),
     commitFull: commit,
     branch,
     localMessage: localMsg,
-    remoteCommit: remote ? remote.slice(0, 7) : '',
+    // "remote" in the dashboard means the safe OTA target: latest release
+    // tag by default. remoteHeadCommit is diagnostic only and may contain
+    // release notes/generated assets/next-release work after that tag.
+    remoteCommit: target ? target.slice(0, 7) : '',
+    remoteHeadCommit: update?.remoteHead ? update.remoteHead.slice(0, 7) : '',
     remoteMessage: remoteMsg,
-    behind,
-    latestTag,
-    published,          // 远端最新提交是否已打 release tag
-    unreleasedCount,    // 未发布提交数
+    behind: !!update?.updateAvailable,
+    diverged: !!update?.diverged,
+    latestTag: update?.latestTag || '',
+    published: true,
+    unreleasedCount: update?.unreleasedCount || 0,
   };
 }
 

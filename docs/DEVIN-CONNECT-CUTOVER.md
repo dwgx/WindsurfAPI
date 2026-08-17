@@ -154,8 +154,9 @@ free-tier behavior; a sustained spike means the upstream is genuinely saturated
 - **Paid models** (claude-*/gpt-*/gemini-*) need a paid entitlement on a pooled
   account — unverified, blocked on a paid token. Free deploy serves
   `swe-1-6-slow` only. See §8 for the one-command verification.
-- **Vision/images**: gated off (`DEVIN_CONNECT_IMAGE_TAG=0`); leave unset. §8
-  has the one-command calibration for when a paid vision token exists.
+- **Vision/images**: native `ChatMessagePrompt.images #10` is verified by the
+  extracted Devin schema and a successful SWE-1.7 image request. It is enabled
+  by default; set `DEVIN_CONNECT_IMAGE_TAG=0` only for an emergency rollback.
 - **Router models** (`adaptive`, `arena-*`): resolution via AssignModel is built
   but gated OFF (`DEVIN_CONNECT_ASSIGN_MODEL` unset) because the wire tags are
   inferred, not yet calibrated on a paid round-trip. §8 has the enable path.
@@ -291,21 +292,23 @@ PAID_VERIFY_REAL=1 CONNECT_SMOKE_PAID_TOKEN=<paid-token> npm run verify:devin-pa
 Exit 0 = all good (or free tier, where tier-walls are expected). Exit 1 = a PAID
 token still has tier-walls (entitlement not really active).
 
-### 8.2 Calibrate the vision image tag (#29)
+### 8.2 Re-calibrate the vision image tag after an upstream wire change
 
-Discovers the unknown protobuf tag for the nested `images` field by probing
-candidate tags against a vision model. Free `swe-1.6` is NOT a vision model, so
-this needs a paid/vision entitlement. On a hit it writes
-`devin-connect-image-tag.json` (gitignored) and prints the exact env line.
+The production default is the verified tag `10`; ordinary SWE-1.7 input keeps
+the image on its source=USER message and does not synthesize tool turns. This
+probe remains only as an emergency diagnostic if a future Devin release changes
+the protobuf layout. On a hit it writes `devin-connect-image-tag.json`
+(gitignored) and prints the exact env override.
 
 ```sh
 IMAGE_CALIBRATE_REAL=1 CONNECT_SMOKE_TOKEN=<paid-vision-token> \
   IMAGE_CALIBRATE_MODEL=claude-opus-4.8 npm run calibrate:devin-image
-# then put the printed DEVIN_CONNECT_IMAGE_TAG=<n> in .env and restart.
+# only after a confirmed upstream migration, put the printed override in .env.
 ```
 
-The default sweep is `[4,5,6,7]` (recon places `images` most likely at #4, right
-after `content`=#3). Widen with `IMAGE_CALIBRATE_TAGS=...` if none hit.
+Include the current known-good tag in the sweep, for example
+`IMAGE_CALIBRATE_TAGS=10,4,5,6,7`; do not change production from `10` on a
+single ambiguous response.
 
 ### 8.3 Enable router models — adaptive / arena-* (AssignModel)
 

@@ -4603,28 +4603,31 @@ docker compose up -d --force-recreate</pre>
         return;
       }
       apply.dataset.mode = 'git';
-      if (r.behind) {
-        if (r.published === false) {
-          // 版本门禁：远端有未打 tag 的提交 → 提示但禁用更新
-          status.innerHTML = `
-            <div style="color:var(--warn);font-weight:600;margin-bottom:6px">${I18n.t('status.updateUnreleased')}</div>
-            <div class="text-sm" style="display:grid;gap:3px">
-              <div>${I18n.t('status.currentVersion')} <code>${this.esc(r.commit)}</code> <span class="text-muted">${this.esc(r.localMessage)}</span></div>
-              <div>${I18n.t('status.remoteVersion')} <code>${this.esc(r.remoteCommit)}</code> <span class="text-muted">${this.esc(r.remoteMessage || '')}</span></div>
-              <div class="text-sm text-muted">${I18n.t('status.unreleasedHint', { count: r.unreleasedCount || 0, tag: this.esc(r.latestTag || '') })}</div>
-            </div>`;
-          apply.classList.add('hidden');
-        } else {
-          status.innerHTML = `
-            <div style="color:var(--accent);font-weight:600;margin-bottom:6px">${I18n.t('status.updateAvailable')}</div>
-            <div class="text-sm" style="display:grid;gap:3px">
-              <div>${I18n.t('status.currentVersion')} <code>${this.esc(r.commit)}</code> <span class="text-muted">${this.esc(r.localMessage)}</span></div>
-              <div>${I18n.t('status.remoteVersion')} <code>${this.esc(r.remoteCommit)}</code> <span class="text-muted">${this.esc(r.remoteMessage || '')}</span></div>
-            </div>`;
-          apply.classList.remove('hidden');
-        }
+      if (r.diverged) {
+        status.innerHTML = `
+          <div style="color:var(--warn);font-weight:600;margin-bottom:6px">${I18n.t('status.updateDiverged')}</div>
+          <div class="text-sm text-muted">${I18n.t('status.updateDivergedHint', {
+            current: this.esc(r.commit || ''),
+            target: this.esc(r.remoteCommit || ''),
+          })}</div>`;
+        apply.classList.add('hidden');
+      } else if (r.behind) {
+        const unreleasedNote = r.unreleasedCount > 0
+          ? `<div class="text-sm text-muted">${I18n.t('status.unreleasedHint', { count: r.unreleasedCount, tag: this.esc(r.latestTag || '') })}</div>`
+          : '';
+        status.innerHTML = `
+          <div style="color:var(--accent);font-weight:600;margin-bottom:6px">${I18n.t('status.updateAvailable')}</div>
+          <div class="text-sm" style="display:grid;gap:3px">
+            <div>${I18n.t('status.currentVersion')} <code>${this.esc(r.commit)}</code> <span class="text-muted">${this.esc(r.localMessage)}</span></div>
+            <div>${I18n.t('status.remoteVersion')} <code>${this.esc(r.remoteCommit)}</code> <span class="text-muted">${this.esc(r.remoteMessage || '')}</span></div>
+            ${unreleasedNote}
+          </div>`;
+        apply.classList.remove('hidden');
       } else {
-        status.innerHTML = '<span style="color:var(--success)">✓ ' + I18n.t('status.upToDate', {commit: this.esc(r.commit), message: this.esc(r.localMessage)}) + '</span>';
+        const unreleasedNote = r.unreleasedCount > 0
+          ? `<div class="text-sm text-muted" style="margin-top:6px">${I18n.t('status.unreleasedHint', { count: r.unreleasedCount, tag: this.esc(r.latestTag || '') })}</div>`
+          : '';
+        status.innerHTML = '<span style="color:var(--success)">✓ ' + I18n.t('status.upToDate', {commit: this.esc(r.commit), message: this.esc(r.localMessage)}) + '</span>' + unreleasedNote;
         apply.classList.add('hidden');
       }
     } catch (err) {

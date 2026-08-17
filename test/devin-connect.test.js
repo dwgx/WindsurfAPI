@@ -10,10 +10,8 @@ import {
   isRetryable,
   streamChat,
   getImageFieldTag,
-  getImageToolDefEnabled,
   getToolDefTags,
   extractInlineImages,
-  expandVisionMessage,
   normalizeToolSchema,
   __setRequestImpl,
   __testing,
@@ -27,8 +25,8 @@ import { wrapEnvelope, endOfStreamEnvelope } from '../src/connect.js';
 import { EventEmitter } from 'node:events';
 
 const ENV_KEYS = ['DEVIN_CONNECT_TOKEN', 'WINDSURF_API_KEY', 'DEVIN_CONNECT_IMAGE_TAG',
-  'DEVIN_CONNECT_IMAGE_TOOLDEF', 'DEVIN_CONNECT_IMAGE_INNER_TAGS', 'DEVIN_CONNECT_TOOL_DEF_TAGS',
-  'DEVIN_CONNECT_REPLAY_REASONING'];
+  'DEVIN_CONNECT_IMAGE_INNER_TAGS', 'DEVIN_CONNECT_TOOL_DEF_TAGS',
+  'DEVIN_CONNECT_REPLAY_REASONING', 'DEVIN_CONNECT_COLLAPSE_SYSTEM'];
 const originalEnv = Object.fromEntries(ENV_KEYS.map(k => [k, process.env[k]]));
 
 afterEach(() => {
@@ -1204,8 +1202,8 @@ describe('isRetryable', () => {
 const RED_DOT = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==';
 
 describe('getImageFieldTag (vision gate)', () => {
-  it('returns 0 (disabled) when unset', () => {
-    assert.equal(getImageFieldTag({}), 0);
+  it('defaults to the wire-verified #10 tag when unset', () => {
+    assert.equal(getImageFieldTag({}), 10);
   });
   it('parses a positive integer tag', () => {
     assert.equal(getImageFieldTag({ DEVIN_CONNECT_IMAGE_TAG: '6' }), 6);
@@ -1215,6 +1213,116 @@ describe('getImageFieldTag (vision gate)', () => {
     assert.equal(getImageFieldTag({ DEVIN_CONNECT_IMAGE_TAG: '0' }), 0);
     assert.equal(getImageFieldTag({ DEVIN_CONNECT_IMAGE_TAG: '-3' }), 0);
     assert.equal(getImageFieldTag({ DEVIN_CONNECT_IMAGE_TAG: '999999999' }), 0);
+  });
+});
+
+describe('buildGetChatMessageRequest — collapse system messages', () => {
+  const cmsOf = (proto) => getAllFields(parseFields(proto), 3).map(f => parseFields(f.value));
+  const roleOf = (cm) => Number(getField(cm, 2, 0)?.value);
+  const textOf = (cm) => getField(cm, 3, 2)?.value.toString('utf8') || '';
+
+  it('defaults off: system remains field #2 and user text is unchanged', () => {
+    const proto = buildGetChatMessageRequest({
+      token: TOKEN,
+      model: 'm',
+      messages: [{ role: 'system', content: 'SYSTEM' }, { role: 'user', content: 'hello' }],
+      env: {},
+    });
+    assert.equal(getField(parseFields(proto), 2, 2).value.toString('utf8'), 'SYSTEM');
+    assert.deepEqual(cmsOf(proto).map(textOf), ['hello']);
+  });
+
+  it('enabled: multiple system messages are wrapped and prepended to the next user turn', () => {
+    const proto = buildGetChatMessageRequest({
+      token: TOKEN,
+      model: 'm',
+      messages: [
+        { role: 'system', content: 'FIRST' },
+        { role: 'system', content: 'SECOND' },
+        { role: 'user', content: 'hello' },
+      ],
+      env: { DEVIN_CONNECT_COLLAPSE_SYSTEM: '1' },
+    });
+    assert.equal(getField(parseFields(proto), 2, 2).value.toString('utf8'), '');
+    assert.equal(textOf(cmsOf(proto)[0]), '<system>\nFIRST\n\nSECOND\n</system>\nhello');
+  });
+
+  it('enabled + tools: field #2 keeps only the existing benign tools placeholder', () => {
+    const proto = buildGetChatMessageRequest({
+      token: TOKEN,
+      model: 'claude-opus-4-8-medium',
+      messages: [{ role: 'system', content: 'BRAND-SENSITIVE' }, { role: 'user', content: 'hello' }],
+      tools: [{ type: 'function', function: { name: 'read', parameters: { type: 'object' } } }],
+      env: { DEVIN_CONNECT_COLLAPSE_SYSTEM: '1' },
+    });
+    const fields = parseFields(proto);
+    const system = getField(fields, 2, 2).value.toString('utf8');
+    assert.match(system, /helpful assistant/i);
+    assert.doesNotMatch(system, /BRAND-SENSITIVE/);
+    assert.match(textOf(cmsOf(proto)[0]), /BRAND-SENSITIVE/);
+  });
+
+  it('system followed by an image user stays one source=USER message with image #10', () => {
+    const proto = buildGetChatMessageRequest({
+      token: TOKEN,
+      model: 'swe-1-7',
+      messages: [{ role: 'system', content: 'VISION SYSTEM' }, {
+        role: 'user',
+        content: [
+          { type: 'text', text: 'what is this?' },
+          { type: 'image_url', image_url: { url: `data:image/png;base64,${RED_DOT}` } },
+        ],
+      }],
+      env: { DEVIN_CONNECT_COLLAPSE_SYSTEM: '1', DEVIN_CONNECT_IMAGE_TAG: '10' },
+    });
+    const [user] = cmsOf(proto);
+    assert.equal(roleOf(user), 1);
+    assert.equal(textOf(user), '<system>\nVISION SYSTEM\n</system>\nwhat is this?');
+    assert.equal(getAllFields(user, 10).length, 1);
+    assert.equal(getField(user, 6, 2), null, 'no synthetic assistant tool call');
+  });
+
+  it('assistant history does not consume a pending system block', () => {
+    const proto = buildGetChatMessageRequest({
+      token: TOKEN,
+      model: 'm',
+      messages: [
+        { role: 'system', content: 'FOR NEXT USER' },
+        { role: 'assistant', content: 'old answer' },
+        { role: 'user', content: 'new question' },
+      ],
+      env: { DEVIN_CONNECT_COLLAPSE_SYSTEM: '1' },
+    });
+    const messages = cmsOf(proto);
+    assert.equal(roleOf(messages[0]), 2);
+    assert.equal(textOf(messages[0]), 'old answer');
+    assert.equal(roleOf(messages[1]), 1);
+    assert.equal(textOf(messages[1]), '<system>\nFOR NEXT USER\n</system>\nnew question');
+  });
+
+  it('trailing system content becomes a final synthetic user turn', () => {
+    const proto = buildGetChatMessageRequest({
+      token: TOKEN,
+      model: 'm',
+      messages: [{ role: 'user', content: 'hello' }, { role: 'system', content: 'TRAILING' }],
+      env: { DEVIN_CONNECT_COLLAPSE_SYSTEM: '1' },
+    });
+    assert.deepEqual(cmsOf(proto).map(textOf), ['hello', '<system>\nTRAILING\n</system>']);
+  });
+
+  it('continuityTrail follows the collapsed system content instead of leaking back into field #2', () => {
+    const proto = buildGetChatMessageRequest({
+      token: TOKEN,
+      model: 'm',
+      messages: [{ role: 'system', content: 'SYSTEM' }, { role: 'user', content: 'hello' }],
+      continuityTrail: '\n\n[Continuity checkpoint]\nprior\n[End]',
+      env: { DEVIN_CONNECT_COLLAPSE_SYSTEM: '1' },
+    });
+    assert.equal(getField(parseFields(proto), 2, 2).value.toString('utf8'), '');
+    const userText = textOf(cmsOf(proto)[0]);
+    assert.match(userText, /SYSTEM/);
+    assert.match(userText, /Continuity checkpoint/);
+    assert.ok(userText.indexOf('SYSTEM') < userText.indexOf('Continuity checkpoint'));
   });
 });
 
@@ -1750,60 +1858,47 @@ describe('buildGetChatMessageRequest — vision (gated)', () => {
       { type: 'image_url', image_url: { url: `data:image/png;base64,${RED_DOT}` } },
     ],
   };
-  // Decode every #3 ChatMessage (there are now several per vision turn) and the
-  // top-level #10 ToolDef list.
+  // Decode every #3 ChatMessage.
   const cmsOf = (proto) => getAllFields(parseFields(proto), 3).map(f => parseFields(f.value));
-  const topToolDefs = (proto) => getAllFields(parseFields(proto), 10).map(f => parseFields(f.value));
   const roleOf = (cm) => Number(getField(cm, 2, 0)?.value);
+  const imagesOf = (cm) => getAllFields(cm, 10).map(f => parseFields(f.value));
 
-  it('does NOT restructure or emit any image when DEVIN_CONNECT_IMAGE_TAG is unset', () => {
-    delete process.env.DEVIN_CONNECT_IMAGE_TAG;
-    const proto = buildGetChatMessageRequest({ token: TOKEN, model: 'm', messages: [visionMsg] });
+  it('the explicit DEVIN_CONNECT_IMAGE_TAG=0 rollback disables image emission', () => {
+    const proto = buildGetChatMessageRequest({
+      token: TOKEN, model: 'm', messages: [visionMsg], env: { DEVIN_CONNECT_IMAGE_TAG: '0' },
+    });
     const cms = cmsOf(proto);
-    // Gate off → one plain user ChatMessage, image dropped, no restructure leak.
+    // Rollback off → one plain user ChatMessage and no image field.
     assert.equal(cms.length, 1, 'single ChatMessage when gate off');
     assert.equal(getField(cms[0], 3, 2).value.toString('utf8'), 'what color?');
     assert.equal(cms[0].filter(f => f.wireType === 2 && f.field > 3).length, 0, 'no image sub-message');
     assert.ok(!cms.some(cm => roleOf(cm) === 4), 'no role=4 tool_result when gate off');
     assert.ok(!cms.some(cm => getField(cm, 7, 2)), 'no #7 tool_call_id when gate off');
-    assert.equal(topToolDefs(proto).length, 0, 'no top-level #10 ToolDef leaked when gate off');
   });
 
-  it('gate ON: image rides a role=4 tool_result paired to a role=2 read tool_call', () => {
-    // NOTE: the byte STRUCTURE below is VERIFIED-FROM-WIRE (req022 CM#4/CM#5).
-    // Whether upstream ACCEPTS this SYNTHETIC minimal structure (no genuine prior
-    // tool_call) is UNVERIFIED — pending one paid probe.
-    process.env.DEVIN_CONNECT_IMAGE_TAG = '10';
-    const proto = buildGetChatMessageRequest({ token: TOKEN, model: 'm', messages: [visionMsg] });
+  it('default: image stays on the source=USER message as repeated field #10', () => {
+    const proto = buildGetChatMessageRequest({
+      token: TOKEN,
+      model: 'swe-1-7',
+      messages: [visionMsg],
+      env: {},
+    });
     const cms = cmsOf(proto);
-    const call = cms.find(cm => roleOf(cm) === 2 && getField(cm, 6, 2));
-    const result = cms.find(cm => roleOf(cm) === 4);
-    assert.ok(call && result, 'emits a role=2 tool_call and a role=4 tool_result');
-    const tc = parseFields(getField(call, 6, 2).value);
-    assert.equal(getField(tc, 2, 2).value.toString('utf8'), 'read', '#6.2 tool name');
-    // linkage: #6.1 id === tool_result #7 (mirrors CM#4<->CM#5).
-    const callId = getField(tc, 1, 2).value.toString('utf8');
-    assert.equal(callId, getField(result, 7, 2).value.toString('utf8'), '#6.1 == #7 linkage');
-    assert.match(callId, /^functions\.read:\d+$/, 'synthetic id format');
-    const args = JSON.parse(getField(tc, 3, 2).value.toString('utf8'));
-    assert.ok(typeof args.file_path === 'string' && args.file_path.length, '#6.3 args has non-empty file_path');
-    assert.equal(getField(result, 3, 2).value.toString('utf8'), '[Image 1]');
-    const img = parseFields(getField(result, 10, 2).value);
+    assert.equal(cms.length, 1, 'one input message stays one wire message');
+    const user = cms[0];
+    assert.equal(roleOf(user), 1, 'source=USER');
+    assert.equal(getField(user, 3, 2).value.toString('utf8'), 'what color?');
+    assert.equal(getField(user, 6, 2), null, 'no synthetic read tool_call');
+    assert.equal(getField(user, 7, 2), null, 'no synthetic tool_call_id');
+    const [img] = imagesOf(user);
     assert.equal(getField(img, 1, 2).value.toString('utf8'), RED_DOT);
     assert.equal(getField(img, 2, 2).value.toString('utf8'), 'image/png');
-    // user text lands on its own role=1 message, BEFORE the pair (order fidelity).
-    const userIdx = cms.findIndex(cm => roleOf(cm) === 1 && getField(cm, 3, 2)?.value.toString('utf8') === 'what color?');
-    assert.ok(userIdx >= 0 && userIdx < cms.indexOf(call) && cms.indexOf(call) < cms.indexOf(result),
-      'order: user text < tool_call < tool_result');
-    // sub-gate default ON → synthetic top-level #10 read ToolDef present.
-    assert.ok(topToolDefs(proto).some(s => getField(s, 1, 2)?.value.toString('utf8') === 'read'),
-      'synthetic read ToolDef injected at top-level #10');
   });
 
   it('text-only turns are unaffected by the gate being on', () => {
-    process.env.DEVIN_CONNECT_IMAGE_TAG = '10';
     const proto = buildGetChatMessageRequest({
       token: TOKEN, model: 'm', messages: [{ role: 'user', content: 'plain text' }],
+      env: { DEVIN_CONNECT_IMAGE_TAG: '10' },
     });
     const cms = cmsOf(proto);
     assert.equal(cms.length, 1);
@@ -1811,11 +1906,9 @@ describe('buildGetChatMessageRequest — vision (gated)', () => {
     assert.equal(getField(cms[0], 6, 2), null, 'no tool_call on a text-only turn');
     assert.equal(getField(cms[0], 10, 2), null, 'no image on a text-only turn');
     assert.ok(!cms.some(cm => roleOf(cm) === 4), 'no tool_result on a text-only turn');
-    assert.equal(topToolDefs(proto).length, 0, 'no synthetic ToolDef when no image pairs');
   });
 
-  it('multi-image: one read pair per image with sequential [Image N] placeholders', () => {
-    process.env.DEVIN_CONNECT_IMAGE_TAG = '10';
+  it('multi-image: every image is repeated on the same user message', () => {
     const proto = buildGetChatMessageRequest({
       token: TOKEN, model: 'm', messages: [{
         role: 'user', content: [
@@ -1824,59 +1917,31 @@ describe('buildGetChatMessageRequest — vision (gated)', () => {
           { type: 'image_url', image_url: { url: `data:image/jpeg;base64,${RED_DOT}` } },
         ],
       }],
+      env: { DEVIN_CONNECT_IMAGE_TAG: '10' },
     });
     const cms = cmsOf(proto);
-    const calls = cms.filter(cm => roleOf(cm) === 2 && getField(cm, 6, 2));
-    const results = cms.filter(cm => roleOf(cm) === 4);
-    assert.equal(calls.length, 2, 'two tool_calls');
-    assert.equal(results.length, 2, 'two tool_results');
-    const ids = calls.map(c => getField(parseFields(getField(c, 6, 2).value), 1, 2).value.toString('utf8'));
-    assert.deepEqual(ids, ['functions.read:0', 'functions.read:1'], 'distinct sequential ids');
-    assert.equal(getField(results[0], 3, 2).value.toString('utf8'), '[Image 1]');
-    assert.equal(getField(results[1], 3, 2).value.toString('utf8'), '[Image 2]');
-    // each result #7 matches its paired call #6.1
-    results.forEach((r, i) => {
-      assert.equal(getField(r, 7, 2).value.toString('utf8'), ids[i], `pair ${i} linkage`);
-    });
+    assert.equal(cms.length, 1);
+    const images = imagesOf(cms[0]);
+    assert.equal(images.length, 2);
+    assert.equal(getField(images[0], 2, 2).value.toString('utf8'), 'image/png');
+    assert.equal(getField(images[1], 2, 2).value.toString('utf8'), 'image/jpeg');
   });
 
-  it('role:tool image message echoes the caller tool_call_id verbatim (never regenerates)', () => {
-    process.env.DEVIN_CONNECT_IMAGE_TAG = '10';
+  it('native role:tool image keeps the caller tool_call_id and attaches field #10 directly', () => {
     const proto = buildGetChatMessageRequest({
       token: TOKEN, model: 'm', messages: [{
         role: 'tool', tool_call_id: 'toolu_ABC123',
         content: [{ type: 'image', source: { type: 'base64', media_type: 'image/png', data: RED_DOT } }],
       }],
+      nativeToolCall: true,
+      env: { DEVIN_CONNECT_IMAGE_TAG: '10' },
     });
     const cms = cmsOf(proto);
-    const call = cms.find(cm => roleOf(cm) === 2 && getField(cm, 6, 2));
-    const result = cms.find(cm => roleOf(cm) === 4);
-    const callId = getField(parseFields(getField(call, 6, 2).value), 1, 2).value.toString('utf8');
-    assert.equal(callId, 'toolu_ABC123', '#6.1 echoes caller id verbatim');
+    assert.equal(cms.length, 1);
+    const result = cms[0];
+    assert.equal(roleOf(result), 4);
     assert.equal(getField(result, 7, 2).value.toString('utf8'), 'toolu_ABC123', '#7 echoes caller id verbatim');
-  });
-
-  it('sub-gate OFF (DEVIN_CONNECT_IMAGE_TOOLDEF=0): pair still emitted but no synthetic ToolDef', () => {
-    process.env.DEVIN_CONNECT_IMAGE_TAG = '10';
-    process.env.DEVIN_CONNECT_IMAGE_TOOLDEF = '0';
-    const proto = buildGetChatMessageRequest({ token: TOKEN, model: 'm', messages: [visionMsg] });
-    const cms = cmsOf(proto);
-    assert.ok(cms.some(cm => roleOf(cm) === 4), 'tool_result still emitted');
-    assert.ok(!topToolDefs(proto).some(s => getField(s, 1, 2)?.value.toString('utf8') === 'read'),
-      'no synthetic read ToolDef when sub-gate off');
-    assert.equal(getImageToolDefEnabled({ DEVIN_CONNECT_IMAGE_TOOLDEF: '0' }), false);
-    assert.equal(getImageToolDefEnabled({}), true);
-  });
-
-  it('does not duplicate the read ToolDef when the native tool-def path already declares read', () => {
-    process.env.DEVIN_CONNECT_IMAGE_TAG = '10';
-    process.env.DEVIN_CONNECT_TOOL_DEF_TAGS = 'outer=10,name=1,description=2,parameters=3';
-    const proto = buildGetChatMessageRequest({
-      token: TOKEN, model: 'm', messages: [visionMsg],
-      tools: [{ type: 'function', function: { name: 'read', description: 'user read', parameters: { type: 'object' } } }],
-    });
-    const readDefs = topToolDefs(proto).filter(s => getField(s, 1, 2)?.value.toString('utf8') === 'read');
-    assert.equal(readDefs.length, 1, 'exactly one read ToolDef (native wins, synthetic skipped)');
+    assert.equal(imagesOf(result).length, 1);
   });
 });
 

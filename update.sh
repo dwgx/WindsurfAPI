@@ -10,29 +10,37 @@ NAME="${PM2_NAME:-windsurf-api}"
 echo "=== [1/5] Pull latest ==="
 git fetch --quiet origin --tags
 BEFORE=$(git rev-parse HEAD)
-REMOTE=$(git rev-parse origin/master)
+REMOTE_HEAD=$(git rev-parse origin/master)
 DIRTY=$(git status --porcelain)
-AHEAD=$(git rev-list --count "${REMOTE}..HEAD")
 FORCE_RESET="${WINDSURFAPI_UPDATE_FORCE_RESET:-0}"
+FORCE_UPDATE="${WINDSURFAPI_UPDATE_FORCE:-0}"
 
-# 版本门禁（tag gate）: 远端最新提交必须是最近 release tag 的后代
-# （语义化版本排序取最新 tag），否则拒绝 —— 未打 tag 的提交不允许 OTA。
+# 版本门禁（tag gate）: normal OTA installs the newest published tag, not
+# origin/master HEAD. Post-tag release notes, generated assets, and work for
+# the next release must not make the published release impossible to install.
+# WINDSURFAPI_UPDATE_FORCE=1 explicitly opts into the untagged branch HEAD.
 LATEST_TAG=$(git tag --list --sort=-v:refname --merged origin/master | head -1 || true)
+TARGET="$REMOTE_HEAD"
 if [ -n "$LATEST_TAG" ]; then
-  UNRELEASED=$(git rev-list --count "${LATEST_TAG}..${REMOTE}" 2>/dev/null || echo 0)
+  UNRELEASED=$(git rev-list --count "${LATEST_TAG}..${REMOTE_HEAD}" 2>/dev/null || echo 0)
+  if [ "$FORCE_UPDATE" != "1" ]; then
+    TARGET=$(git rev-parse "$LATEST_TAG")
+  fi
   if [ "${UNRELEASED:-0}" -gt 0 ]; then
-    echo "    ! 远端有 ${UNRELEASED} 个提交晚于最新 release tag ${LATEST_TAG}（未发布）"
-    echo "      版本门禁拒绝更新。先打 release tag，或设置 WINDSURFAPI_UPDATE_FORCE=1 强制。"
-    if [ "${WINDSURFAPI_UPDATE_FORCE:-0}" != "1" ]; then
-      exit 1
+    echo "    i 远端有 ${UNRELEASED} 个未发布提交；本次只安装 ${LATEST_TAG}"
+    if [ "$FORCE_UPDATE" = "1" ]; then
+      echo "      WINDSURFAPI_UPDATE_FORCE=1：改为跟随 origin/master"
     fi
   fi
-  # 防降级: 远端落后于当前 HEAD 时拒绝
-  DOWNGRADE=$(git rev-list --count "${REMOTE}..HEAD" 2>/dev/null || echo 0)
-  if [ "${DOWNGRADE:-0}" -gt 0 ] && [ "${WINDSURFAPI_UPDATE_FORCE:-0}" != "1" ]; then
-    echo "    ! 远端 ${REMOTE:0:7} 落后当前 HEAD ${DOWNGRADE} 个提交 — 拒绝降级。"
-    exit 1
-  fi
+fi
+
+TO_TARGET=$(git rev-list --count "HEAD..${TARGET}" 2>/dev/null || echo 0)
+PAST_TARGET=$(git rev-list --count "${TARGET}..HEAD" 2>/dev/null || echo 0)
+UNPUSHED=$(git rev-list --count "${REMOTE_HEAD}..HEAD" 2>/dev/null || echo 0)
+
+if [ "${TO_TARGET:-0}" -gt 0 ] && [ "${PAST_TARGET:-0}" -gt 0 ]; then
+  echo "    ! 当前 HEAD 与更新目标 ${TARGET:0:7} 已分叉；拒绝非 fast-forward 更新"
+  exit 1
 fi
 
 if [ "$FORCE_RESET" = "1" ]; then
@@ -40,15 +48,24 @@ if [ "$FORCE_RESET" = "1" ]; then
     echo "    ! preserving local changes in a stash before forced reset"
     git stash push --include-untracked -m "WindsurfAPI pre-update"
   fi
-  echo "    ! forced reset to origin/master"
-  git reset --hard "$REMOTE"
+  RESET_TARGET="$TARGET"
+  # force-reset normally means "clean my working tree and continue updating".
+  # If this checkout already contains the release target and is itself on the
+  # remote branch, resetting to the tag would be an accidental downgrade.
+  if [ "${TO_TARGET:-0}" -eq 0 ] && [ "${PAST_TARGET:-0}" -gt 0 ] && [ "${UNPUSHED:-0}" -eq 0 ]; then
+    RESET_TARGET="$BEFORE"
+  fi
+  echo "    ! forced reset to ${RESET_TARGET:0:7}"
+  git reset --hard "$RESET_TARGET"
 else
-  if [ -n "$DIRTY" ] || [ "$AHEAD" -gt 0 ]; then
+  if [ -n "$DIRTY" ] || [ "${UNPUSHED:-0}" -gt 0 ]; then
     echo "    ! local changes or commits detected; refusing destructive update"
     echo "      review them first, or set WINDSURFAPI_UPDATE_FORCE_RESET=1"
     exit 1
   fi
-  git pull --ff-only --quiet
+  if [ "${TO_TARGET:-0}" -gt 0 ]; then
+    git merge --ff-only --quiet "$TARGET"
+  fi
 fi
 
 AFTER=$(git rev-parse HEAD)

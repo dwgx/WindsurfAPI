@@ -472,8 +472,8 @@ export function validateCountTokensRequest(body) {
 // image_url accepts remote URLs) but the DEVIN_CONNECT wire builder only inlines
 // data-URI images today (see devin-connect.js:extractInlineImages), so remote-URL
 // vision may still be dropped downstream — that path is logged, not silently
-// lost. NOTE: end-to-end vision ALSO requires DEVIN_CONNECT_IMAGE_TAG, which is
-// gated/off pending PAID-1 calibration — do NOT fill that tag here.
+// lost. Inline image data now uses the wire-verified DEVIN_CONNECT #10 default;
+// operators can set DEVIN_CONNECT_IMAGE_TAG=0 to disable that transport.
 function normalizeImageBlock(block) {
   const src = block?.source || {};
   if ((src.type === 'base64' || !src.type) && src.data) {

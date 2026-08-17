@@ -47,6 +47,23 @@ describe('scripts/check-i18n.js', () => {
     }
   });
 
+  it('fails when a locale uses unsupported single-brace placeholders', () => {
+    const workspace = makeWorkspace();
+    try {
+      const localePath = join(workspace, 'src', 'dashboard', 'i18n', 'en.json');
+      const locale = JSON.parse(readFileSync(localePath, 'utf8'));
+      locale.status.rolledBack = 'Rolled back to {commit}';
+      writeFileSync(localePath, `${JSON.stringify(locale, null, 2)}\n`, 'utf8');
+
+      const result = runCheck(workspace);
+      assert.equal(result.status, 1);
+      assert.match(result.stdout, /en\.json:status\.rolledBack/);
+      assert.match(result.stdout, /use \{\{name\}\} placeholders/);
+    } finally {
+      rmSync(workspace, { recursive: true, force: true });
+    }
+  });
+
   it('fails with nonzero exit and reports violation when Chinese text is introduced', () => {
     const workspace = makeWorkspace();
     try {

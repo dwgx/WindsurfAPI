@@ -23,9 +23,12 @@ describe('update.sh language-server source selection', () => {
     assert.match(pullStage, /exit 1/);
 
     const stashAt = pullStage.indexOf('git stash push --include-untracked');
-    const resetAt = pullStage.indexOf('git reset --hard "$REMOTE"');
+    const resetAt = pullStage.indexOf('git reset --hard "$RESET_TARGET"');
     assert.ok(stashAt >= 0, 'forced reset must preserve local changes in a stash');
     assert.ok(resetAt > stashAt, 'stash must happen before hard reset');
+    assert.match(pullStage, /RESET_TARGET="\$TARGET"/);
+    assert.match(pullStage, /git merge --ff-only --quiet "\$TARGET"/);
+    assert.doesNotMatch(pullStage, /git pull --ff-only/);
     assert.doesNotMatch(pullStage, /if ! git pull[\s\S]*git reset --hard/);
   });
 

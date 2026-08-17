@@ -82,8 +82,8 @@
     {
       "name": "handleModels stops using the shared predicate — the two views can diverge again",
       "file": "src/handlers/models.js",
-      "anchor": "    data = data.filter((m) => isReachable(m._windsurf_id).reachable);",
-      "replacement": "    data = data.filter((m) => { const { selector, mapped } = resolveConnectSelector(m._windsurf_id); return mapped && entitled(selector); });"
+      "anchor": "      const reachability = isReachable(m._windsurf_id);",
+      "replacement": "      const { selector, mapped } = resolveConnectSelector(m._windsurf_id); const reachability = { reachable: mapped && entitled(selector), selector: mapped ? selector : null };"
     }
   ]
 }

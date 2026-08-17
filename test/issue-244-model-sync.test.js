@@ -120,7 +120,7 @@ describe('issue #244 — claude5 is fully wired', () => {
   });
 });
 
-describe('issue #244 — swe family rejects image input loudly (upstream has no vision)', () => {
+describe('issue #244 — SWE image requests are allowed to reach the native vision path', () => {
   function imageBody(model) {
     return {
       model,
@@ -134,21 +134,25 @@ describe('issue #244 — swe family rejects image input loudly (upstream has no 
     };
   }
 
-  it('swe-1-7 + image → 400 model_no_vision (not a silent image drop)', async () => {
+  it('swe-1-7 + image is not rejected by a hardcoded model_no_vision guard', async () => {
     process.env.DEVIN_CONNECT = '1';
     withAccount('issue244-swe-vision');
     const result = await handleChatCompletions(imageBody('swe-1-7'));
-    assert.equal(result.status, 400);
-    assert.equal(result.body.error.code, 'model_no_vision');
-    assert.match(result.body.error.message, /does not support image input/i);
+    assert.notEqual(
+      result.status === 400 && result.body?.error?.code === 'model_no_vision',
+      true,
+      'the captured upstream wire proves swe-1-7 accepts source=USER images #10',
+    );
   });
 
-  it('swe-1-7-lightning + image → same 400', async () => {
+  it('swe-1-7-lightning is not rejected merely because it belongs to the SWE family', async () => {
     process.env.DEVIN_CONNECT = '1';
     withAccount('issue244-swe-vision-lt');
     const result = await handleChatCompletions(imageBody('swe-1-7-lightning'));
-    assert.equal(result.status, 400);
-    assert.equal(result.body.error.code, 'model_no_vision');
+    assert.notEqual(
+      result.status === 400 && result.body?.error?.code === 'model_no_vision',
+      true,
+    );
   });
 
   it('a vision-capable model is NOT rejected by the swe guard', async () => {
@@ -160,7 +164,7 @@ describe('issue #244 — swe family rejects image input loudly (upstream has no 
     assert.notEqual(
       result.status === 400 && result.body?.error?.code === 'model_no_vision',
       true,
-      'claude-sonnet-4-6 must not be rejected as a no-vision model',
+      'claude-sonnet-4-6 must not be rejected by a family-name heuristic',
     );
   });
 

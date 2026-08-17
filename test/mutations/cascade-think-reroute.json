@@ -4,7 +4,7 @@
     "test/response-classifier.test.js",
     "test/default-on-switch-registry.test.js"
   ],
-  "expectBaselinePass": 29,
+  "expectBaselinePass": 30,
   "mutations": [
     {
       "name": "the Cascade interception point goes dead — the classifier is never fed, so leading think-tagged content streams straight to the client exactly as it did before the fix. This is #250 itself re-introduced on the path that carries the traffic",

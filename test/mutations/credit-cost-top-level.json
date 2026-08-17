@@ -2,7 +2,7 @@
   "tests": [
     "test/devin-connect.test.js"
   ],
-  "expectBaselinePass": 176,
+  "expectBaselinePass": 181,
   "mutations": [
     {
       "name": "the top-level billing pass goes dead — credit_cost pinned at top-level #14 is never read, so a billed turn reports no cost and the operator cannot tell a billed request from a free one",

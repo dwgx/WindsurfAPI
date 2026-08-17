@@ -86,6 +86,12 @@ export function handleModels(env = process.env) {
   // unrelated Cascade cloud catalog.
   let data = listModels({ env: effectiveEnv });
   if (getBackendSwitch('devinConnect', effectiveEnv)) {
+    const liveCatalog = getLiveCatalog();
+    const imageCapabilityBySelector = new Map(
+      liveCatalog
+        .filter((row) => typeof row?.selector === 'string' && typeof row?.supportsImages === 'boolean')
+        .map((row) => [row.selector, row.supportsImages]),
+    );
     // Row producer #1: the MODELS table, filtered to what this deployment can serve.
     //
     // The rule (existence = snapshot ∪ live, plus the per-account entitlement check, plus
@@ -97,7 +103,12 @@ export function handleModels(env = process.env) {
     // (models.js isModelAllowedByCloudCatalog / filterModelKeysByCloudCatalog), which is
     // correct as a namespace boundary and is why the check has to be redone here.
     const isReachable = buildConnectReachability(effectiveEnv);
-    data = data.filter((m) => isReachable(m._windsurf_id).reachable);
+    data = data.flatMap((m) => {
+      const reachability = isReachable(m._windsurf_id);
+      if (!reachability.reachable) return [];
+      const supportsImages = imageCapabilityBySelector.get(reachability.selector);
+      return [typeof supportsImages === 'boolean' ? { ...m, supports_images: supportsImages } : m];
+    });
     // Producers #2 and #3 below are keyed by SELECTOR, not by a MODELS id, so they cannot
     // go through isReachable — it resolves its argument through resolveConnectSelector.
     // They keep the entitlement check directly.
@@ -114,7 +125,7 @@ export function handleModels(env = process.env) {
     // came from listModels; this loop synthesizes its own, so filtering just the
     // first one left a free-only pool still advertising every live-only paid
     // selector (measured: 86 rows survived a filter applied to producer #1 alone).
-    for (const row of getLiveCatalog()) {
+    for (const row of liveCatalog) {
       const id = row.selector;
       if (!id || seen.has(id)) continue;
       if (!entitled(id)) continue;
@@ -127,6 +138,7 @@ export function handleModels(env = process.env) {
         _windsurf_id: id,
         _source: 'live_catalog',
         ...(row.label ? { _label: row.label } : {}),
+        ...(typeof row.supportsImages === 'boolean' ? { supports_images: row.supportsImages } : {}),
       });
     }
     // THIRD producer — the rebuild, not a filter.

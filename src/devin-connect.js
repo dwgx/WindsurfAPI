@@ -103,9 +103,9 @@ const CLIENT_NAME = 'chisel';
 const CLIENT_VERSION = '2026.8.18';
 
 // ChatMessage.source enum (field #2). Mirrors windsurf.js SOURCE — only the
-// values this path actually emits are listed. TOOL_RESULT (4) is VERIFIED-FROM-
-// WIRE: the captured devin.exe request carries images on a role=4 message tied
-// to a tool_call (see the vision block below).
+// values this path actually emits are listed. TOOL_RESULT (4) and its matching
+// tool_call_id #7 are verified by native tool-history captures; ordinary image
+// input remains source=USER and uses repeated #10 on that same message.
 const SOURCE = Object.freeze({ USER: 1, ASSISTANT: 2, TOOL_RESULT: 4 });
 
 // CompletionConfig defaults, matched to the captured CLI request.
@@ -202,45 +202,28 @@ export function messageText(content) {
   return JSON.stringify(content);
 }
 
-// Image (vision) support — VERIFIED-FROM-WIRE 2026-07-06 (MITM capture of a real
-// devin.exe GetChatMessage carrying an image, teams account).
+// Image (vision) support — VERIFIED-FROM-WIRE against real Devin clients.
 //
 // The `images` field lives NESTED inside each ChatMessage at TAG #10 (confirmed
 // from the captured protobuf: ChatMessage {uuid #1, role #2, text #3,
 // tool_call_id #7, images #10}). Each images entry is an ImageData sub-message
 // { base64_data=1, mime_type=2 } — the SAME inner shape as the Cascade path
-// (earlier RE guesses of 3,4 were wrong). In the captured turn the image rode a
-// role=4 (tool_result) message tied to a `functions.read` tool_call, because the
-// Devin CLI feeds images via a local read tool; a plain user-message image at
-// #10 is the natural generalization.
+// (earlier RE guesses of 3,4 were wrong). A 2026-07-30 native SWE-1.7 capture
+// proves ordinary multimodal input stays on source=USER with repeated images
+// #10; synthesizing an assistant `read` tool call changes the conversation and
+// fails on models whose assistant turns require a server-issued signature.
 //
-// The VERIFIED tag is 10 — set DEVIN_CONNECT_IMAGE_TAG=10 to turn vision on.
-// Kept OFF by default (unset → 0) to honor the project's env-gate discipline:
-// enabling image emission for every request is a behavior change, and only a
-// subset of models accept vision, so it stays opt-in with a now-known-correct
-// value rather than flipping on implicitly.
+// The VERIFIED tag is 10. It is now the default: the extracted Devin schema and
+// a native SWE-1.7 request/response both confirm that ordinary user images ride
+// directly on the source=USER ChatMessage at repeated #10. Operators can still
+// set DEVIN_CONNECT_IMAGE_TAG=0 to disable emission, or point the tag elsewhere
+// temporarily when validating a future upstream wire change.
 export const VERIFIED_IMAGE_TAG = 10;
 export function getImageFieldTag(env = process.env) {
-  const raw = String(env.DEVIN_CONNECT_IMAGE_TAG || '').trim();
-  if (!raw) return 0; // unset → images disabled (opt-in via DEVIN_CONNECT_IMAGE_TAG=10)
+  const raw = String(env.DEVIN_CONNECT_IMAGE_TAG ?? '').trim();
+  if (!raw) return VERIFIED_IMAGE_TAG;
   const tag = Number.parseInt(raw, 10);
   return Number.isInteger(tag) && tag > 0 && tag < 536870912 ? tag : 0;
-}
-
-// Vision sub-gate: when vision is ON, whether to ALSO inject a synthetic `read`
-// ToolDef at top-level #10. VERIFIED-FROM-WIRE (req022): the real devin.exe
-// request ALWAYS declares `read` at the top-level #10 ToolDef list (23 tools,
-// `read` among them) whenever an image rides a read tool_result — so the paired
-// tool_call is never orphaned. Whether upstream *requires* the declaration is
-// UNVERIFIED (needs a paid probe), so this defaults ON (the wire-faithful,
-// lower-rejection-risk path). Flip DEVIN_CONNECT_IMAGE_TOOLDEF=0 to run the
-// minimal no-ToolDef probe. MEANINGFUL ONLY when getImageFieldTag() != 0 — with
-// vision off no restructure happens and this is never consulted, so the gate-off
-// wire stays byte-identical. ← SWITCH POINT: if a paid fire proves the ToolDef is
-// unnecessary, change the default to false.
-export function getImageToolDefEnabled(env = process.env) {
-  const raw = String(env.DEVIN_CONNECT_IMAGE_TOOLDEF ?? '').trim().toLowerCase();
-  return !(raw === '0' || raw === 'off' || raw === 'false'); // default ON
 }
 
 /**
@@ -294,62 +277,41 @@ function encodeImageData(img, env = process.env) {
   ]);
 }
 
-// ─── Vision send-side (gated) — VERIFIED-FROM-WIRE 2026-07-06 (req022) ───
-//
-// On the wire an image NEVER rides a plain user message. Each image rides a
-// role=4 (SOURCE.TOOL_RESULT) ChatMessage { #1 uuid, #2 role=4, #3 "[Image N]",
-// #7 tool_call_id, #10 ImageData } that is PAIRED to a preceding role=2 assistant
-// ChatMessage carrying a #6 tool_call { #1 id, #2 name="read", #3 argsJSON } whose
-// #6.1 id EXACTLY equals the tool_result's #7. (Independently decoded from
-// req022 by three agents; the two image pairs matched by exact-string id, both
-// name="read".) The old blind outer-tag sweep on user messages failed because
-// this is a STRUCTURE requirement, not a tag one.
-//
-// The referenced tool ("read") is ALSO declared in the request's top-level #10
-// ToolDef list on the wire (23 tools). We inject a synthetic `read` ToolDef so
-// the tool_call is not orphaned — see getImageToolDefEnabled / the injection in
-// buildGetChatMessageRequest.
+function encodeChatMessage({
+  source,
+  text = '',
+  images = [],
+  imageTag = 0,
+  toolCallId = '',
+  reasoning = '',
+  reasoningTagNum = 0,
+  env = process.env,
+}) {
+  const fields = [
+    writeStringField(1, randomUUID()),
+    writeVarintField(2, source),
+    writeStringField(3, text),
+  ];
+  if (toolCallId) fields.push(writeStringField(7, toolCallId));
+  if (imageTag) {
+    for (const image of images) {
+      fields.push(writeMessageField(imageTag, encodeImageData(image, env)));
+    }
+  }
+  if (reasoning && reasoningTagNum) {
+    fields.push(writeStringField(reasoningTagNum, reasoning));
+  }
+  return Buffer.concat(fields);
+}
 
-// The synthetic `read` ToolDef reuses the native ToolDef tag layout, which is
-// VERIFIED-FROM-WIRE at #10{name=1, description=2, parameters=3} (same as the
-// live catalog and the calibrated DEVIN_CONNECT_TOOL_DEF_TAGS default).
-const SYNTHETIC_READ_TOOLDEF_TAGS = Object.freeze({ outer: 10, name: 1, description: 2, parameters: 3, schema: 3 });
-
-// `read` ToolDef — description + JSON schema copied VERBATIM from the req022
-// top-level #10[13] entry (decoded from the capture bytes). `parameters` is an
-// OBJECT, not a string: encodeToolDef JSON.stringify()s it, so a string here
-// would double-encode.
-const SYNTHETIC_READ_TOOL = Object.freeze({
-  type: 'function',
-  function: {
-    name: 'read',
-    description: "Reads a file from the local filesystem. The file_path parameter must be an absolute path, not a relative path. By default, it reads up to 20000 characters starting from the beginning of the file. You can optionally specify a line offset and limit (especially handy for long files), but it's recommended to read the whole file by not providing these parameters. Any lines longer than 2000 characters will be truncated.",
-    parameters: {
-      required: ['file_path'],
-      properties: {
-        file_path: { description: 'The absolute path to the file to read.', type: 'string' },
-        offset: { description: 'Optional line number to start reading from (1-based).', type: 'integer' },
-        limit: { description: 'Optional number of lines to read.', type: 'integer' },
-      },
-      type: 'object',
-      additionalProperties: false,
-    },
-  },
-});
-
-// Non-empty absolute path so the synthetic read args satisfy the schema's
-// required:["file_path"] (an empty value risks schema-level rejection). The path
-// is backfill to shape the tool_call args — it is never actually read.
-const syntheticImagePath = (n) => `C:\\windsurfapi\\image_${n + 1}.png`;
-
-// Encode a role=2 assistant ChatMessage carrying one #6 tool_call.
+// Encode a role=2 assistant ChatMessage carrying one native #6 tool_call.
 // VERIFIED-FROM-WIRE (req022 CM#4 #6): the request-side ToolCall is a PROTOBUF
 // submessage { #1 id, #2 name, #3 argsJSON } — only #6.3 (args) is a JSON string.
 // This CONTRADICTS the static-RE memory note "request-side ToolCall is
 // serde-JSON": the ENVELOPE is protobuf, only the args VALUE is JSON. Wire wins.
 // Symmetric with the response-side ChatToolCall #6{1:id,2:name,3:arguments}
 // pinned in parseToolCallTagMap.
-function encodeAssistantToolCall({ id, name, argsJson, reasoning, provider, reasoningTagNum = 11 }) {
+function encodeAssistantToolCall({ id, name, argsJson, reasoning, reasoningTagNum = 11 }) {
   const toolCall = Buffer.concat([
     writeStringField(1, id),
     writeStringField(2, name),
@@ -362,122 +324,12 @@ function encodeAssistantToolCall({ id, name, argsJson, reasoning, provider, reas
   ];
   // #11 reasoning text (or custom tag, e.g. #9 for negative control RE probes) —
   // VERIFIED-FROM-WIRE (req022: every role=2 assistant turn carries #11, 59B–1470B).
-  // Our default synthetic path omits it; a probe can inject one via
-  // DEVIN_CONNECT_IMAGE_REASONING or DEVIN_CONNECT_REPLAY_REASONING.
   // Emitted only when a non-empty string is supplied so default wire stays byte-identical.
   // The tag-number guard is load-bearing even though callers currently pass reasoningText
   // only when reasoningTagNum is truthy: field 0 is RESERVED in protobuf and a zero tag
   // would serialize makeTag(0,2) — an invalid frame — so the encoder refuses it itself.
   if (reasoning && reasoningTagNum) parts.push(writeStringField(reasoningTagNum, reasoning));
-  // #18 provider marker — VERIFIED-FROM-WIRE (req022 MSG14, the DRIVING turn:
-  // #18="anthropic"). Only the final/driving assistant tool_use carried it
-  // (MSG4 did not). Env-gated, default off. A synthetic #12 thinking SIGNATURE
-  // is deliberately NOT emitted: it is server-signed and cannot be fabricated,
-  // so provider without a valid signature is itself a paid probe.
-  if (provider) parts.push(writeStringField(18, provider));
   return Buffer.concat(parts);
-}
-
-// Encode a role=4 tool_result ChatMessage bearing image(s). Field order matches
-// req022 CM#5 exactly: #1 uuid, #2 role=4, #3 placeholder text, #7 tool_call_id,
-// #10 ImageData — do NOT interleave #10 before #7. `toolCallId` is echoed
-// VERBATIM (two id formats coexist on the wire — "functions.read:0" and
-// "toolu_…" — so never normalize or regenerate it).
-function encodeImageToolResult({ toolCallId, text, images, imageTag, env = process.env }) {
-  const fields = [
-    writeStringField(1, randomUUID()),
-    writeVarintField(2, SOURCE.TOOL_RESULT),
-    writeStringField(3, text || '[Image 1]'),
-    writeStringField(7, toolCallId),
-  ];
-  for (const img of images) fields.push(writeMessageField(imageTag, encodeImageData(img, env)));
-  return Buffer.concat(fields);
-}
-
-// Expand ONE OpenAI message carrying inline images into the wire-faithful
-// ChatMessage sequence. VERIFIED-FROM-WIRE (req022): image → role=4 tool_result
-// tied by #7 tool_call_id to a preceding role=2 assistant #6 read tool_call.
-//
-// Ordering: the caller's own text is emitted FIRST on its natural role, then per
-// image a [role=2 read tool_call, role=4 tool_result] pair — matching the wire's
-// causal order (question → read → image) and ending on a role=4 tool_result,
-// which req022 proves is an acceptable final message (CM#15 is the last #3).
-//
-// A real OpenAI role:'tool' image message already has a genuine tool_call_id —
-// echo it verbatim into both #6.1 and #7 and carry all its images in ONE
-// tool_result. A user message has no id, so synth "functions.read:N" ids (that
-// wire path carried NO #12 thinking-signature, so a minimal synthetic assistant
-// message with only #6 stays faithful).
-//
-// ROOT CAUSE FOUND (2026-07-07, 2 paid fires + byte-diff): a SYNTHETIC image
-// turn is REJECTED (UPSTREAM_INTERNAL) by extended-thinking models (opus-4-8),
-// even with #11 reasoning + #18 provider + the real 19KB system prompt added.
-// Byte-diff vs the real req-022 driving turn shows the ONLY remaining difference
-// is #12 — a 324-byte server-issued thinking signature that the client CANNOT
-// forge (it is minted server-side during a genuine Bedrock extended-thinking
-// turn). So faking an assistant tool_use turn to smuggle an image does NOT work
-// for thinking models. Do NOT fire more opus probes (they will reject).
-// Possible unexplored paths: (a) a vision-capable model that does NOT use
-// extended-thinking / needs no #12; (b) a real tool loop so the server signs #12
-// itself; (c) document as a known limit. See memory vision-image-tag-state.
-//
-// @param {object}   msg     OpenAI-style { role, content, tool_call_id? }
-// @param {Array}    images  pre-extracted [{ base64_data, mime_type }] (length ≥ 1)
-// @param {object}   ctx     { imageTag, source, nextReadId, env }
-// @returns {Buffer[]}       encoded ChatMessage buffers (length ≥ 1)
-export function expandVisionMessage(msg, images, ctx) {
-  const { imageTag, source, nextReadId, env = process.env } = ctx;
-  const out = [];
-  const text = messageText(msg.content);
-  // Optional synthetic #11 reasoning / #18 provider on the read tool_call turn —
-  // both default OFF (unset → byte-identical to the pre-probe wire). Populated
-  // only for paid experiment fires that isolate the reasoning / provider
-  // hypotheses. See getImageReasoning / getImageProvider.
-  const reasoning = getImageReasoning(env);
-  const provider = getImageProvider(env);
-
-  if (msg.role === 'tool' && msg.tool_call_id) {
-    // Real tool result: one tool_call genuinely happened. Reuse its opaque id
-    // verbatim for both #6.1 and #7; carry every image in ONE tool_result.
-    const id = msg.tool_call_id;
-    out.push(encodeAssistantToolCall({ id, name: 'read', argsJson: JSON.stringify({ file_path: syntheticImagePath(0) }), reasoning, provider }));
-    out.push(encodeImageToolResult({ toolCallId: id, text: text || '[Image 1]', images, imageTag, env }));
-    return out;
-  }
-
-  // User/other message: caller text first (its own turn), then one read pair per
-  // image — mirrors the wire's one-#10-per-tool_result shape.
-  if (text) {
-    out.push(Buffer.concat([
-      writeStringField(1, randomUUID()),
-      writeVarintField(2, source),
-      writeStringField(3, text),
-    ]));
-  }
-  images.forEach((img, i) => {
-    const id = nextReadId();
-    out.push(encodeAssistantToolCall({ id, name: 'read', argsJson: JSON.stringify({ file_path: syntheticImagePath(i) }), reasoning, provider }));
-    out.push(encodeImageToolResult({ toolCallId: id, text: `[Image ${i + 1}]`, images: [img], imageTag, env }));
-  });
-  return out;
-}
-
-// Optional synthetic #11 reasoning text for the vision read tool_call turn.
-// Default OFF (unset/empty → not emitted, wire byte-identical). A paid probe
-// sets DEVIN_CONNECT_IMAGE_REASONING="..." to test whether the agent-loop
-// requires the assistant turn to carry reasoning (req022 always did).
-export function getImageReasoning(env = process.env) {
-  const raw = env.DEVIN_CONNECT_IMAGE_REASONING;
-  return typeof raw === 'string' && raw.trim() ? raw : '';
-}
-
-// Optional #18 provider marker (e.g. "anthropic"). Default OFF. In req022 only
-// the DRIVING assistant turn (MSG14) carried #18 alongside a server-signed #12
-// thinking signature we cannot fabricate; emitting #18 without a valid #12 is
-// itself a paid probe, hence gated and off by default.
-export function getImageProvider(env = process.env) {
-  const raw = env.DEVIN_CONNECT_IMAGE_PROVIDER;
-  return typeof raw === 'string' && raw.trim() ? raw.trim() : '';
 }
 
 // Native tool definitions — GROUNDWORK, gated behind DEVIN_CONNECT_TOOL_DEF_TAGS.
@@ -1162,22 +1014,35 @@ export function buildGetChatMessageRequest({ token, messages, model, sessionId, 
   const replayTag = String(env.DEVIN_CONNECT_REPLAY_REASONING || '').trim();
   const reasoningTagNum = replayTag === '1' ? 11 : (replayTag === '9' ? 9 : 0);
 
-  // System turns are concatenated into the dedicated system_prompt field (#2);
-  // everything else becomes a repeated ChatMessage (#3).
-  const imageTag = getImageFieldTag();
-  // Vision restructure only fires when the master gate is on AND a message
-  // actually carries images (see the loop). injectReadToolDef gates the synthetic
-  // top-level #10 `read` ToolDef; it is consulted ONLY when imageTag != 0, so the
-  // gate-off wire is byte-identical to the pre-vision path.
-  const injectReadToolDef = Boolean(imageTag) && getImageToolDefEnabled();
-  let readCounter = 0;
-  const nextReadId = () => `functions.read:${readCounter++}`; // mirrors wire "functions.read:0"
-  let syntheticReadPairs = 0;
+  // System turns normally ride the dedicated system_prompt field (#2). The
+  // opt-in collapse mode moves them into the next source=USER message instead,
+  // preserving message order while avoiding the stricter field-#2 policy path.
+  const collapseSystem = String(env.DEVIN_CONNECT_COLLAPSE_SYSTEM || '').trim() === '1';
+  const imageTag = getImageFieldTag(env);
   let systemPrompt = '';
+  let continuityCollapsed = false;
+  let pendingSystemParts = [];
   const chatMessages = [];
+
+  const consumeCollapsedSystem = (text = '') => {
+    if (!collapseSystem) return text;
+    if (!continuityCollapsed && continuityTrail) {
+      pendingSystemParts.push(continuityTrail);
+      continuityCollapsed = true;
+    }
+    if (!pendingSystemParts.length) return text;
+    const wrapped = `<system>\n${pendingSystemParts.join('\n\n')}\n</system>`;
+    pendingSystemParts = [];
+    return text ? `${wrapped}\n${text}` : wrapped;
+  };
+
   for (const msg of messages || []) {
     if (msg.role === 'system') {
       const t = messageText(msg.content);
+      if (collapseSystem) {
+        if (t) pendingSystemParts.push(t);
+        continue;
+      }
       systemPrompt += systemPrompt ? `\n${t}` : t;
       continue;
     }
@@ -1223,46 +1088,45 @@ export function buildGetChatMessageRequest({ token, messages, model, sessionId, 
     if (nativeToolCall && msg.role === 'tool' && msg.tool_call_id) {
       // role=4 tool_result carrying the result text, tied by #7 tool_call_id to
       // the preceding native #6 assistant tool_call (id echoed verbatim).
-      chatMessages.push(Buffer.concat([
-        writeStringField(1, randomUUID()),
-        writeVarintField(2, SOURCE.TOOL_RESULT),
-        writeStringField(3, messageText(msg.content) || '[tool result]'),
-        writeStringField(7, msg.tool_call_id),
-      ]));
+      chatMessages.push(encodeChatMessage({
+        source: SOURCE.TOOL_RESULT,
+        text: messageText(msg.content) || '[tool result]',
+        images: imageTag ? extractInlineImages(msg.content) : [],
+        imageTag,
+        toolCallId: msg.tool_call_id,
+        env,
+      }));
       continue;
     }
-    // Vision (gated): a message carrying inline images is expanded to mirror the
-    // wire — the image rides a role=4 tool_result paired to a role=2 read
-    // tool_call, NOT the user message (req022). imageTag == 0 → this is skipped
-    // and encoding falls through to the text-only path, byte-identical to before.
-    if (imageTag) {
-      const imgs = extractInlineImages(msg.content);
-      if (imgs.length) {
-        for (const cm of expandVisionMessage(msg, imgs, { imageTag, source, nextReadId, env: process.env })) {
-          chatMessages.push(cm);
-        }
-        syntheticReadPairs += imgs.length;
-        continue;
-      }
-    }
     let text = messageText(msg.content);
+    if (collapseSystem && msg.role === 'user') {
+      text = consumeCollapsedSystem(text);
+    }
     // Tool turns have no native slot here; fold them into user text so multi-turn
     // histories that carry tool results still flow through.
     if (msg.role === 'tool') {
       text = `[tool result${msg.tool_call_id ? ` for ${msg.tool_call_id}` : ''}]: ${text}`;
     }
-    const msgParts = [
-      writeStringField(1, randomUUID()),
-      writeVarintField(2, source),
-      writeStringField(3, text),
-    ];
-    if (source === SOURCE.ASSISTANT && reasoningTagNum) {
-      const reasoningText = msg.reasoning || msg.reasoning_content;
-      if (reasoningText && String(reasoningText).trim()) {
-        msgParts.push(writeStringField(reasoningTagNum, String(reasoningText)));
-      }
-    }
-    chatMessages.push(Buffer.concat(msgParts));
+    const reasoningText = source === SOURCE.ASSISTANT && reasoningTagNum
+      ? String(msg.reasoning || msg.reasoning_content || '').trim()
+      : '';
+    chatMessages.push(encodeChatMessage({
+      source,
+      text,
+      images: imageTag ? extractInlineImages(msg.content) : [],
+      imageTag,
+      reasoning: reasoningText,
+      reasoningTagNum,
+      env,
+    }));
+  }
+
+  if (collapseSystem && (pendingSystemParts.length || (!continuityCollapsed && continuityTrail))) {
+    chatMessages.push(encodeChatMessage({
+      source: SOURCE.USER,
+      text: consumeCollapsedSystem(''),
+      env,
+    }));
   }
 
   // ★ EMPTY-SYSTEM + TOOLS GUARD (2026-07-10, verified from live devin.exe capture).
@@ -1288,7 +1152,7 @@ export function buildGetChatMessageRequest({ token, messages, model, sessionId, 
   // runs; this trail is appended here, AFTER it — so the a4-a7 rules never see the
   // trail and the digest reaches the upstream verbatim. That is intentional: the
   // trail's whole purpose is letting the next turn see the prior reasoning as-is.
-  if (continuityTrail) systemPrompt += continuityTrail;
+  if (!collapseSystem && continuityTrail) systemPrompt += continuityTrail;
 
   // ModelConfig #15. RE-CALIBRATED FROM THE FULL CAPTURE SET (not just req022):
   // decoding all 9 GetChatMessage requests of one live session (9501aa2c) shows
@@ -1344,26 +1208,12 @@ export function buildGetChatMessageRequest({ token, messages, model, sessionId, 
   // Native tool definitions (repeated #10) — only when the inner ToolDef tags are
   // calibrated (DEVIN_CONNECT_TOOL_DEF_TAGS). Default: tag map is null → nothing
   // emitted, tools keep flowing through prompt emulation upstream.
-  const toolTags = getToolDefTags(process.env, { useDefault: nativeToolCall });
-  let emittedReadToolDef = false;
+  const toolTags = getToolDefTags(env, { useDefault: nativeToolCall });
   if (toolTags && Array.isArray(tools)) {
     for (const tool of tools) {
       if (tool?.type !== 'function' || !tool.function?.name) continue;
-      if (tool.function.name === 'read') emittedReadToolDef = true;
       parts.push(writeMessageField(toolTags.outer, encodeToolDef(tool, toolTags)));
     }
-  }
-  // Synthetic `read` ToolDef for vision — INDEPENDENT of the default-off native
-  // tool-def gate (getToolDefTags), which would silently no-op under the vision
-  // gate. VERIFIED-FROM-WIRE (req022): the real client always declares `read` at
-  // top-level #10 when an image rides a read tool_result. Emitted only when image
-  // pairs were produced and `read` wasn't already declared by the native path.
-  // Protobuf field order is not load-bearing for decode, so appending #10 here
-  // (after #21, consistent with the native tool-def placement) is safe even
-  // though the wire has #10 before #15. ← SWITCH POINT: drop if a paid fire proves
-  // the ToolDef is not required (also see getImageToolDefEnabled default).
-  if (injectReadToolDef && syntheticReadPairs > 0 && !emittedReadToolDef) {
-    parts.push(writeMessageField(SYNTHETIC_READ_TOOLDEF_TAGS.outer, encodeToolDef(SYNTHETIC_READ_TOOL, SYNTHETIC_READ_TOOLDEF_TAGS)));
   }
   return Buffer.concat(parts);
 }
@@ -2838,7 +2688,5 @@ export const __testing = {
   messageText, f64le, SOURCE, encodeImageData, parseBillingTagMap,
   encodeToolDef, parseToolCallTagMap, decodeToolCalls, decodeOneToolCall,
   looksLikeValidJson, parseSignatureTagMap,
-  encodeAssistantToolCall, encodeImageToolResult, expandVisionMessage,
-  getImageToolDefEnabled, SYNTHETIC_READ_TOOL,
-  getImageReasoning, getImageProvider,
+  encodeAssistantToolCall, encodeChatMessage,
 };

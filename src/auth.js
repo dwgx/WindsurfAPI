@@ -832,7 +832,9 @@ const MODEL_CATALOG_CONFIRM_RETRY_MS = 30_000;
 // may CALL it stays per-account (isConnectSelectorAllowedForAccount → tier bucket).
 const _connectCatalogRowsByAccount = new Map(); // account id → decoded catalog rows
 const _connectCatalogSyncedKeys = new Map();    // account id → apiKey already synced
-let _connectCatalogSyncPromise = null;
+const _connectCatalogSyncedAt = new Map();       // account id → successful refresh timestamp
+const _connectCatalogSyncPromises = new Map();  // account id → { apiKey, promise }
+const DEFAULT_CONNECT_CATALOG_TTL_MS = 5 * 60 * 1000;
 let _modelCatalogDeps = null;
 
 /** Test seams for deterministic catalog synchronization without network calls. */
@@ -851,9 +853,9 @@ export async function __waitForModelCatalogSync() {
   await Promise.allSettled(
     [..._modelCatalogSyncPromises.values()].map(({ promise }) => promise),
   );
-  if (_connectCatalogSyncPromise) {
-    await Promise.allSettled([_connectCatalogSyncPromise]);
-  }
+  await Promise.allSettled(
+    [..._connectCatalogSyncPromises.values()].map(({ promise }) => promise),
+  );
 }
 
 function cancelModelCatalogRetry(accountId) {
@@ -905,7 +907,8 @@ export function __resetModelCatalogState() {
   _modelCatalogConfirmationAttemptKeys.clear();
   _connectCatalogRowsByAccount.clear();
   _connectCatalogSyncedKeys.clear();
-  _connectCatalogSyncPromise = null;
+  _connectCatalogSyncedAt.clear();
+  _connectCatalogSyncPromises.clear();
   clearCloudModelCatalogs();
 }
 
@@ -963,17 +966,38 @@ function unionConnectCatalogRows() {
   return [...bySelector.values()];
 }
 
+function connectCatalogNow() {
+  return _modelCatalogDeps?.now?.() ?? Date.now();
+}
+
+function connectCatalogTtlMs(env = process.env) {
+  const parsed = Number(env.DEVIN_CONNECT_CATALOG_TTL_MS);
+  return Number.isFinite(parsed) && parsed >= 10_000
+    ? Math.floor(parsed)
+    : DEFAULT_CONNECT_CATALOG_TTL_MS;
+}
+
+function connectCatalogPollMs(env = process.env) {
+  const ttl = connectCatalogTtlMs(env);
+  // Polling at exactly the TTL makes the first tick arrive just BEFORE expiry:
+  // the initial fetch normally finishes after initAuth starts its timer, so a
+  // five-minute TTL can otherwise refresh only on the ten-minute tick. This is
+  // a cheap local eligibility check; trySyncConnectCatalog still makes no
+  // network request until the successful snapshot is actually stale.
+  return Math.max(1_000, Math.min(10_000, Math.floor(ttl / 2)));
+}
+
 function trySyncConnectCatalog(acct) {
   if (_modelCatalogDeps?.disableConnectSync) return;
-  // Re-sync when THIS account has not been synced under its current key. A
-  // module-level "already synced once" latch is what made a newly added paid
-  // account invisible; a key change (re-login, rotation) must also re-sync,
-  // which is why the recorded value is the apiKey rather than a boolean.
-  if (_connectCatalogSyncedKeys.get(acct.id) === acct.apiKey) return;
-  if (_connectCatalogSyncPromise) return;
+  const now = connectCatalogNow();
+  const sameKey = _connectCatalogSyncedKeys.get(acct.id) === acct.apiKey;
+  const age = now - (_connectCatalogSyncedAt.get(acct.id) || 0);
+  if (sameKey && age >= 0 && age < connectCatalogTtlMs()) return;
+  const inFlight = _connectCatalogSyncPromises.get(acct.id);
+  if (inFlight?.apiKey === acct.apiKey) return inFlight.promise;
   const accountId = acct.id;
   const apiKey = acct.apiKey;
-  _connectCatalogSyncPromise = (async () => {
+  const promise = (async () => {
     try {
       const { fetchCatalog } = _modelCatalogDeps?.fetchConnectCatalog
         ? { fetchCatalog: _modelCatalogDeps.fetchConnectCatalog }
@@ -983,6 +1007,12 @@ function trySyncConnectCatalog(acct) {
       // the static import with a dynamic one, so the two paths could diverge.
       const applyLiveSelectors = _modelCatalogDeps?.setLiveCatalogSelectors || setLiveCatalogSelectors;
       const connectModels = await fetchCatalog({ token: apiKey });
+      const current = accounts.find((account) => (
+        account.id === accountId
+        && account.status === 'active'
+        && account.apiKey === apiKey
+      ));
+      if (!current) return;
       // Only record a NON-EMPTY response. An empty one is no data, and storing it
       // would let the union shrink — the same fail-open shape as the Cascade
       // empty-catalog defect (models.js mergeCloudCatalogSnapshot).
@@ -990,6 +1020,7 @@ function trySyncConnectCatalog(acct) {
       if (rows.length) {
         _connectCatalogRowsByAccount.set(accountId, rows);
         _connectCatalogSyncedKeys.set(accountId, apiKey);
+        _connectCatalogSyncedAt.set(accountId, connectCatalogNow());
         const union = unionConnectCatalogRows();
         applyLiveSelectors(union);
         log.info(`DEVIN_CONNECT live catalog: account ${accountId} contributed ${rows.length} selectors, pool union now ${union.length}`);
@@ -1000,8 +1031,11 @@ function trySyncConnectCatalog(acct) {
       log.warn(`DEVIN_CONNECT catalog sync failed (snapshot fallback stays in effect): ${e.message}`);
     }
   })().finally(() => {
-    _connectCatalogSyncPromise = null;
+    const current = _connectCatalogSyncPromises.get(accountId);
+    if (current?.promise === promise) _connectCatalogSyncPromises.delete(accountId);
   });
+  _connectCatalogSyncPromises.set(accountId, { apiKey, promise });
+  return promise;
 }
 
 /**
@@ -1016,6 +1050,8 @@ function trySyncConnectCatalog(acct) {
 function forgetConnectCatalogForAccount(accountId) {
   const had = _connectCatalogRowsByAccount.delete(accountId);
   _connectCatalogSyncedKeys.delete(accountId);
+  _connectCatalogSyncedAt.delete(accountId);
+  _connectCatalogSyncPromises.delete(accountId);
   if (!had) return;
   const union = unionConnectCatalogRows();
   const applyLiveSelectors = _modelCatalogDeps?.setLiveCatalogSelectors || setLiveCatalogSelectors;
@@ -1125,15 +1161,7 @@ async function fetchAndMergeModelCatalog(accountId, apiKey) {
  * transitions without blocking unrelated accounts.
  */
 export function trySyncModelCatalog() {
-  const active = reconcileModelCatalogAccounts();
-  // Drive the Connect selector sync from HERE, not only from inside
-  // fetchAndMergeModelCatalog. That function is gated by the Cascade per-key check
-  // below, so once an account's Cascade catalog was recorded as synced, the connect
-  // sync became unreachable for it — its own per-key eligibility was never
-  // consulted. The two namespaces have independent RPCs and independent state, so
-  // they need independent entry points; sharing one gate made the connect catalog
-  // inherit the Cascade latch.
-  for (const acct of active) trySyncConnectCatalog(acct);
+  const active = trySyncConnectCatalogs();
   for (const acct of active) {
     if (_modelCatalogSyncedKeys.get(acct.id) === acct.apiKey) continue;
     if (_modelCatalogRetryCancels.has(acct.id)) continue;
@@ -1151,6 +1179,19 @@ export function trySyncModelCatalog() {
       });
     _modelCatalogSyncPromises.set(acct.id, { apiKey, promise });
   }
+}
+
+function trySyncConnectCatalogs() {
+  const active = reconcileModelCatalogAccounts();
+  // Drive the Connect selector sync from HERE, not only from inside
+  // fetchAndMergeModelCatalog. That function is gated by the Cascade per-key check
+  // below, so once an account's Cascade catalog was recorded as synced, the connect
+  // sync became unreachable for it — its own per-key eligibility was never
+  // consulted. The two namespaces have independent RPCs and independent state, so
+  // they need independent entry points; sharing one gate made the connect catalog
+  // inherit the Cascade latch.
+  for (const acct of active) trySyncConnectCatalog(acct);
+  return active;
 }
 
 async function registerWithCodeium(idToken) {
@@ -4380,6 +4421,10 @@ export async function initAuth() {
   // Fire-and-forget — the hardcoded catalog is sufficient until this completes.
   // trySyncModelCatalog also fires whenever an account becomes active.
   trySyncModelCatalog();
+  const CONNECT_CATALOG_REFRESH_INTERVAL = connectCatalogPollMs();
+  setInterval(() => {
+    trySyncConnectCatalogs();
+  }, CONNECT_CATALOG_REFRESH_INTERVAL).unref?.();
 
   // Periodic Firebase token refresh (every 50 min). Firebase ID tokens expire
   // after 60 min; refreshing at 50 keeps a comfortable margin.

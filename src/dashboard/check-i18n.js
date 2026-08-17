@@ -253,6 +253,37 @@ if (onlyInEn.length === 0 && onlyInZh.length === 0) {
   logOk('Locale files are synchronized');
 }
 
+// Runtime interpolation only recognizes {{name}}. A single-brace `{name}`
+// silently reaches the UI verbatim; this happened in the OTA rollback copy
+// even though the locale key-sync gate stayed green. The one allowlisted key
+// intentionally DISPLAYS the literal template syntax to the operator.
+console.log('\nChecking locale placeholder syntax...');
+const singleBracePlaceholder = /(^|[^\{])\{([A-Za-z_]\w*)\}(?!\})/;
+const literalSingleBraceKeys = new Set([
+  'experimental.missingPlaceholder',
+]);
+let badPlaceholderCount = 0;
+function checkPlaceholderSyntax(obj, locale, prefix = '') {
+  for (const [key, value] of Object.entries(obj || {})) {
+    const pathKey = prefix ? `${prefix}.${key}` : key;
+    if (value && typeof value === 'object' && !Array.isArray(value)) {
+      checkPlaceholderSyntax(value, locale, pathKey);
+    } else if (
+      typeof value === 'string'
+      && singleBracePlaceholder.test(value)
+      && !literalSingleBraceKeys.has(pathKey)
+    ) {
+      logError(`${locale}:${pathKey}: use {{name}} placeholders, not single braces`);
+      badPlaceholderCount++;
+    }
+  }
+}
+checkPlaceholderSyntax(enJson, 'en.json');
+checkPlaceholderSyntax(zhJson, 'zh-CN.json');
+if (badPlaceholderCount === 0) {
+  logOk('Locale placeholders use the supported {{name}} syntax');
+}
+
 // 4. Check for data-i18n usage consistency
 console.log('\nChecking data-i18n attribute usage...');
 const i18nRegex = /data-i18n="([^"]+)"/g;
