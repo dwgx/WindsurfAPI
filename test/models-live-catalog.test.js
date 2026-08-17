@@ -24,7 +24,7 @@ describe('/v1/models — live-catalog synthesis (audit v3.2.4)', () => {
     // grok-4-5-medium: proven live-catalog-only 2026-07-12 (runs at chat, absent
     // from the 130-model MODELS table and the 105-model snapshot).
     setLiveCatalogSelectors([
-      { selector: 'grok-4-5-medium', provider: 'xai', label: 'Grok 4.5 (medium)', supportsImages: true },
+      { selector: '  grok-4-5-medium  ', provider: 'xai', label: 'Grok 4.5 (medium)', supportsImages: true },
       { selector: 'gpt-5-6-sol-medium', provider: 'openai', label: 'GPT-5.6 Sol (medium)', supportsImages: false },
     ]);
     const { data } = handleModels(ENV_ON);
@@ -36,6 +36,8 @@ describe('/v1/models — live-catalog synthesis (audit v3.2.4)', () => {
     assert.equal(grok.owned_by, 'xai');
     assert.equal(grok._source, 'live_catalog');
     assert.equal(grok.supports_images, true);
+    assert.equal(data.some((m) => m.id !== m.id.trim()), false,
+      'live catalog whitespace must not leak into public model ids');
     assert.equal(data.find((m) => m.id === 'gpt-5-6-sol-medium').supports_images, false);
   });
 

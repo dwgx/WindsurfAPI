@@ -82,10 +82,16 @@ export function handleModels(env = process.env) {
   let data = listModels({ env: effectiveEnv });
   if (getBackendSwitch('devinConnect', effectiveEnv)) {
     const liveCatalog = getLiveCatalog();
+    const catalogSelector = (row) => (
+      typeof row === 'string' ? row : row?.selector
+    )?.trim();
     const imageCapabilityBySelector = new Map(
-      liveCatalog
-        .filter((row) => typeof row?.selector === 'string' && typeof row?.supportsImages === 'boolean')
-        .map((row) => [row.selector, row.supportsImages]),
+      liveCatalog.flatMap((row) => {
+        const selector = catalogSelector(row);
+        return selector && typeof row?.supportsImages === 'boolean'
+          ? [[selector, row.supportsImages]]
+          : [];
+      }),
     );
     // Row producer #1: the MODELS table, filtered to what this deployment can serve.
     //
@@ -128,7 +134,7 @@ export function handleModels(env = process.env) {
     // first one left a free-only pool still advertising every live-only paid
     // selector (measured: 86 rows survived a filter applied to producer #1 alone).
     for (const row of liveCatalog) {
-      const id = row.selector;
+      const id = catalogSelector(row);
       if (!id || seen.has(id) || representedSelectors.has(id)) continue;
       if (!entitled(id)) continue;
       seen.add(id);
@@ -137,10 +143,10 @@ export function handleModels(env = process.env) {
         id,
         object: 'model',
         created: ts,
-        owned_by: row.provider || 'windsurf',
+        owned_by: row?.provider || 'windsurf',
         _windsurf_id: id,
         _source: 'live_catalog',
-        ...(row.label ? { _label: row.label } : {}),
+        ...(row?.label ? { _label: row.label } : {}),
         ...(typeof row.supportsImages === 'boolean' ? { supports_images: row.supportsImages } : {}),
       });
     }

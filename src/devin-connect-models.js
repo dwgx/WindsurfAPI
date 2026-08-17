@@ -206,8 +206,15 @@ export function setLiveCatalogSelectors(catalog) {
     : (catalog instanceof Set ? [...catalog] : []);
   if (!items.length) return;
   const next = new Set();
+  const rowsBySelector = new Map();
   for (const it of items) {
-    if (typeof it === 'string') { if (it.trim()) next.add(it.trim()); continue; }
+    if (typeof it === 'string') {
+      const selector = it.trim();
+      if (!selector) continue;
+      next.add(selector);
+      if (!rowsBySelector.has(selector)) rowsBySelector.set(selector, { selector });
+      continue;
+    }
     if (it && typeof it === 'object') {
       // ONLY the canonical `selector` (the full, upstream-accepted form) goes into
       // the live existence set. The catalog's `alias` is a FAMILY shortcut
@@ -222,16 +229,19 @@ export function setLiveCatalogSelectors(catalog) {
       // by the hand-maintained SELECTOR_MAP (which resolves them to a real selector);
       // an alias the map doesn't know must fail closed, not pass through raw.
       // (ultracode review 2026-07-12; real-account confirmed gpt-5.6-sol regression)
-      if (typeof it.selector === 'string' && it.selector.trim()) next.add(it.selector.trim());
+      const selector = typeof it.selector === 'string' ? it.selector.trim() : '';
+      if (!selector) continue;
+      next.add(selector);
+      if (!rowsBySelector.has(selector)) rowsBySelector.set(selector, { ...it, selector });
     }
   }
   if (!next.size) return; // never blank out a good set on a bad fetch
   _liveSelectors.clear();
   for (const s of next) _liveSelectors.add(s);
-  // Retain the full rows too (only when we were handed decoded objects, not a
-  // bare string/Set) so /v1/models can synthesize live-only entries.
-  const rows = items.filter((it) => it && typeof it === 'object' && typeof it.selector === 'string' && it.selector.trim());
-  if (rows.length) _liveCatalog = rows;
+  // Retain normalized rows so every consumer sees the same canonical selector
+  // strings as the existence set. String-only test seams become minimal rows
+  // instead of leaving stale metadata from an earlier object catalog behind.
+  _liveCatalog = [...rowsBySelector.values()];
 }
 
 /**

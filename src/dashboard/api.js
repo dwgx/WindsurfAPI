@@ -1961,7 +1961,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
       // a free account's catalog still lists paid models, and the operator needs to
       // see those as unreachable rather than have them disappear.
       for (const row of getLiveCatalog()) {
-        const id = row?.selector;
+        const id = (typeof row === 'string' ? row : row?.selector)?.trim();
         if (!id || seen.has(id) || representedSelectors.has(id)) continue;
         seen.add(id);
         const { reachable, selector } = isReachable(id);

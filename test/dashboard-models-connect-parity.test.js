@@ -187,7 +187,7 @@ describe('dashboard /models agrees with /v1/models on the Connect namespace (#23
     const liveOnly = 'grok-4-5-medium-dashboard-parity';
     const aliasBacked = 'claude-opus-4-6';
     setLiveCatalogSelectors([
-      { selector: liveOnly, provider: 'xai', label: 'Grok live only' },
+      { selector: `  ${liveOnly}  `, provider: 'xai', label: 'Grok live only' },
       { selector: aliasBacked, provider: 'anthropic', label: 'Claude Opus 4.8 Medium' },
     ]);
     liveCatalogDirty = true;

@@ -125,6 +125,14 @@ describe('resolveConnectSelector — live catalog (audit 2026-07-12 snapshot sta
     assert.equal(m.resolveConnectSelector('qwen-3').mapped, true, 'prior good set survives a bad sync');
   });
 
+  it('normalizes string-only seam rows into the readable live catalog', async () => {
+    const m = await import(`../src/devin-connect-models.js?fresh=${Date.now()}-strings`);
+    m.setLiveCatalogSelectors(['  qwen-3  ', '']);
+
+    assert.deepEqual(m.getLiveCatalog(), [{ selector: 'qwen-3' }]);
+    assert.deepEqual(m.resolveConnectSelector('qwen-3'), { selector: 'qwen-3', mapped: true });
+  });
+
   it('genuine junk still degrades even with a live catalog present', async () => {
     const m = await import(`../src/devin-connect-models.js?fresh=${Date.now()}-e`);
     m.setLiveCatalogSelectors([{ selector: 'qwen-3' }]);
