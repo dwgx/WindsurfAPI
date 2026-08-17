@@ -187,13 +187,14 @@
     "notFetched": "Not fetched",
     "fetchFailed": "Fetch failed",
     "clickToEditTier": "Click to manually edit tier (use when probe fails)",
-    "updateUnreleased": "Update available, but not yet released",
-    "unreleasedHint": "Remote has {count} commit(s) newer than the latest release tag {tag} — OTA requires a release tag first.",
+    "unreleasedHint": "Remote has {{count}} newer unpublished commit(s); this OTA installs the latest release {{tag}} only.",
+    "updateDiverged": "Update blocked: Git history diverged",
+    "updateDivergedHint": "Current {{current}} and release target {{target}} have different histories. Resolve the Git branch manually before using OTA.",
     "updateFailed": "Service did not recover after update",
     "rollbackHint": "Waiting. You can roll back to the previous version with one click.",
     "healthOk": "Health check passed, refreshing…",
     "rollingBack": "Rolling back to the previous version…",
-    "rolledBack": "Rolled back to {commit}, restarting service…",
+    "rolledBack": "Rolled back to {{commit}}, restarting service…",
     "noRollbackPoint": "No rollback point recorded for this update."
   },
   "tier": {

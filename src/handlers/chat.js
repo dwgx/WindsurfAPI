@@ -2874,32 +2874,12 @@ async function _handleChatCompletionsInner(body, context = {}) {
   // the backend. Unmapped names degrade to the free-tier selector downstream.
   if (selectBackend({ modelInfo }).flow === 'devin_connect') {
     const reqModelName = accessFallbackModel || reqModel || config.defaultModel;
-    // SWE family is text/code-only: upstream never declared vision for any
-    // SWE-1.x model (cognition swe-1-7 launch post has zero vision mentions),
-    // and the gateway measured the same wire bytes for swe and claude — the
-    // images go out and upstream silently ignores them (#244). Reject loudly
-    // instead of sending bytes a model can't see; the client should pick a
-    // vision-capable model (e.g. claude-sonnet-4-6) for image requests.
-    // Placed before the ACP reroute: the CLI path would hit the same wall.
-    if (hasMultimodalContent(messages) && /^swe-/i.test(reqModelName || '')) {
-      log.warn(`Chat[${reqId}]: image request to ${safeLogValue(reqModelName)} rejected — SWE family has no vision support upstream`);
-      return {
-        status: 400,
-        body: { error: {
-          message: `The model \`${reqModelName}\` does not support image input — the SWE family is text/code only (upstream never declared vision). Use a vision-capable model (e.g. claude-sonnet-4-6) for image requests.`,
-          type: 'invalid_request_error',
-          param: 'messages',
-          code: 'model_no_vision',
-        } },
-      };
-    }
-    // VISION reroute: the DEVIN_CONNECT synthetic-image path is a dead end for
-    // extended-thinking models (un-forgeable #12 server signature). When the
-    // request carries images AND ACP vision is enabled, hand it to the ACP path
-    // instead — the real devin CLI builds the wire and the server signs its own
-    // turns, so vision works for ALL models including opus-4-8 (verified E2E).
+    // VISION reroute: when ACP vision is explicitly enabled, keep using the real
+    // Devin CLI for its full multimodal session semantics. The direct Connect
+    // path below can also carry source=USER images #10, including SWE-1.7, but ACP
+    // remains the operator-selected transport when this gate is on.
     if (acpVisionEnabled() && hasMultimodalContent(messages)) {
-      log.info(`Chat[${reqId}]: image request → rerouting ${safeLogValue(reqModelName)} to ACP vision path (DEVIN_CONNECT synthetic-image path cannot serve thinking models)`);
+      log.info(`Chat[${reqId}]: image request → rerouting ${safeLogValue(reqModelName)} to the configured ACP vision path`);
       // This reroute leaves the DEVIN_CONNECT branch BEFORE the neutralize pass
       // below, so without this the Claude Code / Grok / Cline identity would reach
       // the Devin CLI verbatim — the same fingerprint the neutralize step exists

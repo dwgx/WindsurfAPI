@@ -195,7 +195,6 @@ describe('drought gate structure — escape points (#234)', () => {
     const ACCEPTED_ESCAPES = [
       { match: /handleSpecialAgentChatCompletion/, why: 'ACP vision reroute → special_agent namespace' },
       { match: /code: 'model_not_found'/, why: 'unresolvable model name → precise 400' },
-      { match: /code: 'model_no_vision'/, why: 'SWE family has no upstream vision → precise 400 before any roundtrip (#244)' },
     ];
 
     const escapes = [];

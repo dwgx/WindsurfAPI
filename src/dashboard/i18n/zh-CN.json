@@ -187,13 +187,14 @@
     "notFetched": "尚未获取",
     "fetchFailed": "获取失败",
     "clickToEditTier": "点击手动修改层级（探测异常时用）",
-    "updateUnreleased": "有更新，但尚未发布",
-    "unreleasedHint": "远端有 {count} 个提交晚于最新 release tag {tag}——按发布流程需先打 tag 才能 OTA。",
+    "unreleasedHint": "远端另有 {{count}} 个未发布提交；本次 OTA 只安装最新 release {{tag}}。",
+    "updateDiverged": "更新已阻止：Git 历史已分叉",
+    "updateDivergedHint": "当前 {{current}} 与发布目标 {{target}} 不在同一条历史上，请先手动处理 Git 分支，再使用 OTA。",
     "updateFailed": "更新后服务未能恢复",
     "rollbackHint": "已停止等待。你可以一键回滚到更新前的版本。",
     "healthOk": "服务健康检查通过，即将刷新…",
     "rollingBack": "正在回滚到更新前的版本…",
-    "rolledBack": "已回滚到 {commit}，正在重启服务…",
+    "rolledBack": "已回滚到 {{commit}}，正在重启服务…",
     "noRollbackPoint": "没有可回滚的记录（本次更新未记录回滚点）。"
   },
   "tier": {

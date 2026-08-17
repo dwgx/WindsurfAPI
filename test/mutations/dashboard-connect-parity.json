@@ -81,8 +81,8 @@
     {
       "name": "handleModels stops using the shared predicate — the two views can diverge again",
       "file": "src/handlers/models.js",
-      "anchor": "      const resolved = isReachable(m._windsurf_id);",
-      "replacement": "      const resolved = resolveConnectSelector(m._windsurf_id, { warnOnFallback: false });"
+      "anchor": "      const reachability = isReachable(m._windsurf_id);",
+      "replacement": "      const { selector, mapped } = resolveConnectSelector(m._windsurf_id, { warnOnFallback: false }); const reachability = { reachable: mapped, selector: mapped ? selector : null };"
     }
   ]
 }

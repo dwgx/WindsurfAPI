@@ -14,7 +14,7 @@ import assert from 'node:assert/strict';
 import {
   __resetModelCatalogState, __setModelCatalogDeps, __waitForModelCatalogSync,
   addAccountByKey, removeAccount, getAccountInternal, setAccountStatus,
-  isConnectSelectorAllowedForAccount,
+  isConnectSelectorAllowedForAccount, trySyncModelCatalog,
 } from '../src/auth.js';
 
 const created = [];
@@ -26,7 +26,7 @@ let perAccountRows = {};
 const SAVED_CONNECT = process.env.DEVIN_CONNECT;
 
 /** Install seams: record every fetch and every write to the resolver. */
-function installDeps({ perAccount }) {
+function installDeps({ perAccount, now }) {
   liveWrites = [];
   fetchCalls = [];
   perAccountRows = { ...perAccount };
@@ -38,6 +38,7 @@ function installDeps({ perAccount }) {
       fetchCalls.push(token);
       return perAccountRows[token] || [];
     },
+    ...(now ? { now } : {}),
     setLiveCatalogSelectors: (rows) => {
       liveWrites.push((rows || []).map((r) => (typeof r === 'string' ? r : r.selector)));
     },
@@ -72,6 +73,45 @@ afterEach(async () => {
 });
 
 describe('connect catalog de-latch (#234)', () => {
+  it('coalesces per account, not globally, when two accounts need their first sync together', async () => {
+    installDeps({
+      perAccount: {
+        'sk-concurrent-a': [{ selector: 'swe-1-6-slow' }],
+        'sk-concurrent-b': [{ selector: 'claude-opus-4-8-medium' }],
+      },
+    });
+
+    mk('sk-concurrent-a', 'free');
+    mk('sk-concurrent-b', 'pro');
+    await __waitForModelCatalogSync();
+
+    assert.deepEqual(new Set(fetchCalls), new Set(['sk-concurrent-a', 'sk-concurrent-b']));
+  });
+
+  it('refreshes a successful Connect catalog after the five-minute TTL', async () => {
+    let now = 1_000_000;
+    installDeps({
+      perAccount: { 'sk-ttl': [{ selector: 'swe-1-6-slow' }] },
+      now: () => now,
+    });
+
+    mk('sk-ttl', 'free');
+    await __waitForModelCatalogSync();
+    assert.equal(fetchCalls.length, 1);
+
+    trySyncModelCatalog();
+    await __waitForModelCatalogSync();
+    assert.equal(fetchCalls.length, 1, 'fresh catalog is reused inside the TTL');
+
+    now += 5 * 60 * 1000 + 1;
+    perAccountRows['sk-ttl'] = [{ selector: 'swe-1-6-slow' }, { selector: 'swe-1-7' }];
+    trySyncModelCatalog();
+    await __waitForModelCatalogSync();
+
+    assert.equal(fetchCalls.length, 2, 'expired catalog is fetched again');
+    assert.ok(lastUnion().includes('swe-1-7'));
+  });
+
   it('syncs a second account instead of latching after the first', async () => {
     installDeps({
       perAccount: {

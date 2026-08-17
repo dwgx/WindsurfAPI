@@ -130,6 +130,7 @@ PY
 | `WINDSURFAPI_DISABLE_SONNET_TOOL_REUSE` | 关 | 关掉 Sonnet 的工具复用（`=== '1'`）。怀疑复用导致串工具时用。 |
 | `WINDSURFAPI_OPUS47_THINKING_UIDS` | 关 | Opus 4.7 用 thinking 专用的模型 uid（`=== '1'`）。 |
 | `WINDSURFAPI_FABRICATE_REJECT` | 关 | 让上游拒绝时构造一个可读的拒绝响应而不是原样透传（`handlers/chat.js`，`=== '1'`）。 |
+| `DEVIN_CONNECT_COLLAPSE_SYSTEM` | 关 | 把连续 system 内容包成 `<system>...</system>`，并入下一条 source=USER 消息。assistant/tool 历史不会提前消费它；末尾没有 user 时补一条 user。开启后原始 system 不再进入 request field `#2`，只有 tools 空-system guard 需要时才保留 benign placeholder。 |
 | `WINDSURFAPI_NEUTRALIZE_CLINE_OBJECTIVE` | 空（= 关） | 中和 Cline 客户端的 objective 段（`\|\| ''`）。 |
 | `WINDSURFAPI_SHOW_DISABLED_SPECIAL_AGENT_MODELS` | 关 | 在模型列表里也显示上游标记为 disabled 的 special agent 模型（`models.js`，`=== '1'`）。默认隐藏 —— 列出来客户端也调不通。 |
 | `WINDSURFAPI_WEAK_MODEL_TOOL_LIMIT` | `8` | 弱模型最多带几个工具定义（`handlers/tool-emulation.js`，非有限值或 ≤0 回落 8）。工具多了弱模型会选错。 |
@@ -163,6 +164,7 @@ PY
 | 变量 | 默认 | 说明 |
 |---|---|---|
 | `DEVIN_CONNECT_WIRE_MAX_TOKENS` | `8192` | 请求里 `max_tokens` 的默认值（`devin-connect.js`，要求正整数否则回落 8192）。和 `handlers/messages.js`、`gemini.js` 里的 `\|\| 8192` 是一套。**在模块加载时求值一次**，改它要重启。 |
+| `DEVIN_CONNECT_CATALOG_TTL_MS` | `300000`（5 分钟） | 每账号成功在线目录的复用时长（`auth.js`，有限数且 `>=10000` 才接受，否则回落 5 分钟）。TTL 内复用 last-known-good；过期后并行按账号刷新。空响应和失败不覆盖已有目录，也不推进成功时间。 |
 | `WINDSURFAPI_TOOL_DESC_MAX` | `500` | 工具描述的字符上限（`toolDescMax()`，要求 `>= 0` 的有限数否则回落 500）。**`0` = 不限长**，不是"全砍掉"。注释说明当前只用于长度阈值判断。 |
 | `CASCADE_1M_HISTORY_BYTES` | `900000` | 1M 上下文模型的历史字节预算（`client.js`，`positiveIntEnv`）。非 1M 模型走 `CASCADE_MAX_HISTORY_BYTES`（默认 `600000`）。 |
 | `CASCADE_MAX_HISTORY_BYTES` | `600000` | 非 1M 模型的历史字节预算（`client.js`，`positiveIntEnv`）。源码注释记着这个默认值的来历：早先是 400KB，**200KB 曾导致 30+ 轮工具调用的会话静默丢上下文**，所以调到 600KB 留出余量。调小之前先想清楚这一点。此前只作为上一行的说明文字出现，没有自己的条目。 |

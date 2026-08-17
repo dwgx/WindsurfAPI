@@ -8,10 +8,13 @@ import {
 import { writeStringField, writeVarintField, writeMessageField } from '../src/proto.js';
 
 // Build a synthetic ClientModelConfig the same way the live wire does:
-//   #1 label, #10 provider, #22 selector, #23 ModelInfo{ #23 alias }
-function buildConfig({ label, provider, selector, alias }) {
+//   #1 label, #4 disabled, #5 supports_images, #10 provider,
+//   #22 selector, #23 ModelInfo{ #23 alias }
+function buildConfig({ label, disabled, supportsImages, provider, selector, alias }) {
   const parts = [];
   if (label != null) parts.push(writeStringField(1, label));
+  if (disabled != null) parts.push(writeVarintField(4, disabled ? 1 : 0));
+  if (supportsImages != null) parts.push(writeVarintField(5, supportsImages ? 1 : 0));
   if (provider != null) parts.push(writeVarintField(10, provider));
   if (selector != null) parts.push(writeStringField(22, selector));
   if (alias != null) parts.push(writeMessageField(23, writeStringField(23, alias)));
@@ -25,8 +28,8 @@ function buildCatalog(configs) {
 describe('decodeCatalog', () => {
   it('decodes selector, label, provider, and alias for each model', () => {
     const raw = buildCatalog([
-      { label: 'Claude Opus 4.8 Medium', provider: 3, selector: 'claude-opus-4-8-medium', alias: 'claude-opus-4.8' },
-      { label: 'SWE-1.6 Slow', provider: 1, selector: 'swe-1-6-slow', alias: 'swe-1.6-slow' },
+      { label: 'Claude Opus 4.8 Medium', supportsImages: true, provider: 3, selector: 'claude-opus-4-8-medium', alias: 'claude-opus-4.8' },
+      { label: 'SWE-1.6 Slow', supportsImages: false, provider: 1, selector: 'swe-1-6-slow', alias: 'swe-1.6-slow' },
     ]);
     const models = decodeCatalog(raw);
     assert.equal(models.length, 2);
@@ -37,7 +40,21 @@ describe('decodeCatalog', () => {
       provider: 'anthropic',
       alias: 'claude-opus-4.8',
       isFreeDefault: false,
+      supportsImages: true,
     });
+  });
+
+  it('keeps supports_images=false as explicit capability data', () => {
+    const raw = buildCatalog([{ selector: 'text-only', supportsImages: false }]);
+    assert.equal(decodeCatalog(raw)[0].supportsImages, false);
+  });
+
+  it('omits disabled models from the callable catalog', () => {
+    const raw = buildCatalog([
+      { selector: 'disabled-model', disabled: true, supportsImages: true },
+      { selector: 'enabled-model', disabled: false, supportsImages: false },
+    ]);
+    assert.deepEqual(decodeCatalog(raw).map((m) => m.selector), ['enabled-model']);
   });
 
   it('flags swe-1-6-slow as the free default', () => {

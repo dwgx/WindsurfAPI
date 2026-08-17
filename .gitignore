@@ -36,6 +36,7 @@ scripts/*
 !scripts/cline-smoke.sh
 !scripts/dashboard-cdp-check.mjs
 !scripts/exe-boot-smoke.mjs
+!scripts/verify-release-version.mjs
 !scripts/mutate-verify.mjs
 !scripts/mutate-verify-dirty.mjs
 src/get-token.js

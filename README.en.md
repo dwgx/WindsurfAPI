@@ -348,47 +348,40 @@ In your client's settings for **Custom OpenAI Compatible**:
 | `RESPONSE_STORE_MAX_AGE_MS` | `86400000` | The **absolute** retention bound (24 hours), measured from when the entry was created and never refreshed by reads. The default sits well above a long agent session rather than close to the idle timeout: dropping a running loop's context mid-flight is a worse failure than retaining it longer, and total memory is already bounded by the byte and count caps. |
 | `RESPONSE_STORE_MAX` | `2000` | Max stored conversations, LRU-evicted with a per-tenant fair share. |
 | `RESPONSE_STORE_MAX_BYTES` | `128m` | Total byte budget for stored conversations (b/k/kb/m/mb/g/gb). The count caps bound cardinality, not memory — a realistic agent conversation measures ~167KB, so 2000 entries is ~327MB. Eviction triggers on whichever limit binds first. |
-| `DEVIN_CONNECT_IMAGE_TAG` | empty (= off) | **Master switch for images on DEVIN_CONNECT.** Unset means images are dropped before they reach upstream: a client can send a picture, get a reply that ignores it, and find nothing in the log. The verified value is `10` — see below. |
+| `DEVIN_CONNECT_IMAGE_TAG` | `10` | DEVIN_CONNECT image-field tag. Defaults to repeated field `#10`, independently verified by the extracted Devin schema and a native SWE-1.7 capture; set `0` to stop emitting images. |
+| `DEVIN_CONNECT_COLLAPSE_SYSTEM` | `0` | Set `1` to wrap system content in `<system>...</system>` and merge it, in order, into the next user message, avoiding the stricter upstream policy path on field `#2`. Default off; when tools require a non-empty field `#2`, only the existing benign placeholder remains there. |
+| `DEVIN_CONNECT_CATALOG_TTL_MS` | `300000` | Successful DEVIN_CONNECT live-catalog TTL (5 minutes by default, 10-second minimum). Accounts sync independently; failed or empty responses keep the last-known-good catalog. |
 
 The full list lives in [.env.example](.env.example); the table above covers the common ones.
 
 ## Enabling images / vision
 
-Vision is **off by default** on the `DEVIN_CONNECT` backend. Turn it on explicitly:
+The `DEVIN_CONNECT` backend now emits inline images using the native Devin wire by default:
 
 ```sh
-DEVIN_CONNECT_IMAGE_TAG=10
+# 10 is already the default; use only for an emergency rollback
+DEVIN_CONNECT_IMAGE_TAG=0
 ```
 
-`10` was **verified from the wire on 2026-07-06** — a MITM capture of a real devin.exe
-`GetChatMessage` carrying an image (teams account). Leave it unset and the image field is never
-emitted, so the model does not see the picture. **That is why "the model acts like there was no
-image" comes with a clean log**: nothing failed, the path was simply closed.
+Tag `10` has two independent sources of truth: the extracted Devin schema declares
+`ChatMessagePrompt.images` as repeated `#10` and `ImageData` as `base64_data #1` /
+`mime_type #2`; a native SWE-1.7 request attaches the image directly to a `source=USER`
+message, receives `modelUid=swe-1-7`, and correctly identifies the macOS Dock, Sketch, QQ,
+and WPS. The gateway therefore no longer invents an assistant `read` tool call, a synthetic
+tool result, or a top-level `read` ToolDef, and it no longer rejects vision from a model merely
+because its name starts with `swe-`.
 
-Why it defaults to off: emitting images on every request is a behaviour change, and only a
-*subset* of upstream models accept vision input.
+Ordinary user images remain on their original user message; multiple images are repeated on that
+same message. Images in a native tool result remain `source=TOOL_RESULT` and preserve the caller's
+`tool_call_id #7`. Live catalog synchronization also decodes
+`ClientModelConfig.supports_images #5` and exposes `supports_images` through `/v1/models` when
+upstream explicitly supplies true or false. A missing field remains unknown rather than being
+invented as false. Models carrying upstream `disabled #4` do not enter the live catalog.
 
-### One thing to know first: the proxy does not filter by model
-
-Measured, same image, only the model name changed:
-
-| Model | `IMAGE_TAG` unset | `IMAGE_TAG=10` |
-|---|---|---|
-| `swe-1-7` | 1008 bytes | **1486 bytes** |
-| `claude-sonnet-4-6-medium` | 1025 bytes | **1503 bytes** |
-
-Both models get **the same +478 bytes** — the picture. There is **no per-model branching here**,
-and there cannot be: the upstream catalog carries no vision-capability field (each entry is only
-selector / provider / alias), so the proxy cannot know in advance which model will ignore an image.
-
-**So if one model sees your picture and another does not, that difference is upstream, not here.**
-
-### Related sub-switches
-
-All of them are read *only* when the master switch is on; with it unset the wire is byte-identical
-to the pre-vision path. Each is documented in [.env.example](.env.example):
-`DEVIN_CONNECT_IMAGE_TOOLDEF` (defaults **on**), `DEVIN_CONNECT_IMAGE_INNER_TAGS`, and the two
-paid-experiment knobs `DEVIN_CONNECT_IMAGE_REASONING` / `_PROVIDER`.
+`DEVIN_CONNECT_IMAGE_INNER_TAGS` can still override the inner `base64,mime` tags (default `1,2`)
+as an emergency calibration surface for a future wire change. The synchronous builder does not
+download remote `https://` image URLs; use data URLs/base64, or explicitly enable
+`DEVIN_ACP_VISION=1` to route vision through a locally installed Devin CLI ACP transport.
 
 ## Dashboard Features
 

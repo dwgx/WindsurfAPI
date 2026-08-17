@@ -435,46 +435,37 @@ curl -X DELETE http://localhost:3003/v1/responses/resp_xxx -H "Authorization: Be
 | `RESPONSE_STORE_MAX_AGE_MS` | `86400000` | **绝对**保留上界(24 小时),从条目创建时刻算、不被读取刷新。默认取得远高于一次长 agent 会话而不是贴着空闲超时:把正在跑的循环的上下文中途丢掉,比多留一会儿更糟;总内存另有字节与条数两个上限管 |
 | `RESPONSE_STORE_MAX` | `2000` | 最多保留多少个会话,LRU 驱逐 + 租户公平配额 |
 | `RESPONSE_STORE_MAX_BYTES` | `128m` | 会话总字节预算(支持 b/k/kb/m/mb/g/gb)。条数上限约束的是数量不是内存 —— 实测真实 agent 会话每条约 167KB,2000 条约 327MB。按条数与字节两个维度中先触发的那个驱逐 |
-| `DEVIN_CONNECT_IMAGE_TAG` | 空（= 关） | **DEVIN_CONNECT 上的图片总开关。** 不设则图片在到达上游之前就被丢掉，客户端发了图也拿不到关于图的回答、且日志里没有任何提示。已验证值是 `10`，见下节 |
+| `DEVIN_CONNECT_IMAGE_TAG` | `10` | DEVIN_CONNECT 图片字段的 tag。默认使用真实 Devin schema 和 SWE-1.7 抓包共同验证的 repeated field `#10`；设 `0` 可回退为不发送图片，见下节 |
+| `DEVIN_CONNECT_COLLAPSE_SYSTEM` | `0` | 设 `1` 后把 system 内容包成 `<system>...</system>`，按顺序并入下一条 user 消息，绕开上游对 field `#2` 更严格的内容策略。默认关闭；有 tools 且 field `#2` 为空时仍只保留既有 benign placeholder |
+| `DEVIN_CONNECT_CATALOG_TTL_MS` | `300000` | DEVIN_CONNECT 在线模型目录的成功缓存 TTL（默认 5 分钟，最小 10 秒）。每个账号独立同步；失败或空响应保留最后一次成功目录 |
 
 完整清单在 [.env.example](.env.example) —— 上表只列常用的。
 只存在于源码里、两处都没收录的开关见 [docs/ENV-SWITCHES.md](docs/ENV-SWITCHES.md)。
 
 ## 图片 / 视觉怎么开
 
-`DEVIN_CONNECT` 后端上视觉**默认关闭**，要显式打开：
+`DEVIN_CONNECT` 后端现在默认按真实 Devin wire 发送内联图片：
 
 ```sh
-DEVIN_CONNECT_IMAGE_TAG=10
+# 默认就是 10；仅在需要紧急回退时关闭
+DEVIN_CONNECT_IMAGE_TAG=0
 ```
 
-`10` 这个值是 **2026-07-06 从真实 devin.exe 的请求里抓包验证的**（teams 账号，带图的
-`GetChatMessage`）。不设 → 图片字段整个不发 → 模型看不到图。**这就是"发了图但模型像没看见"
-且日志干净的原因** —— 它不是失败，是那条路没打开。
+`10` 有两层独立证据：真实 Devin `.proto` 中 `ChatMessagePrompt.images` 是 repeated `#10`，
+`ImageData` 是 `base64_data #1` / `mime_type #2`；真实 SWE-1.7 请求把图片直接挂在
+`source=USER` 消息上，响应的 `modelUid` 仍是 `swe-1-7`，并正确识别了 macOS Dock、Sketch、
+QQ 和 WPS。因此网关不再伪造 assistant `read` tool call、synthetic tool result 或顶层 `read`
+ToolDef，也不再按 `swe-*` 名字硬判定“无视觉”。
 
-默认关的理由：给每个请求都发图是行为变更，而只有**一部分**上游模型接受视觉输入。
+普通 user 图片保持在原 user 消息上；多图按 repeated `#10` 写进同一条消息。原生 tool result
+里的图片保持 `source=TOOL_RESULT`，同时保留调用方的 `tool_call_id #7`。目录同步还会解码
+`ClientModelConfig.supports_images #5`，并在上游明确给出 true/false 时把 `supports_images`
+暴露到 `/v1/models`；字段缺失时保持未知，不伪造 false。上游 `disabled #4` 的模型不会进入
+实时目录。
 
-### 一条要先知道的事：代理不按模型过滤
-
-实测同一张图、只换模型名，量出去的字节数：
-
-| 模型 | `IMAGE_TAG` 未设 | `IMAGE_TAG=10` |
-|---|---|---|
-| `swe-1-7` | 1008 字节 | **1486 字节** |
-| `claude-sonnet-4-6-medium` | 1025 字节 | **1503 字节** |
-
-两个模型**都是 +478 字节**，就是那张图。代理这一侧**没有任何按模型分支的逻辑**，也没法有：
-上游模型目录里不带视觉能力字段（每个条目只有 selector / provider / alias），所以代理无法预先
-知道哪个模型会忽略图片。
-
-**所以如果一个模型能识图、另一个不能，那个差异在上游，不在这里。**
-
-### 相关子开关
-
-都只在总开关打开时才被读到，关着时线上字节与开关前完全一致。全部在
-[.env.example](.env.example) 里有说明：`DEVIN_CONNECT_IMAGE_TOOLDEF`（默认**开**）、
-`DEVIN_CONNECT_IMAGE_INNER_TAGS`、以及两个付费实验用的
-`DEVIN_CONNECT_IMAGE_REASONING` / `_PROVIDER`。
+`DEVIN_CONNECT_IMAGE_INNER_TAGS` 仍可覆盖内部 `base64,mime` tag（默认 `1,2`），仅用于未来
+wire 变更的应急校准。远程 `https://` 图片 URL 仍不会由同步 wire builder 主动下载；请使用
+data URL / base64，或显式开启 `DEVIN_ACP_VISION=1` 走本机 Devin CLI 的 ACP 视觉通道。
 
 ## Dashboard 功能面板
 

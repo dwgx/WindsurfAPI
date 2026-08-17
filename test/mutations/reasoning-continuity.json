@@ -6,7 +6,7 @@
     "test/devin-connect-openai.test.js",
     "test/session-continuity-commit-fallback.test.js"
   ],
-  "expectBaselinePass": 300,
+  "expectBaselinePass": 308,
   "mutations": [
     {
       "name": "T1 store: the overlap-target commit path stops saving the reasoning tail",
@@ -35,7 +35,7 @@
     {
       "name": "T1 wire: continuity trail never reaches the system prompt",
       "file": "src/devin-connect.js",
-      "anchor": "  if (continuityTrail) systemPrompt += continuityTrail;",
+      "anchor": "  if (!collapseSystem && continuityTrail) systemPrompt += continuityTrail;",
       "replacement": ""
     },
     {

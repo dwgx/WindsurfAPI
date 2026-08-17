@@ -42,6 +42,8 @@ const CLIENT_VERSION = '2026.8.18';
 
 // ── ClientModelConfig field numbers (calibrated from a live 200 response) ──
 const F_LABEL = 1;       // friendly name, e.g. "Claude Opus 4.8 Medium"
+const F_DISABLED = 4;    // model is not callable and must not be advertised
+const F_SUPPORTS_IMAGES = 5; // explicit upstream multimodal capability
 const F_PROVIDER = 10;   // 1=SWE/Cognition 2=OpenAI 3=Anthropic 4=Google 7=Moonshot 9=Zhipu
 const F_SELECTOR = 22;   // the value GetChatMessageRequest.model expects
 const F_MODEL_INFO = 23; // ModelInfo submessage; #23.#23 is the short alias
@@ -154,7 +156,7 @@ function intField(fields, num) {
  * Decode a GetCliModelConfigsResponse into a flat list of model entries.
  *
  * @param {Buffer} raw
- * @returns {Array<{selector,label,provider,providerId,alias,isFreeDefault}>}
+ * @returns {Array<{selector,label,provider,providerId,alias,isFreeDefault,supportsImages:boolean|null}>}
  */
 export function decodeCatalog(raw) {
   const configs = parseFields(raw).filter((f) => f.field === 1 && f.wireType === 2);
@@ -163,15 +165,17 @@ export function decodeCatalog(raw) {
     const fields = parseFields(c.value);
     const selector = strField(fields, F_SELECTOR);
     if (!selector) continue;
+    if (intField(fields, F_DISABLED) === 1) continue;
     const label = strField(fields, F_LABEL);
     const providerId = intField(fields, F_PROVIDER);
+    const supportsImagesField = intField(fields, F_SUPPORTS_IMAGES);
     let alias = '';
     const info = fields.find((x) => x.field === F_MODEL_INFO && x.wireType === 2);
     if (info) {
       try { alias = strField(parseFields(info.value), F_ALIAS); } catch { /* keep '' */ }
     }
     // swe-1-6-slow uniquely carries the free context-window default (#18=200000
-    // + #24=1) and lacks the is_premium flag (#4). It's the one selector every
+    // + #24=1). It's the one selector every
     // tier can run; flag it so callers can pick a safe default.
     const isFreeDefault = selector === 'swe-1-6-slow';
     out.push({
@@ -181,6 +185,7 @@ export function decodeCatalog(raw) {
       provider: PROVIDER_NAMES[providerId] || (providerId == null ? 'unknown' : String(providerId)),
       alias,
       isFreeDefault,
+      supportsImages: supportsImagesField == null ? null : supportsImagesField === 1,
     });
   }
   return out;
