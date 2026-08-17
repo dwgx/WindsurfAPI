@@ -20,7 +20,7 @@ import {
   mergeToolCallFragment,
 } from '../src/devin-connect.js';
 import {
-  writeStringField, writeVarintField, writeMessageField,
+  writeStringField, writeVarintField, writeMessageField, writeFixed64Field,
   parseFields, getField, getAllFields,
 } from '../src/proto.js';
 import { wrapEnvelope, endOfStreamEnvelope } from '../src/connect.js';
@@ -653,13 +653,42 @@ describe('decodeFrame', () => {
     assert.deepEqual(decodeFrame(payload, { billingTags }).billing, { committed_credit_cost: 1400 });
   });
 
-  it('parseBillingTagMap: defaults to cache_read_tokens=5 + cache_write_tokens=4, parses pairs, rejects garbage', () => {
+  it('decodes paid-verified committed_acu_cost from top-level #22 fixed64/double', () => {
+    // A paid upstream capture showed top-level #22 carrying the exact same
+    // fractional ACU as Response Statistics #28.2.4.2. The old decoder forced
+    // every configured billing tag through wire type 0 (varint), so this real
+    // double was invisible even when committed_acu_cost=^22 was configured.
+    const acu = 0.0006735000060871243;
+    const raw = Buffer.alloc(8);
+    raw.writeDoubleLE(acu, 0);
+    const payload = Buffer.concat([
+      writeStringField(1, 'bot-enterprise'),
+      writeFixed64Field(22, raw),
+    ]);
+
+    const d = decodeFrame(payload, {
+      billingTags: { committed_acu_cost: -22 },
+      dumpMeta: true,
+    });
+
+    assert.equal(d.billing.committed_acu_cost, acu);
+    assert.deepEqual(d.frameDump[22], {
+      kind: 'fixed64', preview: acu, raw: raw.toString('hex'),
+    });
+  });
+
+  it('parseBillingTagMap: defaults to calibrated cache + ACU tags, parses pairs, rejects garbage', () => {
     const { parseBillingTagMap } = __testing;
-    // Unset → the calibrated defaults (#220 + 2026-07-25):
+    // Unset → the calibrated defaults (#220, 2026-07-25, #239):
     // tag 5 = cache_read (confirmed on GPT+Claude paid accounts)
     // tag 4 = cache_write (confirmed on Claude paid account — GPT carries no tag 4)
-    assert.deepEqual(parseBillingTagMap({}), { cache_read_tokens: 5, cache_write_tokens: 4 });
-    assert.deepEqual(parseBillingTagMap({ DEVIN_CONNECT_BILLING_TAGS: '   ' }), { cache_read_tokens: 5, cache_write_tokens: 4 });
+    // top-level tag 22 = committed_acu_cost (paid fixed64/double capture)
+    assert.deepEqual(parseBillingTagMap({}), {
+      cache_read_tokens: 5, cache_write_tokens: 4, committed_acu_cost: -22,
+    });
+    assert.deepEqual(parseBillingTagMap({ DEVIN_CONNECT_BILLING_TAGS: '   ' }), {
+      cache_read_tokens: 5, cache_write_tokens: 4, committed_acu_cost: -22,
+    });
     // Explicit opt-out decodes nothing at all.
     assert.equal(parseBillingTagMap({ DEVIN_CONNECT_BILLING_TAGS: 'off' }), null);
     assert.equal(parseBillingTagMap({ DEVIN_CONNECT_BILLING_TAGS: 'OFF' }), null);

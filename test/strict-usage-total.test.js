@@ -187,7 +187,7 @@ describe('cost accounting stays honest under BOTH shapes', () => {
     recordAccountSpend(a.apiKey, { prompt_tokens: -500, completion_tokens: -10, total_tokens: -510 },
       { creditCost: -7 });
     const spend = getAccountInternal(a.id)._totalSpend;
-    for (const k of ['totalTokens', 'promptTokens', 'completionTokens', 'creditCost']) {
+    for (const k of ['totalTokens', 'promptTokens', 'completionTokens', 'creditCost', 'acuCost']) {
       assert.equal(spend[k], 0,
         `${k} went to ${spend[k]} — these are CUMULATIVE counters, so one malformed upstream `
         + 'usage block would drag it negative permanently and no later request could undo it');
@@ -211,12 +211,12 @@ describe('the spend tally is monotonic across every counter', () => {
     const a = seed('mono');
     // _totalSpend is created lazily by the first recordAccountSpend, so default the
     // counters rather than reading undefined and comparing it with >=.
-    const ZERO = { requests: 0, totalTokens: 0, promptTokens: 0, completionTokens: 0, creditCost: 0 };
+    const ZERO = { requests: 0, totalTokens: 0, promptTokens: 0, completionTokens: 0, creditCost: 0, acuCost: 0 };
     const snap = () => ({ ...ZERO, ...(getAccountInternal(a.id)._totalSpend || {}) });
 
     const t0 = snap();
     recordAccountSpend(a.apiKey,
-      { prompt_tokens: -900, completion_tokens: -40, total_tokens: -1000 }, { creditCost: -3 });
+      { prompt_tokens: -900, completion_tokens: -40, total_tokens: -1000 }, { creditCost: -3, acuCost: -0.5 });
     const t1 = snap();
     recordAccountSpend(a.apiKey, buildUsageBody(SERVER_USAGE, [], 'x'), { creditCost: 2 });
     const t2 = snap();
@@ -235,9 +235,9 @@ describe('the spend tally is monotonic across every counter', () => {
   it('NaN and non-numeric usage fields cannot poison the running total', () => {
     const a = seed('nan');
     recordAccountSpend(a.apiKey,
-      { prompt_tokens: NaN, completion_tokens: 'x', total_tokens: undefined }, { creditCost: NaN });
+      { prompt_tokens: NaN, completion_tokens: 'x', total_tokens: undefined }, { creditCost: NaN, acuCost: NaN });
     const s = getAccountInternal(a.id)._totalSpend;
-    for (const k of ['totalTokens', 'promptTokens', 'completionTokens', 'creditCost']) {
+    for (const k of ['totalTokens', 'promptTokens', 'completionTokens', 'creditCost', 'acuCost']) {
       assert.ok(Number.isFinite(s[k]), `${k} is ${s[k]} — one NaN would make it NaN forever`);
       assert.equal(s[k], 0);
     }

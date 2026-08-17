@@ -329,50 +329,50 @@ decoded `model_uid` is a sane concrete selector.
 
 ### 8.4 Surface billing cost in usage (credit/acu)
 
-The response carries `credit_cost`/`committed_credit_cost`/`committed_acu_cost`,
-dropped today. These are absent on free tier (zero-valued → not encoded), so the
-tags can only be pinned from a paid response. Once known:
+The response carries `credit_cost`/`committed_credit_cost`/`committed_acu_cost`.
+Paid upstream verification pinned `committed_acu_cost` to top-level tag `#22`,
+encoded as fixed64/double. It ships in the default map with the two
+paid-verified cache-token tags:
 
 ```sh
-# .env (tags are EXAMPLES — pin the real ones from a paid capture):
-DEVIN_CONNECT_BILLING_TAGS="credit_cost=6,committed_credit_cost=7,committed_acu_cost=8"
+# Optional explicit override (setting this replaces the entire default map):
+DEVIN_CONNECT_BILLING_TAGS="cache_read_tokens=5,cache_write_tokens=4,committed_acu_cost=^22"
 ```
 
-`chat()` and the streaming `finish` event then carry a `billing` object. Unset =
-no billing keys, zero behavioral change.
+`chat()` and the streaming `finish` event carry a `billing` object. Account spend
+keeps ACU in the independent `acuCost` field (never mixed with credits), and the
+Dashboard account detail shows fractional ACU. Set the env var to `off` to disable
+billing/cache decoding.
 
 ### 8.5 Discover unknown metadata tags (the calibration master-key)
 
-§8.4 and §8.6 both need integer tags that only appear on a paid/cached response.
-The discovery tool is a single env flag — it dumps every varint subfield of the
-#7 metadata sub-message to the log so you can read the tags straight off a real
-capture:
+Unknown credit fields still need paid calibration. The discovery tool dumps
+top-level, metadata, and nested fields, including varint, fixed64/double, and
+fixed32/float values:
 
 ```sh
 DEVIN_CONNECT_DEBUG_META=1 <your normal request>
-# log line: DEVIN_CONNECT meta dump (tag=value varints): {"2":389,"3":72,"6":6,...}
-#   #2 = prompt_tokens, #3 = completion_tokens (known). Any NEW tag carrying a
-#   credit/acu cost or a cache-token count is your value to pin below.
+# log line: DEVIN_CONNECT meta dump (tag=value fields): {"2":389,"3":72,"6":6,...}
+# top-level #22 fixed64/double is committed_acu_cost (paid-verified).
 ```
 
 Free-tier baseline (verified 2026-06-30 on `swe-1-6-slow`): the terminal frame
 carries only `{2: prompt, 3: completion, 6: provider}` — no cost, no cache
 tokens (free tier doesn't bill or cache, and zero-valued protobuf fields aren't
-encoded). That's exactly why §8.4/§8.6 are paid-only.
+encoded). That is why these coordinates required paid captures to calibrate.
 
 ### 8.6 Surface prompt-cache tokens in usage
 
-`ModelUsageStats` carries `cache_read_tokens` / `cache_write_tokens` (recon
-verified field names). Absent on free tier (no caching). Once a paid/cached
-capture reveals the tags via §8.5, pin them on the SAME billing-tags var — the
+`ModelUsageStats` carries `cache_read_tokens` / `cache_write_tokens`. Paid A/B
+captures pinned them to metadata tags `#5` and `#4`; both ship by default. The
 decoder routes cache_* into `usage` (OpenAI-standard shapes) instead of billing:
 
 ```sh
-DEVIN_CONNECT_BILLING_TAGS="credit_cost=6,cache_read_tokens=14,cache_write_tokens=15"
+DEVIN_CONNECT_BILLING_TAGS="cache_read_tokens=5,cache_write_tokens=4,committed_acu_cost=^22"
 ```
 
-`usage` then gains `prompt_tokens_details.cached_tokens` (from cache_read) and
-`cache_creation_input_tokens` (from cache_write). Unset = neither key present.
+`usage` gains `prompt_tokens_details.cached_tokens` (from cache_read) and
+`cache_creation_input_tokens` (from cache_write).
 
 ### 8.7 finish_reason calibration (already live, free-tier safe)
 
@@ -526,4 +526,3 @@ carries `toolCalls: [{ id, name, arguments }]`. Off (default) → `toolCalls` is
 null and prompt emulation (`parseToolCallsFromText`) owns tool calls on every
 model, exactly as today. The decode is a pure read; an uncalibrated or absent tag
 map has zero behavioral effect.
-

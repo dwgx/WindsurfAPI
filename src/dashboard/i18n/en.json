@@ -211,8 +211,13 @@
     "dailyShort": "D",
     "weeklyShort": "W",
     "promptShort": "P",
+    "acu": "ACU this cycle",
+    "acuCycle": "Current-cycle usage reported by GetUserStatus",
+    "acuLocalLifetime": "Local lifetime total from DEVIN_CONNECT billing",
+    "acuUpstreamLimit": "Upstream ACU limit",
+    "acuLimitNA": "Upstream returned no ACU limit",
     "columnTitle": "Quota Usage",
-    "columnTooltip": "Two bars indicate:\nD — Daily premium-request remaining %\nW — Weekly premium-request remaining % (main signal for Trial accounts)\n\nHigher = more left = safer\nHover each bar for reset time",
+    "columnTooltip": "Personal quota accounts show daily/weekly remaining percentages. If those quotas are absent and ACU accounting is detected, this column shows ACU usage and any upstream limit instead.",
     "dailyDetail": "Daily {{pct}}% remaining (resets {{reset}})",
     "weeklyDetail": "Weekly {{pct}}% remaining (resets {{reset}})",
     "promptDetail": "Prompt credits {{remain}} / {{limit}} remaining ({{pct}}%)",
@@ -1102,6 +1107,12 @@
         "weekly": "Weekly",
         "promptCredits": "Prompt credits",
         "flexCredits": "Flex credits",
+        "acuUsed": "ACU consumed",
+        "acuLimit": "ACU limit",
+        "acuLimitNA": "Not returned by upstream",
+        "acuSource": "Measurement",
+        "acuCycle": "GetUserStatus · current cycle",
+        "acuLocalLifetime": "DEVIN_CONNECT · local lifetime total",
         "used": "used",
         "fetchedAt": "Fetched",
         "notApplicable": "Not applicable to this plan"
@@ -1125,7 +1136,8 @@
         "spendTitle": "Lifetime spend",
         "spendRequests": "Requests",
         "spendTokens": "Total tokens",
-        "spendCredits": "Credit cost"
+        "spendCredits": "Credit cost",
+        "spendAcus": "ACU cost"
       }
     }
   },

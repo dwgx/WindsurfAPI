@@ -84,6 +84,16 @@ describe('toChatCompletion (non-stream)', () => {
     assert.equal('usage' in body, false);
   });
 
+  it('preserves fractional ACU billing for the account-spend caller', async () => {
+    const acu = 0.0006735000060871243;
+    __setStreamChatForTest(fakeStream([
+      { type: 'content', text: 'ok' },
+      { type: 'finish', reason: 'stop', usage: null, billing: { committed_acu_cost: acu } },
+    ]));
+    const { body } = await toChatCompletion({ model: 'm', messages: [] });
+    assert.deepEqual(body._windsurf_billing, { committed_acu_cost: acu });
+  });
+
   it('uses a stable id/created when supplied', async () => {
     __setStreamChatForTest(fakeStream(SAMPLE));
     const { body } = await toChatCompletion({ model: 'm', messages: [] }, { id: 'chatcmpl-fixed', created: 123 });
@@ -192,6 +202,18 @@ describe('streamChatCompletion (SSE)', () => {
     const { send, frames } = collectSend();
     await streamChatCompletion({ model: 'm', messages: [] }, send);
     assert.equal(frames.some(f => f.choices.length === 0), false);
+  });
+
+  it('returns fractional ACU billing to the handler without exposing it in SSE chunks', async () => {
+    const acu = 0.0006735000060871243;
+    __setStreamChatForTest(fakeStream([
+      { type: 'content', text: 'ok' },
+      { type: 'finish', reason: 'stop', usage: null, billing: { committed_acu_cost: acu } },
+    ]));
+    const { send, frames } = collectSend();
+    const result = await streamChatCompletion({ model: 'm', messages: [] }, send);
+    assert.deepEqual(result.billing, { committed_acu_cost: acu });
+    assert.ok(frames.every((frame) => !('_windsurf_billing' in frame) && !('billing' in frame)));
   });
 
   it('streams each content delta as its own chunk (verbatim, not coalesced)', async () => {
@@ -1452,4 +1474,3 @@ describe('think-text reroute (connect layer, DEVIN_CONNECT_THINKTEXT_REROUTE)', 
     assert.equal(body.choices[0].message.content, 'ok');
   });
 });
-

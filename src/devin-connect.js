@@ -1386,7 +1386,8 @@ const FIELD = Object.freeze({ CONTENT: 3, FINISH: 5, META: 7, REASONING: 9 });
 // The top-level #5 finish signal maps to the OpenAI finish_reason vocabulary in
 // mapFinishReason() below (live-anchored 2→'stop', the rest calibratable).
 
-// Billing passthrough (GROUNDWORK, opt-in via DEVIN_CONNECT_BILLING_TAGS).
+// Billing and cache-usage passthrough (configuration-driven, with paid-verified
+// defaults for cache tokens and committed ACU).
 //
 // The static recon (P2-apiserver-methods-fields.md §2.4) verifies that the
 // response carries `credit_cost`, `committed_credit_cost`, `committed_acu_cost`
@@ -1397,15 +1398,9 @@ const FIELD = Object.freeze({ CONTENT: 3, FINISH: 5, META: 7, REASONING: 9 });
 // so the fields are physically ABSENT from every free-account capture we have.
 // This is the same shape as the vision image-tag (also un-calibratable on free).
 //
-// So billing decode is configuration-driven, default-OFF: until an operator
-// runs the calibration on a PAID token and pins the real tags, nothing is
-// parsed and usage carries no billing keys (zero regression). The env var maps
-// logical billing keys to the integer tag observed in the metadata sub-message:
-//
-//   DEVIN_CONNECT_BILLING_TAGS="credit_cost=6,committed_credit_cost=7,committed_acu_cost=8"
-//
-// All tags are read from the #7 metadata sub-message as varints. A future paid
-// calibration run (scripts/devin-connect-paid-verify.mjs style) discovers them.
+// DEVIN_CONNECT_BILLING_TAGS maps logical keys to protobuf tags. Plain N reads
+// the #7 metadata sub-message; ^N reads the top-level response. Numeric fields
+// may be varint, fixed64/double, or fixed32/float.
 //
 // CONFIRMED 2026-07-23 (paid teams account, live A/B — issue #220): the cache-read
 // counter is tag 5. Two requests sharing a long system prefix: round-1 (miss) meta
@@ -1416,8 +1411,8 @@ const FIELD = Object.freeze({ CONTENT: 3, FINISH: 5, META: 7, REASONING: 9 });
 // surfaces prompt_tokens_details.cached_tokens. This also settles #220: caching is
 // billed correctly (hit cost measured at 17.8% of miss); the gap was purely that
 // the dashboard couldn't SEE the cache split, not that credits were over-spent.
-// credit_cost / committed_* remain declaration-order-only and still need their own
-// paid calibration run.
+// credit_cost / committed_credit_cost remain declaration-order-only and still
+// need their own paid calibration run.
 // CONFIRMED 2026-07-25 (same paid account): the cache-WRITE counter is tag 4.
 // Claude-family selectors split prompt input the way Anthropic's own API does —
 // fresh input in tag 2, cache-creation in tag 4 — so a cache-writing turn reported
@@ -1430,14 +1425,19 @@ const FIELD = Object.freeze({ CONTENT: 3, FINISH: 5, META: 7, REASONING: 9 });
 // input rides tag 2, matching OpenAI's no-charge-for-cache-write model), so the
 // default is a no-op there rather than a mis-read.
 //
-// Both tags are calibration-confirmed, so they ship ON by default — otherwise
+// These three tags are calibration-confirmed, so they ship ON by default — otherwise
 // prompt_tokens_details.cached_tokens / cache_creation_input_tokens are always 0
 // and the dashboard silently mis-attributes cached and cache-written input (#220).
+// committed_acu_cost was verified against a paid upstream response: top-level
+// #22 arrived as fixed64/double
+// 0.0006735000060871243, and Response Statistics #28.2.4.2 echoed the same value
+// as fixed32/float. It is safe on non-Enterprise/free accounts because an absent
+// scalar produces no field and therefore no billing entry.
 // Safe on free accounts too: the counters are zero there, and protobuf omits
 // zero-valued scalars, so the tags are simply absent and nothing is decoded.
 // Operators can override the whole map (or drop the defaults) via
 // DEVIN_CONNECT_BILLING_TAGS; set it to `off` to decode nothing at all.
-const DEFAULT_BILLING_TAGS = 'cache_read_tokens=5,cache_write_tokens=4';
+const DEFAULT_BILLING_TAGS = 'cache_read_tokens=5,cache_write_tokens=4,committed_acu_cost=^22';
 
 function parseBillingTagMap(env = process.env) {
   const configured = String(env.DEVIN_CONNECT_BILLING_TAGS ?? '').trim();
@@ -1451,9 +1451,8 @@ function parseBillingTagMap(env = process.env) {
     // metadata sub-message, stored as -N so the decode path can tell them apart
     // without a second map. The four .proto reimplementations put credit_cost at
     // top-level #14 (committed_acu_cost #22, quota basis points #26, overage cents
-    // #27), while every tag calibrated so far lived in #7 — so both locations have
-    // to be expressible. Example, once a paid capture confirms it:
-    //   DEVIN_CONNECT_BILLING_TAGS="cache_read_tokens=5,cache_write_tokens=4,credit_cost=^14"
+    // #27), while cache counters live in #7 — so both locations have to be
+    // expressible. #22 is paid-verified; #14 remains a static candidate.
     const topLevel = typeof tag === 'string' && tag.startsWith('^');
     const n0 = Number.parseInt(topLevel ? tag.slice(1) : tag, 10);
     const n = topLevel && Number.isInteger(n0) && n0 > 0 ? -n0 : n0;
@@ -1470,6 +1469,32 @@ function parseBillingTagMap(env = process.env) {
     }
   }
   return Object.keys(map).length ? map : null;
+}
+
+// Billing scalars are not one protobuf wire type. Token counters and the legacy
+// credit fixtures are varints, while the paid upstream wire carries fractional
+// committed_acu_cost as fixed64/double. Accept the three numeric scalar encodings
+// the parser supports; reject NaN/Infinity and non-numeric fields so an incorrect
+// operator tag cannot poison a monotonic spend counter.
+function readNumericProtoField(fields, tag) {
+  for (const f of getAllFields(fields, tag)) {
+    let value = null;
+    if (f.wireType === 0) value = Number(f.value);
+    else if (f.wireType === 1 && f.value.length === 8) value = f.value.readDoubleLE(0);
+    else if (f.wireType === 5 && f.value.length === 4) value = f.value.readFloatLE(0);
+    if (Number.isFinite(value)) return value;
+  }
+  return null;
+}
+
+function fixedWidthDumpEntry(f) {
+  if (f.wireType === 1 && f.value.length === 8) {
+    return { kind: 'fixed64', preview: f.value.readDoubleLE(0), raw: f.value.toString('hex') };
+  }
+  if (f.wireType === 5 && f.value.length === 4) {
+    return { kind: 'fixed32', preview: f.value.readFloatLE(0), raw: f.value.toString('hex') };
+  }
+  return null;
 }
 
 // Native tool-call DECODE (GROUNDWORK, opt-in via DEVIN_CONNECT_TOOL_CALL_TAGS).
@@ -1732,8 +1757,10 @@ function decodeInnerFields(buf, depth) {
         }
         bucket[sf.field] = entry;
       }
-    } else if (sf.wireType === 5) bucket[sf.field] = { kind: 'fixed32', preview: sf.value.toString('hex') };
-    else if (sf.wireType === 1) bucket[sf.field] = { kind: 'fixed64', preview: sf.value.toString('hex') };
+    } else if (sf.wireType === 5 || sf.wireType === 1) {
+      const entry = fixedWidthDumpEntry(sf);
+      if (entry) bucket[sf.field] = entry;
+    }
   }
   return Object.keys(bucket).length ? bucket : null;
 }
@@ -1848,9 +1875,9 @@ export function decodeFrame(payload, opts = {}) {
       usage = { prompt: prompt ? prompt.value : 0, completion: completion.value };
     }
     // Billing/usage passthrough: opt-in, only when an operator has pinned the
-    // tags. Each is a varint; absent fields (free tier / un-billed / un-cached)
-    // yield nothing. cache_*_tokens are usage stats → folded into `usage`; the
-    // cost fields are billing → into `billing`.
+    // tags. Numeric scalars may be varint, fixed64/double, or fixed32/float;
+    // absent fields (free tier / un-billed / un-cached) yield nothing.
+    // cache_*_tokens are usage stats → folded into `usage`; cost fields → billing.
     const billingTags = opts.billingTags;
     if (billingTags) {
       for (const [key, tag] of Object.entries(billingTags)) {
@@ -1865,12 +1892,12 @@ export function decodeFrame(payload, opts = {}) {
         // point at the top level without a second env var, and keeps the sub-message
         // default untouched for the tags that were measured there.
         if (tag < 0) continue; // handled in the top-level pass below
-        const f = getField(mf, tag, 0);
-        if (f == null) continue;
+        const value = readNumericProtoField(mf, tag);
+        if (value == null) continue;
         if (key === 'cache_read_tokens' || key === 'cache_write_tokens') {
-          (usage ||= { prompt: prompt ? prompt.value : 0, completion: completion ? completion.value : 0 })[key] = Number(f.value);
+          (usage ||= { prompt: prompt ? prompt.value : 0, completion: completion ? completion.value : 0 })[key] = value;
         } else {
-          (billing ||= {})[key] = Number(f.value);
+          (billing ||= {})[key] = value;
         }
       }
     }
@@ -1883,6 +1910,10 @@ export function decodeFrame(payload, opts = {}) {
       metaDump = {};
       for (const f of mf) {
         if (f.wireType === 0) metaDump[f.field] = Number(f.value);
+        else if (f.wireType === 1 || f.wireType === 5) {
+          const entry = fixedWidthDumpEntry(f);
+          if (entry) metaDump[f.field] = entry;
+        }
       }
     }
   }
@@ -1891,12 +1922,12 @@ export function decodeFrame(payload, opts = {}) {
   // response can carry credit_cost at the top level with no #7 sub-message at all
   // (the sub-message holds token counts, and a billed turn is not obliged to
   // report them), so nesting this would silently skip exactly the frames it
-  // exists for. Same varint-or-nothing rule as the sub-message pass.
+  // exists for. Same numeric-scalar rule as the sub-message pass.
   if (opts.billingTags) {
     for (const [key, tag] of Object.entries(opts.billingTags)) {
       if (tag >= 0) continue; // sub-message tags were handled above
-      const f = getField(fields, -tag, 0);
-      if (f == null) continue;
+      const value = readNumericProtoField(fields, -tag);
+      if (value == null) continue;
       if (key === 'cache_read_tokens' || key === 'cache_write_tokens') {
         // Token counts stay usage, wherever they were read from. Routing them into
         // `billing` because of the location they were pinned at would move
@@ -1904,9 +1935,9 @@ export function decodeFrame(payload, opts = {}) {
         // dashboard's cache split — the exact mis-attribution #220 was about.
         // prompt/completion live inside the `if (meta)` block above, so recompute
         // the usage defaults here rather than reference block-scoped locals.
-        (usage ||= { prompt: Number(getField(fields, 2, 0)?.value ?? 0), completion: Number(getField(fields, 3, 0)?.value ?? 0) })[key] = Number(f.value);
+        (usage ||= { prompt: Number(getField(fields, 2, 0)?.value ?? 0), completion: Number(getField(fields, 3, 0)?.value ?? 0) })[key] = value;
       } else {
-        (billing ||= {})[key] = Number(f.value);
+        (billing ||= {})[key] = value;
       }
     }
   }
@@ -1919,6 +1950,10 @@ export function decodeFrame(payload, opts = {}) {
     topLevelDump = {};
     for (const f of fields) {
       if (f.wireType === 0 && f.field !== FIELD.FINISH) topLevelDump[f.field] = Number(f.value);
+      else if (f.wireType === 1 || f.wireType === 5) {
+        const entry = fixedWidthDumpEntry(f);
+        if (entry) topLevelDump[f.field] = entry;
+      }
     }
   }
 
@@ -1961,6 +1996,10 @@ export function decodeFrame(payload, opts = {}) {
     const subDump = {};
     for (const f of fields) {
       if (f.wireType === 0) frameDump[f.field] = Number(f.value);
+      else if (f.wireType === 1 || f.wireType === 5) {
+        const entry = fixedWidthDumpEntry(f);
+        if (entry) frameDump[f.field] = entry;
+      }
       else if (f.wireType === 2 && f.value.length <= 64) {
         const s = f.value.toString('utf8');
         if (/^[\x20-\x7e]+$/.test(s)) frameDump[f.field] = s; // printable preview only
@@ -2574,16 +2613,14 @@ export async function* streamChat({
         // wire-01: decode across frame boundaries so split multi-byte chars survive.
         const content = contentBytes ? contentDecoder.write(contentBytes) : '';
         const reasoning = reasoningBytes ? reasoningDecoder.write(reasoningBytes) : '';
-        // Calibration (DEBUG-gated, default OFF): emit the raw frame payload hex
-        // so a probe can re-decode it WIDE — the production frameDump/metaDump
-        // only collect wireType 0/2 and miss wt1(double)/wt5(float), which is
-        // exactly where billing cost fields (likely doubles) would hide. Pure
-        // additive; only under DEVIN_CONNECT_DUMP_RAW.
+        // Calibration (DEBUG-gated, default OFF): emit raw frame payload hex for
+        // exact offline re-decoding. Structured dumps already expose wire types
+        // 0/1/2/5, including fixed64/double and fixed32/float billing values.
         if (env.DEVIN_CONNECT_DUMP_RAW === '1') {
           queue.push({ type: 'raw-frame', endStream: false, hex: frame.payload.toString('hex') });
         }
         if (frameDump) log.info(`DEVIN_CONNECT frame dump (top-level tag=value): ${JSON.stringify(frameDump)}`);
-        if (metaDump) log.info(`DEVIN_CONNECT meta dump (tag=value varints): ${JSON.stringify(metaDump)}`);
+        if (metaDump) log.info(`DEVIN_CONNECT meta dump (tag=value fields): ${JSON.stringify(metaDump)}`);
         if (subDump) log.info(`DEVIN_CONNECT sub-message dump (top-tag → inner tag=value): ${JSON.stringify(subDump)}`);
         // When dumping, also surface the raw dumps as a structured event so a
         // calibration consumer can aggregate tags without scraping logs. Pure

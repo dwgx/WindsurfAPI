@@ -211,8 +211,13 @@
     "dailyShort": "日",
     "weeklyShort": "周",
     "promptShort": "词",
+    "acu": "本周期 ACU",
+    "acuCycle": "GetUserStatus 返回的本周期用量",
+    "acuLocalLifetime": "DEVIN_CONNECT 本地累计用量",
+    "acuUpstreamLimit": "上游 ACU 配额",
+    "acuLimitNA": "上游未返回 ACU 配额",
     "columnTitle": "配额使用情况",
-    "columnTooltip": "两条进度条分别代表:\n日 — 每日高级请求剩余百分比（重置频繁）\n周 — 每周高级请求剩余百分比（Trial 账号重点看这条）\n\n数值越高 = 剩余越多 = 越安全\n悬停单条进度条可查看重置时间",
+    "columnTooltip": "个人配额账号显示每日/每周剩余百分比；未返回这些配额但检测到 ACU 计费时，改为显示 ACU 用量及上游返回的配额。",
     "dailyDetail": "每日剩余 {{pct}}%（于 {{reset}} 重置）",
     "weeklyDetail": "每周剩余 {{pct}}%（于 {{reset}} 重置）",
     "promptDetail": "本月提示词剩余 {{remain}} / {{limit}}（{{pct}}%）",
@@ -1102,6 +1107,12 @@
         "weekly": "每周",
         "promptCredits": "提示词额度",
         "flexCredits": "Flex 额度",
+        "acuUsed": "ACU 已用",
+        "acuLimit": "ACU 配额",
+        "acuLimitNA": "上游未返回",
+        "acuSource": "计量来源",
+        "acuCycle": "GetUserStatus · 本周期",
+        "acuLocalLifetime": "DEVIN_CONNECT · 本地累计",
         "used": "已用",
         "fetchedAt": "数据时间",
         "notApplicable": "本套餐不适用"
@@ -1125,7 +1136,8 @@
         "spendTitle": "累计花费",
         "spendRequests": "请求数",
         "spendTokens": "总 token 数",
-        "spendCredits": "信用花费"
+        "spendCredits": "信用花费",
+        "spendAcus": "ACU 消耗"
       }
     }
   },

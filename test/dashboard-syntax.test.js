@@ -65,6 +65,26 @@ test('dashboard drought banners expose restriction fail-open state', () => {
   assert.equal(typeof zh.drought.restrictionFailOpen, 'string');
 });
 
+test('dashboard account detail renders fractional ACU separately from credits', () => {
+  const html = readFileSync(join(root, 'src/dashboard/index.html'), 'utf8');
+  const auth = readFileSync(join(root, 'src/auth.js'), 'utf8');
+  const api = readFileSync(join(root, 'src/dashboard/api.js'), 'utf8');
+  const en = JSON.parse(readFileSync(join(root, 'src/dashboard/i18n/en.json'), 'utf8'));
+  const zh = JSON.parse(readFileSync(join(root, 'src/dashboard/i18n/zh-CN.json'), 'utf8'));
+
+  assert.match(html, /const acus = Number\(sp\.acuCost\) \|\| 0/);
+  assert.match(html, /const showAcuQuota = !!acu && !hasPersonalQuota/);
+  assert.match(html, /acu\.source === 'get_user_status'/);
+  assert.doesNotMatch(html, /Cognition Platform \(Enterprise\).*showAcuQuota/);
+  assert.match(html, /runtime\.spendAcus/);
+  assert.equal(en.account.detail.runtime.spendAcus, 'ACU cost');
+  assert.equal(zh.account.detail.runtime.spendAcus, 'ACU 消耗');
+  assert.equal(en.account.detail.quota.acuUsed, 'ACU consumed');
+  assert.equal(zh.account.detail.quota.acuUsed, 'ACU 已用');
+  assert.match(auth, /delete persist\.raw/);
+  assert.match(api, /delete safe\.raw/);
+});
+
 test('dashboard proxy and abnormal-account tables use paged account summaries', () => {
   const html = readFileSync(join(root, 'src/dashboard/index.html'), 'utf8');
   assert.match(html, /id="proxy-accounts-pagination"/);

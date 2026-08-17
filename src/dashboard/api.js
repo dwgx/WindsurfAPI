@@ -1244,7 +1244,12 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
   const creditRefresh = subpath.match(/^\/accounts\/([^/]+)\/refresh-credits$/);
   if (creditRefresh && method === 'POST') {
     const r = await refreshCredits(creditRefresh[1]);
-    return json(res, r.ok ? 200 : 400, r);
+    // Defense in depth: never forward a raw GetUserStatus body. It may contain
+    // enterprise/org/user identifiers even though refreshCredits currently
+    // returns only its normalized projection.
+    const safe = { ...(r || {}) };
+    delete safe.raw;
+    return json(res, safe.ok ? 200 : 400, safe);
   }
 
   // POST /accounts/:id/web-search — run one upstream web search on this account.

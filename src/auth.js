@@ -584,7 +584,7 @@ function _serializeAccounts() {
     // zero; losing it is harmless (backoff just restarts) so it's best-effort.
     _breakerStreak: a._breakerStreak || 0,
     // K8: persist the lifetime spend accumulator (monotonic across restarts).
-    _totalSpend: a._totalSpend || { requests: 0, totalTokens: 0, promptTokens: 0, completionTokens: 0, creditCost: 0 },
+    _totalSpend: a._totalSpend || { requests: 0, totalTokens: 0, promptTokens: 0, completionTokens: 0, creditCost: 0, acuCost: 0 },
     // C5: persisted rolling-hour health window (pruned at save time so the
     // file never carries stale/out-of-window events across restarts).
     _health: Array.isArray(a._health) ? pruneHealthWindow(a, Date.now()) : [],
@@ -731,7 +731,7 @@ function _deserializeAccount(a, now = Date.now()) {
     // K8: per-account lifetime spend accumulator. Monotonic, survives log
     // rotation and restarts. `?? 0` so an older accounts.json (written before
     // this field existed) loads as zero rather than NaN. Shape:
-    // { requests, totalTokens, promptTokens, completionTokens, creditCost }.
+    // { requests, totalTokens, promptTokens, completionTokens, creditCost, acuCost }.
     _totalSpend: (a._totalSpend && typeof a._totalSpend === 'object')
       ? {
           requests: Number(a._totalSpend.requests) || 0,
@@ -739,8 +739,9 @@ function _deserializeAccount(a, now = Date.now()) {
           promptTokens: Number(a._totalSpend.promptTokens) || 0,
           completionTokens: Number(a._totalSpend.completionTokens) || 0,
           creditCost: Number(a._totalSpend.creditCost) || 0,
+          acuCost: Number(a._totalSpend.acuCost) || 0,
         }
-      : { requests: 0, totalTokens: 0, promptTokens: 0, completionTokens: 0, creditCost: 0 },
+      : { requests: 0, totalTokens: 0, promptTokens: 0, completionTokens: 0, creditCost: 0, acuCost: 0 },
     // C5: restore the rolling health window; drop anything already out of
     // the 1h window at load so a long-stopped process starts clean.
     _health: Array.isArray(a._health)
@@ -2946,12 +2947,13 @@ export function reportSuccess(apiKey) {
  * OpenAI-shaped usage object. Monotonic and independent of the rolling stats
  * window / log rotation, so the dashboard can show "which account burns fastest"
  * and drive rotation/retirement decisions. Lazy-persisted via markDirty (the
- * periodic flush writes it — no hot-path fsync). creditCost only accrues when a
- * paid token surfaced billing (DEVIN_CONNECT_BILLING_TAGS calibrated).
+ * periodic flush writes it — no hot-path fsync). creditCost / acuCost only accrue
+ * when the upstream surfaced calibrated billing fields. They remain separate:
+ * credits and ACUs are different units and must never be added together.
  *
  * @param {string} apiKey
  * @param {object|null} usage  { prompt_tokens, completion_tokens, total_tokens }
- * @param {object} [opts]      { creditCost?: number }
+ * @param {object} [opts]      { creditCost?: number, acuCost?: number }
  */
 /**
  * Full billable cost of a request, independent of whatever shape total_tokens is in.
@@ -2986,12 +2988,12 @@ export function fullBillableTokens(usage) {
   return Math.max(total, prompt + completion + cacheWrite);
 }
 
-export function recordAccountSpend(apiKey, usage, { creditCost = 0 } = {}) {
+export function recordAccountSpend(apiKey, usage, { creditCost = 0, acuCost = 0 } = {}) {
   if (!apiKey) return;
   const account = accounts.find(a => a.apiKey === apiKey);
   if (!account) return;
   if (!account._totalSpend || typeof account._totalSpend !== 'object') {
-    account._totalSpend = { requests: 0, totalTokens: 0, promptTokens: 0, completionTokens: 0, creditCost: 0 };
+    account._totalSpend = { requests: 0, totalTokens: 0, promptTokens: 0, completionTokens: 0, creditCost: 0, acuCost: 0 };
   }
   const s = account._totalSpend;
   // Clamped for the same reason fullBillableTokens clamps: these are CUMULATIVE counters, so
@@ -3016,6 +3018,7 @@ export function recordAccountSpend(apiKey, usage, { creditCost = 0 } = {}) {
   s.completionTokens += completion;
   s.totalTokens += total;
   s.creditCost += Math.max(0, Number(creditCost) || 0);
+  s.acuCost = (Number(s.acuCost) || 0) + Math.max(0, Number(acuCost) || 0);
   markDirty();
 }
 
@@ -3248,6 +3251,41 @@ function accountUserStatusSummary(userStatus) {
   };
 }
 
+/**
+ * Discover ACU accounting from data, never from a plan/tier label.
+ *
+ * GetUserStatus is authoritative for the current upstream cycle. The local
+ * DEVIN_CONNECT accumulator is a privacy-safe fallback when an older upstream
+ * omits PlanStatus.acu_consumed; it is explicitly marked lifetime-local so the
+ * UI cannot mistake it for a billing-cycle counter.
+ */
+export function getAccountAcuUsage(account) {
+  const finiteNonNegative = (value) => {
+    if (value == null || value === '') return null;
+    const n = Number(value);
+    return Number.isFinite(n) && n >= 0 ? n : null;
+  };
+  const upstreamConsumed = finiteNonNegative(account?.credits?.acuConsumed);
+  const upstreamLimit = finiteNonNegative(account?.credits?.acuLimit);
+  const localLifetime = finiteNonNegative(account?._totalSpend?.acuCost);
+
+  if (upstreamConsumed != null || upstreamLimit != null) {
+    return {
+      consumed: upstreamConsumed ?? 0,
+      limit: upstreamLimit,
+      source: 'get_user_status',
+    };
+  }
+  if (localLifetime != null && localLifetime > 0) {
+    return {
+      consumed: localLifetime,
+      limit: null,
+      source: 'local_billing',
+    };
+  }
+  return null;
+}
+
 function publicAccount(a, now, { view = 'full' } = {}) {
   const rpmLimit = rpmLimitFor(a);
   const rpmUsed = pruneRpmHistory(a, now);
@@ -3270,6 +3308,9 @@ function publicAccount(a, now, { view = 'full' } = {}) {
     rpmUsed,
     rpmLimit,
     credits: cr,
+    // Identifier-free ACU projection. This is intentionally derived from
+    // numeric capability fields rather than planName/tier strings.
+    acuUsage: getAccountAcuUsage(a),
     blockedModelCount: (a.blockedModels || []).length,
     tierModelCount: tierModels.length,
     userStatus: accountUserStatusSummary(a.userStatus),
@@ -3303,8 +3344,9 @@ function publicAccount(a, now, { view = 'full' } = {}) {
           promptTokens: a._totalSpend.promptTokens || 0,
           completionTokens: a._totalSpend.completionTokens || 0,
           creditCost: a._totalSpend.creditCost || 0,
+          acuCost: a._totalSpend.acuCost || 0,
         }
-      : { requests: 0, totalTokens: 0, promptTokens: 0, completionTokens: 0, creditCost: 0 },
+      : { requests: 0, totalTokens: 0, promptTokens: 0, completionTokens: 0, creditCost: 0, acuCost: 0 },
     capabilities: a.capabilities || {},
     modelRateLimits: a._modelRateLimits ? Object.fromEntries(
       Object.entries(a._modelRateLimits).filter(([, v]) => v > now)
@@ -3458,9 +3500,11 @@ export async function refreshCredits(id) {
     const { getUserStatus } = await import('./windsurf-api.js');
     const proxy = getEffectiveProxy(account.id) || null;
     const status = await getUserStatus(account.apiKey, proxy);
-    // Drop the huge raw payload before persisting — keep it only in memory for
-    // downstream callers (e.g. model catalog cache) to inspect once.
-    const { raw, ...persist } = status;
+    // Drop the raw payload before persisting or returning it. It contains
+    // account/org identifiers and deployment URLs; all dashboard consumers need
+    // is the normalized, identifier-free quota projection below.
+    const persist = { ...status };
+    delete persist.raw;
     account.credits = persist;
     // B: on-demand balance + billing period. The REST getUserStatus `raw` is a
     // PARSED JSON object, not protobuf bytes — feeding it to decodeUserStatusFull
@@ -3482,6 +3526,12 @@ export async function refreshCredits(id) {
         if (billing.balance != null) account.credits.balance = billing.balance;
         if (billing.periodStart) account.credits.periodStart = billing.periodStart;
         if (billing.periodEnd) account.credits.periodEnd = billing.periodEnd;
+        if (billing.acuConsumed != null && account.credits.acuConsumed == null) {
+          account.credits.acuConsumed = billing.acuConsumed;
+        }
+        if (billing.acuLimit != null && account.credits.acuLimit == null) {
+          account.credits.acuLimit = billing.acuLimit;
+        }
         // Only a PAIRED rate table (selector-keyed object) is usable. An unpaired
         // array means the catalog fetch failed, and positional floats without their
         // selectors cannot be attributed to a model.
@@ -3529,9 +3579,7 @@ export async function refreshCredits(id) {
       }
     }
     saveAccounts();
-    // Surface the raw response once so the caller can decide whether to mine
-    // the bundled model catalog from it.
-    return { ok: true, credits: persist, raw };
+    return { ok: true, credits: account.credits };
   } catch (e) {
     const msg = e.message || String(e);
     log.warn(`refreshCredits ${id} failed: ${msg}`);

@@ -12,10 +12,12 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { writeFileSync, unlinkSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
-  classifyTag, aggregateDumps, findCandidates, runCalibration, statusTable,
+  classifyTag, aggregateDumps, findCandidates, resolveToken, runCalibration, statusTable,
   FREE_BASELINE, TARGETS,
 } from '../scripts/devin-connect-calibrate.mjs';
 
@@ -54,6 +56,21 @@ describe('devin-connect calibrate harness — gating', () => {
   });
 });
 
+describe('resolveToken — persisted account lookup', () => {
+  it('uses the configured account file and prefers an active account', () => {
+    const file = join(tmpdir(), `windsurfapi-calibrate-${process.pid}-${Date.now()}.json`);
+    writeFileSync(file, JSON.stringify([
+      { status: 'disabled', apiKey: 'disabled-token' },
+      { status: 'active', apiKey: 'active-token' },
+    ]));
+    try {
+      assert.equal(resolveToken({}, file), 'active-token');
+    } finally {
+      unlinkSync(file);
+    }
+  });
+});
+
 describe('classifyTag — wire-shape → target bucket', () => {
   it('routes a meta varint to billing/cache (#46)', () => {
     const r = classifyTag({ scope: 'meta', tag: 14, kind: 'varint', preview: 1500 });
@@ -68,10 +85,35 @@ describe('classifyTag — wire-shape → target bucket', () => {
     assert.equal(r.task, '#47');
   });
 
+  it('does not misclassify paid provider #21="anthropic" as actual_model_uid', () => {
+    const r = classifyTag({ scope: 'top', tag: 21, kind: 'string', preview: 'anthropic' });
+    assert.equal(r.bucket, 'provider');
+    assert.deepEqual(r.targets, []);
+  });
+
+  it('recognises the live actual model at metadata #7.9', () => {
+    const r = classifyTag({
+      scope: 'sub', topTag: 7, tag: 9, path: '7.9',
+      kind: 'string', preview: 'claude-sonnet-4-6-thinking',
+    });
+    assert.equal(r.bucket, 'actual_model_uid');
+    assert.deepEqual(r.targets, ['actual_model_uid']);
+  });
+
   it('routes a top-level sub-message to tool_calls (#49)', () => {
     const r = classifyTag({ scope: 'top', tag: 12, kind: 'message', preview: '<msg 47b>' });
     assert.equal(r.bucket, 'tool_calls');
     assert.equal(r.task, '#49');
+  });
+
+  it('routes paid-verified top-level #22 fixed64 to committed ACU billing (#239)', () => {
+    const r = classifyTag({
+      scope: 'top', tag: 22, kind: 'fixed64', preview: 0.0006735000060871243,
+    });
+    assert.equal(r.bucket, 'billing/acu');
+    assert.equal(r.task, '#239');
+    assert.deepEqual(r.targets, ['billing']);
+    assert.match(r.detail, /committed_acu_cost/);
   });
 
   it('marks an unrecognized shape as unknown with no targets', () => {
@@ -92,6 +134,18 @@ describe('aggregateDumps — per-frame dumps → tag inventory', () => {
     assert.equal(inv.top[3].kind, 'string');
     assert.equal(inv.meta[14].kind, 'varint');
     assert.equal(inv.meta[14].preview, 1500);
+  });
+
+  it('preserves structured fixed-width values emitted by decodeFrame', () => {
+    const raw = '00000040ba11463f';
+    const acu = 0.0006735000060871243;
+    const inv = aggregateDumps(
+      [{ 22: { kind: 'fixed64', preview: acu, raw } }],
+      [],
+    );
+    assert.deepEqual(inv.top[22], { kind: 'fixed64', preview: acu, raw });
+    const { candidates } = findCandidates(inv);
+    assert.ok(candidates.some((c) => c.tag === 22 && c.bucket === 'billing/acu'));
   });
 });
 
@@ -133,6 +187,22 @@ describe('runCalibration — env-line generation', () => {
     assert.ok(report.envLines.some((l) => l === 'DEVIN_CONNECT_ACTUAL_MODEL_TAG=8'));
     assert.ok(report.envLines.some((l) => /outer=12/.test(l)));
     assert.ok(report.envLines.some((l) => /14,15/.test(l)));
+  });
+
+  it('emits the paid-verified top-level ACU mapping for a #22 double', async () => {
+    const report = await runCalibration({
+      real: false,
+      deps: {
+        frameDumps: [{
+          22: {
+            kind: 'fixed64',
+            preview: 0.0006735000060871243,
+            raw: '00000040ba11463f',
+          },
+        }],
+      },
+    });
+    assert.ok(report.envLines.some((l) => /committed_acu_cost=\^22/.test(l)));
   });
 
   it('surfaces a probe error without throwing', async () => {

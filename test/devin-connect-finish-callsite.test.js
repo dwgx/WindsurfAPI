@@ -13,7 +13,9 @@ import { describe, it, afterEach } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
 import { streamChat, __setRequestImpl, normalizeConnectUsage } from '../src/devin-connect.js';
-import { writeStringField, writeVarintField, writeMessageField } from '../src/proto.js';
+import {
+  writeStringField, writeVarintField, writeMessageField, writeFixed64Field,
+} from '../src/proto.js';
 import { wrapEnvelope, endOfStreamEnvelope } from '../src/connect.js';
 
 const TOKEN = 'devin-session-token$test.jwt.sig';
@@ -101,6 +103,26 @@ describe('the finish event calls normalizeConnectUsage (call-site guard)', () =>
       Buffer.concat([writeStringField(3, 'ok'), writeVarintField(5, 2)]),
     ]);
     assert.equal(finish.usage, null, 'a missing usage block passes through as null');
+  });
+});
+
+describe('the finish event preserves paid ACU billing (call-site guard)', () => {
+  it('carries top-level #22 fixed64 through the default billing map', async () => {
+    const acu = 0.0006735000060871243;
+    const raw = Buffer.alloc(8);
+    raw.writeDoubleLE(acu, 0);
+
+    const finish = await finishEventFrom([
+      Buffer.concat([
+        writeStringField(3, 'ok'),
+        writeVarintField(5, 2),
+        metaFrame({ prompt: 12, completion: 3 }),
+        writeFixed64Field(22, raw),
+      ]),
+    ]);
+
+    assert.ok(finish, 'the stream must reach its terminal finish event');
+    assert.deepEqual(finish.billing, { committed_acu_cost: acu });
   });
 });
 

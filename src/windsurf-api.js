@@ -311,8 +311,23 @@ function normalizeUserStatus(data) {
   const ps = data?.userStatus?.planStatus || {};
   const plan = ps.planInfo || {};
 
+  // Capability discovery, not plan-name detection: newer Devin-backed plans
+  // expose fractional ACU accounting directly on PlanStatus. Keep absence as
+  // null (never manufacture a zero), and never persist the raw UserStatus where
+  // org/user identifiers and deployment URLs also live.
+  const nonNegativeNumber = (value) => {
+    if (value == null || value === '') return null;
+    const n = Number(value);
+    return Number.isFinite(n) && n >= 0 ? n : null;
+  };
+
   // Legacy values come in hundredths; divide by 100 for display.
-  const legacyDiv = (n) => (typeof n === 'number' ? n / 100 : null);
+  // Devin-backed plans use -1 as a legacy-credit "not applicable" sentinel.
+  // Treat it as absence so it cannot render as -0.01 credits or masquerade as
+  // a personal quota alongside ACU accounting.
+  const legacyDiv = (n) => (
+    typeof n === 'number' && Number.isFinite(n) && n >= 0 ? n / 100 : null
+  );
 
   // Unix timestamps may be numeric or string depending on server version.
   const asUnix = (v) => {
@@ -338,6 +353,8 @@ function normalizeUserStatus(data) {
     dailyResetAt: asUnix(ps.dailyQuotaResetAtUnix),
     weeklyResetAt: asUnix(ps.weeklyQuotaResetAtUnix),
     overageBalance: typeof ps.overageBalanceMicros === 'number' ? ps.overageBalanceMicros / 1_000_000 : null,
+    acuConsumed: nonNegativeNumber(ps.acuConsumed ?? ps.acu_consumed),
+    acuLimit: nonNegativeNumber(ps.acuLimit ?? ps.acu_limit),
     prompt: {
       limit: legacyDiv(plan.monthlyPromptCredits),
       used: legacyDiv(ps.usedPromptCredits),

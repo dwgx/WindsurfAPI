@@ -2659,7 +2659,7 @@ tbody tr:hover td { background: var(--surface-2); }
         </div>
         <div class="table-wrap">
           <table id="accounts-table">
-            <thead><tr><th style="width:28px;text-align:center"><input type="checkbox" id="accounts-select-all" aria-label="Select all" onchange="App.toggleSelectAllAccounts(this.checked)"></th><th data-i18n="table.header.id">ID</th><th data-i18n="table.header.label">标签</th><th data-i18n="table.header.tier">层级</th><th data-i18n="table.header.rpm">RPM</th><th class="th-help" data-i18n="table.header.quota" data-i18n-title="creditsBar.columnTooltip" title="配额使用情况&#10;&#10;日 — 每日高级请求剩余百分比（重置频繁）&#10;周 — 每周高级请求剩余百分比（Trial 账号重点看这条）&#10;&#10;数值越高 = 剩余越多 = 越安全&#10;悬停单条进度条可查看重置时间">配额</th><th data-i18n="table.header.models">可用模型</th><th data-i18n="table.header.status">状态</th><th data-i18n="table.header.error">错误</th><th data-i18n="table.header.lastUsed">最后使用</th><th data-i18n="table.header.key">Key</th><th data-i18n="table.header.action">操作</th></tr></thead>
+            <thead><tr><th style="width:28px;text-align:center"><input type="checkbox" id="accounts-select-all" aria-label="Select all" onchange="App.toggleSelectAllAccounts(this.checked)"></th><th data-i18n="table.header.id">ID</th><th data-i18n="table.header.label">标签</th><th data-i18n="table.header.tier">层级</th><th data-i18n="table.header.rpm">RPM</th><th class="th-help" data-i18n="table.header.quota" data-i18n-title="creditsBar.columnTooltip" title="个人账号显示日/周配额；检测到 ACU 时显示 ACU 用量及上游配额">配额</th><th data-i18n="table.header.models">可用模型</th><th data-i18n="table.header.status">状态</th><th data-i18n="table.header.error">错误</th><th data-i18n="table.header.lastUsed">最后使用</th><th data-i18n="table.header.key">Key</th><th data-i18n="table.header.action">操作</th></tr></thead>
             <tbody></tbody>
           </table>
         </div>
@@ -6591,10 +6591,42 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
         : `<span class="text-xs text-dim">-</span>`;
 
       // Credit / quota cell — collapses the legacy credit contract and the
-      // newer daily/weekly percent contract into a single progress bar.
+      // newer daily/weekly percent contract into a single progress bar. ACU is
+      // discovered from numeric upstream/local accounting signals; planName is
+      // display-only and must never decide whether this branch is active.
       const cr = a.credits || null;
+      const acu = a.acuUsage || null;
+      const hasPersonalQuota = !!cr && (
+        cr.dailyPercent != null
+        || cr.weeklyPercent != null
+        || Number(cr.prompt?.limit) > 0
+        || Number(cr.flex?.limit) > 0
+      );
+      const showAcuQuota = !!acu && !hasPersonalQuota;
+      const fmtAcu = (value) => Number(value).toLocaleString(undefined, { maximumFractionDigits: 7 });
       let creditCell;
-      if (!cr) {
+      if (showAcuQuota) {
+        const used = Math.max(0, Number(acu.consumed) || 0);
+        const limit = acu.limit != null && Number.isFinite(Number(acu.limit)) && Number(acu.limit) >= 0 ? Number(acu.limit) : null;
+        const pct = limit > 0 ? Math.min(100, used / limit * 100) : null;
+        const visiblePct = pct != null && pct > 0 ? Math.max(1.5, pct) : 0;
+        const fetchedAgo = cr?.fetchedAt ? Math.round((Date.now() - cr.fetchedAt) / 60000) + 'm ago' : '';
+        const source = acu.source === 'get_user_status'
+          ? I18n.t('creditsBar.acuCycle')
+          : I18n.t('creditsBar.acuLocalLifetime');
+        creditCell = `<div style="min-width:140px;max-width:180px" title="${this.esc(source)}">
+            <div class="text-xs" style="display:flex;justify-content:space-between;gap:8px;margin-bottom:3px">
+              <b>${I18n.t('creditsBar.acu')}</b>
+              ${fetchedAgo ? `<span style="color:var(--text-dim)">${fetchedAgo}</span>` : ''}
+            </div>
+            <div style="font-variant-numeric:tabular-nums;white-space:nowrap">
+              <b style="color:var(--warn)">${fmtAcu(used)}</b>
+              ${limit != null ? `<span style="color:var(--text-dim)"> / ${fmtAcu(limit)}</span>` : '<span style="color:var(--text-dim)"> ACU</span>'}
+            </div>
+            ${limit > 0 ? `<div style="height:4px;background:var(--surface-3);border-radius:2px;overflow:hidden;margin-top:4px"><div style="height:100%;width:${visiblePct}%;background:var(--warn)"></div></div>` : ''}
+            <div class="text-xs text-dim" style="font-size:10px;margin-top:2px">${limit != null ? I18n.t('creditsBar.acuUpstreamLimit') : I18n.t('creditsBar.acuLimitNA')}</div>
+          </div>`;
+      } else if (!cr) {
         creditCell = `<span class="text-xs text-dim">${I18n.t('status.notFetched')}</span>`;
       } else if (cr.lastError && cr.percent == null && !cr.prompt?.limit) {
         creditCell = `<span class="text-xs" style="color:var(--error)" title="${this.esc(cr.lastError)}">${I18n.t('status.fetchFailed')}</span>`;
@@ -6779,6 +6811,12 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
   renderAccountDetail(a) {
     const cr = a.credits || {};
     const us = a.userStatus || {};
+    const acu = a.acuUsage || null;
+    const hasPersonalQuota = cr.dailyPercent != null
+      || cr.weeklyPercent != null
+      || Number(cr.prompt?.limit) > 0
+      || Number(cr.flex?.limit) > 0;
+    const showAcuQuota = !!acu && !hasPersonalQuota;
     const catalog = this._modelsCatalog || {};
     const T = (k, v) => I18n.t('account.detail.' + k, v);
     const barColor = (v) => v == null ? 'var(--text-dim)' : v <= 10 ? 'var(--error)' : v <= 30 ? 'var(--warn)' : 'var(--success)';
@@ -6792,6 +6830,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
       if (s < 86400) return `${Math.floor(s/3600)}h ${T('ago')}`;
       return `${Math.floor(s/86400)}d ${T('ago')}`;
     };
+    const fmtAcu = (value) => Number(value).toLocaleString(undefined, { maximumFractionDigits: 7 });
     const renderBar = (label, pct, resetAt, noDataText) => {
       const isN = pct == null;
       const v = isN ? 0 : Math.max(0, Math.min(100, pct));
@@ -6873,13 +6912,27 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
 
         <div class="detail-card">
           <div class="detail-card-head"><span class="dot" style="background:var(--warn)"></span>${T('quota.title')}</div>
-          ${renderBar(T('quota.daily'), cr.dailyPercent, cr.dailyResetAt, I18n.t('creditsBar.dailyNA'))}
-          ${renderBar(T('quota.weekly'), cr.weeklyPercent, cr.weeklyResetAt, I18n.t('creditsBar.weeklyNA'))}
-          <div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--border)" class="detail-kv">
-            ${cr.prompt?.limit ? `<span class="k">${T('quota.promptCredits')}</span><span class="v"><b>${cr.prompt.remaining ?? 0}</b> / ${cr.prompt.limit} <span style="color:var(--text-dim);font-size:10px">(${T('quota.used')} ${cr.prompt.used ?? 0})</span></span>` : `<span class="k">${T('quota.promptCredits')}</span><span class="v" style="color:var(--text-dim)">${T('quota.notApplicable')}</span>`}
-            ${cr.flex?.limit ? `<span class="k">${T('quota.flexCredits')}</span><span class="v"><b>${cr.flex.remaining ?? 0}</b> / ${cr.flex.limit} <span style="color:var(--text-dim);font-size:10px">(${T('quota.used')} ${cr.flex.used ?? 0})</span></span>` : `<span class="k">${T('quota.flexCredits')}</span><span class="v" style="color:var(--text-dim)">${T('quota.notApplicable')}</span>`}
-            <span class="k">${T('quota.fetchedAt')}</span><span class="v">${fmtAgo(cr.fetchedAt)}</span>
-          </div>
+          ${showAcuQuota ? (() => {
+            const used = Math.max(0, Number(acu.consumed) || 0);
+            const limit = acu.limit != null && Number.isFinite(Number(acu.limit)) && Number(acu.limit) >= 0 ? Number(acu.limit) : null;
+            const pct = limit > 0 ? Math.min(100, used / limit * 100) : null;
+            const visiblePct = pct != null && pct > 0 ? Math.max(1.5, pct) : 0;
+            const source = acu.source === 'get_user_status' ? T('quota.acuCycle') : T('quota.acuLocalLifetime');
+            return `<div class="detail-kv">
+              <span class="k">${T('quota.acuUsed')}</span><span class="v"><b style="color:var(--warn);font-size:16px;font-variant-numeric:tabular-nums">${fmtAcu(used)}</b> ACU</span>
+              <span class="k">${T('quota.acuLimit')}</span><span class="v">${limit != null ? `<b>${fmtAcu(limit)}</b> ACU` : `<span style="color:var(--text-dim)">${T('quota.acuLimitNA')}</span>`}</span>
+              <span class="k">${T('quota.acuSource')}</span><span class="v" style="color:var(--text-dim)">${source}</span>
+              <span class="k">${T('quota.fetchedAt')}</span><span class="v">${fmtAgo(cr.fetchedAt)}</span>
+            </div>
+            ${limit > 0 ? `<div style="height:6px;background:var(--surface-3);border-radius:3px;overflow:hidden;margin-top:12px"><div style="height:100%;width:${visiblePct}%;background:var(--warn)"></div></div>` : ''}`;
+          })() : `
+            ${renderBar(T('quota.daily'), cr.dailyPercent, cr.dailyResetAt, I18n.t('creditsBar.dailyNA'))}
+            ${renderBar(T('quota.weekly'), cr.weeklyPercent, cr.weeklyResetAt, I18n.t('creditsBar.weeklyNA'))}
+            <div style="margin-top:10px;padding-top:10px;border-top:1px dashed var(--border)" class="detail-kv">
+              ${cr.prompt?.limit ? `<span class="k">${T('quota.promptCredits')}</span><span class="v"><b>${cr.prompt.remaining ?? 0}</b> / ${cr.prompt.limit} <span style="color:var(--text-dim);font-size:10px">(${T('quota.used')} ${cr.prompt.used ?? 0})</span></span>` : `<span class="k">${T('quota.promptCredits')}</span><span class="v" style="color:var(--text-dim)">${T('quota.notApplicable')}</span>`}
+              ${cr.flex?.limit ? `<span class="k">${T('quota.flexCredits')}</span><span class="v"><b>${cr.flex.remaining ?? 0}</b> / ${cr.flex.limit} <span style="color:var(--text-dim);font-size:10px">(${T('quota.used')} ${cr.flex.used ?? 0})</span></span>` : `<span class="k">${T('quota.flexCredits')}</span><span class="v" style="color:var(--text-dim)">${T('quota.notApplicable')}</span>`}
+              <span class="k">${T('quota.fetchedAt')}</span><span class="v">${fmtAgo(cr.fetchedAt)}</span>
+            </div>`}
         </div>
 
         ${this.renderSpendPolicyCard(a)}
@@ -6916,13 +6969,15 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
             </div>
             ${(() => {
               // K8: lifetime spend — helps decide which account to rotate/retire.
-              const sp = a.totalSpend || { requests: 0, totalTokens: 0, creditCost: 0 };
+              const sp = a.totalSpend || { requests: 0, totalTokens: 0, creditCost: 0, acuCost: 0 };
               const fmt = (n) => (Number(n) || 0).toLocaleString();
               const credits = Number(sp.creditCost) || 0;
+              const acus = Number(sp.acuCost) || 0;
               return `<div class="detail-kv">
               <span class="k">${T('runtime.spendRequests')}</span><span class="v" style="font-variant-numeric:tabular-nums">${fmt(sp.requests)}</span>
               <span class="k">${T('runtime.spendTokens')}</span><span class="v" style="font-variant-numeric:tabular-nums">${fmt(sp.totalTokens)}</span>
               ${credits > 0 ? `<span class="k">${T('runtime.spendCredits')}</span><span class="v" style="font-variant-numeric:tabular-nums">${(Math.round(credits * 100) / 100).toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>` : ''}
+              ${acus > 0 && !showAcuQuota ? `<span class="k">${T('runtime.spendAcus')}</span><span class="v" style="font-variant-numeric:tabular-nums">${acus.toLocaleString(undefined, { maximumFractionDigits: 7 })}</span>` : ''}
             </div>`;
             })()}
           </div>

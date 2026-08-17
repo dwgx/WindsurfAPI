@@ -30,6 +30,8 @@
  */
 import { readFileSync, writeFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
+import { config } from '../src/config.js';
 
 const REAL = process.env.CALIBRATE_REAL === '1';
 const TIMEOUT_MS = Number(process.env.CALIBRATE_TIMEOUT_MS || 90000);
@@ -83,24 +85,26 @@ export const FREE_BASELINE = {
 // ─── Targets: the five blocked unknowns, each with the env var that arms its
 // already-shipped decoder, the wire shape it appears as, and the task it unblocks.
 export const TARGETS = [
-  { key: 'actual_model_uid', env: 'DEVIN_CONNECT_ACTUAL_MODEL_TAG', scope: 'top', shape: 'string', task: '#47', note: 'concrete model behind a router turn' },
+  { key: 'actual_model_uid', env: 'DEVIN_CONNECT_ACTUAL_MODEL_TAG', scope: 'meta', shape: 'string', task: '#47', note: 'concrete model behind a router turn (#7.9)' },
   { key: 'tool_calls', env: 'DEVIN_CONNECT_TOOL_CALL_TAGS', scope: 'top', shape: 'message', task: '#49', note: 'repeated ChatToolCall (delta_tool_calls)' },
-  { key: 'billing', env: 'DEVIN_CONNECT_BILLING_TAGS', scope: 'meta', shape: 'varint', task: '#46', note: 'credit_cost / committed_*_cost' },
+  { key: 'billing', env: 'DEVIN_CONNECT_BILLING_TAGS', scope: 'top/meta', shape: 'numeric', task: '#239', note: 'paid-verified committed_acu_cost; credit fields pending' },
   { key: 'cache_tokens', env: 'DEVIN_CONNECT_BILLING_TAGS', scope: 'meta', shape: 'varint', task: '#46', note: 'cache_read_tokens / cache_write_tokens' },
   { key: 'image_tag', env: 'DEVIN_CONNECT_IMAGE_TAG', scope: 'request', shape: 'message', task: '#29', note: 'vision images field — needs the dedicated image-calibrate sweep' },
 ];
 
-export function resolveToken(env = process.env) {
+export function resolveToken(
+  env = process.env,
+  defaultAccountsFile = join(config.sharedDataDir || config.dataDir, 'accounts.json'),
+) {
   if (env.CONNECT_SMOKE_TOKEN) return env.CONNECT_SMOKE_TOKEN.trim();
   for (const k of ['DEVIN_CONNECT_TOKEN', 'DEVIN_SESSION_TOKEN', 'WINDSURF_SESSION_TOKEN']) {
     if (env[k]) return env[k].trim();
   }
   try {
-    const accountsUrl = env.CALIBRATE_ACCOUNTS_FILE
-      ? new URL(`file://${env.CALIBRATE_ACCOUNTS_FILE.replace(/\\/g, '/')}`)
-      : new URL('../accounts.json', import.meta.url);
-    const accounts = JSON.parse(readFileSync(accountsUrl, 'utf8'));
-    const first = accounts.find((a) => a.apiKey);
+    const accountsFile = env.CALIBRATE_ACCOUNTS_FILE || defaultAccountsFile;
+    const accounts = JSON.parse(readFileSync(accountsFile, 'utf8'));
+    const first = accounts.find((a) => a?.status === 'active' && a?.apiKey)
+      || accounts.find((a) => a?.apiKey);
     if (first) return first.apiKey;
   } catch { /* none */ }
   return '';
@@ -111,17 +115,37 @@ export function resolveOutPath(env = process.env) {
 }
 
 /**
- * Classify one observed top-level/meta tag (not in the baseline) into the target
+ * Classify one observed top-level/meta/sub-message tag into the target
  * bucket its wire shape best fits. Pure + exported for the self-test.
  *   - meta varint  → billing / cache_tokens (#46)
- *   - top string   → actual_model_uid (#47)
+ *   - top #22 f64  → committed_acu_cost (#239)
+ *   - sub #7.9 str → actual_model_uid (#47)
  *   - top message  → tool_calls (#49)
  */
 export function classifyTag({ scope, tag, kind, preview, topTag, path }) {
   const loc = path || (topTag != null ? `${topTag}.${tag}` : tag);
+  // Paid upstream capture: committed_acu_cost is top-level #22
+  // encoded as fixed64/double, with Response Statistics #28.2.4.2 echoing the
+  // same value as fixed32/float. This is paid-verified, not a shape guess.
+  if (scope === 'top' && tag === 22 && (kind === 'fixed64' || kind === 'fixed32')) {
+    return { bucket: 'billing/acu', targets: ['billing'], task: '#239',
+      detail: `top ${kind} #22=${preview} — paid-verified committed_acu_cost` };
+  }
   if (scope === 'meta' && kind === 'varint') {
     return { bucket: 'billing/cache', targets: ['billing', 'cache_tokens'], task: '#46',
       detail: `meta varint #${tag}=${preview} — credit_cost / cache token candidate` };
+  }
+  // Paid captures put the provider name at top-level #21. Treating every new
+  // printable top-level string as actual_model_uid produced the bogus env
+  // DEVIN_CONNECT_ACTUAL_MODEL_TAG=21 for the literal value "anthropic".
+  if (scope === 'top' && tag === 21 && kind === 'string') {
+    return { bucket: 'provider', targets: [], task: '#239',
+      detail: `top string #21="${preview}" — provider (not actual_model_uid)` };
+  }
+  // actual_model_uid is live-verified at metadata #7.9.
+  if (scope === 'sub' && String(loc) === '7.9' && kind === 'string') {
+    return { bucket: 'actual_model_uid', targets: ['actual_model_uid'], task: '#47',
+      detail: `sub #7.9="${preview}" — actual_model_uid` };
   }
   if (scope === 'top' && kind === 'string') {
     return { bucket: 'actual_model_uid', targets: ['actual_model_uid'], task: '#47',
@@ -136,8 +160,9 @@ export function classifyTag({ scope, tag, kind, preview, topTag, path }) {
   // is where credit_cost / committed_*_cost / cache tokens most likely live when
   // they don't ride the #7 meta block. Strings inside are model-id / stop-reason.
   if (scope === 'sub' && kind === 'varint') {
-    // Informational only (targets: []): the shipped billing decoder reads the #7
-    // meta block, so a #28 inner varint must NOT auto-fill DEVIN_CONNECT_BILLING_TAGS.
+    // Informational only (targets: []): billing coordinates support #7 metadata
+    // and top-level fields, not arbitrary nested #28 paths, so this must NOT
+    // auto-fill DEVIN_CONNECT_BILLING_TAGS.
     // It's surfaced for the operator to inspect, with a dedicated env hint below.
     return { bucket: 'sub-billing', targets: [], task: '#46',
       detail: `sub #${loc} varint=${preview} — billing/usage/stop-metadata candidate` };
@@ -160,6 +185,9 @@ export function classifyTag({ scope, tag, kind, preview, topTag, path }) {
  */
 export function aggregateDumps(frameDumps, metaDumps, subDumps) {
   const classify = (v) => {
+    if (v && typeof v === 'object' && typeof v.kind === 'string' && 'preview' in v) {
+      return { ...v };
+    }
     if (typeof v === 'number') return { kind: 'varint', preview: v };
     if (typeof v === 'string' && /^<msg \d+b>$/.test(v)) return { kind: 'message', preview: v };
     return { kind: 'string', preview: String(v).slice(0, 48) };
@@ -265,11 +293,18 @@ export async function runCalibration({ token, model = DEFAULT_MODEL, prompt = DE
   for (const c of candidates) for (const t of c.targets) (byTarget[t] ||= []).push(c);
   if (byTarget.actual_model_uid?.length) envLines.push(`DEVIN_CONNECT_ACTUAL_MODEL_TAG=${byTarget.actual_model_uid[0].tag}`);
   if (byTarget.tool_calls?.length) envLines.push(`# tool_calls outer candidate at tag ${byTarget.tool_calls[0].tag} — confirm subfields then set:\n# DEVIN_CONNECT_TOOL_CALL_TAGS="outer=${byTarget.tool_calls[0].tag},id=?,name=?,arguments_json=?"`);
-  const billingTags = (byTarget.billing || byTarget.cache_tokens || []).map((c) => c.tag);
+  const acu = (byTarget.billing || []).find((c) => c.scope === 'top' && c.tag === 22
+    && (c.kind === 'fixed64' || c.kind === 'fixed32'));
+  if (acu) {
+    envLines.push('DEVIN_CONNECT_BILLING_TAGS="cache_read_tokens=5,cache_write_tokens=4,committed_acu_cost=^22"');
+  }
+  const billingTags = (byTarget.billing || byTarget.cache_tokens || [])
+    .filter((c) => c.scope === 'meta' && c.kind === 'varint')
+    .map((c) => c.tag);
   if (billingTags.length) envLines.push(`# meta varint candidates at tags [${billingTags.join(',')}] — map to credit_cost/cache_*; then set DEVIN_CONNECT_BILLING_TAGS / cache via DEVIN_CONNECT_BILLING_TAGS`);
   // Sub-message inner varints (e.g. the #28 trailer): informational — the shipped
-  // billing decoder reads the #7 meta block, so these are NOT auto-wired. Surface
-  // them so the operator can decide whether #28 carries the billing/usage fields.
+  // billing decoder cannot address arbitrary nested paths, so these are NOT
+  // auto-wired. Surface them so the operator can inspect the #28 usage trailer.
   const subVarints = candidates.filter((c) => c.scope === 'sub' && c.kind === 'varint');
   if (subVarints.length) {
     // Group by the parent path (everything but the leaf tag) so nested counters
@@ -281,7 +316,7 @@ export async function runCalibration({ token, model = DEFAULT_MODEL, prompt = DE
       (byParent[parent] ||= []).push(`${segs[segs.length - 1]}=${c.preview}`);
     }
     for (const [parent, fields] of Object.entries(byParent)) {
-      envLines.push(`# sub-message #${parent} inner varints: {${fields.join(', ')}} — inspect for credit_cost/cache/stop-metadata (NOT auto-wired; #7-meta drives billing decode today)`);
+      envLines.push(`# sub-message #${parent} inner varints: {${fields.join(', ')}} — inspect for credit_cost/cache/stop-metadata (NOT auto-wired; nested paths are informational)`);
     }
   }
 
@@ -308,6 +343,9 @@ async function selfTest() {
   assert(classifyTag({ scope: 'meta', tag: 10, kind: 'varint', preview: 42 }).bucket === 'billing/cache', 'meta varint → billing/cache');
   assert(classifyTag({ scope: 'top', tag: 8, kind: 'string', preview: 'claude-opus' }).bucket === 'actual_model_uid', 'top string → actual_model_uid');
   assert(classifyTag({ scope: 'top', tag: 12, kind: 'message', preview: '<msg 40b>' }).bucket === 'tool_calls', 'top message → tool_calls');
+  assert(classifyTag({ scope: 'top', tag: 22, kind: 'fixed64', preview: 0.0006735 }).bucket === 'billing/acu', 'top #22 double → ACU billing');
+  assert(classifyTag({ scope: 'top', tag: 21, kind: 'string', preview: 'anthropic' }).bucket === 'provider', 'top #21 anthropic → provider, not model');
+  assert(classifyTag({ scope: 'sub', topTag: 7, tag: 9, path: '7.9', kind: 'string', preview: 'claude-sonnet-4-6-thinking' }).bucket === 'actual_model_uid', 'sub #7.9 → actual model');
   assert(classifyTag({ scope: 'sub', topTag: 28, tag: 3, kind: 'varint', preview: 42 }).bucket === 'sub-billing', 'sub varint → sub-billing');
   assert(classifyTag({ scope: 'sub', topTag: 28, tag: 3, kind: 'varint', preview: 42 }).targets.length === 0, 'sub varint NOT auto-wired');
   assert(classifyTag({ scope: 'sub', topTag: 28, tag: 1, kind: 'string', preview: 'stop' }).bucket === 'sub-metadata', 'sub string → sub-metadata');
@@ -315,7 +353,8 @@ async function selfTest() {
   // aggregate + findCandidates against the free baseline
   const frameDumps = [
     { 1: 'bot-x', 9: 'thinking', 17: 'uuid' },              // all baseline → no candidates
-    { 1: 'bot-x', 3: 'PONG', 4: 2, 8: 'claude-opus-4-8', 12: '<msg 47b>' }, // #8 actual_model, #12 tool_calls
+    { 1: 'bot-x', 3: 'PONG', 4: 2, 8: 'claude-opus-4-8', 12: '<msg 47b>',
+      22: { kind: 'fixed64', preview: 0.0006735000060871243, raw: '00000040ba11463f' } },
   ];
   const metaDumps = [{ 6: 6, 14: 1500, 15: 200 }];          // #14/#15 new varints → billing/cache
   // #28 trailer — the recurring "Response Statistics" container captured on PAID-1
@@ -333,6 +372,7 @@ async function selfTest() {
   const buckets = report.candidates.map((c) => c.bucket).sort();
   assert(report.candidates.some((c) => c.scope === 'top' && c.tag === 8 && c.bucket === 'actual_model_uid'), 'found actual_model_uid #8');
   assert(report.candidates.some((c) => c.scope === 'top' && c.tag === 12 && c.bucket === 'tool_calls'), 'found tool_calls #12');
+  assert(report.candidates.some((c) => c.scope === 'top' && c.tag === 22 && c.bucket === 'billing/acu'), 'found paid-verified ACU #22');
   assert(report.candidates.filter((c) => c.scope === 'meta' && c.bucket === 'billing/cache').length === 2, 'found 2 billing/cache meta varints');
   assert(!report.candidates.some((c) => c.tag === 6), 'baseline meta #6 not flagged');
   assert(!report.candidates.some((c) => c.scope === 'top' && [1, 3, 4, 9, 17].includes(c.tag)), 'baseline top tags not flagged');
@@ -347,6 +387,7 @@ async function selfTest() {
   assert(report.envLines.some((l) => l === 'DEVIN_CONNECT_ACTUAL_MODEL_TAG=8'), 'emits actual_model env line');
   assert(report.envLines.some((l) => /outer=12/.test(l)), 'emits tool_call outer candidate');
   assert(report.envLines.some((l) => /14,15/.test(l)), 'emits billing meta candidates');
+  assert(report.envLines.some((l) => /committed_acu_cost=\^22/.test(l)), 'emits ACU #22 mapping');
   assert(report.envLines.some((l) => /sub-message #28\.2 inner varints/.test(l) && /3=1200/.test(l) && /4=34/.test(l)), 'emits nested sub #28.2 informational env hint');
 
   // status table reflects discoveries + already-set env

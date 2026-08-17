@@ -150,6 +150,17 @@ function intField(fields, num) {
   return f ? Number(f.value) : null;
 }
 
+/** Read a protobuf numeric field without guessing its fixed-width encoding. */
+function numericField(fields, num) {
+  const f = fields.find((x) => x.field === num && (x.wireType === 0 || x.wireType === 1 || x.wireType === 5));
+  if (!f) return null;
+  let value = null;
+  if (f.wireType === 0) value = Number(f.value);
+  else if (f.wireType === 1 && f.value.length === 8) value = f.value.readDoubleLE(0);
+  else if (f.wireType === 5 && f.value.length === 4) value = f.value.readFloatLE(0);
+  return Number.isFinite(value) && value >= 0 ? value : null;
+}
+
 /**
  * Decode a GetCliModelConfigsResponse into a flat list of model entries.
  *
@@ -205,6 +216,8 @@ export function decodePlanName(raw) {
  *   #1.13.16 = balance (varint, micro-dollar — divide by 1e6 for USD)
  *   #1.13.17 = billing period start (varint, epoch seconds)
  *   #1.13.18 = billing period end (varint, epoch seconds)
+ *   #1.13.19 = ACU consumed (double; Devin-capable plans)
+ *   #1.13.20 = ACU limit (double; optional account/org policy)
  *   #1.13.1.21 (repeated) = per-model credit rate table (fixed32 f32, paired to catalog order)
  *
  * Returns { plan, isPaid, balance, balanceUnit, periodStart, periodEnd, rateTable }.
@@ -224,6 +237,8 @@ export function decodePlanName(raw) {
  *   balanceUnit: 'micro-usd'|null,
  *   periodStart: Date|null,
  *   periodEnd: Date|null,
+ *   acuConsumed: number|null,
+ *   acuLimit: number|null,
  *   rateTable: Object<string,number>|Array<number>|null
  * }}
  */
@@ -235,6 +250,8 @@ export function decodeUserStatusFull(raw, catalog = null) {
     balanceUnit: null,
     periodStart: null,
     periodEnd: null,
+    acuConsumed: null,
+    acuLimit: null,
     rateTable: null,
   };
 
@@ -268,6 +285,14 @@ export function decodeUserStatusFull(raw, catalog = null) {
         const periodEndEpoch = intField(billing, 18);
         if (periodStartEpoch != null) result.periodStart = periodStartEpoch * 1000;
         if (periodEndEpoch != null) result.periodEnd = periodEndEpoch * 1000;
+
+        // Current Devin CLI descriptors append PlanStatus.acu_consumed and
+        // acu_limit after the legacy reset/billing fields. They are fractional
+        // doubles in live Enterprise responses; numericField also tolerates
+        // float/varint encodings so an upstream wire-width change degrades to a
+        // value instead of silently hiding ACU support.
+        result.acuConsumed = numericField(billing, 19);
+        result.acuLimit = numericField(billing, 20);
 
         // #1.13.1 = plan detail
         const planField = billing.find((x) => x.field === 1 && x.wireType === 2);
@@ -393,7 +418,7 @@ export async function fetchUserStatus({ token, signal, env = process.env, withCa
   return status;
 }
 
-export const __testing = { buildClientMetadata, strField, intField, PROVIDER_NAMES };
+export const __testing = { buildClientMetadata, strField, intField, numericField, PROVIDER_NAMES };
 
 /**
  * Zero-billable liveness check for a DEVIN_CONNECT session token.

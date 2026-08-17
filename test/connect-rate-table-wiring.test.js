@@ -24,6 +24,7 @@ import {
   recordAccountSpend, getCurrentlyFreeConnectSelectors,
   isConnectSelectorCurrentlyFree, isConnectSelectorBlockedByDrought,
 } from '../src/auth.js';
+import { __testing as chatTesting } from '../src/handlers/chat.js';
 
 const FREE_SELECTOR = 'swe-1-6-slow';
 const PROMO_SELECTOR = 'glm-5-2-none';
@@ -144,6 +145,16 @@ describe('rate table → currently-free selectors (#235)', () => {
 });
 
 describe('per-request credit cost reaches per-account spend (#239)', () => {
+  it('maps credit and ACU into separate spend units', () => {
+    assert.deepEqual(chatTesting.connectBillingSpend({
+      credit_cost: 2.5,
+      committed_acu_cost: 0.0006735,
+    }), {
+      creditCost: 2.5,
+      acuCost: 0.0006735,
+    });
+  });
+
   it('accumulates creditCost across requests', () => {
     const acct = mk({ weeklyPercent: 50 });
     const usage = { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 };
@@ -156,14 +167,26 @@ describe('per-request credit cost reaches per-account spend (#239)', () => {
     assert.equal(row.totalSpend.requests, 2);
   });
 
-  it('stays at zero when billing tags are not calibrated', () => {
-    // The default on every deployment that has not calibrated against a paid token.
-    // Must be a no-op rather than a NaN or a crash.
+  it('accumulates fractional ACU separately from credit cost', () => {
+    const acct = mk({ weeklyPercent: 50 });
+    const usage = { prompt_tokens: 10, completion_tokens: 5, total_tokens: 15 };
+
+    recordAccountSpend(acct.apiKey, usage, { acuCost: 0.0006735 });
+    recordAccountSpend(acct.apiKey, usage, { acuCost: 0.00125 });
+
+    const row = getAccountList().find((a) => a.id === acct.id);
+    assert.equal(row.totalSpend.acuCost, 0.0019235);
+    assert.equal(row.totalSpend.creditCost, 0);
+  });
+
+  it('stays at zero when billing fields are absent', () => {
+    // Missing billing fields must be a no-op rather than a NaN or a crash.
     const acct = mk({ weeklyPercent: 50 });
     recordAccountSpend(acct.apiKey, { prompt_tokens: 1, completion_tokens: 1, total_tokens: 2 });
 
     const row = getAccountList().find((a) => a.id === acct.id);
     assert.equal(row.totalSpend.creditCost, 0);
+    assert.equal(row.totalSpend.acuCost, 0);
     assert.equal(row.totalSpend.requests, 1);
   });
 });

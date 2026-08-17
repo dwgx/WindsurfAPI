@@ -21,6 +21,7 @@ import {
   writeMessageField,
   writeVarintField,
   writeStringField,
+  writeFixed64Field,
   writeFixed32Field,
 } from '../src/proto.js';
 import { decodeUserStatusFull } from '../src/devin-connect-catalog.js';
@@ -42,12 +43,20 @@ function buildPlanDetail({ name, rates = [] }) {
 }
 
 /** Helper: build #1.13 (billing block) */
-function buildBillingBlock({ balance, periodStart, periodEnd, plan }) {
+function buildDoubleField(field, value) {
+  const buf = Buffer.allocUnsafe(8);
+  buf.writeDoubleLE(value, 0);
+  return writeFixed64Field(field, buf);
+}
+
+function buildBillingBlock({ balance, periodStart, periodEnd, acuConsumed, acuLimit, plan }) {
   const billingFields = [];
   if (plan) billingFields.push(buildPlanDetail(plan));
   if (balance != null) billingFields.push(writeVarintField(16, balance));
   if (periodStart != null) billingFields.push(writeVarintField(17, periodStart));
   if (periodEnd != null) billingFields.push(writeVarintField(18, periodEnd));
+  if (acuConsumed != null) billingFields.push(buildDoubleField(19, acuConsumed));
+  if (acuLimit != null) billingFields.push(buildDoubleField(20, acuLimit));
   return writeMessageField(13, Buffer.concat(billingFields));
 }
 
@@ -91,6 +100,19 @@ test('decodeUserStatusFull: paid account with full billing ledger', () => {
   assert.equal(result.rateTable[4], 12);
 });
 
+test('decodeUserStatusFull: discovers fractional ACU accounting without a plan-name gate', () => {
+  const billing = buildBillingBlock({
+    acuConsumed: 0.1554225,
+    acuLimit: 10000,
+    plan: { name: 'Unrecognized future plan', rates: [] },
+  });
+
+  const result = decodeUserStatusFull(buildUserStatusResponse({ billing }));
+
+  assert.equal(result.acuConsumed, 0.1554225);
+  assert.equal(result.acuLimit, 10000);
+});
+
 test('decodeUserStatusFull: catalog pairing (rates → selectors)', () => {
   const billing = buildBillingBlock({
     balance: 100_000_000,
@@ -131,6 +153,8 @@ test('decodeUserStatusFull: free account (minimal billing)', () => {
   assert.equal(result.balanceUnit, null);
   assert.equal(result.periodStart, null);
   assert.equal(result.periodEnd, null);
+  assert.equal(result.acuConsumed, null);
+  assert.equal(result.acuLimit, null);
   assert.equal(result.rateTable, null);
 });
 
