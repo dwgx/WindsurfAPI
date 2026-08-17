@@ -75,6 +75,21 @@ describe('ACU capability discovery', () => {
     });
   });
 
+  it('does not manufacture zero consumption from a limit-only status', () => {
+    assert.equal(getAccountAcuUsage({
+      credits: { acuLimit: 50 },
+    }), null);
+
+    assert.deepEqual(getAccountAcuUsage({
+      credits: { acuLimit: 50 },
+      _totalSpend: { acuCost: 0.25 },
+    }), {
+      consumed: 0.25,
+      limit: null,
+      source: 'local_billing',
+    });
+  });
+
   it('falls back to DEVIN_CONNECT billing without inspecting plan identifiers', () => {
     assert.deepEqual(getAccountAcuUsage({
       credits: { planName: 'anything-at-all' },

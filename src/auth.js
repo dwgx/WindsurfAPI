@@ -3310,9 +3310,9 @@ export function getAccountAcuUsage(account) {
   const upstreamLimit = finiteNonNegative(account?.credits?.acuLimit);
   const localLifetime = finiteNonNegative(account?._totalSpend?.acuCost);
 
-  if (upstreamConsumed != null || upstreamLimit != null) {
+  if (upstreamConsumed != null) {
     return {
-      consumed: upstreamConsumed ?? 0,
+      consumed: upstreamConsumed,
       limit: upstreamLimit,
       source: 'get_user_status',
     };
