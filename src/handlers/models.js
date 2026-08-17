@@ -1,5 +1,7 @@
 import { listModels } from '../models.js';
-import { resolveConnectSelector, getLiveCatalog, FREE_REACHABLE_SELECTORS, __testing } from '../devin-connect-models.js';
+import {
+  resolveConnectSelector, getLiveCatalog, FREE_REACHABLE_SELECTORS,
+} from '../devin-connect-models.js';
 import { getBackendSwitch } from '../runtime-config.js';
 import { hasConnectEntitledAccount, getAccountCount } from '../auth.js';
 
@@ -51,31 +53,24 @@ export function buildConnectReachability(env = process.env) {
   if (!getBackendSwitch('devinConnect', effectiveEnv)) {
     return () => ({ reachable: true, selector: null });
   }
-  const known = (selector) => __testing.CATALOG_SELECTORS.has(selector) || __testing._liveSelectors.has(selector);
   const skipEntitlement = shouldSkipEntitlementFilter(effectiveEnv, getAccountCount().total);
   const entitled = (selector) => skipEntitlement || hasConnectEntitledAccount(selector);
-  // NOTE on what is deliberately NOT here: a FREE_REACHABLE_SELECTORS short-circuit.
-  //
-  // It looks like it belongs — `swe-1-6-slow` is callable by any account and is absent from
-  // both the snapshot and the live catalog, so `known()` answers false for it. But every
-  // caller passes a MODELS-derived id (`handleModels` passes `m._windsurf_id`, the Dashboard
-  // passes the MODELS key), and the free selector is NEITHER a MODELS key nor any entry's
-  // `_windsurf_id` — measured against all 163 entries. So the branch never executed. It was
-  // written, then mutation-verified to be unreachable: deleting it failed zero assertions.
-  //
-  // The floor is real, it just does not live here — both views SYNTHESIZE the free selector
-  // as a row (/v1/models' third producer, and the Dashboard route's equivalent), which is
-  // where it actually works. v3.9.13 shipped a defect of exactly this shape: an exported
-  // helper with no production caller whose mutation guard was watching unreachable code.
-  //
-  // And re-testing the RESOLVED selector instead would be worse than dead — with
-  // STRICT_MODEL=0 an unmapped paid name degrades to `swe-1-6-slow`, so testing after
-  // resolution reports `claude-4-sonnet` as reachable on a free-only pool, which is exactly
-  // the lie #234 is about. `connect-discovery-rebuild.test.js` caught that on the first run
-  // when this was first written the wrong way round.
+  // Do not short-circuit on the RESOLVED free selector. With STRICT_MODEL=0 an
+  // unmapped paid name resolves to `swe-1-6-slow` with mapped:false; treating the
+  // selector alone as reachable would re-advertise every unsupported paid name.
+  // The real free floor is synthesized by both callers after this predicate runs.
   return (windsurfId) => {
-    const { selector, mapped } = resolveConnectSelector(windsurfId);
-    return { reachable: !!(mapped && known(selector) && entitled(selector)), selector: mapped ? selector : null };
+    // Discovery probes every MODELS row, including intentionally unsupported
+    // Cascade-only names. They are not paid requests and must not consume the
+    // resolver's one-time downgrade warning; a later real chat request still will.
+    const { selector, mapped } = resolveConnectSelector(windsurfId, { warnOnFallback: false });
+    return {
+      // resolveConnectSelector already validates aliases and direct selectors
+      // against the authoritative catalog. Keep entitlement as the second,
+      // independent gate; re-checking existence here would duplicate policy.
+      reachable: !!(mapped && entitled(selector)),
+      selector: mapped ? selector : null,
+    };
   };
 }
 
@@ -88,16 +83,27 @@ export function handleModels(env = process.env) {
   if (getBackendSwitch('devinConnect', effectiveEnv)) {
     // Row producer #1: the MODELS table, filtered to what this deployment can serve.
     //
-    // The rule (existence = snapshot ∪ live, plus the per-account entitlement check, plus
-    // the FREE_REACHABLE floor) now lives in buildConnectReachability because the Dashboard
-    // needs the identical answer. Existence alone used to be the only test here, so a
+    // The rule (existence = authoritative live catalog, with snapshot as cold-start
+    // fallback, plus per-account entitlement and the FREE_REACHABLE floor) now lives in
+    // buildConnectReachability because the Dashboard needs the identical answer. Existence
+    // alone used to be the only test here, so a
     // free-only pool advertised every paid selector the upstream publishes and the client
     // got a 403 at chat (#234 / #231 in the connect namespace). #232 fixed that for the
     // Cascade namespace, but its filters early-return unfiltered when devinConnect is on
     // (models.js isModelAllowedByCloudCatalog / filterModelKeysByCloudCatalog), which is
     // correct as a namespace boundary and is why the check has to be redone here.
     const isReachable = buildConnectReachability(effectiveEnv);
-    data = data.filter((m) => isReachable(m._windsurf_id).reachable);
+    // Discovery is a selector catalog, not an alias catalog. Several public names can
+    // resolve to the same upstream selector (for example `claude-opus-4.6` and
+    // `claude-opus-4-6`). Keep the first stable client-facing name and suppress the
+    // rest, otherwise one entitled upstream model appears two or three times.
+    const representedSelectors = new Set();
+    data = data.filter((m) => {
+      const resolved = isReachable(m._windsurf_id);
+      if (!resolved.reachable || representedSelectors.has(resolved.selector)) return false;
+      representedSelectors.add(resolved.selector);
+      return true;
+    });
     // Producers #2 and #3 below are keyed by SELECTOR, not by a MODELS id, so they cannot
     // go through isReachable — it resolves its argument through resolveConnectSelector.
     // They keep the entitlement check directly.
@@ -116,9 +122,10 @@ export function handleModels(env = process.env) {
     // selector (measured: 86 rows survived a filter applied to producer #1 alone).
     for (const row of getLiveCatalog()) {
       const id = row.selector;
-      if (!id || seen.has(id)) continue;
+      if (!id || seen.has(id) || representedSelectors.has(id)) continue;
       if (!entitled(id)) continue;
       seen.add(id);
+      representedSelectors.add(id);
       data.push({
         id,
         object: 'model',

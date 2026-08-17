@@ -827,8 +827,9 @@ const MODEL_CATALOG_CONFIRM_RETRY_MS = 30_000;
 // the live set back down. Hence per-account rows here, unioned before every write.
 //
 // Existence and entitlement are deliberately different questions. This union
-// answers "does the upstream have this selector at all" — the pool-wide view. Who
-// may CALL it stays per-account (isConnectSelectorAllowedForAccount → tier bucket).
+// answers "does at least one active account's live catalog contain this selector?"
+// — the pool-wide discovery view. Who may CALL it stays per-account: the tier
+// bucket and that account's own catalog must both allow it.
 const _connectCatalogRowsByAccount = new Map(); // account id → decoded catalog rows
 const _connectCatalogSyncedKeys = new Map();    // account id → apiKey already synced
 let _connectCatalogSyncPromise = null;
@@ -1368,7 +1369,20 @@ export function isConnectSelectorAllowedForAccount(account, selector) {
   // Paid selector: require a paid bucket. 'unknown' (unprobed new account) is
   // allowed — it self-heals to 'free' after a probe, then gets blocked here on
   // the next request, matching MODEL_TIER_ACCESS.unknown's optimistic policy.
-  return bucket === 'pro' || bucket === 'unknown';
+  if (bucket !== 'pro' && bucket !== 'unknown') return false;
+
+  // A successful GetCliModelConfigs response is authoritative for THIS account.
+  // Paid tier alone is not proof that every selector in the frozen snapshot still
+  // exists. Mixed pools expose the union, then this check keeps routing within the
+  // selected account's own contribution. If this account has never produced a
+  // non-empty catalog, retain the existing tier-based fail-open so a cold start or
+  // transient catalog failure does not take the account offline.
+  const rows = _connectCatalogRowsByAccount.get(account.id);
+  if (!Array.isArray(rows) || rows.length === 0) return true;
+  return rows.some((row) => {
+    const candidate = typeof row === 'string' ? row : row?.selector;
+    return typeof candidate === 'string' && candidate.trim() === selector;
+  });
 }
 
 // True if at least one active account is entitled to this connect selector.

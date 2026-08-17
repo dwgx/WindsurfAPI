@@ -26,7 +26,7 @@ import {
 } from '../src/auth.js';
 import { handleModels } from '../src/handlers/models.js';
 import {
-  setLiveCatalogSelectors, clearLiveCatalogSelectors,
+  setLiveCatalogSelectors, clearLiveCatalogSelectors, __testing,
 } from '../src/devin-connect-models.js';
 
 const FREE_SELECTOR = 'swe-1-6-slow';
@@ -103,6 +103,47 @@ describe('connect discovery — entitlement filter (#234)', () => {
     assert.ok(withPaid.length > freeOnly.length,
       `adding a paid account must widen discovery (was ${freeOnly.length}, now ${withPaid.length})`);
     assert.ok(withPaid.includes(FREE_SELECTOR), 'the free selector stays listed');
+  });
+
+  it('treats a non-empty live catalog as authoritative over the frozen snapshot', () => {
+    connectEnv();
+    mk('pro');
+    setLiveCatalogSelectors([
+      { selector: 'claude-opus-4-8-medium', provider: 'anthropic' },
+    ]);
+    liveCatalogDirty = true;
+
+    const rows = ids();
+    assert.ok(rows.includes('claude-opus-4-8-medium'),
+      'the selector confirmed by the live catalog must be advertised');
+    assert.ok(!rows.includes('gpt-5.5'),
+      'a snapshot-only model must not be advertised after a successful live sync');
+    assert.ok(rows.includes(FREE_SELECTOR), 'the universal free floor stays advertised');
+  });
+
+  it('does not log paid-request downgrade warnings while building discovery', () => {
+    connectEnv();
+    mk('pro');
+    setLiveCatalogSelectors([
+      { selector: 'claude-opus-4-8-medium', provider: 'anthropic' },
+    ]);
+    liveCatalogDirty = true;
+    __testing.degradeWarned.clear();
+
+    const warnings = [];
+    const originalWarn = console.warn;
+    console.warn = (...args) => { warnings.push(args.join(' ')); };
+    try {
+      ids();
+    } finally {
+      console.warn = originalWarn;
+    }
+
+    assert.deepEqual(
+      warnings.filter((line) => line.includes('paid request downgraded to free tier')),
+      [],
+      'GET /v1/models is a read-only catalog probe, not a paid request',
+    );
   });
 
   it('fails open on an empty pool instead of returning nothing', () => {

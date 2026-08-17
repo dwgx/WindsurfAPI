@@ -38,6 +38,7 @@ import {
 } from '../src/auth.js';
 import { handleDashboardApi } from '../src/dashboard/api.js';
 import { handleModels } from '../src/handlers/models.js';
+import { setLiveCatalogSelectors, clearLiveCatalogSelectors } from '../src/devin-connect-models.js';
 import { _resetRuntimeConfigForTests } from '../src/runtime-config.js';
 
 // Written literally rather than imported from FREE_REACHABLE_SELECTORS: importing the set
@@ -51,6 +52,7 @@ const ORIGINAL_ALLOW_NO_AUTH = process.env.DASHBOARD_ALLOW_NO_AUTH;
 const ORIGINAL_DEVIN_CONNECT = process.env.DEVIN_CONNECT;
 const ORIGINAL_DASHBOARD_PASSWORD = config.dashboardPassword;
 const created = [];
+let liveCatalogDirty = false;
 
 function fakeRes() {
   return {
@@ -102,6 +104,12 @@ beforeEach(() => {
   process.env.DASHBOARD_ALLOW_NO_AUTH = '1';
   config.dashboardPassword = '';
   configureBindHost('127.0.0.1');
+  // These are namespace/view tests. Keep them deterministic and offline: account
+  // additions must not launch real catalog RPCs with fixture tokens.
+  __setModelCatalogDeps({
+    disableConnectSync: true,
+    getCascadeModelConfigs: async () => ({ configs: [] }),
+  });
 });
 
 afterEach(async () => {
@@ -111,6 +119,10 @@ afterEach(async () => {
   await __waitForModelCatalogSync();
   __resetModelCatalogState();
   __setModelCatalogDeps(null);
+  if (liveCatalogDirty) {
+    clearLiveCatalogSelectors();
+    liveCatalogDirty = false;
+  }
   _resetRuntimeConfigForTests();
   if (ORIGINAL_DEVIN_CONNECT === undefined) delete process.env.DEVIN_CONNECT;
   else process.env.DEVIN_CONNECT = ORIGINAL_DEVIN_CONNECT;
@@ -170,6 +182,27 @@ describe('dashboard /models agrees with /v1/models on the Connect namespace (#23
     }
   });
 
+  it('includes live-only selectors that /v1/models synthesizes', async () => {
+    seed('pro');
+    const liveOnly = 'grok-4-5-medium-dashboard-parity';
+    const aliasBacked = 'claude-opus-4-6';
+    setLiveCatalogSelectors([
+      { selector: liveOnly, provider: 'xai', label: 'Grok live only' },
+      { selector: aliasBacked, provider: 'anthropic', label: 'Claude Opus 4.8 Medium' },
+    ]);
+    liveCatalogDirty = true;
+
+    const ids = v1Ids();
+    assert.ok(ids.has(liveOnly), 'precondition: /v1/models synthesized the live-only selector');
+    const rows = await dashboardModels();
+    const row = rows.find((r) => r.id === liveOnly);
+    assert.ok(row, 'Dashboard omitted a selector that /v1/models advertises');
+    assert.equal(row.reachable, true);
+    assert.equal(row.connectSelector, liveOnly);
+    assert.equal(rows.filter((r) => r.reachable && r.connectSelector === aliasBacked).length, 1,
+      'Dashboard must not append a canonical row when a visible alias already represents it');
+  });
+
   it('widens when a paid account joins — the flag is computed, not baked in', async () => {
     seed('free');
     const before = await dashboardModels();
@@ -184,42 +217,6 @@ describe('dashboard /models agrees with /v1/models on the Connect namespace (#23
       `reachable count did not grow when a pro account joined (${reachableBefore} -> `
       + `${reachableAfter}). A hardcoded answer would pass every assertion above`,
     );
-  });
-
-  // Pins the premise that makes a documented survivor harmless rather than pretending the
-  // survivor is covered (mutations spec: "the existence term (known()) is dropped").
-  //
-  // The predicate is `mapped && known(selector) && entitled(selector)`. Dropping `known`
-  // changes nothing today because no MODELS entry is in the mapped-but-unknown state: every
-  // entry that resolves mapped also exists in snapshot ∪ live. That is a property of the
-  // current alias map, NOT a structural guarantee — resolveConnectSelector's first branch
-  // (devin-connect-models.js:257) returns mapped:true straight from SELECTOR_MAP without
-  // consulting the catalog, so an alias left pointing at a selector a snapshot rotation
-  // removed would be mapped-but-unknown and `known` would become the only thing rejecting
-  // it. When that day comes this assertion fails, which is the signal to write the fixture
-  // the mutation currently cannot have.
-  it('no MODELS entry is mapped-but-unknown — the premise behind a documented survivor', async () => {
-    seed('free');
-    const { MODELS } = await import('../src/models.js');
-    const dcm = await import('../src/devin-connect-models.js');
-    const { CATALOG_SELECTORS, _liveSelectors } = dcm.__testing;
-    const mappedUnknown = [];
-    let mapped = 0;
-    for (const key of Object.keys(MODELS)) {
-      const r = dcm.resolveConnectSelector(MODELS[key]?._windsurf_id || key);
-      if (!r.mapped) continue;
-      mapped++;
-      if (!CATALOG_SELECTORS.has(r.selector) && !_liveSelectors.has(r.selector)) {
-        mappedUnknown.push(`${key} -> ${r.selector}`);
-      }
-    }
-    assert.ok(mapped > 0, `precondition: some entry must resolve mapped (got ${mapped}) — a `
-      + 'zero here would make the assertion below vacuously true');
-    assert.deepEqual(mappedUnknown, [],
-      'a MODELS entry now resolves to a selector absent from snapshot ∪ live. The existence '
-      + 'term in buildConnectReachability just became load-bearing, so its mutation should '
-      + 'now be CAUGHT — write the fixture and flip expectCaught in '
-      + 'test/mutations/dashboard-connect-parity.json');
   });
 
   // #235: the panel must say whether a model COSTS QUOTA, and must not guess when it cannot

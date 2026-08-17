@@ -39,7 +39,7 @@ import { getLogs, subscribeToLogs, unsubscribeFromLogs } from './logger.js';
 import { getProxyConfig, getProxyConfigMasked, setGlobalProxy, setAccountProxy, removeProxy, getEffectiveProxy } from './proxy-config.js';
 import { MODELS, MODEL_TIER_ACCESS as _TIER_TABLE, getTierModels as _getTierModels, filterModelKeysByCloudCatalog } from '../models.js';
 import { buildConnectReachability } from '../handlers/models.js';
-import { FREE_REACHABLE_SELECTORS } from '../devin-connect-models.js';
+import { FREE_REACHABLE_SELECTORS, getLiveCatalog } from '../devin-connect-models.js';
 import { windsurfLogin, refreshFirebaseToken, reRegisterWithCodeium } from './windsurf-login.js';
 import { getModelAccessConfig, setModelAccessMode, setModelAccessList, addModelToList, removeModelFromList, setDefaultModel } from './model-access.js';
 import { checkMessageRateLimit } from '../windsurf-api.js';
@@ -1905,6 +1905,9 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
     // usable rate table, which is what lets `currentlyFree` below distinguish "costs quota"
     // from "we do not know yet".
     const freeSet = getCurrentlyFreeConnectSelectors();
+    const connectCurrentlyFree = (selector) => (!selector ? null
+      : isConnectSelectorCurrentlyFree(selector) ? true
+      : (freeSet === null ? null : false));
     const models = filterModelKeysByCloudCatalog().map((id) => {
       const info = MODELS[id];
       const { reachable, selector } = isReachable(id);
@@ -1933,9 +1936,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
         // Hence the explicit freeSet null-check: auth.js:304 returns null for "no table
         // anywhere" precisely so callers do not have to guess, and flattening it here would
         // throw away the one thing that function went out of its way to preserve.
-        currentlyFree: !selector ? null
-          : isConnectSelectorCurrentlyFree(selector) ? true
-          : (freeSet === null ? null : false),
+        currentlyFree: connectCurrentlyFree(selector),
       };
     });
     // Selectors that ARE serveable but have no MODELS row (`swe-1-6-slow` is in neither the
@@ -1951,6 +1952,33 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
     // test/dashboard-models-connect-parity.test.js.
     if (getBackendSwitch('devinConnect')) {
       const seen = new Set(models.map((m) => m.id));
+      const representedSelectors = new Set(models
+        .map((m) => m.connectSelector)
+        .filter(Boolean));
+
+      // /v1/models has a second producer for selectors present in the live Connect
+      // catalog but absent from the shared MODELS table. Mirror it here; otherwise
+      // the API advertises live-only selectors that the Dashboard cannot display,
+      // inspect for pricing, or manage. Keep rows annotated rather than filtered:
+      // a free account's catalog still lists paid models, and the operator needs to
+      // see those as unreachable rather than have them disappear.
+      for (const row of getLiveCatalog()) {
+        const id = row?.selector;
+        if (!id || seen.has(id) || representedSelectors.has(id)) continue;
+        seen.add(id);
+        const { reachable, selector } = isReachable(id);
+        if (selector) representedSelectors.add(selector);
+        models.push({
+          id,
+          name: row.label || id,
+          provider: row.provider || 'windsurf',
+          credit: null,
+          reachable,
+          connectSelector: selector,
+          currentlyFree: connectCurrentlyFree(selector),
+        });
+      }
+
       for (const selector of FREE_REACHABLE_SELECTORS) {
         if (seen.has(selector)) continue;
         seen.add(selector);

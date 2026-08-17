@@ -4,13 +4,13 @@
     "test/connect-discovery-rebuild.test.js",
     "test/cloud-catalog-backend-boundary.test.js"
   ],
-  "expectBaselinePass": 22,
+  "expectBaselinePass": 24,
   "mutations": [
     {
       "name": "the original defect: dashboard stops annotating and reports everything reachable",
       "file": "src/dashboard/api.js",
-      "anchor": "      const { reachable, selector } = isReachable(id);",
-      "replacement": "      const { selector } = isReachable(id); const reachable = true;"
+      "anchor": "      const info = MODELS[id];\n      const { reachable, selector } = isReachable(id);",
+      "replacement": "      const info = MODELS[id];\n      const { selector } = isReachable(id); const reachable = true;"
     },
     {
       "name": "dashboard narrows instead of annotating — an allow-list entry becomes unclickable",
@@ -37,41 +37,40 @@
       "replacement": "        // look identical in the UI otherwise."
     },
     {
+      "name": "Dashboard stops synthesizing live-only selectors advertised by /v1/models",
+      "file": "src/dashboard/api.js",
+      "anchor": "      for (const row of getLiveCatalog()) {",
+      "replacement": "      for (const row of []) {"
+    },
+    {
       "name": "the FREE_REACHABLE floor is re-tested AFTER resolution — a degraded paid name reads as reachable",
       "file": "src/handlers/models.js",
-      "anchor": "    const { selector, mapped } = resolveConnectSelector(windsurfId);\n    return { reachable: !!(mapped && known(selector) && entitled(selector)), selector: mapped ? selector : null };",
-      "replacement": "    const { selector, mapped } = resolveConnectSelector(windsurfId);\n    if (FREE_REACHABLE_SELECTORS.has(selector)) return { reachable: true, selector };\n    return { reachable: !!(mapped && known(selector) && entitled(selector)), selector: mapped ? selector : null };"
+      "anchor": "      reachable: !!(mapped && entitled(selector)),",
+      "replacement": "      reachable: FREE_REACHABLE_SELECTORS.has(selector) || !!(mapped && entitled(selector)),"
     },
     {
       "name": "entitlement term dropped from the predicate — a free-only pool advertises paid selectors again",
       "file": "src/handlers/models.js",
-      "anchor": "    return { reachable: !!(mapped && known(selector) && entitled(selector)), selector: mapped ? selector : null };",
-      "replacement": "    return { reachable: !!(mapped && known(selector)), selector: mapped ? selector : null };"
-    },
-    {
-      "name": "DOCUMENTED SURVIVOR: the existence term (known()) is dropped. Measured: of 163 MODELS entries, 58 resolve mapped and ALL 58 are known (snapshot ∪ live), 105 are unmapped — so no fixture puts a row in the mapped-but-unknown state this term exists to reject, and dropping it changes nothing observable. It is NOT dead code: resolveConnectSelector's first branch (devin-connect-models.js:257) returns mapped:true straight from SELECTOR_MAP without consulting the catalog, so an alias left pointing at a selector a snapshot rotation removed would be mapped-but-unknown and this term is the only thing rejecting it. Reproducing that needs a SELECTOR_MAP entry diverging from the catalog, i.e. reaching into module internals to manufacture drift; the term is kept and the premise that makes it currently unexercised is pinned by the fixture-shape assertion in the parity test instead.",
-      "file": "src/handlers/models.js",
-      "anchor": "    return { reachable: !!(mapped && known(selector) && entitled(selector)), selector: mapped ? selector : null };",
-      "replacement": "    return { reachable: !!(mapped && entitled(selector)), selector: mapped ? selector : null };",
-      "expectCaught": false
+      "anchor": "      reachable: !!(mapped && entitled(selector)),",
+      "replacement": "      reachable: !!mapped,"
     },
     {
       "name": "#235 unknown cost is flattened to 'billable' — a guess rendered as a fact",
       "file": "src/dashboard/api.js",
-      "anchor": "        currentlyFree: !selector ? null\n          : isConnectSelectorCurrentlyFree(selector) ? true\n          : (freeSet === null ? null : false),",
-      "replacement": "        currentlyFree: selector ? isConnectSelectorCurrentlyFree(selector) : null,"
+      "anchor": "    const connectCurrentlyFree = (selector) => (!selector ? null\n      : isConnectSelectorCurrentlyFree(selector) ? true\n      : (freeSet === null ? null : false));",
+      "replacement": "    const connectCurrentlyFree = (selector) => (selector ? isConnectSelectorCurrentlyFree(selector) : null);"
     },
     {
       "name": "#235 unknown cost is flattened to 'free' — the reporter's exact loss, reintroduced",
       "file": "src/dashboard/api.js",
-      "anchor": "        currentlyFree: !selector ? null\n          : isConnectSelectorCurrentlyFree(selector) ? true\n          : (freeSet === null ? null : false),",
-      "replacement": "        currentlyFree: !selector ? null : (freeSet === null ? true : isConnectSelectorCurrentlyFree(selector)),"
+      "anchor": "    const connectCurrentlyFree = (selector) => (!selector ? null\n      : isConnectSelectorCurrentlyFree(selector) ? true\n      : (freeSet === null ? null : false));",
+      "replacement": "    const connectCurrentlyFree = (selector) => (!selector ? null : (freeSet === null ? true : isConnectSelectorCurrentlyFree(selector)));"
     },
     {
       "name": "#235 the field is dropped entirely — the panel goes back to not answering the question",
       "file": "src/dashboard/api.js",
-      "anchor": "        currentlyFree: !selector ? null\n          : isConnectSelectorCurrentlyFree(selector) ? true\n          : (freeSet === null ? null : false),",
-      "replacement": ""
+      "anchor": "    const connectCurrentlyFree = (selector) => (!selector ? null\n      : isConnectSelectorCurrentlyFree(selector) ? true\n      : (freeSet === null ? null : false));",
+      "replacement": "    const connectCurrentlyFree = () => undefined;"
     },
     {
       "name": "predicate ignores the transport — a Cascade deployment gets its panel filtered by connect rules",
@@ -82,8 +81,8 @@
     {
       "name": "handleModels stops using the shared predicate — the two views can diverge again",
       "file": "src/handlers/models.js",
-      "anchor": "    data = data.filter((m) => isReachable(m._windsurf_id).reachable);",
-      "replacement": "    data = data.filter((m) => { const { selector, mapped } = resolveConnectSelector(m._windsurf_id); return mapped && entitled(selector); });"
+      "anchor": "      const resolved = isReachable(m._windsurf_id);",
+      "replacement": "      const resolved = resolveConnectSelector(m._windsurf_id, { warnOnFallback: false });"
     }
   ]
 }

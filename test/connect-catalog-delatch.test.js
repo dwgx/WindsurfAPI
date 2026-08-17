@@ -14,6 +14,7 @@ import assert from 'node:assert/strict';
 import {
   __resetModelCatalogState, __setModelCatalogDeps, __waitForModelCatalogSync,
   addAccountByKey, removeAccount, getAccountInternal, setAccountStatus,
+  isConnectSelectorAllowedForAccount,
 } from '../src/auth.js';
 
 const created = [];
@@ -106,6 +107,27 @@ describe('connect catalog de-latch (#234)', () => {
 
     assert.deepEqual(lastUnion(), ['claude-opus-4-8-medium', 'swe-1-6-slow'],
       'the resolver must hold the union of both accounts, not just the last one');
+  });
+
+  it('keeps paid-account routing inside that account\'s own live catalog', async () => {
+    installDeps({
+      perAccount: {
+        'sk-opus-acct': [{ selector: 'claude-opus-4-8-medium' }],
+        'sk-gpt-acct': [{ selector: 'gpt-5-5-low' }],
+      },
+    });
+
+    const opus = mk('sk-opus-acct', 'pro');
+    await __waitForModelCatalogSync();
+    const gpt = mk('sk-gpt-acct', 'pro');
+    await __waitForModelCatalogSync();
+
+    assert.equal(isConnectSelectorAllowedForAccount(opus, 'claude-opus-4-8-medium'), true);
+    assert.equal(isConnectSelectorAllowedForAccount(opus, 'gpt-5-5-low'), false,
+      'a paid tier is not permission to route a selector absent from this account catalog');
+    assert.equal(isConnectSelectorAllowedForAccount(gpt, 'gpt-5-5-low'), true);
+    assert.equal(isConnectSelectorAllowedForAccount(gpt, 'claude-opus-4-8-medium'), false,
+      'mixed-pool union must not erase per-account routing boundaries');
   });
 
   it('does not let an empty response shrink the union', async () => {

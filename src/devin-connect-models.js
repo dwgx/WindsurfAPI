@@ -172,11 +172,12 @@ export const FREE_REACHABLE_SELECTORS = new Set(['swe-1-6-slow']);
 // (chat.js) as "not a valid model", despite being genuinely runnable.
 //
 // Fix: a runtime-populated live selector set, refreshed from GetCliModelConfigs
-// (devin-connect-catalog.js:fetchCatalog) by auth.js on catalog sync. The
-// existence checks below treat "snapshot ∪ live" as the source of truth — the
-// snapshot degrades to a cold-start fallback + the catalog-drift test baseline,
-// exactly the single-source-of-truth principle converged on cross-project.
-// Empty until the first sync (cold start falls back to snapshot alone).
+// (devin-connect-catalog.js:fetchCatalog) by auth.js on catalog sync. A NON-EMPTY
+// live response is authoritative: keeping `snapshot ∪ live` after a successful
+// sync advertises selectors omitted by upstream account-level restrictions. The
+// snapshot is therefore only a cold-start / failed-sync fallback. Empty responses
+// never replace a prior good live set, so making live authoritative does not turn
+// a transient fetch failure into an empty catalog.
 const _liveSelectors = new Set();
 // Full decoded catalog rows ({ selector, label, provider, alias, ... }) from the
 // last good sync. Kept alongside _liveSelectors so /v1/models can synthesize
@@ -247,9 +248,26 @@ export function clearLiveCatalogSelectors() {
   _liveCatalog = [];
 }
 
-/** A selector exists if the frozen snapshot OR the live catalog knows it. */
-function selectorExists(name) {
-  return CATALOG_SELECTORS.has(name) || _liveSelectors.has(name);
+// Synthetic selectors do not appear in GetCliModelConfigs but remain valid routing
+// targets. Keep this list deliberately tiny: everything else must come from the
+// authoritative live catalog once one has been fetched.
+const ALWAYS_KNOWN_SELECTORS = new Set([
+  ...FREE_REACHABLE_SELECTORS,
+  'subagent-default',
+]);
+
+/**
+ * Does the currently authoritative Connect catalog contain this selector?
+ *
+ * Before the first successful live sync, fall back to the frozen snapshot so a
+ * cold-start or transient catalog failure stays usable. Once live data exists,
+ * use it exclusively so removed snapshot selectors are not advertised or routed.
+ */
+export function isKnownConnectSelector(name) {
+  if (ALWAYS_KNOWN_SELECTORS.has(name)) return true;
+  return _liveSelectors.size > 0
+    ? _liveSelectors.has(name)
+    : CATALOG_SELECTORS.has(name);
 }
 
 /**
@@ -259,43 +277,54 @@ function selectorExists(name) {
  * unmapped alias — it degrades to the one selector that always works.
  *
  * @param {string} model
+ * @param {object} [opts]
+ * @param {boolean} [opts.warnOnFallback=true] set false for read-only catalog
+ *   probes; a later real request will still emit the one-time downgrade warning
  * @returns {{ selector: string, mapped: boolean }}
  */
-export function resolveConnectSelector(model) {
+export function resolveConnectSelector(model, { warnOnFallback = true } = {}) {
   const raw = String(model || '').trim();
   if (!raw) return { selector: FREE_TIER_SELECTOR, mapped: false };
 
-  // Direct hit (covers both dash-form and enum-form selectors passed verbatim).
-  if (SELECTOR_MAP.has(raw)) return { selector: SELECTOR_MAP.get(raw), mapped: true };
+  // A hand-maintained alias is valid only while its TARGET exists in the
+  // authoritative catalog. Otherwise a stale map entry can keep a removed model
+  // routable forever even after the live sync proved it is gone.
+  const directTarget = SELECTOR_MAP.get(raw);
+  if (directTarget && isKnownConnectSelector(directTarget)) {
+    return { selector: directTarget, mapped: true };
+  }
 
   // Normalize: lowercase, collapse dots to dashes, strip a leading provider
   // prefix some clients prepend (e.g. "anthropic/claude-...").
   const norm = raw.toLowerCase().replace(/^[a-z]+\//, '').replace(/\./g, '-');
-  if (SELECTOR_MAP.has(norm)) return { selector: SELECTOR_MAP.get(norm), mapped: true };
+  const normalizedTarget = SELECTOR_MAP.get(norm);
+  if (normalizedTarget && isKnownConnectSelector(normalizedTarget)) {
+    return { selector: normalizedTarget, mapped: true };
+  }
   // A normalized dash-form that IS a real catalog selector (e.g. client sent the
   // dotted "gpt-5.5-medium" → norm "gpt-5-5-medium" which the catalog exposes but
   // the alias map doesn't list). Without this, a valid selector written with dots
   // silently degraded to the free tier. Checked after the map so an alias still
   // wins, before the free-tier fallback.
-  if (selectorExists(norm)) return { selector: norm, mapped: true };
+  if (isKnownConnectSelector(norm)) return { selector: norm, mapped: true };
 
   // Enum-form passthrough — ONLY when the catalog actually exposes it. A blind
   // MODEL_* passthrough is what re-introduces UPSTREAM_INTERNAL on drift: any
   // bogus MODEL_DOES_NOT_EXIST would otherwise be written raw to #21.
-  if (/^MODEL_[A-Z0-9_]+$/.test(raw) && selectorExists(raw)) {
+  if (/^MODEL_[A-Z0-9_]+$/.test(raw) && isKnownConnectSelector(raw)) {
     return { selector: raw, mapped: true };
   }
 
-  // A verbatim dash-form selector that IS in the catalog (snapshot ∪ live) but
-  // missing from the alias map (e.g. a lowercased/prefixed valid enum, or a
-  // selector the upstream added after the frozen snapshot — qwen-3/glm-5/etc.)
-  // should still go through rather than silently degrade a paid request to free.
-  if (selectorExists(raw)) return { selector: raw, mapped: true };
+  // A verbatim dash-form selector that IS in the authoritative catalog but is
+  // missing from the alias map (e.g. a selector the upstream added after the
+  // frozen snapshot — qwen-3/glm-5/etc.) should still go through rather than
+  // silently degrade a paid request to free.
+  if (isKnownConnectSelector(raw)) return { selector: raw, mapped: true };
 
   // Unmapped: degrade to the always-available free selector, but make it
   // OBSERVABLE (one-time per distinct model) so a caller ignoring mapped:false
   // still gets an operator signal that a paid model was downgraded to free.
-  if (!degradeWarned.has(raw)) {
+  if (warnOnFallback && !degradeWarned.has(raw)) {
     degradeWarned.add(raw);
     log.warn(
       `[devin-connect] unmapped model "${raw}" not in catalog — degrading to `

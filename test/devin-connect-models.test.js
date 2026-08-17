@@ -54,7 +54,8 @@ describe('resolveConnectSelector — live catalog (audit 2026-07-12 snapshot sta
   // after it was captured (proven on a live account 2026-07-12: qwen-3, glm-5,
   // kimi-k2.5, deepseek-v3, minimax-*) were absent from CATALOG_SELECTORS and
   // got mapped:false → 400'd by the strict gate despite being runnable. The live
-  // catalog set (populated from GetCliModelConfigs) fixes this as "snapshot ∪ live".
+  // catalog set (populated from GetCliModelConfigs) becomes authoritative after
+  // the first successful sync; the snapshot remains the cold-start fallback.
   const STALE = ['qwen-3', 'glm-5', 'kimi-k2.5', 'deepseek-v3'];
 
   it('cold start (no live sync): a genuinely-runnable-but-unsnapshotted selector is mapped:false', async () => {
@@ -100,6 +101,19 @@ describe('resolveConnectSelector — live catalog (audit 2026-07-12 snapshot sta
     // independent of the (now removed) alias fold.
     assert.equal(m.resolveConnectSelector('glm-5-2').mapped, true);
     assert.equal(m.resolveConnectSelector('glm-5.2').selector, 'glm-5-2');
+  });
+
+  it('retires a snapshot alias when its target is absent from the live catalog', async () => {
+    const m = await import(`../src/devin-connect-models.js?fresh=${Date.now()}-c3`);
+    m.setLiveCatalogSelectors([
+      { selector: 'claude-opus-4-8-medium', alias: 'claude-opus-4.8' },
+    ]);
+
+    assert.equal(m.resolveConnectSelector('claude-opus-4.8').mapped, true,
+      'precondition: an alias targeting a live selector remains valid');
+    const retired = m.resolveConnectSelector('gpt-5.5', { warnOnFallback: false });
+    assert.deepEqual(retired, { selector: m.FREE_TIER_SELECTOR, mapped: false },
+      'chat preflight must not keep a snapshot-only alias routable after live sync');
   });
 
   it('a bad/empty sync never blanks out a good live set', async () => {

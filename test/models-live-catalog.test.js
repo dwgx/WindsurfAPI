@@ -1,19 +1,20 @@
 // audit 2026-07-12 (v3.2.4 regression fix): after v3.2.3 made resolveConnectSelector
-// recognize live-synced selectors (snapshot ∪ live), the /v1/models handler still
+// recognize live-synced selectors, the /v1/models handler still
 // filtered against the frozen CATALOG_SELECTORS snapshot ONLY, and the 37 upstream-
 // added selectors (gpt-5-6-*/grok-4-5-*/nemotron) aren't in the hardcoded MODELS
 // table either — so they ran fine at /v1/chat/completions but were absent from
 // /v1/models, leaving Codex/clients unable to discover them. handleModels now
-// (a) filters on snapshot ∪ live and (b) synthesizes entries for live-only selectors.
+// (a) filters on the authoritative live catalog (snapshot only before sync) and
+// (b) synthesizes entries for live-only selectors.
 //
 // NOTE: handleModels imports devin-connect-models via a plain (cached) import, so
 // these tests use the SAME cached singleton (no ?fresh= — that would give the
-// handler a different instance than the one we seed). The live catalog is additive
-// and cleared per test via setLiveCatalogSelectors, so cross-test leakage is bounded.
+// handler a different instance than the one we seed). Each non-empty seed replaces
+// the prior live catalog, so cross-test leakage inside this file is bounded.
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { setLiveCatalogSelectors } from '../src/devin-connect-models.js';
+import { setLiveCatalogSelectors, resolveConnectSelector } from '../src/devin-connect-models.js';
 import { handleModels } from '../src/handlers/models.js';
 
 const ENV_ON = { DEVIN_CONNECT: '1' };
@@ -41,6 +42,19 @@ describe('/v1/models — live-catalog synthesis (audit v3.2.4)', () => {
     const { data } = handleModels(ENV_ON);
     const count = data.filter((m) => m.id === 'swe-1-6-slow').length;
     assert.ok(count <= 1, `swe-1-6-slow must not be duplicated (got ${count})`);
+  });
+
+  it('deduplicates a live canonical selector already represented by a client alias', () => {
+    const selector = 'claude-opus-4-6';
+    setLiveCatalogSelectors([{ selector, provider: 'anthropic' }]);
+    const { data } = handleModels(ENV_ON);
+    const matching = data.filter((m) => {
+      if (m._source === 'live_catalog') return m.id === selector;
+      return resolveConnectSelector(m._windsurf_id, { warnOnFallback: false }).selector === selector;
+    });
+
+    assert.equal(matching.length, 1,
+      `one upstream selector must produce one discovery row, got: ${matching.map((m) => m.id).join(', ')}`);
   });
 
   it('non-DEVIN_CONNECT deployment returns the full list without live synthesis', () => {
