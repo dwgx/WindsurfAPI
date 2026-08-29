@@ -219,6 +219,23 @@ export const MODELS = {
   'astraflow/llama-3.3-70b':        { name: 'astraflow/llama-3.3-70b',        provider: 'astraflow', enumValue: 0, modelUid: 'llama-3.3-70b-instruct',    credit: 0.5 , deprecated: true },
   'astraflow/gemini-2.0-flash':     { name: 'astraflow/gemini-2.0-flash',     provider: 'astraflow', enumValue: 0, modelUid: 'gemini-2.0-flash',          credit: 0.5 , deprecated: true },
 
+  // ── OrcaRouter (AI gateway) ────────────────────────────────
+  // OrcaRouter is an OpenAI-compatible AI gateway (https://www.orcarouter.ai)
+  // that aggregates models from Anthropic, OpenAI, Google, DeepSeek and more
+  // behind one endpoint, adding adaptive routing, automatic failover and
+  // zero-markup inference. These entries use provider:'orcarouter' and set
+  // enumValue:0 so chat.js short-circuits the Windsurf backends and forwards
+  // the request verbatim to https://api.orcarouter.ai/v1 (src/orcarouter.js)
+  // with the operator's ORCAROUTER_API_KEY. A handful of curated ids are
+  // catalogued below; any id from GET /v1/models is also accepted as a raw
+  // orcarouter/ prefixed model name, so the gateway's full catalog stays
+  // reachable without a static entry here.
+  'orcarouter/free':                { name: 'orcarouter/free',                provider: 'orcarouter', enumValue: 0, modelUid: 'orcarouter/free',                credit: 0 , backend: 'orcarouter' },
+  'orcarouter/fusion':              { name: 'orcarouter/fusion',              provider: 'orcarouter', enumValue: 0, modelUid: 'orcarouter/fusion',              credit: 1 , backend: 'orcarouter' },
+  'orcarouter/fusion-flash':        { name: 'orcarouter/fusion-flash',        provider: 'orcarouter', enumValue: 0, modelUid: 'orcarouter/fusion-flash',        credit: 1 , backend: 'orcarouter' },
+  'orcarouter/fusion-mini':         { name: 'orcarouter/fusion-mini',         provider: 'orcarouter', enumValue: 0, modelUid: 'orcarouter/fusion-mini',         credit: 0.5, backend: 'orcarouter' },
+  'orcarouter/auto':                { name: 'orcarouter/auto',                provider: 'orcarouter', enumValue: 0, modelUid: 'orcarouter/auto',                credit: 1 , backend: 'orcarouter' },
+
   // ── Gemini ──────────────────────────────────────────────
   'gemini-2.5-pro':                 { name: 'gemini-2.5-pro',                 provider: 'google', enumValue: 246, modelUid: 'MODEL_GOOGLE_GEMINI_2_5_PRO', credit: 1 },
   'gemini-2.5-flash':               { name: 'gemini-2.5-flash',               provider: 'google', enumValue: 312, modelUid: 'MODEL_GOOGLE_GEMINI_2_5_FLASH', credit: 0.5 },
@@ -835,6 +852,10 @@ function isModelAllowedByCatalogUids(key, catalogUids) {
   const model = MODELS[key];
   if (!model) return false;
   if (model.backend === 'special_agent') return true;
+  // Third-party gateway models (orcarouter/*) are served by the operator's own
+  // upstream key, never by the Windsurf account pool — so the Windsurf cloud
+  // catalog must not filter them out of /v1/models.
+  if (model.backend === 'orcarouter') return true;
   const uid = normalizeCloudCatalogUid(model.modelUid);
   return uid !== '' && catalogUids.has(uid);
 }

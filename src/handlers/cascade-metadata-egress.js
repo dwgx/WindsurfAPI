@@ -149,6 +149,7 @@ const PROVIDER_DISPLAY_NAMES = {
   minimax: 'MiniMax',
   moonshot: 'Moonshot',
   openai: 'OpenAI',
+  orcarouter: 'OrcaRouter',
   windsurf: 'Windsurf',
   xai: 'xAI',
   zhipu: 'Zhipu',

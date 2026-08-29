@@ -176,6 +176,11 @@ export const config = {
   astraflowApiKeyCn: process.env.ASTRAFLOW_CN_API_KEY || '',
   astraflowApiUrl: 'https://api-us-ca.umodelverse.ai/v1',
   astraflowApiUrlCn: 'https://api.modelverse.cn/v1',
+  // OrcaRouter — OpenAI-compatible AI gateway (https://www.orcarouter.ai).
+  // Routes orcarouter/* models straight to https://api.orcarouter.ai/v1.
+  // Set ORCAROUTER_API_KEY to enable them (see src/orcarouter.js).
+  orcarouterApiKey: process.env.ORCAROUTER_API_KEY || '',
+  orcarouterApiUrl: 'https://api.orcarouter.ai/v1',
   // Fallback model when a request omits `model`. MUST be a name that resolves to
   // a live DEVIN_CONNECT catalog selector (mapped:true) — the old
   // 'claude-4.5-sonnet-thinking' is a legacy word-order alias that resolveModel

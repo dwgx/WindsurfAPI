@@ -339,6 +339,7 @@ In your client's settings for **Custom OpenAI Compatible**:
 | `WINDSURFAPI_NATIVE_TOOL_BRIDGE_MODELS` / `PROVIDERS` / `ROUTES` / `CALLERS` / `ACCOUNTS` / `API_KEYS` | empty | Optional native-bridge gray gates. Empty means unrestricted; when set, the request must match. `ACCOUNTS` accepts upstream account id/email. `API_KEYS` matches caller API keys without passing plaintext tokens into chat logic. |
 | `WINDSURFAPI_NATIVE_TOOL_BRIDGE_OFF` | empty | Set to `1` to force native bridge off. |
 | `WINDSURFAPI_SPECIAL_AGENT_BACKEND` | empty | Optional lab-only special-agent backend. Set `devin-cli` to test `swe-1.6`, `swe-1.6-fast`, `adaptive`, and `arena-*` through Devin CLI instead of direct Cascade. This is not a normal catalog-model fix. |
+| `ORCAROUTER_API_KEY` | empty | Enables the OrcaRouter third-party gateway provider. When set, `orcarouter/*` models (e.g. `orcarouter/fusion-mini`) are forwarded verbatim to `https://api.orcarouter.ai/v1` and do not consume Windsurf account-pool quota. See the "Supported Models" section. |
 | `DEVIN_CLI_PATH` | `devin` | Devin CLI executable path. Docker/macOS deployments must install or mount it themselves. |
 | `DEVIN_CLI_MODE` | `print` | `print` uses conservative `devin -p`; `acp` is an experimental ACP stdio backend using upstream Windsurf account-pool apiKeys. |
 | `DEVIN_MAX_PROCS` | `1` | Maximum concurrent Devin CLI processes. |
@@ -449,6 +450,18 @@ swe-1.5 / 1.5-fast / 1.6 / 1.6-fast / 1.7 / 1.7-lightning · arena-fast · arena
 > **Free-account entitlements** typically include `gemini-2.5-flash`, `glm-4.7` / `glm-5` / `5.1`, `kimi-k2` / `k2.5` / `k2-6`, `qwen-3` and similar open-source models; Claude family, GPT family, and Opus / thinking variants require Pro. Each account's exact list shows up in the dashboard.
 >
 > **Tool-calling reliability (measured v2.0.82+):** Claude family is the most reliable (their training covered prompt-level tool protocols); GLM-4.7 / Kimi-K2.5 work for most cases via NLU fallback + optional retry-with-correction; GLM-5.1 is unreliable on the cascade backend (it often returns empty responses, no narration to recover from); GPT family is also limited because the cascade upstream doesn't carry `tools[]` schema. For Claude Code / Cline / Codex doing local tool calls, prefer `claude-haiku-4.5` or `claude-sonnet-4.6`.
+
+<details>
+<summary><b>OrcaRouter (OpenAI-compatible AI gateway) — third-party provider</b></summary>
+
+[OrcaRouter](https://www.orcarouter.ai) is an OpenAI-compatible AI gateway. Like OpenRouter, it exposes a provider/model namespace across many models on one endpoint — but it also combines adaptive routing, automatic failover, zero-markup inference, observability, guardrails, and agent-tool governance behind that same endpoint. Adding it as a first-class provider here means setting `ORCAROUTER_API_KEY` and calling any `orcarouter/*` model (e.g. `orcarouter/fusion-mini`, `orcarouter/fusion`); requests are forwarded verbatim to `https://api.orcarouter.ai/v1` and do not consume Windsurf account-pool quota. Gateway-level, zero-trust security for AI agents runs on the same endpoint — screening every prompt/response and governing every tool call on a default-deny basis, with no application code changes.
+
+- Config: set `ORCAROUTER_API_KEY=sk-orca-...` in `.env`.
+- Model prefix: `orcarouter/<upstream-model-id>` — any id forwards (`GET /v1/models` lists the curated `orcarouter/free` / `fusion` / `fusion-flash` / `fusion-mini` / `auto`).
+- Both streaming and non-streaming OpenAI-compatible responses are relayed.
+- Discord: discord.gg/YEubt8enRA · X: https://x.com/OrcaRouter
+
+</details>
 
 ### Language-Following for CJK Users
 

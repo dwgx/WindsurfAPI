@@ -32,6 +32,39 @@ function clineCompatArgs(raw, active) {
   if (fixed !== (raw || '{}')) recordArgRepair();
   return fixed;
 }
+
+// OrcaRouter forward: relay the upstream JSON/SSE response to the caller.
+// The upstream body is buffered whole by forwardChatCompletions, so the stream
+// path just writes it back verbatim (frames are already `data: …\n\n`-separated).
+// Error responses (4xx/5xx) are relayed with their OpenAI-shaped body so the
+// client sees the gateway's real `type`/`code` instead of a generic 502.
+function forwardOrcaRouterChat(body, { apiKey, signal = null } = {}) {
+  return forwardChatCompletions(body, { apiKey, signal })
+    .then(({ status, body: buf }) => {
+      const raw = buf.toString('utf8');
+      if (body.stream) {
+        return {
+          status,
+          stream: true,
+          headers: {
+            'Content-Type': 'text/event-stream',
+            'Cache-Control': 'no-store',
+            'Connection': 'keep-alive',
+            'X-Accel-Buffering': 'no',
+          },
+          async handler(res) {
+            if (!res.writableEnded) res.write(raw);
+            if (!res.writableEnded) res.end();
+          },
+        };
+      }
+      try {
+        return { status, body: JSON.parse(raw) };
+      } catch {
+        return { status, body: { error: { message: raw.slice(0, 300), type: 'upstream_error', code: 'orcarouter_non_json' } } };
+      }
+    });
+}
 import { checkMessageRateLimit } from '../windsurf-api.js';
 import { getEffectiveProxy } from '../dashboard/proxy-config.js';
 import {
@@ -54,6 +87,7 @@ import {
 } from '../special-agent.js';
 import { acpVisionEnabled } from '../devin-acp.js';
 import { selectBackend, usesCascadeFlow } from '../backend-router.js';
+import { isOrcaRouterModel, orcaRouterApiKey, forwardChatCompletions } from '../orcarouter.js';
 import { toChatCompletion as _toChatCompletion, streamChatCompletion as _streamChatCompletion } from '../devin-connect-openai.js';
 import { resolveConnectSelector } from '../devin-connect-models.js';
 import { isRetryable as isConnectRetryable, getToolDefTags, parseToolCallTagMap } from '../devin-connect.js';
@@ -4029,6 +4063,45 @@ async function _handleChatCompletionsInner(body, context = {}) {
       log.info(`Chat[${reqId}]: DEVIN_CONNECT failover hop ${hops + 1} → next pooled account`);
       bumpConnect('failover_hops');
       acct = next;
+    }
+  }
+
+  // OrcaRouter short-circuit: a model whose catalog entry carries
+  // provider/backend 'orcarouter' — or any raw `orcarouter/` prefixed id — is
+  // served by the operator's own ORCAROUTER_API_KEY, not the Windsurf account
+  // pool. Forward the request verbatim to https://api.orcarouter.ai/v1 and
+  // relay the OpenAI-compatible response (JSON or SSE) straight back. This
+  // lives AFTER access control so operator allow/blocklists still apply, but
+  // BEFORE the Windsurf backends so no account or LS is ever touched.
+  const isOrcaRouterRequest = isOrcaRouterModel(modelInfo)
+    || String(routingModelKey || '').toLowerCase().startsWith('orcarouter/');
+  if (isOrcaRouterRequest) {
+    const orcaKey = orcaRouterApiKey();
+    if (!orcaKey) {
+      return {
+        status: 503,
+        body: { error: {
+          message: 'OrcaRouter is not configured. Set ORCAROUTER_API_KEY to use orcarouter/* models.',
+          type: 'api_error',
+          code: 'orcarouter_not_configured',
+        } },
+      };
+    }
+    log.info(`Chat[${reqId}]: routing ${safeLogValue(routingModelKey)} through OrcaRouter gateway`);
+    try {
+      return await forwardOrcaRouterChat(body, { apiKey: orcaKey, signal: context.signal });
+    } catch (err) {
+      // Transport-level failures (network, timeout, abort). Relay as a clean
+      // 502 so the caller can retry, instead of surfacing as a bare 500.
+      log.warn(`Chat[${reqId}]: OrcaRouter upstream error: ${err?.message || err}`);
+      return {
+        status: 502,
+        body: { error: {
+          message: `OrcaRouter upstream error: ${err?.message || 'unknown error'}`,
+          type: 'upstream_error',
+          code: 'orcarouter_upstream_error',
+        } },
+      };
     }
   }
 

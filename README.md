@@ -424,6 +424,7 @@ curl -X DELETE http://localhost:3003/v1/responses/resp_xxx -H "Authorization: Be
 | `WINDSURFAPI_NATIVE_TOOL_BRIDGE_MODELS` / `PROVIDERS` / `ROUTES` / `CALLERS` / `ACCOUNTS` / `API_KEYS` | 空 | native bridge 灰度门。为空表示不限；设置后必须匹配才启用。`ACCOUNTS` 可填账号 id/email，`API_KEYS` 匹配调用方 API key 但不会把明文 key 传进 chat 逻辑 |
 | `WINDSURFAPI_NATIVE_TOOL_BRIDGE_OFF` | 空 | 设为 `1` 强制关闭 native tool bridge，优先级高于上面的开关 |
 | `WINDSURFAPI_SPECIAL_AGENT_BACKEND` | 空 | 可选 lab-only special-agent 后端。设为 `devin-cli` 后，`swe-1.6` / `swe-1.6-fast` / `adaptive` / `arena-*` 不再走 direct Cascade，而是走 Devin CLI PoC；这不是普通 catalog 模型修复 |
+| `ORCAROUTER_API_KEY` | 空 | 启用 OrcaRouter 第三方网关 provider。设置后 `orcarouter/*` 模型（`orcarouter/fusion-mini` 等）直接转发到 `https://api.orcarouter.ai/v1`，不消耗 Windsurf 账号池；见"支持的模型"一节 |
 | `DEVIN_CLI_PATH` | `devin` | Devin CLI 可执行文件路径；Docker/macOS 都需要自己安装或挂载，不是基础镜像硬依赖 |
 | `DEVIN_CLI_MODE` | `print` | `print` 为 `devin -p` 保守模式；`acp` 为实验 ACP stdio 后端，使用账号池上游 Windsurf apiKey 认证，默认不全量启用 |
 | `DEVIN_MAX_PROCS` | `1` | Devin CLI 最大并发进程数，避免 special-agent 路径把内存打爆 |
@@ -528,6 +529,18 @@ swe-1.5 / 1.5-fast / 1.6 / 1.6-fast / 1.7 / 1.7-lightning · arena-fast · arena
 </details>
 
 > `swe-1.6` / `swe-1.6-fast` / `adaptive` / `arena-*` 属于 special-agent 路径。direct Cascade 会报 unknown model UID / route 不通；默认不会假装可用。需要测试时显式开启 `WINDSURFAPI_SPECIAL_AGENT_BACKEND=devin-cli`，并安装/挂载 Devin CLI。当前 PoC 是 `devin -p` print 模式，默认拒绝 caller-local tools/media；ACP 工具桥接另做。
+
+<details>
+<summary><b>OrcaRouter（OpenAI 兼容 AI 网关）— 第三方 provider</b></summary>
+
+[OrcaRouter](https://www.orcarouter.ai) 是一个 OpenAI 兼容的 AI 网关，像 OpenRouter 一样在一个端点上聚合 Anthropic / OpenAI / Google / DeepSeek 等多家模型，同时叠加自适应路由、自动故障转移、零加价推理、可观测性、护栏与 agent 工具治理。把它作为一等 provider 接进 WindsurfAPI：设置 `ORCAROUTER_API_KEY` 后，`orcarouter/*` 模型（如 `orcarouter/fusion-mini`、`orcarouter/fusion`）直接转发到 `https://api.orcarouter.ai/v1`，不消耗 Windsurf 账号池配额。网关级、零信任的 AI agent 安全（默认拒绝地筛查每一条 prompt/response、治理每一次工具调用）也在同一个端点生效，无需改应用代码。
+
+- 配置：`.env` 里填 `ORCAROUTER_API_KEY=sk-orca-...`。
+- 模型前缀：`orcarouter/<上游模型 id>`，任意 id 均可转发（`GET /v1/models` 会列出预置的 `orcarouter/free` / `fusion` / `fusion-flash` / `fusion-mini` / `auto`）。
+- 流式与非流式都透传 OpenAI 兼容响应。
+- Discord: discord.gg/YEubt8enRA · X: https://x.com/OrcaRouter
+
+</details>
 
 > **免费账号 entitled 模型**主要是 `gemini-2.5-flash`、`glm-4.7`、`glm-5` / `5.1`、`kimi-k2` / `k2.5` / `k2-6`、`qwen-3` 等开源系列；Claude / GPT 全系 + Opus 系列要 Pro。具体每个账号的 entitled 清单看 dashboard。
 >

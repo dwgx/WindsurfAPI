@@ -65,14 +65,21 @@ function syncAllowed(keys = [ALLOWED_KEY], accountId = ACCOUNT_A) {
 }
 
 function cascadeKeys(keys) {
-  return keys.filter((key) => MODELS[key]?.backend !== 'special_agent');
+  // Exclude backends the Cascade cloud catalog does not govern: special-agent
+  // models and third-party gateway models (orcarouter/*) are served by their
+  // own upstreams, so the account-pool catalog neither controls nor should
+  // hide them.
+  return keys.filter((key) => {
+    const backend = MODELS[key]?.backend;
+    return backend !== 'special_agent' && backend !== 'orcarouter';
+  });
 }
 
 function fullStaticCloudConfigs() {
   const seen = new Set();
   const configs = [];
   for (const model of Object.values(MODELS)) {
-    if (model?.deprecated || model?.backend === 'special_agent' || typeof model?.modelUid !== 'string') continue;
+    if (model?.deprecated || model?.backend === 'special_agent' || model?.backend === 'orcarouter' || typeof model?.modelUid !== 'string') continue;
     const normalized = model.modelUid.trim().toLowerCase();
     if (!normalized || seen.has(normalized)) continue;
     seen.add(normalized);
@@ -256,7 +263,11 @@ describe('upstream account cloud catalog filtering', () => {
 
     const models = handleModels({}).data;
     assert.deepEqual(cascadeKeys(models.map((model) => model._windsurf_id)), [key]);
-    assert.equal(models[0].owned_by, 'anthropic');
+    // The discovered model is the only Cascade-catalog entry; index into the
+    // filtered view rather than the raw list (which may lead with third-party
+    // gateway models like orcarouter/* that precede it in MODELS order).
+    const catalogModel = models.find((m) => m._windsurf_id === key);
+    assert.equal(catalogModel.owned_by, 'anthropic');
   });
 
   it('unions model listings while enforcing each account catalog during routing', () => {
