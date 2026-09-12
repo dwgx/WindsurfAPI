@@ -241,3 +241,13 @@ PY
 [`test/docs-consistency-guard.test.js`](../test/docs-consistency-guard.test.js) 的
 「every switch read in src/ is findable in some reader-facing doc」守着 ——
 **加新开关不写文档会直接让测试变红**，不再依赖人记得。
+
+## Optional SWE-2 ACP transport
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `DEVIN_SWE2_TRANSPORT` | unset (disabled) | Set to `acp` to route SWE-2 Chat Completions through the installed Devin CLI. |
+| `DEVIN_CLI_PATH` | `~/.local/bin/devin` | Absolute path to the official CLI executable. |
+| `DEVIN_SWE2_ACP_DATA` | `~/.local/share/windsurfapi/swe2-acp` | Private temporary session/config directory. |
+
+See [SWE-2 ACP](SWE2-ACP.md). These settings do not rewrite other model routes.

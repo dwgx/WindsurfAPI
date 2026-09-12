@@ -712,3 +712,11 @@ MIT License. See [LICENSE](LICENSE).
 <p align="center">
   <a href="https://www.star-history.com/?type=date&repos=dwgx/WindsurfAPI">Star History · 点击查看完整星图</a>
 </p>
+
+## Optional SWE-2 CLI transport
+
+`DEVIN_SWE2_TRANSPORT=acp` connects SWE-2 requests to the official Devin CLI and
+relays tool execution to the calling client. Other model routes are unchanged.
+Use `DEVIN_CLI_PATH` to select the executable and `DEVIN_SWE2_ACP_DATA` to select
+the private session directory. See [SWE-2 ACP setup and client recipes](docs/SWE2-ACP.md)
+for requirements, effort selection, permissions, and current limitations.

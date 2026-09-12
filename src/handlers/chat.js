@@ -4,6 +4,8 @@
  */
 
 import { createHash, randomUUID } from 'crypto';
+import { handleSwe2AcpChat } from '../swe2-acp/bridge.mjs';
+import { sweModel } from '../swe2-acp/protocol.mjs';
 import { WindsurfClient, contentToString, isCascadeTransportError } from '../client.js';
 import { getApiKey, acquireAccountByKey, releaseAccountById, currentApiKeyForId, getAccountAvailability, reportError, reportSuccess, markRateLimited, markQuotaExhausted, reportInternalError, reportDeadToken, updateCapability, getAccountList, isAllRateLimited, isAllTemporarilyUnavailable, refundReservation, looksLikeBanSignal, reportBanSignal, clearBanSignals, isModelBlockedByDrought, isConnectSelectorBlockedByDrought, getDroughtSummary, reLoginAccount, getAccountCount, hasConnectEntitledAccount, recordAccountSpend, ensureDeviceSeed } from '../auth.js';
 import { isStickyEnabled, setStickyBinding, peekStickyBinding } from '../account/sticky-session.js';
@@ -2764,6 +2766,13 @@ function connectSpendOpts(billing) {
 }
 
 export async function handleChatCompletions(body, context = {}) {
+  // Opt-in local CLI transport; the existing routes own every other request.
+  // Admission still respects the operator's model access policy. Do not apply
+  // cloud-account fallback or instruction rewriting to an ACP session.
+  if (process.env.DEVIN_SWE2_TRANSPORT === 'acp' && sweModel(body?.model)) {
+    return handleSwe2AcpChat(body, context);
+  }
+
   // Full-chain trace (gated WINDSURFAPI_TRACE=1): one traceId stitches client
   // request → routing → Devin wire bytes → client response. Reused as reqId so
   // logs and the trace dir share the same id. No-op when tracing is off.
