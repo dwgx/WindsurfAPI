@@ -17,7 +17,8 @@ import {
   contentText,
   errorInfo,
   newToolCallId,
-  isPendingAction,
+  completionIssue,
+  completionNudge,
   clientPermissionDenial,
 } from './protocol.mjs';
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -795,6 +796,9 @@ async function acquire(body, context) {
 }
 async function run(body, context, onText) {
   if (context.signal?.aborted) throw new Error('Client disconnected');
+  const receivedToolResults = (body.messages || []).filter(
+    (m) => m.role === 'tool' && pendingCalls.has(m.tool_call_id),
+  ).length;
   const s = await acquire(body, context);
   let text = '',
     continuations = 0,
@@ -820,16 +824,25 @@ async function run(body, context, onText) {
       if (event.type === 'done') {
         if (event.result.stopReason !== 'end_turn')
           throw new Error(`Devin stopped with ${event.result.stopReason}`);
-        if (s.defs.length && isPendingAction(text.slice(iterationStart))) {
+        const issue = completionIssue({
+          attemptText: text.slice(iterationStart),
+          messages: body.messages,
+          body,
+          defs: s.defs,
+          receivedToolResults: receivedToolResults > 0,
+        });
+        if (issue) {
           if (continuations++ < 1) {
-            diagnostic(s, 'continue_announced_action');
+            diagnostic(s, 'completion_retry', {
+              reason: issue.kind,
+              receivedToolResults,
+            });
             iterationStart = text.length;
             s.begin(
               [
                 {
                   role: 'user',
-                  content:
-                    'Your last reply announced a pending action but returned no client function call. Continue the requested work now using client MCP functions and their complete schemas. Preserve all original instructions and permission checks. If the action cannot be performed, state the concrete blocker instead of announcing another future action.',
+                  content: completionNudge(issue),
                 },
               ],
               body,
@@ -837,17 +850,28 @@ async function run(body, context, onText) {
             );
             continue;
           }
+          diagnostic(s, 'completion_failed', {
+            reason: issue.kind,
+            receivedToolResults,
+          });
+          if (
+            ['skill_read_required', 'required_tool', 'announced_action'].includes(
+              issue.kind,
+            )
+          )
+            throw Object.assign(
+              new Error(
+                'SWE-2 ended without the required client tool call after one corrective continuation.',
+              ),
+              { status: 422, code: 'SWE2_TOOL_CALL_REQUIRED' },
+            );
           throw Object.assign(
             new Error(
-              'SWE-2 ended after announcing an action without returning a client tool call.',
+              'SWE-2 ended without an answer or client tool call after one corrective continuation.',
             ),
-            { status: 422, code: 'SWE2_TOOL_CALL_REQUIRED' },
+            { status: 502, code: 'SWE2_EMPTY_RESPONSE' },
           );
         }
-        if (!text.trim())
-          throw new Error(
-            'Devin finished without an answer or client tool call',
-          );
         const message = { role: 'assistant', content: text };
         s.lastConversation = conversationKey([...body.messages, message]);
         diagnostic(s, 'completed', { answerChars: text.length });

@@ -138,6 +138,99 @@ export function clientPermissionDenial(messages) {
   return null;
 }
 
+function normalizeSkillPath(value) {
+  const raw = String(value || '')
+    .trim()
+    .replace(/^<|>$/g, '')
+    .replace(/#.*$/, '');
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+}
+
+function readToolNames(defs) {
+  return new Set(
+    (defs || [])
+      .filter((def) => {
+        const name = String(def.originalName || def.name || '');
+        const props = def.inputSchema?.properties || {};
+        return (
+          /^(?:read|read_file|read_text_file|fs_read)$/i.test(name) &&
+          ['path', 'file_path', 'filePath', 'filename'].some((key) =>
+            Object.hasOwn(props, key),
+          )
+        );
+      })
+      .map((def) => def.originalName || def.name),
+  );
+}
+
+function callPath(call) {
+  let args = call?.function?.arguments;
+  if (typeof args === 'string') {
+    try {
+      args = JSON.parse(args);
+    } catch {
+      return '';
+    }
+  }
+  if (!args || typeof args !== 'object') return '';
+  return normalizeSkillPath(
+    args.path || args.file_path || args.filePath || args.filename,
+  );
+}
+
+// Aside and Pi encode an explicitly selected skill as a Markdown link to its
+// SKILL.md. The matching client read and result are the completion contract;
+// free-form promises such as "I'll read it" are only a fallback signal.
+export function pendingSkillRead(messages, defs) {
+  const names = readToolNames(defs);
+  if (!names.size) return null;
+  let ref = null;
+  for (let i = 0; i < (messages || []).length; i++) {
+    if (messages[i]?.role !== 'user') continue;
+    const text = contentText(messages[i].content);
+    const re = /\[\$([^\]\r\n]+)\]\(([^)\r\n]*\/SKILL\.md(?:#[^)\r\n]*)?)\)/giu;
+    for (const match of text.matchAll(re)) {
+      ref = {
+        index: i,
+        name: match[1].trim(),
+        path: normalizeSkillPath(match[2]),
+      };
+    }
+  }
+  if (!ref) return null;
+  const calls = new Map();
+  for (let i = ref.index + 1; i < (messages || []).length; i++) {
+    const message = messages[i];
+    if (message?.role === 'assistant') {
+      for (const call of message.tool_calls || []) {
+        if (
+          names.has(call?.function?.name) &&
+          callPath(call) === ref.path
+        )
+          calls.set(call.id, true);
+      }
+    }
+    if (message?.role === 'tool' && calls.has(message.tool_call_id)) return null;
+  }
+  return { ...ref, toolNames: [...names] };
+}
+
+export function requiredToolChoice(body) {
+  const choice = body?.tool_choice;
+  if (choice === 'required' || choice === 'any')
+    return { kind: 'required_tool' };
+  if (choice && typeof choice === 'object')
+    return {
+      kind: 'required_tool',
+      name: choice.function?.name || choice.name || null,
+    };
+  return null;
+}
+
 export function isPendingAction(text) {
   const t = String(text || '')
     .trim()
@@ -166,4 +259,37 @@ export function isPendingAction(text) {
       t,
     )
   );
+}
+
+export function completionIssue({
+  attemptText,
+  messages,
+  body,
+  defs,
+  receivedToolResults = false,
+}) {
+  const text = String(attemptText || '').trim();
+  if (!text)
+    return { kind: receivedToolResults ? 'empty_post_tool' : 'empty_turn' };
+  const skill = pendingSkillRead(messages, defs);
+  if (skill) return { kind: 'skill_read_required', ...skill };
+  const required = requiredToolChoice(body);
+  if (required) return required;
+  if ((defs || []).length && isPendingAction(text))
+    return { kind: 'announced_action' };
+  return null;
+}
+
+export function completionNudge(issue) {
+  if (issue?.kind === 'empty_post_tool')
+    return 'The client tool results were delivered, but your last turn contained no final answer. Continue from the existing session state and give the user the complete final answer now. Do not repeat completed side effects. Use another client function only if more evidence is actually required.';
+  if (issue?.kind === 'empty_turn')
+    return 'Your last turn contained neither an answer nor a client function call. Continue the requested work now. Use the client MCP functions when action is required, or give the complete final answer if no function is needed.';
+  if (issue?.kind === 'skill_read_required')
+    return `The caller explicitly selected skill ${JSON.stringify(issue.name)}. Before completing, call one of ${JSON.stringify(issue.toolNames)} through client MCP to read exactly ${JSON.stringify(issue.path)}. Preserve the client's approval checks, then follow the loaded skill.`;
+  if (issue?.kind === 'required_tool')
+    return issue.name
+      ? `The caller requires client function ${JSON.stringify(issue.name)} on this turn. Call it through client MCP with its complete schema before completing.`
+      : 'The caller requires at least one client function call on this turn. Call the appropriate function through client MCP before completing.';
+  return 'Your last reply announced a pending action but returned no client function call. Continue the requested work now using client MCP functions and their complete schemas. Preserve all original instructions and permission checks. If the action cannot be performed, state the concrete blocker instead of announcing another future action.';
 }

@@ -81,9 +81,12 @@ An explicit OMO tool-permission rejection ends the turn. Provider content-policy
 errors are returned as errors without stripping instructions or retrying through
 another model. System/developer messages and memories are preserved in full.
 
-If the model ends with a short announcement of work but no tool call, the adapter
-asks it once to finish that work or explain a concrete blocker. This is bounded
-and does not retry policy refusals.
+An explicitly selected `[$Skill](.../SKILL.md)` is incomplete until the matching
+client file-reading call returns. Required `tool_choice` values are enforced from
+the request field rather than inferred from prose. If a turn ends empty after a
+real client tool result, the adapter asks once for the final answer without
+repeating completed side effects. A short announcement of unfinished work remains
+a bounded fallback signal. None of these paths retries policy refusals.
 
 ## Limits and verification
 
