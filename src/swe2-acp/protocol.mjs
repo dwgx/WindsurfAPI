@@ -79,6 +79,7 @@ export function buildPrompt(messages, body, { initial = true } = {}) {
         'Use the client MCP functions to act in the caller environment. Those tools execute in the client and retain its approval and permission checks. The native host file/exec tools are disabled because this process is only the connection adapter.',
         'A client permission rejection is binding. Do not retry the denied operation through another tool, language, subprocess, or path. Stop and explain the rejected permission so the user can decide in their client.',
         'The client MCP server exposes list_client_tools, get_client_tools, and call_client_tool. Use get_client_tools to obtain complete original schemas for the names needed, then call_client_tool to execute them. Do not invent tool results. Give a complete final answer appropriate to the user request after the work is done.',
+        'An announcement of intended work is not a completed answer. If you announce that you will read a skill, search, or perform another action needed for the request, execute it through the client MCP tools before ending the turn. Finish with the requested result or a concrete blocker. A skill path in the caller conversation belongs to the client environment and can be read through its file-reading tool.',
         `Available client function names: ${(body.tools || []).map((t) => (t.function || t).name).join(', ')}`,
       ].join('\n')
     : 'Continue the same caller conversation with these new messages. Preserve its instructions and tool execution boundary.';
@@ -149,11 +150,19 @@ export function isPendingAction(text) {
     )
   )
     return false;
+  // Offers, scheduled actions, and quoted examples are not instructions to
+  // execute a client operation now. Do not turn a blocker into a retry.
+  if (
+    /원하시면|원한다면|필요하시면|필요하면|내일|다음\s*(?:주|달)|나중에|권한.{0,20}(?:없|거부)|정책.{0,20}차단|(?:example|예시)\s*(?:문장)?\s*:/i.test(
+      t,
+    )
+  )
+    return false;
   return (
     /\b(?:I'll|I will|Let me|I need to)\s+(?:first\s+)?(?:read|check|inspect|calculate|compute|run|call|look|search|verify|open|fetch|discover)\b/i.test(
       t,
     ) ||
-    /(?:읽|확인|실행|계산|조회|검사|검색).{0,20}(?:하겠습니다|겠습니다|할게요)[.!。]?$/u.test(
+    /(?:읽(?:을게(?:요)?|겠습니다|어볼게(?:요)?|어보겠습니다)|(?:확인|실행|계산|조회|검사|검색|조사|분석|시작|호출|정리)(?:할게(?:요)?|하겠습니다)|(?:찾아|살펴|알아|열어)?(?:볼게(?:요)?|보겠습니다)|(?:불러|가져)오겠습니다|열겠습니다)[.!。…]*$/u.test(
       t,
     )
   );
