@@ -1036,7 +1036,45 @@ export function buildGetChatMessageRequest({ token, messages, model, sessionId, 
     return text ? `${wrapped}\n${text}` : wrapped;
   };
 
-  for (const msg of messages || []) {
+  // Coalesce consecutive same-source text-only turns before wire encoding.
+  // Clients that persist streamed output per-part (opencode after a foreign-model
+  // /compact, agents that split one turn into several entries) emit runs of
+  // consecutive same-role text messages — e.g. [assistant,assistant,...]. The
+  // real client's wire never carries back-to-back same-source TEXT messages (a
+  // turn ends at a tool_call/tool_result or yields to the opposite role), and the
+  // upstream request validator rejects the run with invalid_argument
+  // ("an internal error occurred") — observed live: same content pasted as a
+  // single user turn succeeds while the split history fails. Merging keeps the
+  // text identical while restoring the alternating shape upstream expects.
+  // Text-only guard: never merge entries carrying tool_calls/tool_call_id,
+  // reasoning payloads, or non-text content parts (images) — those encode to
+  // distinct wire types and must stay separate.
+  const isMergeableText = (m) => {
+    if (!m || (m.role !== 'user' && m.role !== 'assistant')) return false;
+    if (m.tool_calls?.length || m.tool_call_id) return false;
+    if (m.reasoning || m.reasoning_content) return false;
+    if (Array.isArray(m.content)) return m.content.every((c) => c?.type === 'text');
+    return true;
+  };
+  const mergedMessages = [];
+  for (const m of messages || []) {
+    // system turns are hoisted to field #2 on the wire — they vanish from the
+    // chat sequence, so look past them when judging same-source adjacency.
+    let pi = mergedMessages.length - 1;
+    while (pi >= 0 && mergedMessages[pi].role === 'system') pi--;
+    const prev = pi >= 0 ? mergedMessages[pi] : null;
+    if (prev && prev.role === m.role && isMergeableText(prev) && isMergeableText(m)) {
+      const a = messageText(prev.content);
+      const b = messageText(m.content);
+      // Fresh object, never mutate caller state — the same `messages` array is
+      // re-passed on retry/failover and an in-place merge would double-append.
+      mergedMessages[pi] = { ...prev, content: b ? (a ? `${a}\n\n${b}` : b) : a };
+      continue;
+    }
+    mergedMessages.push(m);
+  }
+
+  for (const msg of mergedMessages) {
     if (msg.role === 'system') {
       const t = messageText(msg.content);
       if (collapseSystem) {
@@ -1059,30 +1097,31 @@ export function buildGetChatMessageRequest({ token, messages, model, sessionId, 
     // history, symmetric with how we decode #6. Gated: only when nativeToolCall
     // is on (else the text-fold path below keeps the emulation wire unchanged).
     if (nativeToolCall && msg.role === 'assistant' && Array.isArray(msg.tool_calls) && msg.tool_calls.length) {
-      // Optional leading assistant text stays on its own role=2 text message.
+      // One ChatMessage per assistant TURN: the turn's parallel tool_calls ride as
+      // repeated #6 entries on the SAME message (and leading turn text in #3), not
+      // as consecutive ASSISTANT messages — the upstream validator rejects
+      // back-to-back same-source messages with invalid_argument, and splitting a
+      // multi-call turn produced exactly that shape (observed: an OpenAI history
+      // with x2/x3 parallel calls per turn failed while the text-folded twin passed).
+      const parts = [
+        writeStringField(1, randomUUID()),
+        writeVarintField(2, SOURCE.ASSISTANT),
+      ];
       const preText = messageText(msg.content);
-      const reasoningText = reasoningTagNum && (msg.reasoning || msg.reasoning_content) ? String(msg.reasoning || msg.reasoning_content) : '';
-      if (preText) {
-        const parts = [
-          writeStringField(1, randomUUID()),
-          writeVarintField(2, SOURCE.ASSISTANT),
-          writeStringField(3, preText),
-        ];
-        if (reasoningText) parts.push(writeStringField(reasoningTagNum, reasoningText));
-        chatMessages.push(Buffer.concat(parts));
-      }
+      if (preText) parts.push(writeStringField(3, preText));
       for (const tc of msg.tool_calls) {
         const name = tc.function?.name || tc.name || 'unknown';
         const rawArgs = tc.function?.arguments ?? tc.arguments;
         const argsJson = typeof rawArgs === 'string' ? rawArgs : JSON.stringify(rawArgs ?? {});
-        chatMessages.push(encodeAssistantToolCall({
-          id: tc.id || randomUUID(),
-          name,
-          argsJson,
-          reasoning: reasoningText,
-          reasoningTagNum,
-        }));
+        parts.push(writeMessageField(6, Buffer.concat([
+          writeStringField(1, tc.id || randomUUID()),
+          writeStringField(2, name),
+          writeStringField(3, argsJson),
+        ])));
       }
+      const reasoningText = reasoningTagNum && (msg.reasoning || msg.reasoning_content) ? String(msg.reasoning || msg.reasoning_content) : '';
+      if (reasoningText) parts.push(writeStringField(reasoningTagNum, reasoningText));
+      chatMessages.push(Buffer.concat(parts));
       continue;
     }
     if (nativeToolCall && msg.role === 'tool' && msg.tool_call_id) {
