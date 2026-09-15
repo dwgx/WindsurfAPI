@@ -1148,56 +1148,80 @@ export function interleaveParallelToolMessages(messages) {
   let i = 0;
   while (i < messages.length) {
     const m = messages[i];
-    if (m?.role === 'assistant' && Array.isArray(m.tool_calls) && m.tool_calls.length > 1) {
-      let j = i + 1;
-      const toolMsgs = [];
-      while (j < messages.length && messages[j]?.role === 'tool') {
-        toolMsgs.push(messages[j]);
+    if (m?.role === 'assistant' && Array.isArray(m.tool_calls) && m.tool_calls.length) {
+      let j = i;
+      const assistantMsgs = [];
+      const strayTexts = [];
+      while (j < messages.length && messages[j]?.role === 'assistant') {
+        if (Array.isArray(messages[j].tool_calls) && messages[j].tool_calls.length) {
+          assistantMsgs.push(messages[j]);
+        } else {
+          strayTexts.push(messages[j]);
+        }
         j++;
       }
 
-      let hasMatches = false;
-      const usedIndices = new Set();
-      for (const tc of m.tool_calls) {
-        const tcid = String(tc?.id ?? '');
-        if (tcid && toolMsgs.some((tm) => String(tm?.tool_call_id ?? '') === tcid)) {
-          hasMatches = true;
-          break;
-        }
+      let k = j;
+      const toolMsgs = [];
+      while (k < messages.length && messages[k]?.role === 'tool') {
+        toolMsgs.push(messages[k]);
+        k++;
       }
 
-      if (hasMatches) {
-        let first = true;
-        for (const tc of m.tool_calls) {
-          const singleAssistant = {
-            ...m,
-            content: first ? (m.content || null) : null,
-            tool_calls: [tc],
-          };
-          if (!first) {
-            delete singleAssistant.reasoning_content;
-            delete singleAssistant.reasoning;
-          }
-          out.push(singleAssistant);
+      const toolCalls = assistantMsgs.flatMap((assistant) => assistant.tool_calls);
+      const hasMatches = toolCalls.some((tc) =>
+        toolMsgs.some((tm) => String(tm?.tool_call_id ?? '') === String(tc?.id ?? '')),
+      );
 
-          const tcid = String(tc?.id ?? '');
-          const matchIdx = toolMsgs.findIndex(
-            (tm, idx) => !usedIndices.has(idx) && String(tm?.tool_call_id ?? '') === tcid,
-          );
-          if (matchIdx !== -1) {
-            usedIndices.add(matchIdx);
-            out.push(toolMsgs[matchIdx]);
+      if (toolCalls.length > 1 && hasMatches) {
+        if (strayTexts.length) {
+          const strayText = strayTexts
+            .map((s) => (s?.content == null ? '' : contentTextForPreambleCheck(s.content)))
+            .filter(Boolean)
+            .join('\n\n');
+          if (strayText) {
+            const first = assistantMsgs[0];
+            const cur = first.content == null ? '' : contentTextForPreambleCheck(first.content);
+            assistantMsgs[0] = { ...first, content: cur ? `${cur}\n\n${strayText}` : strayText };
           }
-          first = false;
+        }
+        const usedIndices = new Set();
+        for (const assistant of assistantMsgs) {
+          let first = true;
+          for (const tc of assistant.tool_calls) {
+            const singleAssistant = {
+              ...assistant,
+              content: first ? (assistant.content || null) : null,
+              tool_calls: [tc],
+            };
+            if (!first) {
+              delete singleAssistant.reasoning_content;
+              delete singleAssistant.reasoning;
+            }
+            out.push(singleAssistant);
+
+            const tcid = String(tc?.id ?? '');
+            const matchIdx = toolMsgs.findIndex(
+              (tm, idx) => !usedIndices.has(idx) && String(tm?.tool_call_id ?? '') === tcid,
+            );
+            if (matchIdx !== -1) {
+              usedIndices.add(matchIdx);
+              out.push(toolMsgs[matchIdx]);
+            }
+            first = false;
+          }
         }
         for (let idx = 0; idx < toolMsgs.length; idx++) {
-          if (!usedIndices.has(idx)) {
-            out.push(toolMsgs[idx]);
-          }
+          if (!usedIndices.has(idx)) out.push(toolMsgs[idx]);
         }
-        i = j;
+        i = k;
         continue;
       }
+      // No interleave applied: emit the whole assistant run verbatim (calls and
+      // stray text alike) so nothing is silently dropped.
+      for (let x = i; x < j; x++) out.push(messages[x]);
+      i = j;
+      continue;
     }
     out.push(m);
     i++;

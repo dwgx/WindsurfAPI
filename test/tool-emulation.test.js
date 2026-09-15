@@ -991,6 +991,21 @@ describe('interleaveParallelToolMessages', () => {
     assert.equal(out[5].content, 'next');
   });
 
+  it('interleaves consecutive single-tool assistant turns from Responses clients', () => {
+    const messages = [
+      { role: 'assistant', content: '', tool_calls: [{ id: 'c1', type: 'function', function: { name: 'f1', arguments: '{}' } }] },
+      { role: 'assistant', tool_calls: [{ id: 'c2', type: 'function', function: { name: 'f2', arguments: '{}' } }] },
+      { role: 'assistant', tool_calls: [{ id: 'c3', type: 'function', function: { name: 'f3', arguments: '{}' } }] },
+      { role: 'tool', tool_call_id: 'c1', content: 'r1' },
+      { role: 'tool', tool_call_id: 'c2', content: 'r2' },
+      { role: 'tool', tool_call_id: 'c3', content: 'r3' },
+    ];
+
+    const out = interleaveParallelToolMessages(messages);
+    assert.deepEqual(out.map((m) => m.role), ['assistant', 'tool', 'assistant', 'tool', 'assistant', 'tool']);
+    assert.deepEqual(out.map((m) => m.tool_calls?.[0]?.id || m.tool_call_id), ['c1', 'c1', 'c2', 'c2', 'c3', 'c3']);
+  });
+
   it('preserves unmatched tool results and non-parallel messages intact', () => {
     const messages = [
       {
@@ -1023,6 +1038,40 @@ describe('interleaveParallelToolMessages', () => {
       { role: 'assistant', tool_calls: [{ id: 'c1' }, { id: 'c2' }] },
     ];
     assert.deepEqual(interleaveParallelToolMessages(pending), pending);
+  });
+
+  it('absorbs a text-only assistant inside a parallel-call run instead of breaking it', () => {
+    // Codex emits parallel function_calls as separate items, then an assistant
+    // text item, then the results — i.e. [tc, tc, text, tool, tool]. Letting
+    // that through verbatim encodes as three consecutive ASSISTANT wire
+    // messages (call, call, text), which the upstream validator rejects with
+    // invalid_argument ("an internal error occurred"). The stray text belongs
+    // to the same turn, so fold it into the first call's assistant entry.
+    const messages = [
+      { role: 'user', content: 'list resources' },
+      { role: 'assistant', tool_calls: [{ id: 'a:0#x1', type: 'function', function: { name: 'list_mcp_resources', arguments: '{"server":"a"}' } }] },
+      { role: 'assistant', tool_calls: [{ id: 'a:1#x2', type: 'function', function: { name: 'list_mcp_resources', arguments: '{"server":"b"}' } }] },
+      { role: 'assistant', content: 'checking both servers' },
+      { role: 'tool', tool_call_id: 'a:0#x1', content: 'err1' },
+      { role: 'tool', tool_call_id: 'a:1#x2', content: 'ok1' },
+      { role: 'user', content: 'go on' },
+    ];
+
+    const out = interleaveParallelToolMessages(messages);
+    assert.deepEqual(out.map((m) => m.role), ['user', 'assistant', 'tool', 'assistant', 'tool', 'user']);
+    assert.equal(out[1].content, 'checking both servers', 'stray text folded into first call turn');
+    assert.deepEqual(out[1].tool_calls.map((t) => t.id), ['a:0#x1']);
+    assert.deepEqual(out[3].tool_calls.map((t) => t.id), ['a:1#x2']);
+  });
+
+  it('preserves the full run verbatim when no tool results match', () => {
+    const messages = [
+      { role: 'assistant', tool_calls: [{ id: 'c1', type: 'function', function: { name: 'f1', arguments: '{}' } }] },
+      { role: 'assistant', tool_calls: [{ id: 'c2', type: 'function', function: { name: 'f2', arguments: '{}' } }] },
+      { role: 'assistant', content: 'no results yet' },
+      { role: 'user', content: 'next' },
+    ];
+    assert.deepEqual(interleaveParallelToolMessages(messages), messages);
   });
 });
 
