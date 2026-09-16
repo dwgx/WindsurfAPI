@@ -1142,6 +1142,28 @@ export function stripOrphanedToolResults(messages) {
   return dropped ? out : messages;
 }
 
+// Fold-safety for stray (text-only) assistant entries inside a parallel-call
+// run. Folding keeps only `content`, so a stray carrying any other own field
+// would silently lose it — reasoning_content/signature feed the native #11/#12
+// reasoning + sealed-blob frames (responses.js attaches them for Codex's
+// reasoning items), and name/annotations/refusal/audio have no generic merge
+// semantics either. Likewise an array content folds losslessly only when every
+// part is text — non-text parts encode as distinct wire types and must survive
+// as objects (the same rule isMergeableText enforces upstream in
+// devin-connect.js). Anything outside this envelope is emitted verbatim after
+// the interleaved block instead of being folded.
+const STRAY_FOLDABLE_KEYS = new Set(['role', 'content', 'tool_calls']);
+function isStrayMergeable(msg) {
+  if (!msg || typeof msg !== 'object') return false;
+  for (const key of Object.keys(msg)) {
+    if (!STRAY_FOLDABLE_KEYS.has(key)) return false;
+  }
+  if (msg.tool_calls != null && (!Array.isArray(msg.tool_calls) || msg.tool_calls.length)) {
+    return false;
+  }
+  return !Array.isArray(msg.content) || msg.content.every((part) => part?.type === 'text');
+}
+
 export function interleaveParallelToolMessages(messages) {
   if (!Array.isArray(messages)) return messages;
   const out = [];
@@ -1169,20 +1191,42 @@ export function interleaveParallelToolMessages(messages) {
       }
 
       const toolCalls = assistantMsgs.flatMap((assistant) => assistant.tool_calls);
-      const hasMatches = toolCalls.some((tc) =>
-        toolMsgs.some((tm) => String(tm?.tool_call_id ?? '') === String(tc?.id ?? '')),
-      );
+      // An empty/missing call id must never pair: on the native path a missing
+      // call id gets a fresh UUID while an empty result id never reaches the
+      // role=4 branch — two empty strings comparing equal is not evidence of
+      // call ownership. Keep the `tcid &&` gate in the entry check here and in
+      // the per-call consume below.
+      const hasMatches = toolCalls.some((tc) => {
+        const tcid = String(tc?.id ?? '');
+        return tcid && toolMsgs.some((tm) => String(tm?.tool_call_id ?? '') === tcid);
+      });
 
       if (toolCalls.length > 1 && hasMatches) {
+        const verbatimStrays = [];
         if (strayTexts.length) {
-          const strayText = strayTexts
+          const foldableStrays = [];
+          for (const s of strayTexts) {
+            (isStrayMergeable(s) ? foldableStrays : verbatimStrays).push(s);
+          }
+          const strayText = foldableStrays
             .map((s) => (s?.content == null ? '' : contentTextForPreambleCheck(s.content)))
             .filter(Boolean)
             .join('\n\n');
           if (strayText) {
             const first = assistantMsgs[0];
-            const cur = first.content == null ? '' : contentTextForPreambleCheck(first.content);
-            assistantMsgs[0] = { ...first, content: cur ? `${cur}\n\n${strayText}` : strayText };
+            if (Array.isArray(first.content)) {
+              // Append a text part — never flatten the array into a string:
+              // non-text parts (image_url …) encode as different wire types
+              // and extractInlineImages (Array.isArray gate) would lose them.
+              const hasTextPart = first.content.some((part) => part?.type === 'text');
+              assistantMsgs[0] = {
+                ...first,
+                content: [...first.content, { type: 'text', text: `${hasTextPart ? '\n' : ''}${strayText}` }],
+              };
+            } else {
+              const cur = first.content == null ? '' : contentTextForPreambleCheck(first.content);
+              assistantMsgs[0] = { ...first, content: cur ? `${cur}\n\n${strayText}` : strayText };
+            }
           }
         }
         const usedIndices = new Set();
@@ -1202,7 +1246,7 @@ export function interleaveParallelToolMessages(messages) {
 
             const tcid = String(tc?.id ?? '');
             const matchIdx = toolMsgs.findIndex(
-              (tm, idx) => !usedIndices.has(idx) && String(tm?.tool_call_id ?? '') === tcid,
+              (tm, idx) => tcid && !usedIndices.has(idx) && String(tm?.tool_call_id ?? '') === tcid,
             );
             if (matchIdx !== -1) {
               usedIndices.add(matchIdx);
@@ -1211,6 +1255,12 @@ export function interleaveParallelToolMessages(messages) {
             first = false;
           }
         }
+        // Unmergeable strays go out whole, after the interleaved pairs: appending
+        // them at the tail keeps the alternating source pattern (a same-source
+        // run of 3 needs ≥3 unmergeable strays — rare next to the single
+        // reasoning+text item Codex replays per turn), and placing them between
+        // pairs could split a call from its result.
+        for (const s of verbatimStrays) out.push(s);
         for (let idx = 0; idx < toolMsgs.length; idx++) {
           if (!usedIndices.has(idx)) out.push(toolMsgs[idx]);
         }

@@ -1073,6 +1073,85 @@ describe('interleaveParallelToolMessages', () => {
     ];
     assert.deepEqual(interleaveParallelToolMessages(messages), messages);
   });
+
+  it('keeps every original content part when absorbing stray text', () => {
+    const image = { type: 'image_url', image_url: { url: 'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==' } };
+    const content = [{ type: 'text', text: 'see' }, image];
+    const messages = [
+      { role: 'assistant', content, tool_calls: [{ id: 'c1', type: 'function', function: { name: 'f', arguments: '{}' } }] },
+      { role: 'assistant', tool_calls: [{ id: 'c2', type: 'function', function: { name: 'f', arguments: '{}' } }] },
+      { role: 'assistant', content: 'stray note' },
+      { role: 'tool', tool_call_id: 'c1', content: 'r1' },
+      { role: 'tool', tool_call_id: 'c2', content: 'r2' },
+    ];
+    const out = interleaveParallelToolMessages(messages);
+    assert.equal(out[0].content[1], image, 'image part must survive as an object');
+    assert.deepEqual(content, [{ type: 'text', text: 'see' }, image], 'caller array untouched');
+  });
+
+  it('never pairs calls with results when the id is missing on both sides', () => {
+    // Two empty ids comparing equal is not evidence of call ownership: on the
+    // native path a missing call id gets a fresh UUID while an empty result id
+    // never reaches the role=4 branch. Pre-regression this shape interleaved;
+    // it must pass through verbatim.
+    const messages = [
+      {
+        role: 'assistant',
+        tool_calls: [
+          { type: 'function', function: { name: 'f', arguments: '{}' } },
+          { type: 'function', function: { name: 'f', arguments: '{}' } },
+        ],
+      },
+      { role: 'tool', content: 'r1' },
+      { role: 'tool', content: 'r2' },
+    ];
+    assert.deepEqual(interleaveParallelToolMessages(messages), messages);
+  });
+
+  it('emits strays carrying unmergeable fields verbatim instead of folding them', () => {
+    // Codex replays a reasoning item as an assistant entry carrying
+    // reasoning_content + signature (native #11/#12 reasoning + sealed blob).
+    // Folding keeps only `content`, so those fields would be silently dropped —
+    // the stray goes out whole, after the interleaved pairs, keeping the
+    // alternating call/result source pattern (2,4,2,4,2).
+    const stray = {
+      role: 'assistant',
+      content: 'checking both servers',
+      reasoning_content: 'thinking it through',
+      signature: 'sealed.v1.abc',
+    };
+    const messages = [
+      { role: 'assistant', tool_calls: [{ id: 'c1', type: 'function', function: { name: 'f', arguments: '{}' } }] },
+      { role: 'assistant', tool_calls: [{ id: 'c2', type: 'function', function: { name: 'f', arguments: '{}' } }] },
+      stray,
+      { role: 'tool', tool_call_id: 'c1', content: 'r1' },
+      { role: 'tool', tool_call_id: 'c2', content: 'r2' },
+    ];
+
+    const out = interleaveParallelToolMessages(messages);
+    assert.deepEqual(out.map((m) => m.role), ['assistant', 'tool', 'assistant', 'tool', 'assistant']);
+    assert.equal(out[4], stray, 'unmergeable stray emitted verbatim — same object, fields intact');
+    assert.equal(out[0].content, null, 'stray text must NOT fold into the first call turn');
+    assert.equal(out[0].signature, undefined, 'sealed signature must not leak onto the call turn');
+  });
+
+  it('emits a stray whose content array carries non-text parts verbatim', () => {
+    const image = { type: 'image_url', image_url: { url: 'data:image/png;base64,AAAA' } };
+    const strayContent = [{ type: 'text', text: 'look' }, image];
+    const messages = [
+      { role: 'assistant', tool_calls: [{ id: 'c1', type: 'function', function: { name: 'f', arguments: '{}' } }] },
+      { role: 'assistant', tool_calls: [{ id: 'c2', type: 'function', function: { name: 'f', arguments: '{}' } }] },
+      { role: 'assistant', content: strayContent },
+      { role: 'tool', tool_call_id: 'c1', content: 'r1' },
+      { role: 'tool', tool_call_id: 'c2', content: 'r2' },
+    ];
+
+    const out = interleaveParallelToolMessages(messages);
+    const tail = out[out.length - 1];
+    assert.equal(tail.role, 'assistant');
+    assert.equal(tail.content[1], image, 'image part survives as an object on the verbatim stray');
+    assert.deepEqual(strayContent, [{ type: 'text', text: 'look' }, image], 'caller array untouched');
+  });
 });
 
 // ─── The call site: normalizeMessagesForCascade must interleave on the native
