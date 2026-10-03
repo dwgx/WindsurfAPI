@@ -2887,6 +2887,79 @@ export async function handleChatCompletions(body, context = {}) {
   return result;
 }
 
+// Message-shape repair. Callers that replay a stored transcript hand us tails
+// the upstream cannot answer, plus one shape it rejects outright:
+//   * a trailing assistant turn (the Anthropic "prefill" shape) - the upstream
+//     answers UPSTREAM_INTERNAL, which the pool counts as an account fault;
+//   * an empty-content user turn - rejected by the answerability check below;
+//   * a tool/function result whose tool_call_id no earlier assistant turn ever
+//     declared - upstream invalid_argument (502).
+// None of them carries content the upstream could respond to, so the last
+// answerable turn is what the request actually means. Repairing here keeps a
+// stored transcript servable instead of returning a 400/502 the caller cannot
+// act on, and keeps a replay loop from degrading the account pool.
+// Never invents content and never drops system turns: a chain with nothing
+// answerable left is returned unchanged and still gets the 400 below.
+const ANSWERABLE_TAIL_ROLES = new Set(['user', 'tool', 'function']);
+
+function messageContentIsBlank(content) {
+  if (typeof content === 'string') return content.trim().length === 0;
+  if (!Array.isArray(content)) return content == null;
+  return content.every((p) => {
+    if (typeof p?.text === 'string') return p.text.trim().length === 0;
+    // Non-text parts (image_url / input_audio / file / ...) count as content,
+    // matching the answerability check below.
+    return !(p && typeof p === 'object' && p.type && p.type !== 'text');
+  });
+}
+
+function repairUnanswerableMessages(messages, reqId = '') {
+  if (!Array.isArray(messages) || !messages.length) return messages;
+  const declared = new Set();
+  const kept = [];
+  let orphanTool = 0;
+  let emptyUser = 0;
+  for (const m of messages) {
+    if (m?.role === 'assistant' && Array.isArray(m.tool_calls)) {
+      for (const tc of m.tool_calls) if (tc?.id) declared.add(tc.id);
+    }
+    if ((m?.role === 'tool' || m?.role === 'function') && m.tool_call_id && !declared.has(m.tool_call_id)) {
+      orphanTool++;
+      continue;
+    }
+    if (m?.role === 'user' && messageContentIsBlank(m.content)) {
+      emptyUser++;
+      continue;
+    }
+    kept.push(m);
+  }
+  // Trailing assistant turns: drop everything after the last answerable turn,
+  // keeping system turns in place (they hoist to field #2, so they never form
+  // the chat tail). An unanswerable chain is left as sent.
+  let lastNonSystem = -1;
+  for (let i = kept.length - 1; i >= 0; i--) {
+    if (kept[i]?.role !== 'system') { lastNonSystem = i; break; }
+  }
+  let out = kept;
+  let assistantTail = 0;
+  if (lastNonSystem >= 0 && kept[lastNonSystem].role === 'assistant') {
+    let lastAnswerable = -1;
+    for (let i = lastNonSystem; i >= 0; i--) {
+      const role = kept[i]?.role;
+      if (role !== 'system' && ANSWERABLE_TAIL_ROLES.has(role)) { lastAnswerable = i; break; }
+    }
+    if (lastAnswerable >= 0) {
+      out = kept.filter((m, i) => i <= lastAnswerable || m?.role === 'system');
+      assistantTail = lastNonSystem - lastAnswerable;
+    }
+  }
+  if (orphanTool || emptyUser || assistantTail) {
+    log.info(`Repair[${reqId}]: orphanTool=${orphanTool} emptyUser=${emptyUser}`
+      + ` assistantTail=${assistantTail} turns=${messages.length}->${out.length}`);
+  }
+  return out;
+}
+
 async function _handleChatCompletionsInner(body, context = {}) {
   // Reuse the trace id as reqId so log lines Chat[<id>] correlate 1:1 with the
   // <traceId>/ trace dir. Falls back to a random short id when untraced.
@@ -2958,6 +3031,10 @@ async function _handleChatCompletionsInner(body, context = {}) {
       log.info(`Probe[${reqId}] msg[${mi}] role=${m?.role} ${requestLogSummary(c)}`);
     }
   } catch {}
+
+    // Repair the transcript shape before the answerability check below and the
+    // wire encoder: see repairUnanswerableMessages for the three tails it absorbs.
+    messages = repairUnanswerableMessages(messages, reqId);
 
   // Reject pathologically empty user turns. Without this, an empty
   // `user.content` slips through and the model answers against the

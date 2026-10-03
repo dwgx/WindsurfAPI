@@ -116,11 +116,15 @@ describe('an unanswerable conversation is rejected locally, never forwarded', ()
   // Verified against the real upstream that an assistant-terminated conversation
   // (the Anthropic prefill shape) is NOT supported there either, so turning it into
   // a 400 removes an opaque 503 plus an account penalty without losing anything.
+  // The repairable tails (trailing assistant turn, empty user turn, orphan tool
+  // result) are normalized now instead: repairUnanswerableMessages in
+  // src/handlers/chat.js trims back to the last answerable turn, so the upstream
+  // never sees the shape it cannot serve. What still lands here is a chain with
+  // nothing answerable left at all.
   const unanswerable = [
     ['no messages at all', []],
     ['only a system message', [{ role: 'system', content: 'You are X.' }]],
     ['only an assistant message', [{ role: 'assistant', content: 'hi' }]],
-    ['ending on an assistant turn', [{ role: 'user', content: 'a' }, { role: 'assistant', content: 'b' }]],
   ];
 
   for (const [label, messages] of unanswerable) {
@@ -132,6 +136,32 @@ describe('an unanswerable conversation is rejected locally, never forwarded', ()
       assert.equal(res.status, 400, `${label} must be rejected locally`);
       assert.equal(res.body.error.type, 'invalid_request_error');
       assert.equal(res.body.error.param, 'messages');
+    });
+  }
+
+  // Tails the upstream cannot answer but that ARE repairable: the tail is trimmed
+  // back to the last answerable turn (or the orphan result dropped), so these must
+  // be answered instead of rejected.
+  const repairable = [
+    ['ending on an assistant turn', [{ role: 'user', content: 'a' }, { role: 'assistant', content: 'b' }]],
+    ['ending on an empty user turn', [
+      { role: 'user', content: 'a' },
+      { role: 'assistant', content: 'b' },
+      { role: 'user', content: '' },
+    ]],
+    ['carrying an orphan tool result', [
+      { role: 'user', content: 'a' },
+      { role: 'tool', tool_call_id: 'never-declared', content: 'stale' },
+    ]],
+  ];
+
+  for (const [label, messages] of repairable) {
+    it(`repairs a conversation ${label} instead of rejecting it`, async () => {
+      const res = await handleChatCompletions(
+        { model: 'claude-sonnet-4.6', max_tokens: 8, messages },
+        { callerKey: 'api:x:user:u' },
+      );
+      assert.notEqual(res.status, 400, `${label} must be repaired, not rejected`);
     });
   }
 
