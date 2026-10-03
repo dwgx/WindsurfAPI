@@ -3656,6 +3656,21 @@ async function _handleChatCompletionsInner(body, context = {}) {
     // re-picks a known-dead account when we hop to the next pool member.
     const triedKeys = [];
     const maxHops = connectFailoverMax();
+
+    // [STREAM-CACHE] exact-match cache for the DEVIN_CONNECT path (covers the
+    // ~98% stream traffic that never reaches the inner cache: the DEVIN_CONNECT
+    // short-circuit returns before it). cacheKey() gates isCacheEnabled +
+    // hasPerUserScope (-> null when uncacheable, so no cross-user sharing).
+    // The key is stream-agnostic (normalize() has no stream field), so stream
+    // and non-stream turns share one slot. Hits release the acquired account
+    // immediately and skip upstream entirely.
+    let __sCkey = null;
+    let __sHit = null;
+    try {
+      __sCkey = cacheKey(body, callerKey);
+      __sHit = __sCkey ? cacheGet(__sCkey) : null;
+      if (__sHit) log.info('[STREAM-CACHE-HIT] ckey=' + __sCkey);
+    } catch (e) { log.info('[STREAM-CACHE-ERR] pre ' + (e && e.message)); }
     if (stream) {
       return {
         status: 200,
@@ -3736,6 +3751,40 @@ async function _handleChatCompletionsInner(body, context = {}) {
           }, HEARTBEAT_MS);
           const stopHeartbeat = () => clearInterval(heartbeat);
           res.on('close', stopHeartbeat);
+          // [STREAM-CACHE] replay stored answer as SSE frames, skip upstream.
+          // Placed AFTER heartbeat/registerSse wiring (unregisterSse + stopHeartbeat
+          // are in scope here) and BEFORE the first upstream attempt, so a hit
+          // never burns a pooled account or emits partial bytes.
+          if (__sHit) {
+            try { if (ccAcct) releaseAccountById(ccAcct.id); } catch {}
+            try {
+              const _st = applyStop(__sHit.text || '', normalizeStop(body.stop));
+              const _txt = _st.hit ? _st.text : (__sHit.text || '');
+              recordRequest(connectDisplayModel, true, 0, null);
+              const _use = __sHit.usage || cachedUsage(messages, _txt);
+              try { recordTokenUsage(_use); } catch {}
+              send({ id: ccId, object: 'chat.completion.chunk', created: ccCreated, model: connectDisplayModel,
+                choices: [{ index: 0, delta: { role: 'assistant', content: '' }, finish_reason: null }] });
+              if (__sHit.thinking) {
+                send({ id: ccId, object: 'chat.completion.chunk', created: ccCreated, model: connectDisplayModel,
+                  choices: [{ index: 0, delta: { reasoning_content: __sHit.thinking }, finish_reason: null }] });
+              }
+              if (_txt) {
+                send({ id: ccId, object: 'chat.completion.chunk', created: ccCreated, model: connectDisplayModel,
+                  choices: [{ index: 0, delta: { content: _txt }, finish_reason: null }] });
+              }
+              send({ id: ccId, object: 'chat.completion.chunk', created: ccCreated, model: connectDisplayModel,
+                choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] });
+              if (connectMeta.includeUsage) {
+                send({ id: ccId, object: 'chat.completion.chunk', created: ccCreated, model: connectDisplayModel,
+                  choices: [], usage: _use });
+              }
+              if (!res.writableEnded) { res.write('data: [DONE]\n\n'); res.end(); }
+            } catch (e) { log.info('[STREAM-CACHE-ERR] replay ' + (e && e.message)); }
+            unregisterSse();
+            stopHeartbeat();
+            return;
+          }
           // Run one account through the stream, with same-account re-login as the
           // first recovery step. Returns 'ok', 'dead' (token unrecoverable on this
           // account → caller may fail over), or 'error' (non-recoverable). Every
@@ -3893,6 +3942,17 @@ async function _handleChatCompletionsInner(body, context = {}) {
                   }];
                   commitConnectSession(callerKey || '', commitMsgs, undefined, { reasoning: r.sr?.reasoning || incomingConnectReasoning });
                 } catch { /* session commit is best-effort */ }
+                // [STREAM-CACHE] store full text + usage AFTER commit, BEFORE the
+                // loop-exit break (code after break is unreachable).
+                try {
+                  const _sTxt = r.sr?.content || '';
+                  const _sTc = r.sr?.toolCalls;
+                  if (__sCkey && _sTxt && !(_sTc && _sTc.length)) {
+                    const _sSt = applyStop(_sTxt, normalizeStop(body.stop));
+                    cacheSet(__sCkey, { text: _sSt.hit ? _sSt.text : _sTxt, thinking: r.sr?.reasoning || '', stop: _sSt.hit ? _sSt.stop : null, usage: r.sr?.usage || null });
+                    log.info('[STREAM-CACHE-STORE] ckey=' + __sCkey);
+                  }
+                } catch (e) { log.info('[STREAM-CACHE-ERR] store ' + (e && e.message)); }
                 break;
               }
               // #225: a client-gone abort is not an account fault — stop the
@@ -4021,6 +4081,26 @@ async function _handleChatCompletionsInner(body, context = {}) {
         return { kind: 'error', err };
       }
     };
+    // [STREAM-CACHE] non-stream replay: same slot as the stream path (the key
+    // is stream-agnostic). Releases the acquired account and returns without
+    // touching upstream. usage rides along when stored (usage passthrough),
+    // otherwise falls back to cachedUsage estimation like the inner cache.
+    if (__sHit) {
+      try { if (ccAcct) releaseAccountById(ccAcct.id); } catch {}
+      const _nst = applyStop(__sHit.text || '', normalizeStop(body.stop));
+      const _ntxt = _nst.hit ? _nst.text : (__sHit.text || '');
+      const _nuse = __sHit.usage || cachedUsage(messages, _ntxt);
+      try { recordTokenUsage(_nuse); } catch {}
+      const _nmodel = mapped ? reqModelName : selector;
+      try { recordRequest(_nmodel, true, 0, null); } catch {}
+      const _nmsg = { role: 'assistant', content: _ntxt };
+      if (__sHit.thinking) _nmsg.reasoning_content = __sHit.thinking;
+      const _nchoice = { index: 0, message: _nmsg, finish_reason: 'stop' };
+      if (context?.__messagesStopCarrier === true && _nst.hit && _nst.stop) _nchoice._windsurf_stop_sequence = _nst.stop;
+      log.info('[STREAM-CACHE-HIT] non-stream replay ckey=' + __sCkey);
+      return { status: 200, body: { id: ccId, object: 'chat.completion', created: ccCreated, model: _nmodel,
+        system_fingerprint: systemFingerprint(_nmodel), choices: [_nchoice], usage: _nuse } };
+    }
     let acct = ccAcct;
     for (let hops = 0; ; hops++) {
       if (context.signal?.aborted) {
@@ -4054,6 +4134,17 @@ async function _handleChatCompletionsInner(body, context = {}) {
           }];
           commitConnectSession(callerKey || '', commitMsgs, undefined, { reasoning: msg?.reasoning_content || incomingConnectReasoning });
         } catch { /* session commit is best-effort */ }
+        // [STREAM-CACHE] store non-stream text + usage BEFORE the return
+        // (code after return is unreachable).
+        try {
+          const _nMsg = r.out?.body?.choices?.[0]?.message;
+          const _nTxt = _nMsg?.content;
+          if (__sCkey && typeof _nTxt === 'string' && _nTxt && !(_nMsg?.tool_calls?.length)) {
+            const _nSt = applyStop(_nTxt, normalizeStop(body.stop));
+            cacheSet(__sCkey, { text: _nSt.hit ? _nSt.text : _nTxt, thinking: _nMsg?.reasoning_content || '', stop: _nSt.hit ? _nSt.stop : null, usage: r.out?.body?.usage || null });
+            log.info('[STREAM-CACHE-STORE] ckey=' + __sCkey);
+          }
+        } catch (e) { log.info('[STREAM-CACHE-ERR] store ' + (e && e.message)); }
         return r.out;
       }
       if (r.kind === 'abort') {
