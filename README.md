@@ -8,14 +8,14 @@
 <div align="center">
 
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/banner.svg?t=a3f30b86b6c8" />
-  <source media="(prefers-color-scheme: light)" srcset="docs/assets/banner-light.svg?t=a3f30b86b6c8" />
-  <img src="docs/assets/banner.svg?t=a3f30b86b6c8" width="100%" alt="WindsurfAPI — 把 Windsurf/Devin 云端 100+ 模型变成 OpenAI / Anthropic / Gemini 三套兼容 API" />
+  <source media="(prefers-color-scheme: dark)" srcset="docs/assets/banner.svg?t=17c54de18d90" />
+  <source media="(prefers-color-scheme: light)" srcset="docs/assets/banner-light.svg?t=17c54de18d90" />
+  <img src="docs/assets/banner.svg?t=17c54de18d90" width="100%" alt="WindsurfAPI — 把 Windsurf/Devin 云端 100+ 模型变成 OpenAI / Anthropic / Gemini 三套兼容 API" />
 </picture>
 
 <br/>
 
-JavaScript · MIT · ★3,046
+JavaScript · MIT · ★3,049
 
 [docs](https://dwgx.github.io/WindsurfAPI/) · [releases](https://github.com/dwgx/WindsurfAPI/releases) · [issues](https://github.com/dwgx/WindsurfAPI/issues)
 
