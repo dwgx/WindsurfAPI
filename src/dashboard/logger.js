@@ -4,8 +4,9 @@
  * Patches the primitive `log` object from config.js so every log call also:
  *   1. lands in an in-memory ring buffer (dashboard "recent logs")
  *   2. fans out to live SSE subscribers
- *   3. appends a structured JSONL line to logs/app.jsonl (daily-rotated)
- *   4. errors/warns also go to logs/error.jsonl
+ *   3. appends a structured JSONL line to logs/app-<UTC-date>.jsonl
+ *   4. errors/warns also go to logs/error-<UTC-date>.jsonl
+ * Optional LOG_* disk limits add retention, size rotation and oldest-first eviction.
  *
  * Structured context: the last argument to log.*() may be a plain object.
  * It is stripped from the message and attached as `ctx`, so callers can do:
@@ -17,6 +18,7 @@ import { mkdirSync, createWriteStream } from 'fs';
 import { join } from 'path';
 import { randomUUID } from 'crypto';
 import { config, log } from '../config.js';
+import { createLogFileWriter, readLogPolicy } from './log-files.js';
 
 const MAX_BUFFER = 1000;
 const _buffer = [];
@@ -24,6 +26,12 @@ const _subscribers = new Set();
 
 const LOG_DIR = join(config.dataDir, 'logs');
 try { mkdirSync(LOG_DIR, { recursive: true }); } catch {}
+
+const logPolicy = readLogPolicy();
+const _fileWriter = Object.values(logPolicy).some(limit => limit > 0)
+  ? createLogFileWriter({ dir: LOG_DIR, ...logPolicy,
+    onError: () => console.warn('[logger] Disk log write/cleanup failed; check directory permissions and LOG_* limits.') })
+  : null;
 
 // Rotate by UTC date. One stream per day, lazily recreated at midnight.
 let _appStream = null;
@@ -108,10 +116,13 @@ for (const level of ['debug', 'info', 'warn', 'error']) {
 
     // Persist to disk
     try {
-      const { app, err } = getStreams();
       const line = JSON.stringify(entry) + '\n';
-      writeLogLine(app, line);
-      if (level === 'error' || level === 'warn') writeLogLine(err, line);
+      if (_fileWriter) _fileWriter.write(level, line);
+      else {
+        const { app, err } = getStreams();
+        writeLogLine(app, line);
+        if (level === 'error' || level === 'warn') writeLogLine(err, line);
+      }
     } catch {}
 
     // Also print to console so pm2 logs still work
