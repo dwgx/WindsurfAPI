@@ -423,7 +423,10 @@ curl -X DELETE http://localhost:3003/v1/responses/resp_xxx -H "Authorization: Be
 | `DATA_DIR` | 项目根目录 | 持久化 JSON 状态和 `logs/` 的目录，Docker 推荐设成 `/data` |
 | `DEFAULT_MODEL` | `claude-sonnet-4.6` | 不传 model 用哪个。必须是当前后端能解析的名字。Connect 上解析不到默认 400 `model_not_found`（`WINDSURFAPI_STRICT_MODEL=0` 才静默降级到免费 selector） |
 | `MAX_TOKENS` | `8192` | 默认最大回复 token 数 |
-| `LOG_LEVEL` | `info` | debug / info / warn / error |
+| `LOG_LEVEL` | `info` | 控制台级别：debug / info / warn / error；JSONL 文件和 Dashboard 仍接收所有级别 |
+| `LOG_RETENTION_DAYS` | `0`（关闭） | 应用 JSONL 日志保留的 UTC 日历天数，包含当天；示例 `14`。启动及每小时清理，改配置需重启 |
+| `LOG_MAX_FILE_MB` | `0`（关闭） | 单个新写入日志文件的 MiB 上限，示例 `20`；整条 JSONL 记录轮转，不拆行 |
+| `LOG_MAX_TOTAL_MB` | `0`（关闭） | app/error 日志合计的 MiB 上限，示例 `500`；按日期/分段淘汰最旧文件，可能包含当天。超限单条记录跳过磁盘写入。详见 [日志保留策略](docs/ENV-SWITCHES.md#应用磁盘日志) |
 | `WINDSURFAPI_LEAK_TRACE` | off | 推理/内容边界结构化日志(实验性,默认关闭)。开启后输出 `LEAK_TRACE` 前缀日志:原始流事件所属通道(content/reasoning)、think 标记、截断文本样本、settle 时 content/reasoning 字符数。用于在线抓取模型推理泄漏进 content 通道的问题。字段:channel/blockType/think/sample/len/reqId/account/msgId/contentChars/reasoningChars/rerouted |
 | `WINDSURFAPI_IGNORE_CLOUD_FILTER` | `0` | Cascade 路径下，各账号云端 catalog 同步后，账号池列表展示活跃账号目录的并集，路由则校验所选账号自己的目录；设为 `1` 恢复完整静态 catalog。目录缺失、为空或同步失败时保持 fail-open；`DEVIN_CONNECT` 使用独立 selector catalog |
 | `LS_BINARY_PATH` | `/opt/windsurf/language_server_linux_x64` | LS 二进制位置 |
