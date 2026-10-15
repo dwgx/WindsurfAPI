@@ -35,20 +35,20 @@ let _touchSeq = 0;
 let _curBucket = null;
 
 /** Count of tracked model keys excluding the shared overflow bucket. */
-function realModelKeyCount() {
+function realModelKeyCount(modelCounts = _state.modelCounts) {
   let n = 0;
-  for (const k of Object.keys(_state.modelCounts)) {
+  for (const k of Object.keys(modelCounts)) {
     if (k !== OTHER_MODEL_KEY) n++;
   }
   return n;
 }
 
 /** Fold an evicted model's counts into the shared '(other)' bucket. */
-function foldIntoOther(src) {
-  let dst = _state.modelCounts[OTHER_MODEL_KEY];
+function foldIntoOther(src, modelCounts = _state.modelCounts) {
+  let dst = modelCounts[OTHER_MODEL_KEY];
   if (!dst) {
     dst = { requests: 0, success: 0, errors: 0, totalMs: 0, recentMs: [], lastTs: 0 };
-    _state.modelCounts[OTHER_MODEL_KEY] = dst;
+    modelCounts[OTHER_MODEL_KEY] = dst;
   }
   dst.requests += src.requests || 0;
   dst.success += src.success || 0;
@@ -59,7 +59,7 @@ function foldIntoOther(src) {
     for (const v of src.recentMs) dst.recentMs.push(v);
     if (dst.recentMs.length > 200) dst.recentMs = dst.recentMs.slice(-200);
   }
-  dst.lastTs = ++_touchSeq;
+  dst.lastTs = modelCounts === _state.modelCounts ? ++_touchSeq : Math.max(dst.lastTs || 0, src.lastTs || 0);
 }
 
 /**
@@ -67,24 +67,24 @@ function foldIntoOther(src) {
  * least-recently-updated real model into '(other)' while over the cap.
  * No-op when MAX_MODELS is 0 (unbounded).
  */
-function enforceModelCap() {
+function enforceModelCap(reserveSlot = true, modelCounts = _state.modelCounts) {
   if (MAX_MODELS <= 0) return;
-  while (realModelKeyCount() >= MAX_MODELS) {
+  while (realModelKeyCount(modelCounts) > MAX_MODELS - (reserveSlot ? 1 : 0)) {
     let coldestKey = null;
     let coldestTs = Infinity;
-    for (const [k, s] of Object.entries(_state.modelCounts)) {
+    for (const [k, s] of Object.entries(modelCounts)) {
       if (k === OTHER_MODEL_KEY) continue;
       const ts = s.lastTs || 0;
       if (ts < coldestTs) { coldestTs = ts; coldestKey = k; }
     }
     if (coldestKey == null) break;
-    foldIntoOther(_state.modelCounts[coldestKey]);
-    delete _state.modelCounts[coldestKey];
+    foldIntoOther(modelCounts[coldestKey], modelCounts);
+    delete modelCounts[coldestKey];
   }
 }
 
-const _state = {
-  startedAt: Date.now(),
+const STATS_DEFAULTS = {
+  startedAt: 0,
   totalRequests: 0,
   successCount: 0,
   errorCount: 0,
@@ -123,6 +123,12 @@ const _state = {
   // keep a rolling window of recent calls for audit/export instead of losing them.
   recentRequests: [],  // [{ ts, model, success, ms, account, credit }]  newest last, cap 500
 };
+
+function createStatsState() {
+  return { ...structuredClone(STATS_DEFAULTS), startedAt: Date.now() };
+}
+
+const _state = createStatsState();
 
 const RECENT_REQ_CAP = 500;
 
@@ -292,60 +298,129 @@ export function exportStats() {
   };
 }
 
+function normalizeStatsSnapshot(src) {
+  const object = value => value && typeof value === 'object' && !Array.isArray(value);
+  const number = (value = 0) => {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value < 0) throw new Error('invalid number');
+    return value;
+  };
+  const counts = (value, keys) => {
+    if (!object(value)) throw new Error('invalid counters');
+    return Object.fromEntries(keys.map(key => [key, number(value[key])]));
+  };
+  const out = createStatsState();
+  if (!object(src) || !Object.keys(out).some(key => Object.hasOwn(src, key))) throw new Error('empty snapshot');
+  if (src._schema != null && !['windsurfapi-stats-v1', 'windsurfapi-stats-v2'].includes(src._schema)) {
+    throw new Error('unsupported schema');
+  }
+  for (const [key, value] of Object.entries(out)) {
+    if (typeof value === 'number' && Object.hasOwn(src, key)) out[key] = number(src[key]);
+  }
+  for (const key of ['modelCounts', 'accountCounts', 'creditsByHour', 'creditsByDay', 'creditsByModel']) {
+    if (!Object.hasOwn(src, key)) continue;
+    if (!object(src[key])) throw new Error('invalid map');
+    for (const [name, value] of Object.entries(src[key])) {
+      if (key.startsWith('credits')) { out[key][name] = number(value); continue; }
+      const entry = counts(value, key === 'modelCounts'
+        ? ['requests', 'success', 'errors', 'totalMs', 'lastTs'] : ['requests', 'success', 'errors']);
+      if (key === 'modelCounts') {
+        if (value.recentMs !== undefined && !Array.isArray(value.recentMs)) throw new Error('invalid latency samples');
+        entry.recentMs = (value.recentMs || []).map(v => number(v)).slice(-200);
+      }
+      out[key][name] = entry;
+    }
+  }
+  if (Object.hasOwn(src, 'tokenTotals')) out.tokenTotals = counts(src.tokenTotals, Object.keys(out.tokenTotals));
+  for (const key of ['hourlyBuckets', 'recentRequests', 'recentPolicyBlocks']) {
+    if (!Object.hasOwn(src, key)) continue;
+    if (!Array.isArray(src[key])) throw new Error('invalid history');
+    out[key] = src[key].map(entry => {
+      if (!object(entry)) throw new Error('invalid history entry');
+      if (key === 'hourlyBuckets') {
+        if (typeof entry.hour !== 'string' || !Number.isFinite(Date.parse(entry.hour))) throw new Error('invalid hour');
+        return { hour: new Date(entry.hour).toISOString(), ...counts(entry, ['requests', 'errors']) };
+      }
+      number(entry.ts);
+      if (!Object.hasOwn(entry, 'ts')) throw new Error('missing timestamp');
+      if (key === 'recentRequests') {
+        if (typeof entry.model !== 'string') throw new Error('invalid model');
+        if (entry.success !== undefined && typeof entry.success !== 'boolean') throw new Error('invalid success flag');
+        if (entry.account != null && typeof entry.account !== 'string') throw new Error('invalid account');
+        for (const field of ['ms', 'credit']) if (Object.hasOwn(entry, field)) number(entry[field]);
+      } else if (typeof entry.promptHash !== 'string') throw new Error('invalid prompt hash');
+      return entry;
+    });
+  }
+  return out;
+}
+
+function mergeStatsHistory(existing, incoming, identity, cap) {
+  const entries = new Map(existing.map(entry => [identity(entry), entry]));
+  for (const entry of incoming) {
+    const key = identity(entry);
+    if (!entries.has(key)) entries.set(key, entry);
+  }
+  return [...entries.values()].sort((a, b) => a.ts - b.ts).slice(-cap);
+}
+
 // v2.0.148 — Import a previously exported snapshot. MERGE mode (default) adds
 // counts onto current; REPLACE overwrites. Numeric fields are summed, keyed
 // maps merged, recentRequests concatenated + de-duped by ts+model then capped.
 export function importStats(snap, { mode = 'merge' } = {}) {
-  if (!snap || typeof snap !== 'object') return { ok: false, error: 'invalid snapshot' };
-  // Match runtime-config.js:182-190: ignore prototype keys at every depth.
-  // Complete the clone before clearing state so a failed clone is non-mutating.
-  const src = JSON.parse(JSON.stringify(snap), (key, value) => {
-    if (key === '__proto__' || key === 'constructor' || key === 'prototype') return undefined;
-    return value;
-  });
-  if (mode === 'replace') {
-    for (const k of Object.keys(_state)) delete _state[k];
-    Object.assign(_state, src);
-    delete _state._exportedAt; delete _state._schema;
-    _curBucket = null; // S8: state wholesale-replaced, cached bucket ref is stale
-    scheduleSave();
-    return { ok: true, mode: 'replace' };
+  if (!['merge', 'replace'].includes(mode)) return { ok: false, error: 'invalid mode' };
+  let next;
+  try {
+    // Clone and validate before touching live state; prototype keys are stripped at every depth.
+    const src = normalizeStatsSnapshot(JSON.parse(JSON.stringify(snap), (key, value) => {
+      if (key === '__proto__' || key === 'constructor' || key === 'prototype') return undefined;
+      return value;
+    }));
+    next = mode === 'replace' ? src : normalizeStatsSnapshot(JSON.parse(JSON.stringify(_state)));
+    if (mode === 'merge') {
+      for (const [key, value] of Object.entries(src)) {
+        if (typeof value === 'number' && key !== 'startedAt') next[key] += value;
+      }
+      for (const key of ['creditsByHour', 'creditsByDay', 'creditsByModel', 'tokenTotals']) {
+        for (const [name, value] of Object.entries(src[key])) {
+          next[key][name] = (Object.hasOwn(next[key], name) ? next[key][name] : 0) + value;
+        }
+      }
+      for (const key of ['modelCounts', 'accountCounts']) {
+        for (const [name, incoming] of Object.entries(src[key])) {
+          const current = Object.hasOwn(next[key], name) ? next[key][name] : null;
+          if (!current) { next[key][name] = incoming; continue; }
+          for (const field of ['requests', 'success', 'errors']) current[field] += incoming[field];
+          if (key === 'modelCounts') {
+            current.totalMs += incoming.totalMs;
+            current.lastTs = Math.max(current.lastTs, incoming.lastTs);
+            current.recentMs = [...current.recentMs, ...incoming.recentMs].slice(-200);
+          }
+        }
+      }
+    }
+    const hours = new Map();
+    for (const bucket of [...(mode === 'merge' ? src.hourlyBuckets : []), ...next.hourlyBuckets]) {
+      const current = hours.get(bucket.hour);
+      if (current) { current.requests += bucket.requests; current.errors += bucket.errors; }
+      else hours.set(bucket.hour, { ...bucket });
+    }
+    next.hourlyBuckets = [...hours.values()].sort((a, b) => a.hour.localeCompare(b.hour)).slice(-720);
+    next.recentRequests = mergeStatsHistory(next.recentRequests, mode === 'merge' ? src.recentRequests : [],
+      r => `${r.ts}|${r.model}`, RECENT_REQ_CAP);
+    next.recentPolicyBlocks = mergeStatsHistory(next.recentPolicyBlocks, mode === 'merge' ? src.recentPolicyBlocks : [],
+      r => `${r.ts}|${r.promptHash}`, Number(process.env.POLICY_BLOCK_RING) || 50);
+    pruneKeyed(next.creditsByHour, 720);
+    pruneKeyed(next.creditsByDay, 90);
+    enforceModelCap(false, next.modelCounts);
+    next = normalizeStatsSnapshot(next); // Also reject numeric overflow from merging.
+  } catch {
+    return { ok: false, error: 'invalid snapshot' };
   }
-  // merge
-  const numKeys = ['totalRequests', 'successCount', 'errorCount', 'creditsTotal', 'policyBlockedCount', 'rateLimitedCount'];
-  for (const k of numKeys) if (typeof src[k] === 'number') _state[k] = (_state[k] || 0) + src[k];
-  for (const mapKey of ['creditsByHour', 'creditsByDay', 'creditsByModel']) {
-    const m = src[mapKey]; if (m && typeof m === 'object') {
-      _state[mapKey] = _state[mapKey] || {};
-      for (const [k, v] of Object.entries(m)) _state[mapKey][k] = (_state[mapKey][k] || 0) + (Number(v) || 0);
-    }
-  }
-  if (Array.isArray(src.recentRequests)) {
-    const seen = new Set((_state.recentRequests || []).map(r => `${r.ts}|${r.model}`));
-    for (const r of src.recentRequests) {
-      const id = `${r.ts}|${r.model}`;
-      if (!seen.has(id)) { _state.recentRequests.push(r); seen.add(id); }
-    }
-    _state.recentRequests.sort((a, b) => a.ts - b.ts);
-    if (_state.recentRequests.length > RECENT_REQ_CAP) {
-      _state.recentRequests.splice(0, _state.recentRequests.length - RECENT_REQ_CAP);
-    }
-  }
-  if (Array.isArray(src.recentPolicyBlocks)) {
-    if (!Array.isArray(_state.recentPolicyBlocks)) _state.recentPolicyBlocks = [];
-    const seen = new Set((_state.recentPolicyBlocks || []).map(r => `${r.ts}|${r.promptHash}`));
-    for (const r of src.recentPolicyBlocks) {
-      const id = `${r.ts}|${r.promptHash}`;
-      if (!seen.has(id)) { _state.recentPolicyBlocks.push(r); seen.add(id); }
-    }
-    _state.recentPolicyBlocks.sort((a, b) => a.ts - b.ts);
-    const CAP = Number(process.env.POLICY_BLOCK_RING) || 50;
-    if (_state.recentPolicyBlocks.length > CAP) {
-      _state.recentPolicyBlocks.splice(0, _state.recentPolicyBlocks.length - CAP);
-    }
-  }
+  Object.assign(_state, next);
+  for (const entry of Object.values(_state.modelCounts)) _touchSeq = Math.max(_touchSeq, entry.lastTs);
+  _curBucket = null;
   scheduleSave();
-  return { ok: true, mode: 'merge' };
+  return { ok: true, mode };
 }
 
 /** Reset all stats. */

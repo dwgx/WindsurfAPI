@@ -1,21 +1,17 @@
 import assert from 'node:assert/strict';
-import { test } from 'node:test';
-import { readFileSync } from 'node:fs';
+import { afterEach, beforeEach, mock, test } from 'node:test';
+import { exportStats, importStats, resetStats } from '../src/dashboard/stats.js';
 
-const source = readFileSync(new URL('../src/dashboard/stats.js', import.meta.url), 'utf8');
-const match = source.match(/^export function importStats\([^]*?^\}/m);
-assert.ok(match, 'exercise the actual production importStats function');
+beforeEach(() => mock.timers.enable({ apis: ['setTimeout'] }));
+afterEach(() => mock.timers.reset());
 function fresh() {
-  const state = { totalRequests: 2, creditsByModel: { normal: 1 }, recentRequests: [], recentPolicyBlocks: [] };
-  return new Function('_state', `
-    let _curBucket = {};
-    let saves = 0;
-    const RECENT_REQ_CAP = 200;
-    const process = { env: {} };
-    function scheduleSave() { saves += 1; }
-    ${match[0].replace(/^export /, '')}
-    return { importStats, state: () => _state, saves: () => saves };
-  `)(state);
+  resetStats();
+  assert.equal(importStats({ totalRequests: 2, creditsByModel: { normal: 1 } }, { mode: 'replace' }).ok, true);
+  return { importStats, state() {
+    const snapshot = structuredClone(exportStats());
+    delete snapshot._exportedAt;
+    return snapshot;
+  } };
 }
 
 test('SEC-4: JSON own __proto__ cannot change the state prototype on replace', () => {
@@ -50,14 +46,13 @@ test('SEC-4: object-literal __proto__ is not confused with an own JSON key', () 
   assert.equal(Object.hasOwn(input, '__proto__'), false);
   api.importStats(input, { mode: 'replace' });
   assert.equal(Object.getPrototypeOf(api.state()), Object.prototype);
-  assert.equal(api.state().totalRequests, undefined);
+  assert.equal(api.state().totalRequests, 0);
 });
 
 test('SEC-4: clone failure leaves the existing state untouched', () => {
   const api = fresh();
   const before = JSON.stringify(api.state());
   const cycle = {}; cycle.self = cycle;
-  assert.throws(() => api.importStats(cycle, { mode: 'replace' }), TypeError);
+  assert.deepEqual(api.importStats(cycle, { mode: 'replace' }), { ok: false, error: 'invalid snapshot' });
   assert.equal(JSON.stringify(api.state()), before);
-  assert.equal(api.saves(), 0);
 });
