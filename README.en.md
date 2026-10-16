@@ -324,7 +324,10 @@ In your client's settings for **Custom OpenAI Compatible**:
 | `CODEIUM_API_URL` | `https://server.self-serve.windsurf.com` | Windsurf cloud API endpoint. |
 | `DEFAULT_MODEL` | `claude-sonnet-4.6` | The model to use if `model` is not specified. Must be a name the active backend can resolve. Unmapped Connect names return 400 `model_not_found` unless `WINDSURFAPI_STRICT_MODEL=0` (legacy silent degrade to the free selector). |
 | `MAX_TOKENS` | `8192` | Default maximum number of response tokens. |
-| `LOG_LEVEL` | `info` | debug / info / warn / error |
+| `LOG_LEVEL` | `info` | Console level: debug / info / warn / error. JSONL files and Dashboard still receive all levels. |
+| `LOG_RETENTION_DAYS` | `0` (off) | Application JSONL retention in UTC calendar days including today; e.g. `14`. Cleanup at startup and hourly. Restart after changes. |
+| `LOG_MAX_FILE_MB` | `0` (off) | MiB limit for newly written log files; e.g. `20`. Rotate between complete JSONL records. |
+| `LOG_MAX_TOTAL_MB` | `0` (off) | Combined app/error log MiB budget; e.g. `500`. Evict oldest dated segments, including today's if necessary. Oversized records skip disk persistence. See [disk-log policy](docs/ENV-SWITCHES.md#应用磁盘日志). |
 | `WINDSURFAPI_IGNORE_CLOUD_FILTER` | `0` | On the Cascade transport, after per-account cloud catalogs sync, pool listings show their union and routing enforces each selected account's catalog. Set to `1` to restore the full static catalog. Missing, empty, or failed catalog syncs fail open. `DEVIN_CONNECT` uses its separate selector catalog. |
 | `LS_BINARY_PATH` | `/opt/windsurf/language_server_linux_x64` | Path to the LS binary. |
 | `LS_PORT` | `42100` | LS gRPC port. |
