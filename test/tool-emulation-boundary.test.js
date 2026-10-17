@@ -226,4 +226,31 @@ describe('stripOrphanedToolResults', () => {
     );
     assert.ok(!out.some(m => typeof m.content === 'string' && m.content.includes('tool_result')));
   });
+  it('keeps a result whose matching call appears LATER (anywhere, not seen-so-far)', () => {
+    // tool-emulation.js:1106-1108 — orphanhood means no matching call ANYWHERE
+    // in the history. A seen-so-far set would silently drop this result while
+    // keeping its call (PR #274 review M1, second half).
+    const out = stripOrphanedToolResults([
+      { role: 'tool', tool_call_id: 'c1', content: 'result-first' },
+      { role: 'assistant', tool_calls: [{ id: 'c1', function: { name: 'f' } }] },
+      { role: 'user', content: 'go' },
+    ]);
+    assert.equal(out.length, 3, 'the result must survive when its call appears later');
+    assert.equal(out[0].content, 'result-first');
+  });
+  it('a mid-array orphan survives the text-emulation encoder (not just tails)', () => {
+    // PR #274 review M1 drive: [user | orphan tool MARKER | user] through the
+    // text-emulation encoder (stripOrphans unset) must keep MARKER — the shared
+    // layer must never pre-strip what this encoder is meant to fold.
+    const out = normalizeMessagesForCascade(
+      [
+        { role: 'user', content: 'a' },
+        { role: 'tool', tool_call_id: 'gone', content: 'MARKER' },
+        { role: 'user', content: 'summarise' },
+      ],
+      [], { route: 'devin_connect' },
+    );
+    const folded = out.map((m) => (typeof m.content === 'string' ? m.content : '')).join('\n');
+    assert.ok(folded.includes('MARKER'), 'orphan tool content must reach the prompt fold');
+  });
 });
