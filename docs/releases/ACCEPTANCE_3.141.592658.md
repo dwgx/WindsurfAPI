@@ -94,12 +94,14 @@ WIRE_EXPECTED_DIFFS {"byte_identical":270,"expected":0,"entries":0,"compared":27
 
 live 证据在 combined candidate `2b9adae9` 上采集，`15dd8904` 只在其上改了一行 mutation spec
 （`test/mutations/request-tail-contract.json`），`src/` 逐字节相同。因此下面的产品行为证据对发布
-提交同样成立；发布提交本身没有新增 live 采集。
+提交同样成立；发布提交本身没有新增 live 采集。表中**唯一**一行不是本机实测的是「后续用户轮
+A/B（作者侧）」，行内已标明来源与未复跑。
 
 | 面 | 结果 | 证据 |
 |---|---|---|
 | 上游签名真实性 | 200；1440 字符 CAIS `C` 信封；`compatibleClaudeSignature=true`、`candidateValidatorAccepts=true`；另有 1028/1036/1580 字符样本 | `req_45d8910a…`；`LIVE-REPORT.md` §签名 |
 | 工具循环 A/B | 回放臂 **2/3** 召回 vs 不带签名对照 **0/3**，全部 200 | `req_34e3806b…`、`req_c942139c…` |
+| 后续用户轮 A/B（**作者侧，未本机复跑**） | **3/3 vs 0/4**（强制作答设计）是 PR 作者在 [`pr://282`](https://github.com/dwgx/WindsurfAPI/pull/282) 公布的测量（2026-10-28），不是本机的实测；本机在后续用户轮只有一次真实 Claude Code `--resume`（wire `#11` 72 B + `#12` 936 B），不构成对该对照的复现 | `pr://282`；`RELEASE_NOTES_3.141.592658.md` §2 |
 | 篡改负对照 | 未篡改 200；改一个 payload 字节 → 上游 `invalid_argument` 400；破坏信封 → 本地 400 | `req_76fc139f…`、`req_f88d9b87…` |
 | 真实客户端 | Claude Code 2.1.306 `Read` 工具循环 + `--resume`；客户端回传 936 字符签名；后续轮 wire `#11` 72 B + `#12` 936 B，回放关闭 `#11` 0 / `#12` 0 | `capture-final-on.jsonl` / `capture-final-off.jsonl` |
 | M3 空文本轮 | 带签名 reasoning-only 轮 200，`#11` + `#12`，文本为空 | `req_303ab87d…` |
