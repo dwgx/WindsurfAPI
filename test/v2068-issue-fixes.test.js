@@ -152,7 +152,7 @@ describe('#119 — sticky-IP proxy username segregates LS instances under env fl
     }
   });
 
-  it('with env=1: doc-style smoke (proxyKey is internal; full segregation needs LS spawn — covered by integration)', () => {
+  it('with env=1: doc-style smoke (proxyKey is internal; full segregation needs LS spawn — covered by integration)', async () => {
     // proxyKey is module-internal. We verify the env knob exists and
     // the module loads correctly with it set. End-to-end segregation
     // (different LS process per username) is covered manually on the
@@ -161,9 +161,14 @@ describe('#119 — sticky-IP proxy username segregates LS instances under env fl
     process.env.WINDSURFAPI_LS_PER_PROXY_USER = '1';
     try {
       // Re-import succeeds, no syntax error in the new branch.
-      assert.doesNotThrow(async () => {
-        await import(`../src/langserver.js?reload=${Date.now()}`);
-      });
+      //
+      // 2026-11-01: this was `assert.doesNotThrow(async () => { await import(...) })`.
+      // doesNotThrow does not await its argument, so a rejection inside the async
+      // callback was invisible — the assertion passed whether or not the module
+      // loaded, and the failure only surfaced later as an unhandledRejection
+      // attributed to "async activity after the test ended". Awaiting the import
+      // directly makes a load failure fail here, on this line.
+      await import(`../src/langserver.js?reload=${Date.now()}`);
     } finally {
       if (orig !== undefined) process.env.WINDSURFAPI_LS_PER_PROXY_USER = orig;
       else delete process.env.WINDSURFAPI_LS_PER_PROXY_USER;

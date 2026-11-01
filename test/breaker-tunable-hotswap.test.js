@@ -142,9 +142,43 @@ describe('breaker hot-swap drives reportError live (v3.0.3)', () => {
   it('lowering errorStreakThreshold trips an already-near-limit account on the next error', async () => {
     // Half-new-half-old lock: reportError reads the getter live, so an account
     // sitting at errorCount=2 trips the moment the threshold drops to 2.
+    //
+    // 2026-11-01: this case used to be a tautology. It opened with
+    //   `if (typeof auth.reportError !== 'function') return;`
+    // — a guard that can never fire (auth.js:4259 always exports it) — and then
+    // only did setBreakerTunables + a getter read-back. reportError was never
+    // called, so the name's promise ("trips an already-near-limit account") was
+    // never exercised. The guard is gone; the scenario below is real.
+    //
+    // The sequence RAISES the threshold before lowering it. That is what makes
+    // the case bite: with a fixed count it could not tell a live read from a
+    // hardcoded `>= 3` (both true at errorCount=3 — measured: mutating the read
+    // to a constant left the earlier version green). Here a constant cannot
+    // satisfy both halves: 3 must NOT trip at threshold 5, and 4 MUST trip at 3.
     const auth = await import('../src/auth.js');
-    if (typeof auth.reportError !== 'function') return; // shape guard
-    setBreakerTunables({ errorStreakThreshold: 2 });
-    assert.equal(getBreakerTunable('errorStreakThreshold'), 2);
+    // A peer must exist or lastAccountExempt (default true) keeps the tripping
+    // account in rotation — see connect-error-blame.test.js:331.
+    const hot = auth.addAccountByKey('hot-key-hotswap', 'hot@example.invalid');
+    auth.addAccountByKey('peer-key-hotswap', 'peer@example.invalid');
+    assert.ok(hot, 'precondition: the account was added');
+
+    auth.reportError('hot-key-hotswap');
+    auth.reportError('hot-key-hotswap');
+    assert.equal(hot.errorCount, 2, 'precondition: two errors recorded');
+
+    // Raised above the count: the next error must NOT trip.
+    setBreakerTunables({ errorStreakThreshold: 5 });
+    assert.equal(getBreakerTunable('errorStreakThreshold'), 5);
+    auth.reportError('hot-key-hotswap');
+    assert.equal(hot.errorCount, 3);
+    assert.notEqual(hot.status, 'error', 'threshold 5 must hold a count of 3 in rotation');
+
+    // Lowered under the running process: the next error MUST trip. A hardcoded
+    // threshold fails one of these two assertions whichever constant it picks.
+    setBreakerTunables({ errorStreakThreshold: 3 });
+    assert.equal(getBreakerTunable('errorStreakThreshold'), 3);
+    auth.reportError('hot-key-hotswap');
+    assert.equal(hot.errorCount, 4);
+    assert.equal(hot.status, 'error', 'the lowered threshold tripped the account live');
   });
 });

@@ -24,6 +24,8 @@ import { join, dirname, resolve, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync } from 'node:child_process';
 
+import { changelogCounts, renderCounts } from '../scripts/sync-changelog-counts.mjs';
+
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const DOCS = join(ROOT, 'docs');
 
@@ -892,13 +894,41 @@ describe('docs: version claims match the repository', () => {
     assert.equal(row[1], pkgVersion, `CHANGELOG's 当前 row says ${row[1]}, package.json is ${pkgVersion}`);
   });
 
-  it('the CHANGELOG banner count and table count agree', () => {
+  it('the CHANGELOG release counts are the ones the checkout has', () => {
+    // Comparing the banner against the table only proves that two hand edits agree. On
+    // 2026-10-31 they did not: the banner said 218 (the RELEASE_NOTES_*.md count) and the
+    // table said 222 — 222 is what `find docs/releases -name '*.md' | wc -l` returns, which
+    // also counts README.md and the three ACCEPTANCE_*.md appendices. The same class of
+    // drift had already shipped once, in the other direction: the index said 172 while 175
+    // files sat on disk (3.9.22/23 were present but uncounted). Each claim is now compared
+    // against its own derivation, and `scripts/sync-changelog-counts.mjs` writes them, so
+    // the number is a fact about the checkout rather than a number someone typed.
     const changelog = read(join(ROOT, 'CHANGELOG.md'));
+    const counts = changelogCounts(ROOT);
     const banner = changelog.match(/全部\s+(\d+)\s+份发布说明/);
     const table = changelog.match(/发布说明\s*\|\s*\*\*(\d+)\*\*\s*份/);
+    const tags = changelog.match(/^\|\s*git tag\s*\|\s*(\d+)/m);
     assert.ok(banner, 'CHANGELOG.md banner must state 全部 N 份发布说明');
     assert.ok(table, 'CHANGELOG.md table must state 发布说明 | **N** 份');
-    assert.equal(banner[1], table[1], `banner says ${banner[1]} notes, table says ${table[1]}`);
+    assert.ok(tags, 'CHANGELOG.md table must state git tag | N 个');
+    assert.equal(banner[1], String(counts.notes),
+      `banner says ${banner[1]} notes, docs/releases carries ${counts.notes} RELEASE_NOTES_*.md`);
+    assert.equal(table[1], String(counts.notes),
+      `table says ${table[1]} notes, docs/releases carries ${counts.notes} RELEASE_NOTES_*.md`);
+    // A checkout without git history cannot count tags; the row is left alone rather than
+    // rewritten to a zero the host cannot stand behind.
+    if (counts.tags !== null) {
+      assert.equal(tags[1], String(counts.tags), `table says ${tags[1]} tags, git lists ${counts.tags}`);
+    }
+  });
+
+  it('the CHANGELOG counting rows are exactly what the generator renders', () => {
+    // Byte equality, not just the numbers: the rows are generated, so any hand edit —
+    // including one that keeps the digits but restates the measurement — has to fail here
+    // instead of shipping. Same contract as docs/UNVERIFIED.md (test/unverified-register.test.js).
+    const changelog = read(join(ROOT, 'CHANGELOG.md'));
+    assert.equal(renderCounts(changelog, changelogCounts(ROOT)), changelog,
+      'CHANGELOG.md counting rows drifted from scripts/sync-changelog-counts.mjs — run it');
   });
 
   it('the packaged version has a CHANGELOG index row and a release-notes file', () => {
@@ -966,22 +996,6 @@ describe('docs: version claims match the repository', () => {
       if (!changelog.includes(`](docs/releases/${name})`)) missing.push(name);
     }
     assert.deepEqual(missing, [], `3.9.x notes not indexed in CHANGELOG.md:\n  ${missing.join('\n  ')}`);
-  });
-
-  it('CHANGELOG release-notes count matches files on disk', () => {
-    // The index said 172 while 175 files sat on disk (22/23 were present but
-    // uncounted). A hand-edited number that is not derived from readdir is the
-    // same class of claim as a stale version string.
-    const files = readdirSync(join(DOCS, 'releases'))
-      .filter((n) => /^RELEASE_NOTES_/.test(n) && n.endsWith('.md'));
-    const changelog = read(join(ROOT, 'CHANGELOG.md'));
-    const m = changelog.match(/发布说明\s*\|\s*\*\*(\d+)\*\*\s*份/);
-    assert.ok(m, 'CHANGELOG.md must state the release-notes count as **N** 份');
-    assert.equal(
-      Number(m[1]),
-      files.length,
-      `CHANGELOG says ${m[1]} notes but docs/releases has ${files.length} RELEASE_NOTES_*.md files`,
-    );
   });
 
   it('HISTORY-LEDGER.md does not present v3.9.21 as the live product tag', () => {

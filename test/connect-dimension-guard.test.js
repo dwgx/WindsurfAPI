@@ -59,8 +59,21 @@ describe('connect selection sees every cooldown a connect request can cause', ()
   // is throttled (auth.js pickDegradedFallback — the deliberate alternative to a
   // blanket 429). That is opt-in and clearly flagged. What must NEVER happen is a
   // NORMAL selection handing the cooled account back as if it were healthy.
-  const assertNotNormallySelected = (picked, what) => {
-    if (picked === null) return;
+  // 2026-11-01: the `picked === null` branch used to `return` silently. "Not
+  // selected" alone is ambiguous — an EVICTED account (status='error') is also
+  // unselectable, so a cooldown that wrongly evicted the account would pass this
+  // guard for the wrong reason. The sibling file already carries this assertion
+  // (connect-dimension-behaviour.test.js:89-96); this is the same check here.
+  const assertNotNormallySelected = (picked, what, acct) => {
+    if (picked === null) {
+      if (acct) {
+        const after = getAccountInternal(acct.id);
+        assert.notEqual(after.status, 'error',
+          `${what} evicted the account instead of cooling it. "Not selected" would `
+          + 'then pass for the wrong reason.');
+      }
+      return;
+    }
     assert.ok(picked._degraded,
       `${what} was handed back by normal selection — the cooldown is invisible to `
       + 'the connect lookup (modelKey=null). See #224 / v3.8.0 CAPACITY.');
@@ -70,19 +83,19 @@ describe('connect selection sees every cooldown a connect request can cause', ()
   it('account-wide cooldown (RATE_LIMITED, #224) gates the connect lookup', () => {
     const a = seed('rl');
     markRateLimited(a.apiKey, 60_000, null, 'r');
-    assertNotNormallySelected(connectLookup(), 'an account-wide cooldown');
+    assertNotNormallySelected(connectLookup(), 'an account-wide cooldown', a);
   });
 
   it('selector-scoped cooldown (CAPACITY, v3.8.0) gates the connect lookup', () => {
     const a = seed('cap');
     markRateLimited(a.apiKey, 60_000, SELECTOR, 'c');
-    assertNotNormallySelected(connectLookup(), 'a selector-scoped cooldown');
+    assertNotNormallySelected(connectLookup(), 'a selector-scoped cooldown', a);
   });
 
   it('quota cooldown (QUOTA_EXHAUSTED) gates the connect lookup', () => {
     const a = seed('quota');
     markQuotaExhausted(a.apiKey, 60_000);
-    assertNotNormallySelected(connectLookup(), 'a quota dry-well');
+    assertNotNormallySelected(connectLookup(), 'a quota dry-well', a);
   });
 
   it('a healthy peer is preferred over any cooled account (no degraded serve needed)', () => {

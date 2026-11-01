@@ -1,6 +1,7 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import {
@@ -10,12 +11,32 @@ import {
   estimateDefaultMaxLsInstances,
   classifyLanguageServerStderr,
   getLsStatus,
+  getLsAdmissionStatus,
   hasLsPoolCapacityForStart,
+  isLanguageServerRunning,
+  shouldPrewarmDefaultLs,
+  stopLanguageServerAndWait,
   sweepIdleLanguageServers,
 } from '../src/langserver.js';
+import { addAccountByKey, getLsAdmissionForAccount } from '../src/auth.js';
+import { probeOutcomeEntry } from '../src/dashboard/fleet-jobs.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const AUTH_JS = readFileSync(join(__dirname, '..', 'src/auth.js'), 'utf8');
+const repoRoot = join(__dirname, '..');
+const readSrc = (rel) => readFileSync(join(repoRoot, rel), 'utf8');
+
+/** Run `fn` with one env var pinned (or unset when `value` is undefined), then restore. */
+function withEnv(name, value, fn) {
+  const saved = process.env[name];
+  if (value === undefined) delete process.env[name];
+  else process.env[name] = value;
+  try {
+    return fn();
+  } finally {
+    if (saved === undefined) delete process.env[name];
+    else process.env[name] = saved;
+  }
+}
 
 describe('language server resource policy', () => {
   test('default max instances scales down on small hosts', () => {
@@ -123,120 +144,84 @@ describe('language server resource policy', () => {
     assert.equal(result.scanned, 0);
     assert.equal(result.stopped, 0);
   });
+});
 
-  test('startup proxy prewarm is opt-in', () => {
-    assert.match(AUTH_JS, /uniqueProxies\.set\('default', null\)/);
-    assert.match(AUTH_JS, /process\.env\.LS_PREWARM_PROXIES === '1'/);
+// ─── Admission seam ─────────────────────────────────────────────────────────
+// `getLsAdmissionStatus` is the object every probe/restart decision branches on
+// (`residentProbeSkip`, the scheduled probe loop, predictive prewarm, the
+// dashboard probe routes). Asserting the seam's own output replaces the
+// former source-text greps: a changed branch now has to change an observable
+// reason code instead of a string in a file.
+describe('LS admission seam', () => {
+  test('a cold default key is admitted and is never reported resident', () => {
+    const adm = getLsAdmissionStatus(null);
+    assert.equal(adm.ok, true);
+    assert.equal(adm.wouldStart, true);
+    assert.equal(adm.reason, 'can_start');
+    assert.equal(adm.pending, false);
+    assert.equal(adm.key, 'default');
+    assert.equal(adm.maxInstances, getLsStatus().maxInstances);
+    // The whole point of the probe guard: nothing resident ⇒ a non-forcing
+    // probe has no idle instance to reuse.
+    assert.notEqual(adm.reason, 'already_running');
   });
 
-  test('auth warmup honors LS_PREWARM_DEFAULT=0 too', () => {
-    assert.match(AUTH_JS, /shouldPrewarmDefaultLs\(\)/);
+  test('a cold non-default proxy is never reported resident', () => {
+    // `getLsAdmissionStatus` keys off a proxy object, not a key string: a
+    // string has no `.host`, so it silently degrades to the default key.
+    const adm = getLsAdmissionStatus({ host: 'lsres-proxy.example', port: 8080 });
+    assert.equal(adm.key, 'px_lsres_proxy_example_8080');
+    assert.notEqual(adm.reason, 'already_running');
+    assert.equal(adm.pending, false);
+    // Only these three can come back from a cold pool; each of them makes
+    // residentProbeSkip() return `skipped: true`.
+    assert.ok(
+      ['can_start', 'memory_guard', 'pool_full_no_idle'].includes(adm.reason),
+      `unexpected cold-pool reason: ${adm.reason}`,
+    );
+    assert.equal(adm.idleEvictableCount, 0);
+    assert.equal(adm.wouldStart, true);
   });
 
-  test('default LS startup prewarm can be disabled for low-memory pools', () => {
-    const src = readFileSync(join(__dirname, '..', 'src/index.js'), 'utf8');
-    assert.match(src, /configureLanguageServer\(lsConfig\)/);
-    assert.match(src, /shouldPrewarmDefaultLs\(\)/);
-    assert.match(src, /LS default prewarm disabled/);
+  test('an account with no resident LS is not admitted as resident', () => {
+    const account = addAccountByKey(`sk-lsres-${Date.now()}-${Math.random().toString(36).slice(2)}`, 'lsres');
+    const adm = getLsAdmissionForAccount(account.id);
+    assert.equal(adm.accountId, account.id);
+    assert.notEqual(adm.reason, 'already_running');
+    assert.equal(adm.ok, true);
+    // Cold-path admissions carry no instance counters at all — that is exactly
+    // why the guard reads `(admission.activeRequests || 0) > 0`.
+    assert.equal(adm.activeRequests, undefined);
+    assert.equal(adm.maintenanceRequests, undefined);
   });
 
-  test('dashboard account-add LS warmup is opt-in', () => {
-    const src = readFileSync(join(__dirname, '..', 'src/dashboard/api.js'), 'utf8');
-    assert.match(src, /LS_PREWARM_ON_ACCOUNT_ADD === '1'/);
-    assert.match(src, /function scheduleAccountWarmup/);
+  test('an unknown account can never be admitted', () => {
+    const missing = getLsAdmissionForAccount('does-not-exist');
+    assert.equal(missing.ok, false);
+    assert.equal(missing.errorType, 'account_not_found');
+    assert.equal(missing.reason, 'account_not_found');
   });
 
-  test('scheduled probes only reuse idle resident LS instances', () => {
-    assert.match(AUTH_JS, /const admission = getLsAdmissionForAccount\(a\.id\)/);
-    assert.match(AUTH_JS, /admission\.reason !== 'already_running'/);
-    assert.match(AUTH_JS, /\(admission\.activeRequests \|\| 0\) > 0/);
-    assert.match(AUTH_JS, /\(admission\.maintenanceRequests \|\| 0\) > 0/);
-    assert.match(AUTH_JS, /isAccountBusyForProbe\(a\)/);
-    assert.match(AUTH_JS, /Scheduled probe .*wouldStart=/);
-    assert.match(AUTH_JS, /probeAccount\(a\.id, \{ allowLsStart: false \}\)/);
+  test('default and restart paths share one admission budget', () => {
+    const def = getLsAdmissionStatus(null);
+    const proxy = getLsAdmissionStatus({ host: 'lsres-restart.example', port: 8081 });
+    assert.equal(proxy.key, 'px_lsres_restart_example_8081');
+    // Same ceiling and same memory guard object shape ⇒ the restart path is not
+    // exempted from the budget the default path obeys (the #174 regression).
+    assert.equal(def.maxInstances, proxy.maxInstances);
+    assert.deepEqual(Object.keys(def.memoryGuard).sort(), Object.keys(proxy.memoryGuard).sort());
+    assert.equal(def.memoryGuard.estimatedRssBytesPerInstance, getLsStatus().memoryGuard.estimatedRssBytesPerInstance);
   });
 
-  test('background account maintenance skips busy production accounts by default', () => {
-    assert.match(AUTH_JS, /function maintenanceBusyReason\(account\)/);
-    assert.match(AUTH_JS, /function shouldSkipBusyBackgroundMaintenance\(\)/);
-    assert.match(AUTH_JS, /WINDSURFAPI_BACKGROUND_MAINTENANCE_SKIP_BUSY !== '0'/);
-    assert.match(AUTH_JS, /export async function refreshAllCredits\(\{ skipBusy = false \} = \{\}\)/);
-    assert.match(AUTH_JS, /async function refreshAllFirebaseTokens\(\{ skipBusy = false \} = \{\}\)/);
-    assert.match(AUTH_JS, /const skipBusyMaintenance = shouldSkipBusyBackgroundMaintenance\(\)/);
-    assert.match(AUTH_JS, /refreshAllCredits\(\{ skipBusy: skipBusyMaintenance \}\)/);
-    assert.match(AUTH_JS, /refreshAllFirebaseTokens\(\{ skipBusy: skipBusyMaintenance \}\)/);
-    assert.match(AUTH_JS, /skipped: true, reason: busyReason/);
-  });
-
-  test('predictive prewarm is admission-gated and reports structured failures', () => {
-    assert.match(AUTH_JS, /const admission = getLsAdmissionForAccount\(nextAccount\.id\)/);
-    assert.match(AUTH_JS, /admission\.reason !== 'already_running'/);
-    assert.match(AUTH_JS, /\(admission\.activeRequests \|\| 0\) > 0/);
-    assert.match(AUTH_JS, /\(admission\.maintenanceRequests \|\| 0\) > 0/);
-    assert.match(AUTH_JS, /ensureLsForAccount\(nextAccount\.id\)\)\.then\(r =>/);
-    assert.match(AUTH_JS, /r\?\.errorType \|\| 'ls_start_failed'/);
-  });
-
-  test('dashboard probes are resident-only unless explicitly forced', () => {
-    const src = readFileSync(join(__dirname, '..', 'src/dashboard/api.js'), 'utf8');
-    const fleet = readFileSync(join(__dirname, '..', 'src/dashboard/fleet-jobs.js'), 'utf8');
-    assert.match(src, /const force = body\?\.force === true \|\| body\?\.allowLsStart === true/);
-    // The pool-wide loop moved to fleet-jobs.js so the browser can poll it; the
-    // single-account route still forces through the same flag.
-    assert.match(fleet, /probeAccount\(account\.id, \{ allowLsStart: force \}\)/);
-    assert.match(src, /probeAccount\(accountProbe\[1\], \{ allowLsStart: force, canary \}\)/);
-    // A skipped probe must remain visible as skipped (never `ok: true`); the
-    // classification lives in probeOutcomeEntry so every route shares it.
-    assert.match(fleet, /const entry = probeOutcomeEntry\(account\.id, result\)/);
-    assert.match(fleet, /if \(result\.skipped\)/);
-    assert.match(fleet, /ok: false, skipped: true, reason:/);
-  });
-
-  test('LS admission is serialized and never evicts starting instances', () => {
-    const ls = readFileSync(join(__dirname, '..', 'src/langserver.js'), 'utf8');
-    assert.match(ls, /function withStartAdmissionLock/);
-    assert.match(ls, /poolOccupancy\(\)/);
-    assert.match(ls, /pendingStartReservationCount/);
-    assert.match(ls, /poolOccupancyWithPendingReservations/);
-    assert.match(ls, /countIdleNonDefaultEvictionCandidates/);
-    assert.match(ls, /const _pendingStartSeq = new Map\(\)/);
-    assert.match(ls, /const _stopping = new Map\(\)/);
-    assert.match(ls, /if \(!e\?\.ready\) continue/);
-    assert.match(ls, /_maintenanceUses\.get\(k\)/);
-    assert.match(ls, /await withStartAdmissionLock/);
-    assert.match(ls, /activeSpawnReservationCount\(\{ excludeKey: key, beforeSeq: pendingStartSeq \}\)/);
-    assert.match(ls, /poolOccupancyWithPendingReservations\(\{ excludeKey: key, beforeSeq: pendingStartSeq \}\)/);
-    assert.match(ls, /const ownsEntry = current\?\.process === proc/);
-    assert.match(ls, /Ignoring stale LS exit/);
-    assert.match(ls, /const _intentionalShutdownProcs = new WeakSet\(\)/);
-    assert.match(ls, /markIntentionalShutdown\(entry\)/);
-  });
-
-  test('default LS and restart paths are guarded by the same admission budget', () => {
-    const ls = readFileSync(join(__dirname, '..', 'src/langserver.js'), 'utf8');
-    const dashboard = readFileSync(join(__dirname, '..', 'src/dashboard/api.js'), 'utf8');
-    assert.doesNotMatch(ls, /function waitForPoolCapacity[\s\S]{0,120}key === 'default'\) return/);
-    assert.doesNotMatch(ls, /function waitForMemoryHeadroom[\s\S]{0,120}key === 'default'\) return/);
-    assert.match(ls, /function isDefaultBootstrapStart/);
-    assert.match(ls, /_stopping\.set\(key, \{ at: Date\.now\(\), pid: entry\?\.process\?\.pid \|\| null, reason: 'restart' \}\)/);
-    assert.match(ls, /await waitProcessExit\(entry\?\.process, 1500\)/);
-    assert.match(dashboard, /await stopLanguageServerAndWait\(\{ perProcessTimeoutMs: 1500 \}\)/);
-    assert.doesNotMatch(dashboard, /stopLanguageServer\(\);\s*setTimeout/);
-  });
-
-  test('probe maintenance has a second resident-only guard before ensureLs', () => {
-    const ls = readFileSync(join(__dirname, '..', 'src/langserver.js'), 'utf8');
-    assert.match(AUTH_JS, /function residentProbeSkip/);
-    assert.match(AUTH_JS, /export async function fetchUserStatus\(id, \{ allowLsStart = true \} = \{\}\)/);
-    assert.match(AUTH_JS, /fetchUserStatus\(account\.id, \{ allowLsStart \}\)/);
-    assert.match(AUTH_JS, /_probeAccountImpl\(account, \{ allowLsStart, canary: useCanary \}/);
-    assert.match(AUTH_JS, /if \(!allowLsStart\) \{/);
-    assert.match(AUTH_JS, /const skipped = residentProbeSkip\(account, preAdmission\)/);
-    assert.match(AUTH_JS, /const skipped = residentProbeSkip\(account, getLsAdmissionForAccount\(account\.id\)\)/);
-    assert.match(AUTH_JS, /if \(allowLsStart\) await ensureLs\(proxy\)/);
-    assert.match(AUTH_JS, /reason: busyReason \|\| admission\.errorType \|\| admission\.reason \|\| 'ls_not_idle_resident'/);
-    assert.match(ls, /port: existing\.port \|\| null/);
-    assert.match(ls, /generation: existing\.generation \|\| null/);
+  test('stopLanguageServerAndWait settles on an empty pool without burning the timeout', async () => {
+    const started = Date.now();
+    await stopLanguageServerAndWait({ perProcessTimeoutMs: 1500 });
+    assert.equal(isLanguageServerRunning(), false);
+    assert.equal(getLsStatus().pool.occupancy, 0);
+    assert.equal(getLsStatus().pool.stopping, 0);
+    // No child to reap ⇒ resolves immediately; the 1500ms ceiling is for the
+    // child, not for the call.
+    assert.ok(Date.now() - started < 1500, 'stopLanguageServerAndWait should not block with no children');
   });
 
   test('LS capacity formula counts pending starts before admitting cold proxies', () => {
@@ -247,38 +232,237 @@ describe('language server resource policy', () => {
     assert.equal(hasLsPoolCapacityForStart(3, 2, 2), true);
   });
 
-  test('LS status includes admission telemetry for health and dashboard', () => {
-    const ls = readFileSync(join(__dirname, '..', 'src/langserver.js'), 'utf8');
-    assert.match(ls, /const _admissionStats = \{/);
-    assert.match(ls, /function getLsPoolSummary/);
-    assert.match(ls, /recordAdmissionWait\('pool_capacity'/);
-    assert.match(ls, /recordAdmissionWait\('memory_guard'/);
-    assert.match(ls, /recordAdmissionFailure\('pool_capacity'/);
-    assert.match(ls, /recordAdmissionFailure\('memory_guard'/);
-    assert.match(ls, /recordStartAttempt\(key/);
-    assert.match(ls, /recordStartSuccess\(key/);
-    assert.match(ls, /recordStartFailure\(key/);
-    assert.match(ls, /admissionStatsSnapshot\(\)/);
-    assert.match(ls, /function publicLsKey/);
-    assert.match(ls, /_u_redacted/);
-    assert.match(ls, /pendingKeys = Array\.from\(_pending\.keys\(\)\)\.map\(publicLsKey\)/);
-    assert.match(ls, /evictionCandidateKey: evictionCandidate\?\.key \? publicLsKey\(evictionCandidate\.key\) : null/);
-    assert.match(AUTH_JS, /effectivePoolSize: lsAdmission\.effectivePoolSize/);
-    assert.match(AUTH_JS, /estimatedRssBytesPerInstance: lsAdmission\.memoryGuard\?\.estimatedRssBytesPerInstance/);
+  test('admission telemetry is zeroed, complete and exposed to health + dashboard', () => {
+    const { admissionStats } = getLsStatus();
+    const counters = [
+      'startAttempts', 'startSuccesses', 'startFailures',
+      'poolWaits', 'memoryWaits', 'poolExhausted', 'memoryGuardBlocks', 'evictions',
+    ];
+    assert.deepEqual(
+      Object.keys(admissionStats).filter((k) => !k.startsWith('last')).sort(),
+      counters.slice().sort(),
+    );
+    for (const key of counters) {
+      assert.equal(typeof admissionStats[key], 'number', `${key} must be a counter`);
+      assert.ok(admissionStats[key] >= 0, `${key} must never go negative`);
+    }
+    // Nothing has started in this process, so every counter is still at its seed.
+    for (const key of counters) assert.equal(admissionStats[key], 0, `${key} should start at 0`);
+    for (const key of ['lastAttempt', 'lastSuccess', 'lastFailure', 'lastWait', 'lastEviction']) {
+      assert.ok(key in admissionStats, `${key} slot must exist for the dashboard`);
+    }
   });
 
-  test('default prewarm is skipped when LS_MAX_INSTANCES leaves no proxy slot', () => {
-    const ls = readFileSync(join(__dirname, '..', 'src/langserver.js'), 'utf8');
-    const index = readFileSync(join(__dirname, '..', 'src/index.js'), 'utf8');
-    assert.match(ls, /export function shouldPrewarmDefaultLs\(\)/);
-    assert.match(ls, /MAX_LS_INSTANCES > 1/);
-    assert.match(index, /shouldPrewarmDefaultLs\(\)/);
-    assert.match(AUTH_JS, /shouldPrewarmDefaultLs\(\)/);
+  test('pool summary reports the eviction surface the dashboard reads', () => {
+    const { pool } = getLsStatus();
+    assert.deepEqual(pool.pendingKeys, []);
+    assert.deepEqual(pool.stoppingInstances, []);
+    assert.equal(pool.idleEvictable, false);
+    assert.equal(pool.evictionCandidateKey, null);
+    assert.equal(pool.defaultRunning, false);
+    assert.equal(pool.nonDefaultInstances, 0);
+    assert.equal(pool.size, 0);
+    assert.ok(pool.blockReason === null || typeof pool.blockReason === 'string', 'blockReason is null or a reason code');
   });
 });
 
+// ─── Probe outcome classification ───────────────────────────────────────────
+describe('probe outcome classification', () => {
+  test('a skipped probe stays visible as skipped, never as ok', () => {
+    assert.deepEqual(
+      probeOutcomeEntry('acct-1', { skipped: true, reason: 'ls_not_idle_resident', tier: 'pro' }),
+      { id: 'acct-1', ok: false, skipped: true, reason: 'ls_not_idle_resident', tier: 'pro' },
+    );
+    // A skip with no reason still must not read as success.
+    assert.deepEqual(
+      probeOutcomeEntry('acct-2', { skipped: true }),
+      { id: 'acct-2', ok: false, skipped: true, reason: 'probe_skipped', tier: 'unknown' },
+    );
+  });
+
+  test('a completed probe is ok and a missing account is an error', () => {
+    assert.deepEqual(probeOutcomeEntry('acct-3', { ok: true, tier: 'free' }), { id: 'acct-3', ok: true, tier: 'free' });
+    assert.deepEqual(probeOutcomeEntry('acct-4', null), { id: 'acct-4', ok: false, error: 'ERR_ACCOUNT_NOT_FOUND' });
+  });
+});
+
+// ─── Prewarm gate ───────────────────────────────────────────────────────────
+describe('default LS prewarm gate', () => {
+  test('prewarm is opt-out, not opt-in', () => {
+    withEnv('LS_PREWARM_DEFAULT', undefined, () => {
+      assert.equal(shouldPrewarmDefaultLs(), getLsStatus().maxInstances > 1);
+    });
+    withEnv('LS_PREWARM_DEFAULT', '1', () => {
+      assert.equal(shouldPrewarmDefaultLs(), getLsStatus().maxInstances > 1);
+    });
+  });
+
+  test('LS_PREWARM_DEFAULT=0 disables prewarm on any host', () => {
+    withEnv('LS_PREWARM_DEFAULT', '0', () => {
+      assert.equal(shouldPrewarmDefaultLs(), false);
+    });
+  });
+
+  test('a single-instance pool has no proxy slot, so prewarm is off even unset', () => {
+    // MAX_LS_INSTANCES is frozen at module load, so the floor can only be
+    // exercised in a fresh process.
+    const env = { ...process.env, LS_MAX_INSTANCES: '1', LS_PREWARM_DEFAULT: '' };
+    // A plain child must not inherit the runner's test context or options.
+    delete env.NODE_TEST_CONTEXT;
+    delete env.NODE_OPTIONS;
+    const out = execFileSync(
+      process.execPath,
+      ['--input-type=module', '-e',
+        "import('./src/langserver.js').then(m => process.stdout.write(`${m.shouldPrewarmDefaultLs()}|${m.getLsStatus().maxInstances}`))"],
+      {
+        cwd: repoRoot,
+        env,
+        encoding: 'utf8',
+        timeout: 30_000,
+      },
+    );
+    assert.equal(out, 'false|1');
+  });
+});
+
+// ─── Residual wiring ────────────────────────────────────────────────────────
+// Everything below is source-text on purpose. Each assertion pins a call site
+// inside a module-private function (or a side-effecting entrypoint) that has no
+// importable seam: reaching it needs a live upstream account, a spawned LS
+// binary, or importing src/index.js (which boots the server). They are kept as
+// one-assertion-per-fact wiring guards, not as behaviour claims.
+describe('wiring with no reachable seam', () => {
+  test('startup proxy prewarm stays behind LS_PREWARM_PROXIES=1', () => {
+    const auth = readSrc('src/auth.js');
+    // Private prewarm block in auth.js: imports langserver lazily and warms
+    // every configured proxy. Needs a configured proxy list + a real LS binary.
+    assert.match(auth, /process\.env\.LS_PREWARM_PROXIES === '1'/);
+    assert.match(auth, /uniqueProxies\.set\('default', null\)/);
+  });
+
+  test('the auth prewarm path consults the shared kill switch', () => {
+    // Same private block as above; the *decision function* is covered
+    // behaviourally in the prewarm-gate suite.
+    assert.match(readSrc('src/auth.js'), /shouldPrewarmDefaultLs\(\)/);
+  });
+
+  test('the entrypoint configures the LS and honours the kill switch', () => {
+    // src/index.js is a side-effecting entrypoint: importing it boots the
+    // HTTP server, so its wiring can only be inspected as text.
+    const index = readSrc('src/index.js');
+    assert.match(index, /configureLanguageServer\(lsConfig\)/);
+    assert.match(index, /shouldPrewarmDefaultLs\(\)/);
+    assert.match(index, /LS default prewarm disabled/);
+  });
+
+  test('dashboard account-add warmup stays opt-in', () => {
+    // scheduleAccountWarmup() is module-private in the dashboard router and
+    // fires on POST /accounts, which needs a real upstream login.
+    const api = readSrc('src/dashboard/api.js');
+    assert.match(api, /LS_PREWARM_ON_ACCOUNT_ADD === '1'/);
+    assert.match(api, /function scheduleAccountWarmup/);
+  });
+
+  test('scheduled probes run with allowLsStart=false', () => {
+    // The scheduled-probe loop is private and driven by a timer against live
+    // accounts; the admission decision it reads is covered behaviourally above.
+    const auth = readSrc('src/auth.js');
+    assert.match(auth, /probeAccount\(a\.id, \{ allowLsStart: false \}\)/);
+    assert.match(auth, /Scheduled probe .*wouldStart=/);
+  });
+
+  test('background maintenance skips busy accounts by default', () => {
+    // refreshAllCredits()/refreshAllFirebaseTokens() are exported, but their
+    // busy-skip branch is only observable with accounts that have live inflight
+    // requests; the switch itself lives in a private helper.
+    const auth = readSrc('src/auth.js');
+    assert.match(auth, /WINDSURFAPI_BACKGROUND_MAINTENANCE_SKIP_BUSY !== '0'/);
+    assert.match(auth, /const skipBusyMaintenance = shouldSkipBusyBackgroundMaintenance\(\)/);
+    assert.match(auth, /refreshAllCredits\(\{ skipBusy: skipBusyMaintenance \}\)/);
+    assert.match(auth, /refreshAllFirebaseTokens\(\{ skipBusy: skipBusyMaintenance \}\)/);
+  });
+
+  test('predictive prewarm reports a structured failure instead of throwing', () => {
+    // Runs after a real turn completes, against the next account's proxy.
+    const auth = readSrc('src/auth.js');
+    assert.match(auth, /ensureLsForAccount\(nextAccount\.id\)\)\.then\(r =>/);
+    assert.match(auth, /r\?\.errorType \|\| 'ls_start_failed'/);
+  });
+
+  test('dashboard probe routes pass the force flag through', () => {
+    // The routes need an HTTP server + a live account; the classification they
+    // delegate to is covered behaviourally by probeOutcomeEntry.
+    const api = readSrc('src/dashboard/api.js');
+    const fleet = readSrc('src/dashboard/fleet-jobs.js');
+    assert.match(api, /const force = body\?\.force === true \|\| body\?\.allowLsStart === true/);
+    assert.match(fleet, /probeAccount\(account\.id, \{ allowLsStart: force \}\)/);
+    assert.match(api, /probeAccount\(accountProbe\[1\], \{ allowLsStart: force, canary \}\)/);
+  });
+
+  test('probe maintenance has a second resident-only guard before ensureLs', () => {
+    // residentProbeSkip() and fetchUserStatus() are private/network-bound; the
+    // admission object they branch on is asserted behaviourally above.
+    const auth = readSrc('src/auth.js');
+    assert.match(auth, /function residentProbeSkip/);
+    assert.match(auth, /if \(!allowLsStart\) \{/);
+    assert.match(auth, /if \(allowLsStart\) await ensureLs\(proxy\)/);
+    assert.match(auth, /reason: busyReason \|\| admission\.errorType \|\| admission\.reason \|\| 'ls_not_idle_resident'/);
+  });
+
+  test('LS start admission is serialized through one lock', () => {
+    // withStartAdmissionLock() wraps a real spawn; the observable half (pending
+    // reservations counting toward effectiveOccupancy) is asserted above.
+    const ls = readSrc('src/langserver.js');
+    assert.match(ls, /function withStartAdmissionLock/);
+    assert.match(ls, /pendingStartReservationCount/);
+    assert.match(ls, /poolOccupancyWithPendingReservations/);
+    assert.match(ls, /countIdleNonDefaultEvictionCandidates/);
+  });
+
+  test('a stale LS exit never tears down its replacement', () => {
+    // Fires from a real child `exit` event after a restart.
+    const ls = readSrc('src/langserver.js');
+    assert.match(ls, /const ownsEntry = current\?\.process === proc/);
+    assert.match(ls, /Ignoring stale LS exit/);
+    assert.match(ls, /markIntentionalShutdown\(entry\)/);
+  });
+
+  test('restart records the stopping window so the port is not reused early', () => {
+    const ls = readSrc('src/langserver.js');
+    assert.match(ls, /_stopping\.set\(key, \{ at: Date\.now\(\), pid: entry\?\.process\?\.pid \|\| null, reason: 'restart' \}\)/);
+    assert.match(ls, /await waitProcessExit\(entry\?\.process, 1500\)/);
+  });
+
+  test('neither wait loop short-circuits the default key', () => {
+    // Negative guards: the #174 regression was a `key === 'default'` early
+    // return inside these two private waiters. No export exposes them, so the
+    // absence is asserted as text.
+    const ls = readSrc('src/langserver.js');
+    assert.doesNotMatch(ls, /function waitForPoolCapacity[\s\S]{0,120}key === 'default'\) return/);
+    assert.doesNotMatch(ls, /function waitForMemoryHeadroom[\s\S]{0,120}key === 'default'\) return/);
+  });
+
+  test('pool keys are redacted before they leave the process', () => {
+    // publicLsKey() is private and only observable with a populated pool
+    // (`px_…_u<user>` must never reach the dashboard).
+    const ls = readSrc('src/langserver.js');
+    assert.match(ls, /function publicLsKey/);
+    assert.match(ls, /_u_redacted/);
+    assert.match(ls, /pendingKeys = Array\.from\(_pending\.keys\(\)\)\.map\(publicLsKey\)/);
+  });
+
+  test('the dashboard restart path waits for the child instead of firing and forgetting', () => {
+    const api = readSrc('src/dashboard/api.js');
+    assert.match(api, /await stopLanguageServerAndWait\(\{ perProcessTimeoutMs: 1500 \}\)/);
+    assert.doesNotMatch(api, /stopLanguageServer\(\);\s*setTimeout/);
+  });
+});
+
+// ─── Process-level resilience (audit F) ─────────────────────────────────────
+// src/index.js registers these handlers as a side effect of being imported, so
+// they cannot be exercised without booting the server; text is the only surface.
 describe('process-level resilience (audit F)', () => {
-  const INDEX_JS = readFileSync(join(__dirname, '..', 'src/index.js'), 'utf8');
+  const INDEX_JS = readSrc('src/index.js');
 
   test('registers global unhandledRejection / uncaughtException safety nets', () => {
     // F-1: the long-lived process must not die on a stray async rejection.
@@ -291,6 +475,7 @@ describe('process-level resilience (audit F)', () => {
   test('SIGTERM shutdown awaits LS children exiting (no orphan-port race)', () => {
     // F-2: reuse stopLanguageServerAndWait so children release pool ports
     // before process.exit, instead of the fire-and-forget stopLanguageServer.
+    // The callee itself is covered behaviourally above.
     assert.match(INDEX_JS, /stopLanguageServerAndWait\(\{ perProcessTimeoutMs: \d+ \}\)/);
     assert.match(INDEX_JS, /import \{[^}]*stopLanguageServerAndWait[^}]*\} from '\.\/langserver\.js'/);
   });

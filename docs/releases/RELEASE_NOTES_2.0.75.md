@@ -10,7 +10,7 @@ zhqsuo 诊断到 file:line — v2.0.70 把 `shouldUseNativeBridge` 改成 Claude
 [INFO] Cascade done ... reason=aborted polls=753 ms=379197
 ```
 
-修法（[`src/cascade-native-bridge.js:967`](src/cascade-native-bridge.js)）— 把 v2.0.70 加的 `if (isClaude) return true` 直接移除。**默认所有客户端都走 emulation 路径**（客户端本地执行工具，proxy 只翻译协议）。要远程执行的部署用 `WINDSURFAPI_NATIVE_TOOL_BRIDGE=1` 显式打开。
+修法（[`src/cascade-native-bridge.js:967`](../../src/cascade-native-bridge.js)）— 把 v2.0.70 加的 `if (isClaude) return true` 直接移除。**默认所有客户端都走 emulation 路径**（客户端本地执行工具，proxy 只翻译协议）。要远程执行的部署用 `WINDSURFAPI_NATIVE_TOOL_BRIDGE=1` 显式打开。
 
 ```js
 // 改前 (v2.0.70-v2.0.74)

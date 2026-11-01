@@ -2,7 +2,7 @@
 
 ### #122 zhangzhang-bit · 25s 把 30s 才到的成功请求砍掉重试
 
-报上来一直没人接。v2.0.70 跑 Cascade 工具拉代码 / 下载，**30 秒左右就成功了 但是 25 秒被截断重复**。根因：[client.js:176](src/client.js:176) 的 `warmStallMs=25_000` 是给纯文本短回复调的阈值，工具执行（curl / git clone / view 大文件）走的是另一种节奏 — trajectory step 卡在执行态 60-150s 不动是常态。
+报上来一直没人接。v2.0.70 跑 Cascade 工具拉代码 / 下载，**30 秒左右就成功了 但是 25 秒被截断重复**。根因：[client.js:176](../../src/client.js) 的 `warmStallMs=25_000` 是给纯文本短回复调的阈值，工具执行（curl / git clone / view 大文件）走的是另一种节奏 — trajectory step 卡在执行态 60-150s 不动是常态。
 
 修法分三档 ceiling，大档赢：
 

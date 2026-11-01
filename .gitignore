@@ -24,6 +24,7 @@ scripts/*
 !scripts/lsp-capacity-matrix.mjs
 !scripts/web-search-direct-probe.mjs
 !scripts/sync-docs-contributors.mjs
+!scripts/sync-changelog-counts.mjs
 !scripts/unverified-register.mjs
 !scripts/check-dashboard-copy.mjs
 !scripts/verify-release-assets.mjs
@@ -100,7 +101,7 @@ copilot2api-go/
 .continue/
 .codex/
 .devin/
-audit/
+/audit/
 tmp/
 tmp-testing/
 runtime-config.json
