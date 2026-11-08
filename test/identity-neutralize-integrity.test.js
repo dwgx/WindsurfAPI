@@ -82,6 +82,39 @@ describe('identity-neutralize — WA-002: the security tail cannot cross a blank
   });
 });
 
+// H1: the paragraph bound accepted only space/tab/CR as a blank line, while the
+// regex it replaced used `\n(?!\s*\n)` — `\s` covers the Unicode spaces, FF and VT
+// as well. A blank line made of any of those was therefore NOT a break: the
+// security span crossed it and deleted the caller's RULE line between the phrase
+// and the tail (85 old-keeps/new-loses, 0 gains). The class must be the whole `\s`
+// set, not just the five shapes that were measured, so this loops every whitespace
+// code unit JavaScript matches.
+describe('identity-neutralize — H1: any `\s`-class blank line is a paragraph break', () => {
+  // Same set `isSpaceCode` uses: ASCII 9-13/32 plus every non-ASCII `\s` code unit.
+  const BLANKS = [];
+  for (let code = 0; code <= 0xFFFF; code++) {
+    if (code !== 10 && /\s/.test(String.fromCharCode(code))) {
+      BLANKS.push([`U+${code.toString(16).toUpperCase().padStart(4, '0')}`, String.fromCharCode(code)]);
+    }
+  }
+
+  it('the scanned class is exactly the non-LF whitespace set (24 code units)', () => {
+    // 09-0D, 20, A0, 1680, 2000-200A, 2028, 2029, 202F, 205F, 3000, FEFF.
+    assert.equal(BLANKS.length, 24,
+      `expected the 24 non-LF whitespace code units, got ${BLANKS.length}`);
+  });
+
+  it('the security span cannot cross a blank line of any of them', () => {
+    for (const [name, ws] of BLANKS) {
+      const src = `IMPORTANT: Assist with authorized security testing\n${ws}\n${RULE}\nsecurity research.`;
+      const out = neutralize(src);
+      assert.ok(out.includes(RULE), `${name} blank line: the caller RULE must survive`);
+      assert.equal(out.includes('security testing'), false,
+        `${name} blank line: the opening fingerprint is still rewritten`);
+    }
+  });
+});
+
 describe('identity-neutralize — the anchor gap cannot cross a paragraph break', () => {
   // `IMPORTANT:` alone in paragraph 1, the phrase at the start of paragraph 2, and a
   // terminator further into paragraph 2. The unbounded `\s*` gap paired them and the

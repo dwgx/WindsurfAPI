@@ -158,6 +158,72 @@ describe('identity-neutralize — spans stop at a paragraph break', () => {
   });
 });
 
+// H1: the paragraph bound was hand-written to accept only space/tab/CR as a blank
+// line, while the regex it replaced used `\n(?!\s*\n)` — `\s` covers the Unicode
+// spaces, FF and VT as well. A prompt whose paragraph separator was one of those
+// therefore had NO break, so the security/brand/catalogue span crossed it and
+// deleted the caller's RULE line sitting between the anchor and the terminator
+// (measured differential: 85 old-keeps/new-loses, 0 gains). The security half of
+// the class is pinned in identity-neutralize-integrity.test.js; this block pins
+// brand + catalogue plus the exact measured shapes.
+const UNICODE_BLANKS = [
+  ['NBSP (U+00A0)', '\u00A0'],
+  ['ideographic space (U+3000)', '\u3000'],
+  ['em space (U+2003)', '\u2003'],
+  ['form feed (U+000C)', '\u000C'],
+  ['vertical tab (U+000B)', '\u000B'],
+];
+
+describe('identity-neutralize — a Unicode-whitespace blank line is a paragraph break', () => {
+  it('security: the measured NBSP shape keeps the caller RULE', () => {
+    const src = 'IMPORTANT: Assist with authorized security testing\n\u00A0\nsecurity research.\n\nRULE: keep me';
+    const { out } = neutralize(src);
+    assert.ok(out.includes('RULE: keep me'), 'caller RULE kept');
+    assert.equal(/Assist with authorized security testing/i.test(out), false,
+      'the opening fingerprint is still removed');
+  });
+
+  it('brand: the measured NBSP shape keeps the caller RULE', () => {
+    const src = 'Claude Code is available as a CLI\n\u00A0\navailable on Opus 4.8.\n\nRULE: keep me';
+    const { out } = neutralize(src);
+    assert.ok(out.includes('RULE: keep me'), 'caller RULE kept');
+    assert.equal(/Claude Code/i.test(out), false, 'the opening fingerprint is still removed');
+  });
+
+  it('catalogue: the measured U+3000 shape keeps the caller RULE', () => {
+    const src = 'The most recent Claude models are\n\u3000\nmost capable Claude models.\n\nRULE: keep me';
+    const { out } = neutralize(src);
+    assert.ok(out.includes('RULE: keep me'), 'caller RULE kept');
+    assert.equal(/most recent Claude models are/i.test(out), false,
+      'the opening fingerprint is still removed');
+  });
+
+  // The deletion shape: the terminator sits after the caller's rules, so before the
+  // fix the unbroken "paragraph" reached it and took the rules with it.
+  for (const [name, ws] of UNICODE_BLANKS) {
+    it(`brand: ${name} blank line does not carry the span across the caller RULE`, () => {
+      const src = `Claude Code is available as a CLI\n${ws}\n${USER_RULES}\navailable on Opus 4.8.`;
+      const { out } = neutralize(src);
+      assert.ok(out.includes('RULE 7: the API key must never be logged.'), 'user API-key rule kept');
+      assert.ok(out.includes('Never delete the production database.'), 'user DB rule kept');
+      assert.ok(out.includes('available on Opus 4.8.'),
+        'the paragraph after the blank line is outside the span');
+      assert.equal(/Claude Code/i.test(out), false, 'the opening fingerprint is still removed');
+    });
+
+    it(`catalogue: ${name} blank line does not carry the span across the caller RULE`, () => {
+      const src = `The most recent Claude models are\n${ws}\n${USER_RULES}\nmost capable Claude models.`;
+      const { out } = neutralize(src);
+      assert.ok(out.includes('RULE 7: the API key must never be logged.'), 'user API-key rule kept');
+      assert.ok(out.includes('Never delete the production database.'), 'user DB rule kept');
+      assert.ok(out.includes('most capable Claude models.'),
+        'the paragraph after the blank line is outside the span');
+      assert.equal(/most recent Claude models are/i.test(out), false,
+        'the opening fingerprint is still removed');
+    });
+  }
+});
+
 describe('identity-neutralize — an over-large deletion is observable', () => {
   // Threshold is 512 bytes per substitution, calibrated on the fixtures the 49
   // pinning tests use (largest legitimate removal: the security paragraph at 322,

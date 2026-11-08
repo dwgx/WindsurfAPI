@@ -63,12 +63,15 @@ const isGrokRunCode = (code) => isWordCode(code) || code === 32 || code === 46 |
  * Index of the newline that OPENS a paragraph break at or after `from`, or
  * `text.length` when the paragraph runs to the end of the string.
  *
- * A blank line is a line whose only characters are spaces, tabs or CR — the shape
- * real editors and prompt builders emit. A single newline is NOT a break: the
- * Environment block and the security paragraph wrap across lines, so a scan that
- * stopped at every newline would leave most of the fingerprint upstream (a silent
- * regression of the 529 / content-policy defence, which is worse than the
- * over-deletion this bound exists to stop).
+ * A blank line is a line whose only characters are whitespace OTHER than the
+ * newline itself — spaces, tabs, CR, FF, VT and the Unicode spaces, the same class
+ * the old `\s` matched. That matters: a blank line made of NBSP or U+3000 is a
+ * paragraph break in the regex this module replaces, and treating it as content
+ * let the span cross it and delete the caller's instructions (H1). A single
+ * newline is NOT a break: the Environment block and the security paragraph wrap
+ * across lines, so a scan that stopped at every newline would leave most of the
+ * fingerprint upstream (a silent regression of the 529 / content-policy defence,
+ * which is worse than the over-deletion this bound exists to stop).
  */
 function paragraphEndAt(text, from) {
   for (let i = from; i < text.length; i++) {
@@ -76,7 +79,7 @@ function paragraphEndAt(text, from) {
     let j = i + 1;
     while (j < text.length) {
       const c = text.charCodeAt(j);
-      if (c === 32 || c === 9 || c === 13) { j++; continue; }
+      if (c !== 10 && isSpaceCode(c)) { j++; continue; }
       break;
     }
     if (j >= text.length || text.charCodeAt(j) === 10) return i;

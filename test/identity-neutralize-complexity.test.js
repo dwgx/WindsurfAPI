@@ -76,6 +76,50 @@ describe('identity-neutralize — linear scanners (no quadratic blow-up)', () =>
   });
 });
 
+// H1: paragraphEndAt now asks `isSpaceCode` about every character after a newline
+// (the Unicode branch runs a regex per non-ASCII code unit), and the billing scan
+// walks every line. These 512 KiB shapes keep that per-character work from becoming
+// synchronous event-loop time, and the Unicode prefix must come through byte-identical
+// — the module folds ASCII code units instead of lowercasing a copy precisely because
+// 'İ' changes length under toLowerCase.
+describe('identity-neutralize — 512 KiB whitespace / Unicode bounds (H1)', () => {
+  it('512 KiB single line of spaces and of NBSP: under 500 ms, unchanged', () => {
+    for (const unit of [' ', '\u00A0']) {
+      const src = unit.repeat(512 * KIB);
+      assert.equal(src.length, 512 * KIB);
+      const { ms, out } = timed(src);
+      assert.equal(out, src, `nothing in a ${JSON.stringify(unit)} run is a fingerprint`);
+      assert.ok(ms < 500,
+        `${JSON.stringify(unit)} run took ${ms.toFixed(1)} ms, bound is 500 ms`);
+    }
+  });
+
+  it('512 KiB of four-space lines (the billing scan shape): under 500 ms, unchanged', () => {
+    const src = fill('    \n', 512 * KIB);
+    assert.equal(src.length, 512 * KIB);
+    assert.equal(src.split('\n').length - 1, Math.floor((512 * KIB) / 5),
+      'fixture is 104,857 four-space lines');
+    const { ms, out } = timed(src);
+    assert.equal(out, src, 'no billing header means no rewrite');
+    assert.ok(ms < 500, `took ${ms.toFixed(1)} ms, bound is 500 ms`);
+  });
+
+  it('512 KiB Unicode-prefix prompt: under 500 ms, prefix intact', () => {
+    const prefix = 'İİİ 😀 ';
+    const brand = ' - Claude Code is available as a CLI in the terminal, desktop app (Mac/Windows), '
+      + 'web app (claude.ai/code), and IDE extensions (VS Code, JetBrains).\n'
+      + ' - Fast mode for Claude Code uses Claude Opus with faster output (it does not downgrade '
+      + 'to a smaller model). It can be toggled with /fast and is available on Opus 4.8/4.7.';
+    const head = prefix.repeat(Math.ceil((512 * KIB - brand.length) / prefix.length));
+    const src = head + brand;
+    const { ms, out } = timed(src);
+    assert.ok(out.startsWith(head), 'the Unicode prefix is unchanged');
+    assert.equal(/Claude Code/i.test(out), false, 'the brand block is still neutralized');
+    assert.equal(/claude\.ai\/code/i.test(out), false, 'the URL is gone');
+    assert.ok(ms < 500, `took ${ms.toFixed(1)} ms, bound is 500 ms`);
+  });
+});
+
 // NEGATIVE CONTROL: speed must not have been bought by skipping the work. A normal
 // 8 KiB prompt carrying the real brand block, model catalogue and security paragraph
 // still has every fingerprint removed.
