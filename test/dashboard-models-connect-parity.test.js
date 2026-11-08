@@ -406,7 +406,7 @@ describe('dashboard /models agrees with /v1/models on the Connect namespace (#23
   // whitelist called free (`swe-1-6-slow`) is absent from the catalog and 502s.
   // Before the fix the panel showed the inverse of all of that.
   describe('rows carry upstream cost tier, promo and account quota state', () => {
-    const PROMO_END = '2026-11-01T06:59:59.999999999Z';
+    const PROMO_END = '2099-12-31T23:59:59.999999999Z';
     const CONNECT_ROWS = [
       { selector: 'swe-2-medium', provider: 'windsurf', label: 'SWE-2 Medium' },
       { selector: 'swe-2-high', provider: 'windsurf', label: 'SWE-2 High' },
@@ -453,7 +453,7 @@ describe('dashboard /models agrees with /v1/models on the Connect namespace (#23
         assert.equal(row.costTier, 'MODEL_COST_TIER_FREE', id);
         assert.equal(row.freeNow, true, id);
         assert.equal(row.freeReason, 'cost_tier_free', id);
-        assert.equal(row.promoEndsAt, '2026-11-01T06:59:59.999Z', id);
+        assert.equal(row.promoEndsAt, '2099-12-31T23:59:59.999Z', id);
         assert.equal(row.quotaState, 'free', id);
       }
     });

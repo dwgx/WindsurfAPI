@@ -12,7 +12,7 @@ import assert from 'node:assert/strict';
 import { buildModelBillingIndex } from '../src/dashboard/api.js';
 import { clearCloudModelCatalogs, mergeCloudCostTiers } from '../src/models.js';
 
-const PROMO_END = '2026-11-01T06:59:59.999999999Z';
+const PROMO_END = '2099-12-31T23:59:59.999999999Z';
 
 function config(uid, { tier = null, promo = undefined, credit = 1 } = {}) {
   return {
@@ -43,7 +43,7 @@ describe('buildModelBillingIndex', () => {
       freeNow: true,
       freeReason: 'cost_tier_free',
       costTier: 'MODEL_COST_TIER_FREE',
-      promoEndsAt: '2026-11-01T06:59:59.999Z',
+      promoEndsAt: '2099-12-31T23:59:59.999Z',
       promoLabel: null,
       pricingFetchedAt: index['swe-2-medium'].pricingFetchedAt,
       pricingStale: false,

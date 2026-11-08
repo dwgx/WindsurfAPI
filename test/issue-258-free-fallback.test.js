@@ -30,7 +30,7 @@ import { clearLiveCatalogSelectors, resolveConnectSelector } from '../src/devin-
 import { handleChatCompletions } from '../src/handlers/chat.js';
 import { log } from '../src/config.js';
 
-const PROMO_END = '2026-11-01T06:59:59.999999999Z';
+const PROMO_END = '2099-12-31T23:59:59.999999999Z';
 
 function costRow(uid, { tier = 'MODEL_COST_TIER_FREE', promo = { isActive: true, endDate: PROMO_END } } = {}) {
   return {

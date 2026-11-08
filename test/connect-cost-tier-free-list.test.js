@@ -8,7 +8,7 @@
 //                                                 "Your daily usage quota has been
 //                                                 exhausted"
 //   GetCascadeModelConfigs FREE rows            → swe-2-medium / -high / -max, promo
-//                                                 active to 2026-11-01T06:59:59Z;
+//                                                 active to 2026-11-01 (06:59:59Z);
 //                                                 six live calls left daily quota at 0
 //   account rate table                          → 240 entries, ZERO with rate 0
 //
@@ -39,9 +39,10 @@ import {
   removeAccount,
 } from '../src/auth.js';
 
-// The exact promo end the upstream sent (9 fractional digits), and the same instant
-// as milliseconds, so "expired" cases are deterministic rather than clock-dependent.
-const PROMO_END = '2026-11-01T06:59:59.999999999Z';
+// A promo end in the wire shape the upstream sent (9 fractional digits), pinned far
+// enough in the future that "still active" cases do not depend on the wall clock; the
+// same instant as milliseconds keeps the "expired" cases deterministic too.
+const PROMO_END = '2099-12-31T23:59:59.999999999Z';
 const PROMO_END_MS = Date.parse(PROMO_END);
 const AFTER_PROMO = PROMO_END_MS + 1;
 
@@ -112,7 +113,7 @@ describe('cost tier + promotion decode (GetCascadeModelConfigs)', () => {
 
     const medium = getCloudCostTierInfo('swe-2-medium');
     assert.equal(medium.costTier, 'MODEL_COST_TIER_FREE');
-    assert.equal(medium.promoEndsAt, '2026-11-01T06:59:59.999Z',
+    assert.equal(medium.promoEndsAt, '2099-12-31T23:59:59.999Z',
       'the promo end is normalized to an ISO instant the dashboard can render');
     assert.equal(medium.promoLabel, null);
   });
@@ -189,7 +190,7 @@ describe('pricing resolution (auth.js)', () => {
     assert.equal(medium.freeNow, true);
     assert.equal(medium.freeReason, 'cost_tier_free');
     assert.equal(medium.costTier, 'MODEL_COST_TIER_FREE');
-    assert.equal(medium.promoEndsAt, '2026-11-01T06:59:59.999Z');
+    assert.equal(medium.promoEndsAt, '2099-12-31T23:59:59.999Z');
 
     assert.equal(getConnectSelectorPricing('swe-2-medium-lightning').freeNow, false);
     assert.deepEqual(getConnectFreeSelectors().sort(), ['swe-2-high', 'swe-2-max', 'swe-2-medium']);

@@ -44,7 +44,7 @@ import {
   __waitForModelCatalogSync,
 } from '../src/auth.js';
 
-const PROMO_END = '2026-11-01T06:59:59.999999999Z';
+const PROMO_END = '2099-12-31T23:59:59.999999999Z';
 const PROMO_END_MS = Date.parse(PROMO_END);
 
 function config(uid, { tier = null, promo = undefined, credit = 1 } = {}) {
@@ -151,7 +151,7 @@ describe('credit rate sync (creditMultiplier on the catalog row)', () => {
     assert.equal(pricing.freeReason, 'cost_tier_free',
       'the tier is the upstream\'s own no-charge statement; the 6-credit rate is the list price');
     assert.equal(pricing.rate, 6);
-    assert.equal(pricing.promoEndsAt, '2026-11-01T06:59:59.999Z');
+    assert.equal(pricing.promoEndsAt, '2099-12-31T23:59:59.999Z');
   });
 
   it('does not let a response that omits the fields blank a known rate', () => {
@@ -336,7 +336,7 @@ describe('pool-wide free list includes the synced rate', () => {
     assert.equal(getCloudSelectorPricing('swe-2-medium', PROMO_END_MS - 1).freeNow, true);
     const expired = getCloudSelectorPricing('swe-2-medium', PROMO_END_MS + 1);
     assert.equal(expired.freeNow, false, 'an ended promo is over even before the next sync lands');
-    assert.equal(expired.promoEndsAt, '2026-11-01T06:59:59.999Z',
+    assert.equal(expired.promoEndsAt, '2099-12-31T23:59:59.999Z',
       'the end date stays visible so the operator can see WHY it stopped');
   });
 });

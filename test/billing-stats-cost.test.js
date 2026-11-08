@@ -11,7 +11,7 @@ import assert from 'node:assert/strict';
 import { getStats, recordRequest, resetStats } from '../src/dashboard/stats.js';
 import { clearCloudModelCatalogs, mergeCloudCostTiers } from '../src/models.js';
 
-const PROMO_END = '2026-11-01T06:59:59.999999999Z';
+const PROMO_END = '2099-12-31T23:59:59.999999999Z';
 
 function config(uid, { tier = null, promo = undefined, credit = 1 } = {}) {
   return {
