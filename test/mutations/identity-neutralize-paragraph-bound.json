@@ -9,38 +9,38 @@
     {
       "name": "the original defect: the brand-block span goes back to [\\s\\S]*? and eats the caller's paragraphs (measured 213 -> 59 bytes)",
       "file": "src/handlers/identity-neutralize.js",
-      "anchor": "new RegExp(`Claude Code is available as a CLI${WITHIN_PARAGRAPH}available on Opus [\\\\d.\\\\/]+\\\\.`, 'i')",
-      "replacement": "/Claude Code is available as a CLI[\\s\\S]*?available on Opus [\\d.\\/]+\\./i"
+      "anchor": "    const limit = paragraphEndAt(text, from);\n    const end = opusTerminatorEnd(text, from, limit);",
+      "replacement": "    const limit = text.length;\n    const end = opusTerminatorEnd(text, from, limit);"
     },
     {
       "name": "the original defect on the catalogue span (measured 208 -> 18 bytes)",
       "file": "src/handlers/identity-neutralize.js",
-      "anchor": "new RegExp(`The most recent Claude models are${WITHIN_PARAGRAPH}most capable Claude models\\\\.`, 'i')",
-      "replacement": "/The most recent Claude models are[\\s\\S]*?most capable Claude models\\./i"
+      "anchor": "    const limit = paragraphEndAt(text, from);\n    const term = indexOfAsciiCI(text, CATALOGUE_TERMINATOR, from, limit);",
+      "replacement": "    const limit = text.length;\n    const term = indexOfAsciiCI(text, CATALOGUE_TERMINATOR, from, limit);"
     },
     {
       "name": "the original defect on the security-paragraph span",
       "file": "src/handlers/identity-neutralize.js",
-      "anchor": "new RegExp(`IMPORTANT:\\\\s*Assist with authorized security testing${WITHIN_PARAGRAPH}(?:defensive use cases\\\\.|security research[^.]*\\\\.)`, 'i')",
-      "replacement": "/IMPORTANT:\\s*Assist with authorized security testing[\\s\\S]*?(?:defensive use cases\\.|security research[^.]*\\.)/i"
+      "anchor": "    const limit = paraLimit;",
+      "replacement": "    const limit = text.length;"
     },
     {
       "name": "WITHIN_PARAGRAPH loses the whole bound — every span crosses blank lines again",
       "file": "src/handlers/identity-neutralize.js",
-      "anchor": "const WITHIN_PARAGRAPH = '(?:[^\\\\n]|\\\\n(?!\\\\s*\\\\n))*?';",
-      "replacement": "const WITHIN_PARAGRAPH = '[\\\\s\\\\S]*?';"
+      "anchor": "function paragraphEndAt(text, from) {",
+      "replacement": "function paragraphEndAt(text, from) {\n  return text.length;"
     },
     {
       "name": "the lookahead drops \\s* — a 'blank' line carrying spaces stops counting as a paragraph break",
       "file": "src/handlers/identity-neutralize.js",
-      "anchor": "'(?:[^\\\\n]|\\\\n(?!\\\\s*\\\\n))*?'",
-      "replacement": "'(?:[^\\\\n]|\\\\n(?!\\\\n))*?'"
+      "anchor": "      if (c === 32 || c === 9 || c === 13) { j++; continue; }",
+      "replacement": "      if (c === 13) { j++; continue; }"
     },
     {
       "name": "over-corrected to LINE-bounded — the wrapped Environment paragraph stops being neutralized (529 defence regressed)",
       "file": "src/handlers/identity-neutralize.js",
-      "anchor": "const WITHIN_PARAGRAPH = '(?:[^\\\\n]|\\\\n(?!\\\\s*\\\\n))*?';",
-      "replacement": "const WITHIN_PARAGRAPH = '[^\\\\n]*?';"
+      "anchor": "  for (let i = from; i < text.length; i++) {\n    if (text.charCodeAt(i) !== 10) continue;",
+      "replacement": "  for (let i = from; i < text.length; i++) {\n    if (text.charCodeAt(i) !== 10) continue;\n    return i;"
     },
     {
       "name": "the a4-cli-line fallback is dropped — the bounded span declines and 'Claude Code' leaks upstream",
@@ -57,7 +57,7 @@
     {
       "name": "the b-security-line fallback is dropped — 'Assist with authorized security testing' leaks upstream",
       "file": "src/handlers/identity-neutralize.js",
-      "anchor": "  rule('b-security-line',\n    /IMPORTANT:\\s*Assist with authorized security testing[^\\n]*/i,\n    SECURITY_BENIGN,\n  );",
+      "anchor": "  applySpans('b-security-line', securityLineSpans(out), SECURITY_BENIGN, true);",
       "replacement": ""
     },
     {
@@ -75,44 +75,44 @@
     {
       "name": "the threshold check is dropped entirely — every substitution logs",
       "file": "src/handlers/identity-neutralize.js",
-      "anchor": "    if (removed > OVER_DELETION_WARN_BYTES) {",
-      "replacement": "    if (true) {"
+      "anchor": "    const beforeBytes = Buffer.byteLength(out, 'utf8');\n    const afterBytes = Buffer.byteLength(next, 'utf8');\n    const removed = beforeBytes - afterBytes;\n    if (removed > OVER_DELETION_WARN_BYTES) {",
+      "replacement": "    const beforeBytes = Buffer.byteLength(out, 'utf8');\n    const afterBytes = Buffer.byteLength(next, 'utf8');\n    const removed = beforeBytes - afterBytes;\n    if (true) {"
     },
     {
       "name": "the check becomes cumulative-per-prompt instead of per-substitution — heavy but legitimate prompts start warning",
       "file": "src/handlers/identity-neutralize.js",
-      "anchor": "    if (removed > OVER_DELETION_WARN_BYTES) {",
-      "replacement": "    if (Buffer.byteLength(String(text), 'utf8') - Buffer.byteLength(next, 'utf8') > OVER_DELETION_WARN_BYTES) {"
+      "anchor": "    const beforeBytes = Buffer.byteLength(out, 'utf8');\n    const afterBytes = Buffer.byteLength(next, 'utf8');\n    const removed = beforeBytes - afterBytes;\n    if (removed > OVER_DELETION_WARN_BYTES) {",
+      "replacement": "    const beforeBytes = Buffer.byteLength(out, 'utf8');\n    const afterBytes = Buffer.byteLength(next, 'utf8');\n    const removed = beforeBytes - afterBytes;\n    if (Buffer.byteLength(String(text), 'utf8') - Buffer.byteLength(next, 'utf8') > OVER_DELETION_WARN_BYTES) {"
     },
     {
       "name": "the WARN reports the threshold instead of the measured delta — the number stops being evidence",
       "file": "src/handlers/identity-neutralize.js",
-      "anchor": "rule ${id} removed ${removed} bytes in one `",
-      "replacement": "rule ${id} removed ${OVER_DELETION_WARN_BYTES} bytes in one `"
+      "anchor": "    if (next === out) return;\n    const afterBytes = Buffer.byteLength(next, 'utf8');\n    const removed = beforeBytes - afterBytes;\n    if (removed > OVER_DELETION_WARN_BYTES) {\n      log.warn(`neutralizeClientIdentity: rule ${id} removed ${removed} bytes in one `",
+      "replacement": "    if (next === out) return;\n    const afterBytes = Buffer.byteLength(next, 'utf8');\n    const removed = beforeBytes - afterBytes;\n    if (removed > OVER_DELETION_WARN_BYTES) {\n      log.warn(`neutralizeClientIdentity: rule ${id} removed ${OVER_DELETION_WARN_BYTES} bytes in one `"
     },
     {
       "name": "the delta is counted in characters — a CJK prompt under-reports 3x and slips under the threshold",
       "file": "src/handlers/identity-neutralize.js",
-      "anchor": "    const beforeBytes = Buffer.byteLength(out, 'utf8');\n    const afterBytes = Buffer.byteLength(next, 'utf8');",
-      "replacement": "    const beforeBytes = out.length;\n    const afterBytes = next.length;"
+      "anchor": "    if (next === out) return;\n    const afterBytes = Buffer.byteLength(next, 'utf8');\n    const removed = beforeBytes - afterBytes;",
+      "replacement": "    if (next === out) return;\n    const afterBytes = Buffer.byteLength(next, 'utf8');\n    const removed = out.length - next.length;"
     },
     {
       "name": "rule() stops writing back — every rewrite silently does nothing (the whole 529 defence off)",
       "file": "src/handlers/identity-neutralize.js",
-      "anchor": "    out = next;\n  };",
-      "replacement": "  };"
+      "anchor": "    out = next;\n  };\n  /**",
+      "replacement": "  };\n  /**"
     },
     {
       "name": "rule() returns early only when the text SHRANK — a pure rewrite (Cline boast, a7) stops being applied",
       "file": "src/handlers/identity-neutralize.js",
-      "anchor": "    if (next === out) return;",
-      "replacement": "    if (Buffer.byteLength(next, 'utf8') >= Buffer.byteLength(out, 'utf8')) return;"
+      "anchor": "    const next = out.replace(re, replacement);\n    if (next === out) return;",
+      "replacement": "    const next = out.replace(re, replacement);\n    if (Buffer.byteLength(next, 'utf8') >= Buffer.byteLength(out, 'utf8')) return;"
     },
     {
       "name": "the care block gets paragraph-bounded too — multi-paragraph safety prose is left half-stripped, tags and all",
       "file": "src/handlers/identity-neutralize.js",
-      "anchor": "rule('a6-grok2-care', /<executing_actions_with_care>[\\s\\S]*?<\\/executing_actions_with_care>/gi, '');",
-      "replacement": "rule('a6-grok2-care', new RegExp(`<executing_actions_with_care>${WITHIN_PARAGRAPH}<\\\\/executing_actions_with_care>`, 'gi'), '');"
+      "anchor": "    const close = indexOfAsciiCI(text, CARE_CLOSE, open + CARE_OPEN.length);",
+      "replacement": "    const close = indexOfAsciiCI(text, CARE_CLOSE, open + CARE_OPEN.length, paragraphEndAt(text, open));"
     },
     {
       "name": "the off-switch stops covering the module — opt-out clients get rewritten anyway",

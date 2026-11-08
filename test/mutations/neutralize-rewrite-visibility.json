@@ -35,8 +35,8 @@
     {
       "name": "the over-deletion branch loses its threshold, so the W2 guard it was built for reports every deletion",
       "file": "src/handlers/identity-neutralize.js",
-      "anchor": "    if (removed > OVER_DELETION_WARN_BYTES) {",
-      "replacement": "    if (removed > 0) {"
+      "anchor": "    const beforeBytes = Buffer.byteLength(out, 'utf8');\n    const afterBytes = Buffer.byteLength(next, 'utf8');\n    const removed = beforeBytes - afterBytes;\n    if (removed > OVER_DELETION_WARN_BYTES) {",
+      "replacement": "    const beforeBytes = Buffer.byteLength(out, 'utf8');\n    const afterBytes = Buffer.byteLength(next, 'utf8');\n    const removed = beforeBytes - afterBytes;\n    if (removed > 0) {"
     },
     {
       "name": "OVER-REACH CONTROL: the count threshold drops to zero, so every global rule warns on every single hit including the trigger the rule exists for",
