@@ -33,7 +33,7 @@
     {
       "name": "the lookahead drops \\s* — a 'blank' line carrying spaces stops counting as a paragraph break",
       "file": "src/handlers/identity-neutralize.js",
-      "anchor": "      if (c === 32 || c === 9 || c === 13) { j++; continue; }",
+      "anchor": "      if (c !== 10 && isSpaceCode(c)) { j++; continue; }",
       "replacement": "      if (c === 13) { j++; continue; }"
     },
     {
