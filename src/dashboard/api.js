@@ -1072,20 +1072,27 @@ function applyReauthToken(id, rawToken, { via = 'token' } = {}) {
   };
 }
 
-/**
- * Handle all /dashboard/api/* requests.
- */
-export async function handleDashboardApi(method, subpath, body, req, res) {
-  // Resolve the CORS origin once (allowlist-gated, default none) so every
-  // json() response — including the OPTIONS preflight below — reflects the
-  // same decision instead of a blanket `*`.
-  if (res) res._dashboardCorsOrigin = resolveCorsOrigin(req);
-  if (method === 'OPTIONS') return json(res, 204, '');
+// Marker set on the IncomingMessage by preflightDashboardRequest(). A Symbol
+// (not a string key) so a handler-level fixture cannot forge it and an HTTP
+// client can never set it: request headers live under req.headers.
+const DASHBOARD_PREFLIGHT_PASSED = Symbol('dashboardPreflightPassed');
 
+/**
+ * Host/mutation/lockout/auth gate shared by `preflightDashboardRequest` and
+ * `handleDashboardApi`. Returns true when the request may proceed; otherwise
+ * writes the 403/415/429/401 response itself and returns false.
+ *
+ * Extracted from handleDashboardApi unchanged (S03/G05) so server.js can run
+ * it BEFORE reading a /dashboard/api/* body: an unauthenticated mutation must
+ * not be able to make the process buffer and JSON-parse up to the 10 MiB body
+ * cap. Keeping one implementation is what keeps the two call sites from
+ * drifting apart.
+ */
+function runDashboardRequestGate(method, subpath, req, res) {
   // A04: reject cross-site/simple-form mutations before auth counters, body
   // handling, or any route side effect. This is deliberately before the
   // lockout so a hostile page cannot spend a victim's auth attempts.
-  if (!enforceDashboardMutationGate(method, subpath, req, res)) return;
+  if (!enforceDashboardMutationGate(method, subpath, req, res)) return false;
 
   // v2.0.56: brute-force lockout — apply BEFORE the auth check so the
   // password comparison itself can't be used as an oracle once the IP is
@@ -1096,10 +1103,11 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
   const lock = checkLockout(clientIp);
   if (lock.blocked) {
     res.setHeader?.('Retry-After', String(Math.ceil(lock.retryAfterMs / 1000)));
-    return json(res, 429, {
+    json(res, 429, {
       error: `Too many failed attempts. IP banned for ${Math.ceil(lock.retryAfterMs / 1000)}s.`,
       retryAfterMs: lock.retryAfterMs,
     });
+    return false;
   }
 
   // Auth check (except for auth verification endpoint)
@@ -1111,12 +1119,60 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
     // anything, and counting each empty-password 401 as a "failed attempt"
     // banned the IP the instant the page opened. Mirrors the /auth probe below.
     if (String(req.headers['x-dashboard-password'] || '')) failedAuthAttempt(clientIp);
-    return json(res, 401, { error: 'Unauthorized. Set X-Dashboard-Password header.' });
+    json(res, 401, { error: 'Unauthorized. Set X-Dashboard-Password header.' });
+    return false;
   }
   if (subpath !== '/auth') successfulAuthAttempt(clientIp);
+  return true;
+}
+
+/**
+ * Pre-body gate for /dashboard/api/*.
+ *
+ * server.js calls this BEFORE readBody() so an unauthenticated mutation is
+ * rejected at the Host/mutation/lockout/auth boundary without touching the
+ * request stream (S03/G05: the body read used to run first, letting an
+ * anonymous caller force up to MAX_BODY_SIZE of buffering + JSON parsing per
+ * request). Reuses the same gate handleDashboardApi runs.
+ *
+ * Returns true when the caller may proceed (and, for a mutation, read the
+ * body); false when the rejection response was already written. OPTIONS
+ * carries no body and is answered by handleDashboardApi's early 204 exactly
+ * as before, so it passes through untouched.
+ */
+export function preflightDashboardRequest(method, subpath, req, res) {
+  if (res) res._dashboardCorsOrigin = resolveCorsOrigin(req);
+  if (method === 'OPTIONS') return true;
+  if (!runDashboardRequestGate(method, subpath, req, res)) return false;
+  if (req && typeof req === 'object') req[DASHBOARD_PREFLIGHT_PASSED] = true;
+  return true;
+}
+
+/**
+ * Handle all /dashboard/api/* requests.
+ */
+export async function handleDashboardApi(method, subpath, body, req, res) {
+  // Resolve the CORS origin once (allowlist-gated, default none) so every
+  // json() response — including the OPTIONS preflight below — reflects the
+  // same decision instead of a blanket `*`.
+  if (res) res._dashboardCorsOrigin = resolveCorsOrigin(req);
+  if (method === 'OPTIONS') return json(res, 204, '');
+
+  // server.js already ran preflightDashboardRequest() before reading the body;
+  // running the gate again would re-validate the Host and double-count the
+  // successful-auth reset. Direct callers (unit tests, in-process handlers)
+  // never set the marker and still get the full gate here, exactly as before.
+  if (!(req && req[DASHBOARD_PREFLIGHT_PASSED] === true)) {
+    if (!runDashboardRequestGate(method, subpath, req, res)) return;
+  }
 
   // ─── Auth ─────────────────────────────────────────────
   if (subpath === '/auth') {
+    // The gate that used to declare clientIp now lives in
+    // runDashboardRequestGate (and may have already run as the server.js
+    // preflight). Re-resolve the same pure value for the probe's counter
+    // updates — no lockout/auth side effect is repeated.
+    const clientIp = dashboardClientIp(req);
     const storedPw = getEffectiveDashboardPasswordStored();
     const effectiveApiKey = getEffectiveApiKey();
     const hasSecret = !!(storedPw || effectiveApiKey);
