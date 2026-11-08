@@ -184,8 +184,16 @@ export function contentToString(content) {
   return content == null ? '' : JSON.stringify(content);
 }
 
-function escapeHistoryTag(text, tag) {
-  return text.replaceAll(`</${tag}>`, `<\\/${tag}>`);
+// Both role closers are escaped in EVERY body — history lines and the latest
+// turn. Escaping only the body's own closer let user text close the wrapper
+// with `</assistant>`, and let a history turn smuggle the other role's closer
+// into the replayed prompt. `<\/tag>` is the existing reversible
+// representation; unrelated XML/code (`<div>`, `<human-readable>`) is untouched.
+const CASCADE_ROLE_CLOSERS = ['</human>', '</assistant>'];
+function escapeHistoryTags(text) {
+  let out = String(text ?? '');
+  for (const closer of CASCADE_ROLE_CLOSERS) out = out.replaceAll(closer, `<\\/${closer.slice(2)}`);
+  return out;
 }
 
 /**
@@ -360,7 +368,7 @@ function buildCascadeHistoryEntries(convo, budgetBytes, openingText = '', bodyFo
     const m = convo[i];
     const tag = m.role === 'user' ? 'human' : 'assistant';
     const body = (bodyForTurn ? bodyForTurn(i) : undefined) ?? contentToString(m.content);
-    const lineBytes = Buffer.byteLength(`<${tag}>\n${escapeHistoryTag(body, tag)}\n</${tag}>`, 'utf8');
+    const lineBytes = Buffer.byteLength(`<${tag}>\n${escapeHistoryTags(body)}\n</${tag}>`, 'utf8');
     if (historyBytes + lineBytes > budgetBytes && entries.length > 0) {
       log.info(`Cascade: trimmed history at turn ${i}/${convo.length} (${Math.round(historyBytes/1024)}KB kept, ${convo.length - 2 - i} turns dropped)`);
       firstIncluded = i + 1;
@@ -376,7 +384,7 @@ function buildCascadeHistoryEntries(convo, budgetBytes, openingText = '', bodyFo
 function renderCascadeHistoryLines(entries, bodyForEntry = null) {
   return entries.map((entry) => {
     const body = (bodyForEntry ? bodyForEntry(entry) : undefined) ?? entry.body;
-    return `<${entry.tag}>\n${escapeHistoryTag(body, entry.tag)}\n</${entry.tag}>`;
+    return `<${entry.tag}>\n${escapeHistoryTags(body)}\n</${entry.tag}>`;
   });
 }
 
@@ -415,10 +423,10 @@ function reportCascadeImageHistoryDrops(stats, meta) {
  * may never see is not worth it, so history images are not attached in that
  * mode; they are counted as `no_vision` drops.
  */
-async function buildCascadeMultiTurnPrompt(convo, { budgetBytes, openingText = '', allowHistoryImages = true } = {}) {
+async function buildCascadeMultiTurnPrompt(convo, { budgetBytes, openingText = '', allowHistoryImages = true, signal = null, beforeFetch = null } = {}) {
   const caps = cascadeHistoryImageCaps();
   const latest = convo[convo.length - 1];
-  const latestExtracted = await extractImages(latest?.content ?? '');
+  const latestExtracted = await extractImages(latest?.content ?? '', { signal, beforeFetch });
   const images = [...latestExtracted.images];
 
   const stats = { attached: 0, droppedCap: 0, droppedBytes: 0, droppedTruncated: 0, droppedNoVision: 0 };
@@ -440,7 +448,7 @@ async function buildCascadeMultiTurnPrompt(convo, { budgetBytes, openingText = '
       stats.droppedCap += countImageLikeBlocks(content);
       continue;
     }
-    const extracted = await extractImages(content);
+    const extracted = await extractImages(content, { signal, beforeFetch });
     // A turn whose image blocks produced nothing (guard rejection, failed
     // fetch, unsupported mime) keeps its plain `contentToString` body: the
     // placeholder stays in the text, and the guard already logged the reason.
@@ -489,7 +497,7 @@ async function buildCascadeMultiTurnPrompt(convo, { budgetBytes, openingText = '
   }
 
   const lines = renderCascadeHistoryLines(entries, (entry) => bodies.get(entry.index));
-  const text = `The following is a multi-turn conversation. You MUST remember and use all information from prior turns.\n\n${lines.join('\n\n')}\n\n<human>\n${latestExtracted.text}\n</human>`;
+  const text = `The following is a multi-turn conversation. You MUST remember and use all information from prior turns.\n\n${lines.join('\n\n')}\n\n<human>\n${escapeHistoryTags(latestExtracted.text)}\n</human>`;
   reportCascadeImageHistoryDrops(stats, { turns: convo.length });
   return { text, images, firstIncluded };
 }
@@ -1260,7 +1268,10 @@ export class WindsurfClient {
       // Budget is UTF-8 bytes (what the wire encoder writes), not UTF-16 units.
       if (isResume || convo.length <= 1) {
         const last = convo[convo.length - 1];
-        const extracted = await extractImages(last?.content ?? '');
+        const extracted = await extractImages(last?.content ?? '', {
+          signal,
+          beforeFetch: () => assertBudget('Cascade image extraction'),
+        });
         text = extracted.text;
         images = extracted.images;
         if (!isResume && sysText) text = sysText + '\n\n' + text;
@@ -1276,6 +1287,8 @@ export class WindsurfClient {
           budgetBytes: maxHistoryBytes,
           openingText: sysText,
           allowHistoryImages,
+          signal,
+          beforeFetch: () => assertBudget('Cascade image extraction'),
         });
         const { firstIncluded } = built;
         historyCoverage = {
@@ -1343,6 +1356,8 @@ export class WindsurfClient {
         const built = await buildCascadeMultiTurnPrompt(convo, {
           budgetBytes: cascadeHistoryBudget(modelUid),
           allowHistoryImages,
+          signal,
+          beforeFetch: () => assertBudget('Cascade image extraction'),
         });
         const { firstIncluded } = built;
         historyCoverage = {

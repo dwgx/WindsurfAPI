@@ -574,17 +574,49 @@ function detach(emitter, listeners) {
   listeners.length = 0;
 }
 
-export function fetchImageUrl(url, timeoutMs = IMAGE_FETCH_TIMEOUT_MS, _depth = 0, _ctx = null) {
+// Abort-shaped error for a cancelled image extraction. `signal.reason` is
+// preserved when it is an Error/DOMException (AbortSignal.timeout gives a
+// TimeoutError, abort(err) gives that exact error); otherwise a fresh
+// AbortError is created. Either way callers see `name === 'AbortError'`.
+function imageAbortError(signal) {
+  const reason = signal?.reason;
+  if (reason && typeof reason === 'object' && typeof reason.message === 'string') return reason;
+  const err = new Error(typeof reason === 'string' && reason ? reason : 'Image extraction aborted');
+  err.name = 'AbortError';
+  err.code = 'ABORT_ERR';
+  return err;
+}
+
+// A terminal error ends the extraction; an ordinary per-image failure (bad
+// MIME, 404, SSRF, size, decode) keeps the log-and-continue behaviour.
+function isTerminalImageError(err, signal) {
+  if (signal?.aborted) return true;
+  if (err?.name === 'AbortError' || err?.code === 'ABORT_ERR') return true;
+  // `beforeFetch` is the caller's turn deadline (client.js assertBudget). The
+  // marker is the one request-budget.js sets; checking it here instead of
+  // importing the predicate keeps image.js's import shape unchanged (the codec
+  // seam helper asserts it).
+  return err?.budgetExceeded === true || err?.code === 'DEADLINE_EXCEEDED';
+}
+
+export function fetchImageUrl(url, timeoutMs = IMAGE_FETCH_TIMEOUT_MS, _depth = 0, _ctx = null, signal = null) {
   if (_depth > MAX_REDIRECTS) return Promise.reject(new Error('Too many image redirects'));
   if (_ctx) return fetchImageHop(url, _depth, _ctx);
 
-  // Root call: one timer, one settlement, one set of owned handles.
-  const ctx = { done: false, timer: null, handles: new Set(), timeoutMs };
+  // Root call: one timer, one settlement, one set of owned handles. The
+  // caller's AbortSignal is an ADDITIONAL stop next to the absolute timer: an
+  // abort settles once through the same path, so every owned request/response
+  // is destroyed exactly as it is on a deadline. The timer is never replaced.
+  const ctx = { done: false, timer: null, handles: new Set(), timeoutMs, signal, onAbort: null };
   const promise = new Promise((resolve, reject) => {
     const settle = (error, value) => {
       if (ctx.done) return;
       ctx.done = true;
       if (ctx.timer) { clearTimeout(ctx.timer); ctx.timer = null; }
+      if (ctx.onAbort) {
+        ctx.signal?.removeEventListener?.('abort', ctx.onAbort);
+        ctx.onAbort = null;
+      }
       for (const handle of ctx.handles) {
         detach(handle.res, handle.resListeners);
         detach(handle.req, handle.reqListeners);
@@ -600,6 +632,13 @@ export function fetchImageUrl(url, timeoutMs = IMAGE_FETCH_TIMEOUT_MS, _depth = 
       timeoutMs,
     );
     if (typeof ctx.timer.unref === 'function') ctx.timer.unref();
+    if (signal) {
+      // Already-aborted signal: settle before any hop starts, so a turn that is
+      // already over opens zero requests.
+      if (signal.aborted) { settle(imageAbortError(signal)); return; }
+      ctx.onAbort = () => settle(imageAbortError(signal));
+      signal.addEventListener('abort', ctx.onAbort, { once: true });
+    }
     fetchImageHop(url, _depth, ctx).then(
       (value) => settle(null, value),
       (error) => settle(error),
@@ -611,6 +650,7 @@ export function fetchImageUrl(url, timeoutMs = IMAGE_FETCH_TIMEOUT_MS, _depth = 
 function fetchImageHop(url, depth, ctx) {
   return new Promise((resolve, reject) => {
     if (ctx.done) { reject(new Error('Image fetch deadline exceeded')); return; }
+    if (ctx.signal?.aborted) { reject(imageAbortError(ctx.signal)); return; }
 
     let parsed;
     try { parsed = validateImageUrl(url); } catch (e) { reject(e); return; }
@@ -643,6 +683,7 @@ function fetchImageHop(url, depth, ctx) {
     const req = mod.get(parsed.href, { timeout: ctx.timeoutMs ?? IMAGE_FETCH_TIMEOUT_MS, headers: { 'Accept': 'image/*' }, lookup: safeLookup }, (res) => {
       handle.res = res;
       if (ctx.done) { res.destroy(); return; }
+      if (ctx.signal?.aborted) { finish(imageAbortError(ctx.signal)); return; }
       if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
         // Destroy the redirect body instead of draining it: an endless 3xx response
         // must not keep a socket (or its bytes) alive after we have moved on.
@@ -650,6 +691,8 @@ function fetchImageHop(url, depth, ctx) {
         ctx.handles.delete(handle);
         handle.res = null;
         res.destroy();
+        // The hop must not start a request the caller has already cancelled.
+        if (ctx.signal?.aborted) { finish(imageAbortError(ctx.signal)); return; }
         fetchImageUrl(res.headers.location, ctx.timeoutMs, depth + 1, ctx).then(
           (v) => finish(null, v), (e) => finish(e),
         );
@@ -688,8 +731,30 @@ function fetchImageHop(url, depth, ctx) {
   });
 }
 
-export async function extractImages(contentBlocks) {
+// Test seam: extractImages resolves remote images through this indirection so
+// cancellation can be exercised without the network. Production always points
+// at fetchImageUrl; tests restore it in `finally`.
+let fetchImageUrlImpl = fetchImageUrl;
+export function __setFetchImageUrlForTest(fn) {
+  fetchImageUrlImpl = typeof fn === 'function' ? fn : fetchImageUrl;
+}
+
+/**
+ * Flatten content blocks to {text, images}.
+ *
+ * `signal` and `beforeFetch` are the Cascade turn's cancellation surface:
+ * `beforeFetch` (the caller's budget assertion) runs before every remote fetch
+ * and every pushImage, and an aborted `signal` stops extraction the same way.
+ * A terminal abort/deadline error is rethrown; an ordinary per-image failure
+ * (bad MIME, 404, SSRF, size, decode) still logs and continues, unchanged.
+ */
+export async function extractImages(contentBlocks, { signal = null, beforeFetch = null } = {}) {
   if (!Array.isArray(contentBlocks)) return { text: String(contentBlocks ?? ''), images: [] };
+
+  const checkpoint = () => {
+    beforeFetch?.();
+    if (signal?.aborted) throw imageAbortError(signal);
+  };
 
   let text = '';
   const images = [];
@@ -723,11 +788,20 @@ export async function extractImages(contentBlocks) {
       }
       try {
         if ((src.type === 'base64' || !src.type) && src.data) {
+          checkpoint();
           await pushImage(images, { base64_data: src.data, mime_type: src.media_type || 'image/png' });
         } else if (src.type === 'url' && src.url) {
-          await pushImage(images, await fetchImageUrl(src.url));
+          checkpoint();
+          const fetched = await fetchImageUrlImpl(src.url, IMAGE_FETCH_TIMEOUT_MS, 0, null, signal);
+          // A turn can be spent while the fetch runs: do not attach an image
+          // the caller can no longer use.
+          checkpoint();
+          await pushImage(images, fetched);
         }
-      } catch (e) { log.warn(`Image extraction failed: ${e.message}`); }
+      } catch (e) {
+        if (isTerminalImageError(e, signal)) throw e;
+        log.warn(`Image extraction failed: ${e.message}`);
+      }
     } else if (block.type === 'image_url') {
       const url = block.image_url?.url || '';
       try {
@@ -749,16 +823,25 @@ export async function extractImages(contentBlocks) {
             continue;
           }
           const parsed = parseDataUrl(url);
-          if (parsed) await pushImage(images, parsed);
+          if (parsed) {
+            checkpoint();
+            await pushImage(images, parsed);
+          }
         } else if (/^https?:\/\//i.test(url)) {
           // Schemes are case-insensitive (RFC 3986 §3.1) and `new URL()` normalizes
           // them, so a case-sensitive prefix test only SKIPPED the block: uppercase
           // HTTPS never fetched, uppercase HTTP never reached the https-only gate —
           // both vanished silently. The plaintext rejection still comes from
           // validateImageUrl, unchanged.
-          await pushImage(images, await fetchImageUrl(url));
+          checkpoint();
+          const fetched = await fetchImageUrlImpl(url, IMAGE_FETCH_TIMEOUT_MS, 0, null, signal);
+          checkpoint();
+          await pushImage(images, fetched);
         }
-      } catch (e) { log.warn(`Image fetch failed: ${e.message}`); }
+      } catch (e) {
+        if (isTerminalImageError(e, signal)) throw e;
+        log.warn(`Image fetch failed: ${e.message}`);
+      }
     } else if (block.type === 'file' || block.type === 'input_file') {
       // OpenAI PDF input: { type:'file', file:{ filename, file_data:'data:application/pdf;base64,...' } }
       // or file_id (uploaded via Files API — we can't fetch, so ignore).
