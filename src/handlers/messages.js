@@ -530,6 +530,46 @@ function validateContextManagement(cm) {
   return null;
 }
 
+// CTX-01: signed replay re-attaches a turn's signed thinking upstream (the
+// signedReplay attach in anthropicToOpenAI). Mirrors that attach condition —
+// an assistant turn whose thinking blocks are ALL signed and number exactly
+// one (the wire has one #11/#12 slot per message) — so the finite-keep refusal
+// only fires when the translator would actually contradict the edit. A mixed
+// or multi-block turn is dropped on translation and satisfies any `keep`.
+function hasReplayableSignedThinking(messages) {
+  if (!Array.isArray(messages)) return false;
+  for (const message of messages) {
+    if (message?.role !== 'assistant' || !Array.isArray(message.content)) continue;
+    let signed = 0;
+    let unsigned = false;
+    for (const block of message.content) {
+      if (!block || typeof block !== 'object' || block.type !== 'thinking') continue;
+      if (typeof block.thinking === 'string' && block.thinking
+          && typeof block.signature === 'string' && block.signature) signed++;
+      else unsigned = true;
+    }
+    if (signed === 1 && !unsigned) return true;
+  }
+  return false;
+}
+
+// CTX-01: a finite `keep` ("none" or {type:"thinking_turns"}) asks this bridge
+// to drop old thinking, but signed replay would re-attach that very thinking to
+// the upstream request. The upstream verifies each signature against its own
+// text, so a partial keep cannot be replayed either — refuse instead of logging
+// "edit satisfied" while contradicting the edit.
+function validateSignedReplayClearThinking(cm, messages, model) {
+  if (!signedThinkingReplayEnabled(process.env, model)) return null;
+  const edits = Array.isArray(cm?.edits) ? cm.edits : [];
+  const index = edits.findIndex(edit => edit?.type === 'clear_thinking_20251015'
+    && (edit.keep === 'none' || (edit.keep != null && typeof edit.keep === 'object')));
+  if (index === -1 || !hasReplayableSignedThinking(messages)) return null;
+  return unsupportedParameter(
+    `context_management.edits[${index}].keep`,
+    `context_management.edits[${index}].keep cannot be honoured while signed thinking replay is enabled (DEVIN_CONNECT_REPLAY_SIGNED_THINKING=1): the proxy would re-attach the signed thinking this edit asks to clear, and the upstream verifies each signature so a partial keep cannot be replayed. Use keep:"all", disable signed thinking replay, or remove the signed thinking history from the request.`,
+  );
+}
+
 // C4: a cache_control breakpoint must be { type: 'ephemeral', ttl?: '5m'|'1h' }.
 // Non-ephemeral types and unknown ttl values were silently accepted (ttl fell
 // back to 5m); official behavior is a 400. Returns an error {status,body} or null.
@@ -563,6 +603,10 @@ export function validateMessagesRequest(body) {
   // never silently dropped (Claude Code 2.1.306 sends one on every turn).
   const cmErr = validateContextManagement(body.context_management);
   if (cmErr) return cmErr;
+  // CTX-01: a finite clear_thinking keep cannot be honoured while signed
+  // replay re-attaches that thinking upstream; keep shape errors above win.
+  const replayErr = validateSignedReplayClearThinking(body.context_management, body.messages, body.model);
+  if (replayErr) return replayErr;
   // C3/C4: walk every block that can carry a cache_control breakpoint in the
   // same tools → system → messages prefix order extractCachePolicy uses.
   let breakpointCount = 0;
