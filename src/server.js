@@ -673,13 +673,22 @@ async function route(req, res) {
     // reads the request id from the `request-id` header. The shared gate used to
     // answer every family with the OpenAI {error:{type:'auth_error'}} body and
     // no Anthropic header, so a Claude client saw an unparseable 401. Keep the
-    // OpenAI (and Gemini, which reuses it here) shape byte-identical.
+    // OpenAI shape byte-identical; Gemini got its own envelope below (M10).
     if (isAnthropicPath(path)) {
       res.setHeader('request-id', fallbackRequestId);
       return json(res, 401, withRequestId(401, {
         type: 'error',
         error: { type: 'authentication_error', message },
       }, fallbackRequestId));
+    }
+    // M10: Gemini-surface clients (Google GenAI SDK, generateContent on either
+    // the /v1beta or the /v1/models alias) parse only the Google error
+    // envelope — {error:{code,message,status:'UNAUTHENTICATED'}}. The shared
+    // OpenAI auth_error body is as unparseable to them as it was to Anthropic
+    // SDKs before Q2 T02. geminiError owns the vocabulary.
+    if (credentialSurface === 'gemini') {
+      res.setHeader('request-id', fallbackRequestId);
+      return json(res, 401, withRequestId(401, geminiError(401, null, message).body, fallbackRequestId));
     }
     return json(res, 401, withRequestId(401, { error: { message, type: 'auth_error' } }, fallbackRequestId));
   }

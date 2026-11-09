@@ -255,13 +255,24 @@ describe('server auth routing', () => {
     assert.ok(res.headers['request-id']);
   });
 
-  it('T02: the OpenAI and Gemini gate responses keep their existing shape', async () => {
+  it('T02/M10: the OpenAI gate keeps auth_error; Gemini gets its own envelope', async () => {
     const chat = await request(port(), 'POST', '/v1/chat/completions', {}, chatBody);
     assert.equal(chat.status, 401);
     assert.equal(chat.body.error.type, 'auth_error');
-    const gemini = await request(port(), 'POST', '/v1beta/models/gemini-2.5-pro:generateContent', {}, geminiBody);
-    assert.equal(gemini.status, 401);
-    assert.equal(gemini.body.error.type, 'auth_error');
+    // M10: Google GenAI SDKs parse only the Gemini error envelope — the shared
+    // OpenAI auth_error body was as unparseable to them as it was to Anthropic
+    // SDKs before Q2 T02.
+    for (const path of [
+      '/v1beta/models/gemini-2.5-pro:generateContent',
+      '/v1/models/gemini-2.5-pro:generateContent',
+    ]) {
+      const gemini = await request(port(), 'POST', path, {}, geminiBody);
+      assert.equal(gemini.status, 401, `${path} must still be a 401`);
+      assert.equal(gemini.body.error.status, 'UNAUTHENTICATED', `${path}: Google SDKs parse only the Gemini envelope`);
+      assert.equal(gemini.body.error.code, 401);
+      assert.match(String(gemini.body.error.message || ''), /API key/i);
+      assert.doesNotMatch(JSON.stringify(gemini.body), /auth_error/, 'the OpenAI-only auth_error type must not leak');
+    }
   });
 
   it('T03: a chat POST is refused for ?key=, x-goog-api-key and x-api-key', async () => {
