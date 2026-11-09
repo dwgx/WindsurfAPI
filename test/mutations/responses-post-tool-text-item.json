@@ -33,8 +33,8 @@
     {
       "name": "output_item.done reverts to the whole-turn accumulator, so each item claims all the turn's text",
       "file": "src/handlers/responses.js",
-      "anchor": "    const complete = textMessageItem(this.msgId, this.segmentText);",
-      "replacement": "    const complete = textMessageItem(this.msgId, this.text);"
+      "anchor": "    const complete = textMessageItem(this.msgId, this.segmentText, this.failedTurn ? 'incomplete' : 'completed');",
+      "replacement": "    const complete = textMessageItem(this.msgId, this.text, this.failedTurn ? 'incomplete' : 'completed');"
     },
     {
       "name": "output_text.done reverts to the whole-turn accumulator",
