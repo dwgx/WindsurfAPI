@@ -533,14 +533,15 @@ function validateContextManagement(cm) {
 // CTX-01: signed replay re-attaches a turn's signed thinking upstream (the
 // signedReplay attach in anthropicToOpenAI). Mirrors that attach condition —
 // an assistant turn whose thinking blocks are ALL signed and number exactly
-// one (the wire has one #11/#12 slot per message) — and counts such turns, so
-// the finite-keep refusal can tell whether the edit retains every turn the
-// translator would re-attach. A mixed or multi-block turn is dropped on
-// translation and satisfies any `keep`.
-function countReplayableSignedThinking(messages) {
-  if (!Array.isArray(messages)) return 0;
-  let turns = 0;
-  for (const message of messages) {
+// one (the wire has one #11/#12 slot per message) — and returns the message
+// indexes of such turns, so the finite-keep refusal can tell whether the edit
+// retains every turn the translator would re-attach. A mixed or multi-block
+// turn is dropped on translation and satisfies any `keep`.
+function replayableSignedIndexes(messages) {
+  const indexes = [];
+  if (!Array.isArray(messages)) return indexes;
+  for (let i = 0; i < messages.length; i++) {
+    const message = messages[i];
     if (message?.role !== 'assistant' || !Array.isArray(message.content)) continue;
     let signed = 0;
     let unsigned = false;
@@ -550,30 +551,55 @@ function countReplayableSignedThinking(messages) {
           && typeof block.signature === 'string' && block.signature) signed++;
       else unsigned = true;
     }
-    if (signed === 1 && !unsigned) turns++;
+    if (signed === 1 && !unsigned) indexes.push(i);
   }
-  return turns;
+  return indexes;
+}
+
+// CTX-01: message indexes of every assistant turn carrying a thinking block,
+// signed or not. `clear_thinking_20251015` clears a PREFIX of these turns, so
+// the keep decision must compare against their positions rather than against
+// the replayable subset's count: a keep can drop the oldest turns and with
+// them a signed turn while still keeping as many turns as happen to be signed.
+function thinkingTurnIndexes(messages) {
+  const indexes = [];
+  if (!Array.isArray(messages)) return indexes;
+  for (let i = 0; i < messages.length; i++) {
+    const message = messages[i];
+    if (message?.role !== 'assistant' || !Array.isArray(message.content)) continue;
+    if (message.content.some(block => block && typeof block === 'object' && block.type === 'thinking')) {
+      indexes.push(i);
+    }
+  }
+  return indexes;
 }
 
 // CTX-01: a finite `keep` ("none" or {type:"thinking_turns"}) asks this bridge
-// to drop old thinking, but signed replay would re-attach that very thinking to
-// the upstream request. The upstream verifies each signature against its own
-// text, so a keep that clears a replayable signed turn cannot be honoured —
-// refuse instead of logging "edit satisfied" while contradicting the edit. A
-// {thinking_turns,N} keep is satisfiable when N >= signedTurns (the edit keeps
-// every turn replay would re-attach); keep:"none" keeps none, so it is refused
-// whenever signedTurns > 0. Other keep shapes are already rejected by
-// validateThinkingKeep.
+// to drop the OLDEST thinking turns, but signed replay would re-attach that very
+// thinking to the upstream request. The upstream verifies each signature
+// against its own text, so a keep that clears a replayable signed turn cannot
+// be honoured — refuse instead of logging "edit satisfied" while contradicting
+// the edit. The comparison is order-aware: {thinking_turns,N} clears the prefix
+// `thinkingTurnIndexes().slice(0, turns - N)`, so it is accepted when N covers
+// every thinking turn (N >= turns) or when no dropped turn is replayable — not
+// merely when N reaches the replayable count. keep:"none" keeps no turn, so it
+// is refused whenever a replayable signed turn exists. Other keep shapes are
+// already rejected by validateThinkingKeep.
 function validateSignedReplayClearThinking(cm, messages, model) {
   if (!signedThinkingReplayEnabled(process.env, model)) return null;
   const edits = Array.isArray(cm?.edits) ? cm.edits : [];
   const index = edits.findIndex(edit => edit?.type === 'clear_thinking_20251015'
     && (edit.keep === 'none' || (edit.keep != null && typeof edit.keep === 'object')));
   if (index === -1) return null;
-  const signedTurns = countReplayableSignedThinking(messages);
-  if (signedTurns === 0) return null;
+  const signedIndexes = replayableSignedIndexes(messages);
+  if (signedIndexes.length === 0) return null;
   const keep = edits[index].keep;
-  if (keep !== 'none' && keep.type === 'thinking_turns' && keep.value >= signedTurns) return null;
+  if (keep !== 'none' && keep.type === 'thinking_turns') {
+    const turns = thinkingTurnIndexes(messages);
+    if (keep.value >= turns.length) return null;
+    const dropped = new Set(turns.slice(0, turns.length - keep.value));
+    if (!signedIndexes.some(turn => dropped.has(turn))) return null;
+  }
   return unsupportedParameter(
     `context_management.edits[${index}].keep`,
     `context_management.edits[${index}].keep cannot be honoured while signed thinking replay is enabled (DEVIN_CONNECT_REPLAY_SIGNED_THINKING=1): the proxy would re-attach the signed thinking this edit asks to clear, and the upstream verifies each signature so a partial keep cannot be replayed. Use keep:"all", disable signed thinking replay, or remove the signed thinking history from the request.`,

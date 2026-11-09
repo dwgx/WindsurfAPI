@@ -2,12 +2,15 @@
  * CTX-01: a finite `clear_thinking_20251015` keep can only be honoured while
  * signed thinking replay is enabled when it retains every replayable signed
  * turn — anthropicToOpenAI re-attaches exactly that signed thinking (the
- * `signedReplay` attach), and the upstream verifies each signature. A
- * {type:"thinking_turns",N} keep with N >= signedTurns keeps them all and is
- * accepted; N < signedTurns (and keep:"none", which keeps none) clears a turn
- * the replay would re-attach, so the proxy answers 400 unsupported_parameter
- * instead of logging the edit as satisfied. keep:"all", absent keep, replay
- * off and histories the translator does not replay stay accepted.
+ * `signedReplay` attach), and the upstream verifies each signature. The edit
+ * clears the OLDEST thinking turns, so the check is order-aware:
+ * {type:"thinking_turns",N} drops `thinkingTurnIndexes().slice(0, turns - N)`
+ * and is accepted when N covers every thinking turn or when no dropped turn is
+ * replayable. [signed, mixed] keep 1 therefore rejects (it drops the signed
+ * turn) while [mixed, signed] keep 1 accepts (it drops only the mixed turn).
+ * keep:"none" keeps none, so it is refused whenever a replayable signed turn
+ * exists. keep:"all", absent keep, replay off and histories the translator does
+ * not replay stay accepted.
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -34,6 +37,50 @@ function signedHistory(turns = 2) {
     if (i < turns - 1) messages.push({ role: 'user', content: `again ${i + 1}` });
   }
   messages.push({ role: 'user', content: 'final' });
+  return messages;
+}
+
+// Single assistant turns for the order-aware cases. `signedTurn` is replayable
+// (exactly one signed thinking block); `unsignedTurn` is a thinking turn the
+// translator drops; `mixedTurn` mixes one signed and one unsigned thinking
+// block, so it counts as a thinking turn but is never replayed.
+function signedTurn(label) {
+  return {
+    role: 'assistant',
+    content: [
+      { type: 'thinking', thinking: `secret ${label}`, signature: SIG },
+      { type: 'text', text: `answer ${label}` },
+    ],
+  };
+}
+
+function unsignedTurn(label) {
+  return {
+    role: 'assistant',
+    content: [
+      { type: 'thinking', thinking: `unsigned ${label}`, signature: '' },
+      { type: 'text', text: `answer ${label}` },
+    ],
+  };
+}
+
+function mixedTurn(label) {
+  return {
+    role: 'assistant',
+    content: [
+      { type: 'thinking', thinking: `secret ${label}`, signature: SIG },
+      { type: 'thinking', thinking: `unsigned ${label}`, signature: '' },
+      { type: 'text', text: `answer ${label}` },
+    ],
+  };
+}
+
+// History whose assistant turns appear in the given order, oldest first.
+function turnHistory(...turns) {
+  const messages = [{ role: 'user', content: 'go' }];
+  for (const turn of turns) {
+    messages.push(turn, { role: 'user', content: 'again' });
+  }
   return messages;
 }
 
@@ -106,6 +153,50 @@ describe('CTX-01 clear_thinking_20251015 finite keep vs signed replay', () => {
   it('rejects keep:{type:"thinking_turns",value:1} when two signed turns would be cleared', () => {
     withReplay(true, () => {
       const err = validateMessagesRequest(request({
+        context_management: clearThinking({ type: 'thinking_turns', value: 1 }),
+      }));
+      assertUnsupportedKeep(err);
+    });
+  });
+
+  it('rejects keep:1 for [signed, mixed]: the dropped prefix holds the signed turn', () => {
+    withReplay(true, () => {
+      const err = validateMessagesRequest(request({
+        messages: turnHistory(signedTurn('1'), mixedTurn('2')),
+        context_management: clearThinking({ type: 'thinking_turns', value: 1 }),
+      }));
+      assertUnsupportedKeep(err);
+    });
+  });
+
+  it('accepts keep:1 for [mixed, signed]: the dropped prefix holds only the mixed turn', () => {
+    withReplay(true, () => {
+      assert.equal(validateMessagesRequest(request({
+        messages: turnHistory(mixedTurn('1'), signedTurn('2')),
+        context_management: clearThinking({ type: 'thinking_turns', value: 1 }),
+      })), null);
+    });
+  });
+
+  it('rejects keep:1 and accepts keep:2 for [signed, signed]', () => {
+    withReplay(true, () => {
+      const messages = turnHistory(signedTurn('1'), signedTurn('2'));
+      const err = validateMessagesRequest(request({
+        messages,
+        context_management: clearThinking({ type: 'thinking_turns', value: 1 }),
+      }));
+      assertUnsupportedKeep(err);
+      assert.equal(validateMessagesRequest(request({
+        messages,
+        context_management: clearThinking({ type: 'thinking_turns', value: 2 }),
+      })), null);
+    });
+  });
+
+  it('rejects keep:1 for [signed, unsigned]: the dropped prefix holds the signed turn', () => {
+    withReplay(true, () => {
+      const err = validateMessagesRequest(request({
+        messages: turnHistory(signedTurn('1'), unsignedTurn('2')),
         context_management: clearThinking({ type: 'thinking_turns', value: 1 }),
       }));
       assertUnsupportedKeep(err);
