@@ -92,6 +92,39 @@ describe('IMG-01: extractImages cancellation', () => {
     assert.equal(fetched, 0, 'no image is fetched for an already-cancelled turn');
   });
 
+  it('a signal that aborts during the LAST image still refuses the result (post-loop checkpoint)', async () => {
+    // Every in-loop checkpoint runs BEFORE the last image's final await
+    // (pushImage). An abort landing inside that window — or during any
+    // trailing non-image blocks — used to return the cancelled turn's images
+    // as if extraction had finished, because nothing checked the signal after
+    // the loop. The abort is queued from the last checkpoint's beforeFetch so
+    // it fires while pushImage is still awaiting: past every checkpoint the
+    // loop itself performs.
+    __setFetchImageUrlForTest(async () => ({ ...IMAGE }));
+    const controller = new AbortController();
+    let checkpoints = 0;
+
+    await assert.rejects(
+      extractImages([
+        { type: 'image_url', image_url: { url: 'https://img.example.test/last.png' } },
+        { type: 'text', text: 'trailing text after the last image' },
+      ], {
+        signal: controller.signal,
+        beforeFetch: () => {
+          checkpoints += 1;
+          // Checkpoint #2 is the post-fetch checkpoint of the only image: the
+          // abort it schedules lands inside the following pushImage await.
+          if (checkpoints === 2) queueMicrotask(() => controller.abort());
+        },
+      }),
+      (err) => {
+        assert.equal(err.name, 'AbortError');
+        return true;
+      },
+    );
+    assert.equal(checkpoints, 2, 'no checkpoint runs after the loop — the post-loop check is the only guard');
+  });
+
   it('a normal turn still fetches and returns every image', async () => {
     const fetched = [];
     __setFetchImageUrlForTest(async (url) => { fetched.push(url); return { ...IMAGE }; });

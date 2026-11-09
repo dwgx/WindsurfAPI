@@ -867,5 +867,11 @@ export async function extractImages(contentBlocks, { signal = null, beforeFetch 
     }
   }
 
+  // M7: the last block's fetch/push can outlive the abort — every checkpoint
+  // above runs before an await, so an abort landing inside the final
+  // pushImage (or during trailing non-image blocks) used to return the
+  // cancelled turn's images as if extraction had finished.
+  if (signal?.aborted) throw imageAbortError(signal);
+
   return { text, images };
 }
