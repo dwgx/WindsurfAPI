@@ -668,6 +668,34 @@ describe('G3: an upstream that never said how it ended is a failed turn', () => 
     assert.equal(res.body.includes('data: [DONE]'), false);
   });
 
+  it('non-stream: a failed turn marks its tool-call items incomplete, not completed', async () => {
+    // The response reports status:'failed'; an item-level 'completed' inside
+    // it would claim the call finished cleanly when the turn did not.
+    const result = await handleResponses(
+      { model: 'gpt-5.2', input: 'hi' },
+      nonStreamDeps((body) => ({
+        status: 200,
+        body: {
+          created: 123,
+          model: body.model,
+          choices: [{
+            index: 0,
+            message: {
+              role: 'assistant',
+              content: 'partial',
+              tool_calls: [{ id: 'call_1', type: 'function', function: { name: 'exec', arguments: '{"input":"echo"}' } }],
+            },
+            finish_reason: 'error',
+          }],
+        },
+      }), {}),
+    );
+    assert.equal(result.body.status, 'failed');
+    const callItem = result.body.output.find(i => i.type === 'function_call');
+    assert.ok(callItem, 'the partial tool call is still visible to the client');
+    assert.equal(callItem.status, 'incomplete');
+  });
+
   it('stream: an unterminated marker fails even when finish_reason is "stop"', async () => {
     const result = await handleResponses(
       { model: 'gpt-5.2', input: 'hi', stream: true },

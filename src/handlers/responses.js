@@ -964,6 +964,15 @@ export function chatToResponse(chatBody, requestedModel, responseId = genRespons
   const choice = chatBody.choices?.[0] || {};
   const message = choice.message || {};
   const finishReason = choice.finish_reason || 'stop';
+  // G3 (Q1 audit §7): the Connect decoder reports an end-of-stream frame that
+  // carried an answer but NO stopReason as `finish_reason:'error'` (with
+  // `unterminated:true` when the signal rides the choice). That is a FAILED
+  // turn, not a finished one: closing it as `completed` — the old behaviour —
+  // told the client a half answer was whole. `incomplete` is wrong too; it is
+  // reserved for caller-imposed caps and benign content filters. Computed
+  // before the output items are built so a failed turn cannot publish
+  // item-level 'completed' entries inside a status:'failed' response.
+  const upstreamUnterminated = finishReason === 'error' || choice.unterminated === true;
   const text = message.content || '';
   const output = [];
   // G01: the blob is emitted ONLY when the caller opted in through `include` and
@@ -976,7 +985,7 @@ export function chatToResponse(chatBody, requestedModel, responseId = genRespons
   if (text) output.push(textMessageItem(msgId, text));
   // One allocator per turn: duplicate upstream call ids become distinct wire ids.
   const allocateCallId = toolHygieneEnabled() ? createToolIdAllocator() : null;
-  for (const tc of (message.tool_calls || [])) output.push(functionCallItem(tc, 'completed', requestedTools, toolNameMap, allocateCallId));
+  for (const tc of (message.tool_calls || [])) output.push(functionCallItem(tc, upstreamUnterminated ? 'incomplete' : 'completed', requestedTools, toolNameMap, allocateCallId));
 
   // A turn that ends by emitting function calls is `completed` in the OpenAI
   // Responses API — `incomplete` is reserved for truncation (length /
@@ -993,13 +1002,6 @@ export function chatToResponse(chatBody, requestedModel, responseId = genRespons
   // report `upstream_incomplete` (not max_output_tokens) and must not be
   // committed to the response store (see commit() below).
   const upstreamTruncated = choice._windsurf_end_reason === 'upstream_truncated';
-  // G3 (Q1 audit §7): the Connect decoder reports an end-of-stream frame that
-  // carried an answer but NO stopReason as `finish_reason:'error'` (with
-  // `unterminated:true` when the signal rides the choice). That is a FAILED
-  // turn, not a finished one: closing it as `completed` — the old behaviour —
-  // told the client a half answer was whole. `incomplete` is wrong too; it is
-  // reserved for caller-imposed caps and benign content filters.
-  const upstreamUnterminated = finishReason === 'error' || choice.unterminated === true;
   const truncated = !upstreamUnterminated
     && (upstreamTruncated || finishReason === 'length' || finishReason === 'content_filter');
   return {
