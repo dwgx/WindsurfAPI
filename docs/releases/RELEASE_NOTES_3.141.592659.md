@@ -28,22 +28,21 @@ SSE JSON、队列字节预算、按未确认字节计 drain、history 预算改�
 
 **范围更正。** §0 与文首的计数（36 提交 / 45 文件 / +4,996 −501 / 6 个 `src/` 文件）
 度量的是 `v3.141.592658..deeb2539` 审计分支在发布提交前的冻结范围，**不包含**
-`e0c5c715` 之后的 hardening 与复审修复。发布提交之后本分支另有 **24 个提交 /
-64 个文件 / +6,627 −400 / 16 个 `src/` 文件**（`git rev-list --count
-e0c5c715..4b061af1`；`git diff --shortstat e0c5c715..4b061af1`；
-`git diff --name-only e0c5c715..4b061af1 -- src | wc -l`）：`c4931c40`（审计收口，
+`e0c5c715` 之后的 hardening 与复审修复。发布提交之后本分支另有 **28 个提交 /
+65 个文件 / +6,860 −454 / 16 个 `src/` 文件**（`git rev-list --count
+e0c5c715..7c995f40`；`git diff --shortstat e0c5c715..7c995f40`；
+`git diff --name-only e0c5c715..7c995f40 -- src | wc -l`）：`c4931c40`（审计收口，
 49 文件 / +5,010 −324）、`0aea4ea3`（connect 显式错误终止与 catalogue 边界）、
-`911e6674` / `d0359733`（纯文档）、复审修复波 `04503830`–`4b061af1`（含 spec
-基线重钉与文档订正）共 20 个提交。
+`911e6674` / `d0359733`（纯文档）、复审修复波 `04503830`–`7c995f40`（含 spec
+基线重钉、文档订正与差分审计修复）共 24 个提交。
 逐提交证据记入验收附录的增补段（acceptance addendum，另行补写）；本文件只登记
 范围与用户可见变化。
 
 **tag 目标。** `v3.141.592659` 必须打在合并后的 master tip 上（流程：把
 `origin/master` 合入本分支 → `master --ff-only` → 在 master tip 打 annotated tag →
 push），**不是** `e0c5c715`——否则 `c4931c40`/`0aea4ea3` 与复审修复会被关在版本外。
-写作时分支 HEAD 为 `4b061af1`，其后 `8e89af65`/`1490fe10` 只动 docs/test/mutation；
-最后一个改 `src/` 的提交是 `5fb21e70`。最终 tag 目标记作 `<merge-tip>`，以合并
-提交的实际 SHA 为准。
+写作时分支 HEAD 为 `7c995f40`（最后一个改 `src/` 的提交，差分审计修复）；
+最终 tag 目标记作 `<merge-tip>`，以合并提交的实际 SHA 为准。
 
 **复审修复波的用户可见变化**（`04503830`–`5fb21e70`，按面分组；`c4931c40` 已覆盖的
 面见上节）：
@@ -85,6 +84,13 @@ push），**不是** `e0c5c715`——否则 `c4931c40`/`0aea4ea3` 与复审修�
 - **identity**：catalogue 行内 ID 扫描改为每行 memo（512 KiB 单行 3,439 ms → ~21 ms，
   消掉 `04503830` 复审发现的 anchors×line 二次复杂度）；`claude-` ID 语法收紧为
   封闭词表 + 干净边界；`isHorizontalSpaceCode` 恢复 `\s` 全类（除 LF）。
+  差分审计（952 例语料，OLD 逐条对照 `.agent/diff-audit/`）补三个欠脱敏缺口
+  （`7c995f40`）：`IMPORTANT:` 独占行 + 纯空白跨段 + 指纹句的形状恢复删除
+  （gap 只要求纯空白，锚点后随真实文字仍不跨段——WA-002 保持）；行模型扩到
+  全部 JS 行终止符（`\r`/U+2028/U+2029 后的 billing/fastmode/cli 锚点不再漏）；
+  FREEFORM 生效域从同行扩到同段（换行 preamble 的 token 不漏，调用方裸 token
+  仍保留）。复跑后 79→70 条候选，剩余全部是刻意保留：catalogue 散文形状
+  （上游模型 ID 是完整选择子，不是散文）与裸 FREEFORM token（WA-003 契约）。
 - **client/image**：prepend 进 Cascade 的 system prompt 在 fresh 单轮、多轮与 resume
   重建三处统一转义 `</human>`/`</assistant>` 闭合标签；`extractImages` 在最后一个块
   之后也拒绝已取消的轮次；translator SSE framer 在客户端断连时 dispose。
@@ -343,10 +349,12 @@ linear spec 扩到 12 条突变、`04503830` 再把两条锚点改指重写后�
 `neutralize-rewrite-visibility.json` 基线 92→**100**（`c4931c40`/`0aea4ea3` 随被测文件
 增补用例重钉）。`d142d06e` 把 `gemini-egress-parity`（→88）与
 `gemini-schema-type-normalize`（→107）的 `expectBaselinePass` 重钉到实测值，
-`1490fe10` 把 `responses-post-tool-text-item` 的锚点改指 sealed status 参数。
-截至 `1490fe10`，`spec-baseline-check --all` 实测 **99 spec / 1 drift /
-0 untrustworthy**——仅剩 `think-text-reroute`（实测 98、spec 期望 97）的
-`expectBaselinePass` 待重钉（见 §7），重钉前该 spec 的突变判定不作为证据。
+`1490fe10` 把 `responses-post-tool-text-item` 的锚点改指 sealed status 参数；
+`7c995f40` 随 `identity-neutralize.js` 行模型与安全 gap 改写把
+`identity-neutralize-linear`/`identity-neutralize-paragraph-bound` 的两条锚点改指
+新代码（变异意图不变），并把 `think-text-reroute` 的 `expectBaselinePass` 重钉到
+实测 98。截至 `7c995f40`，`spec-baseline-check --all` 实测 **99 spec / 0 drift /
+0 untrustworthy**。
 
 ## 5. 回滚
 
@@ -382,9 +390,9 @@ linear spec 扩到 12 条突变、`04503830` 再把两条锚点改指重写后�
    （`openai-api-key test/transport-matrix.helpers.mjs 93d6533f4255 SYNTHETIC: …`），
    扫描恢复 **exit 0（0 unbaselined）**。
 
-**当前阻断项（`1490fe10` 时点）：** mutation 语料有 1 份 spec（`think-text-reroute`）的
-`expectBaselinePass` 待重钉（§4、§7），重钉后需在 POSIX 上对最终树复跑 mutation
-sweep；`gate:release` 需在合并树上跑完（见 §7）。本机可跑的其余门禁绿。
+**当前阻断项（`7c995f40` 时点）：** mutation 基线已全部重钉（§4），需在 POSIX 上
+对最终树复跑 mutation sweep；`gate:release` 需在合并树上跑完（见 §7）。本机
+可跑的其余门禁绿。
 
 ## 7. 已知 / 尚未验证
 
@@ -396,13 +404,12 @@ sweep；`gate:release` 需在合并树上跑完（见 §7）。本机可跑的�
   99 个 `SPEC_EXIT` 中 2 个零突变 spec）。旧的「1800 s 上限前 56/97、剩 41」是中途
   截断的中间态，已被该次完整 sweep 取代；`spec-baseline-check` 只证明锚点与基线
   成立，不执行变异体。
-- **[UNVERIFIED] mutation 最终树复跑与基线重钉**：语料已扩到 **99 spec / 878
-  mutation**；HMC 侧对合并树 `5a3ec2a9` 的 99/99 覆盖已测（其后 `5fb21e70` 又改
-  `src/`），`spec-baseline-check --all` 本地实测（`1490fe10` 树）**99 spec /
-  1 drift / 0 untrustworthy**——`d142d06e` 已把 `gemini-egress-parity` 与
-  `gemini-schema-type-normalize` 的 `expectBaselinePass` 重钉到实测值，仅剩
-  `think-text-reroute`（实测 98、期望 97）待重钉。重钉并在 POSIX 上
-  复跑 `node scripts/mutation-sweep.mjs --shard 0/1` 与 `--verify` 前，最终树的
+- **[UNVERIFIED] mutation 最终树复跑**：语料已扩到 **99 spec / 878 mutation**；
+  `spec-baseline-check --all` 本地实测（`7c995f40` 树）**99 spec / 0 drift /
+  0 untrustworthy**——`d142d06e` 重钉 gemini 两份、`7c995f40` 重钉
+  `think-text-reroute` 并重锚 identity 两份。HMC 侧对合并树 `5a3ec2a9` 的
+  99/99 覆盖已测（其后 `5fb21e70`/`7c995f40` 又改 `src/`）。在 POSIX 上复跑
+  `node scripts/mutation-sweep.mjs --shard 0/1` 与 `--verify` 前，最终树的
   变异体结论不作为证据。
 - **[VERIFIED] mutation 全量基线（发布树）**：`spec-baseline-check.mjs --all`（97 spec）是 release
   workflow 的模式；发布树实测 **97 spec measured, 0 drift, 0 untrustworthy**，wall 202.5 s
