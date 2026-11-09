@@ -2133,6 +2133,33 @@ function scanUserMessageForBareCwd(messages) {
     return cand;
   };
 
+  // Pass-2 strip: remove every `<system-reminder>…</system-reminder>` pair
+  // with a cursor-advancing scan. The regex equivalent
+  // `content.replace(/<system-reminder\b[\s\S]*?<\/system-reminder>\s*/gi,'')`
+  // is O(K×n) — each of K unterminated open tags makes the lazy `[\s\S]*?`
+  // re-search the whole tail for a closer that is not there (measured: 512 KiB
+  // of bare opens ≈ 2.1 s of synchronous event-loop time, ~4× per doubling).
+  // Offsets only move forward, so this stays O(n) at any input size. Output is
+  // byte-identical to the regex: a pair drops its span plus the whitespace
+  // after the closer; an open with no closer keeps the tail.
+  const REMINDER_OPEN = /<system-reminder\b/gi;
+  const REMINDER_CLOSE = /<\/system-reminder>\s*/gi;
+  const stripSystemReminderBlocks = (text) => {
+    let out = '';
+    let cursor = 0;
+    for (;;) {
+      REMINDER_OPEN.lastIndex = cursor;
+      const open = REMINDER_OPEN.exec(text);
+      if (!open) break;
+      REMINDER_CLOSE.lastIndex = open.index + open[0].length;
+      const close = REMINDER_CLOSE.exec(text);
+      if (!close) break;
+      out += text.slice(cursor, open.index);
+      cursor = close.index + close[0].length;
+    }
+    return out + text.slice(cursor);
+  };
+
   for (const m of messages) {
     if (m?.role !== 'user') continue;
     let content;
@@ -2154,7 +2181,7 @@ function scanUserMessageForBareCwd(messages) {
     // those wrappers and try again with a slightly bigger window (the prose
     // that follows tends to be longer than the raw input).
     if (!/<system-reminder\b/i.test(content)) continue;
-    const stripped = content.replace(/<system-reminder\b[\s\S]*?<\/system-reminder>\s*/gi, '');
+    const stripped = stripSystemReminderBlocks(content);
     const wrapped = tryMatch(stripped.slice(0, 500));
     if (wrapped) return wrapped;
   }
