@@ -4,7 +4,7 @@
     "test/client-identity-neutralize.test.js",
     "test/identity-neutralize-shapes.test.js"
   ],
-  "expectBaselinePass": 67,
+  "expectBaselinePass": 80,
   "mutations": [
     {
       "name": "the original defect: the brand-block span goes back to [\\s\\S]*? and eats the caller's paragraphs (measured 213 -> 59 bytes)",
