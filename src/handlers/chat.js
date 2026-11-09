@@ -1805,7 +1805,15 @@ export function repairToolCallArguments(tc, messages) {
   // the user named in order to FORBID it; reading it as the intended command turns
   // a prohibition into an instruction. Same masking the NLU layer uses, so the two
   // cannot drift apart on what counts as actionable.
-  const source = maskNonActionableRegions(maskDocumentSpans(latestRealUserText(messages)));
+  //
+  // CPU bound (S1 audit): maskNonActionableRegions rebuilds the string once per
+  // masked region — K negated clauses or fences on an n-char text is O(K×n) —
+  // and this was the only caller feeding it untruncated text. The NLU entry
+  // points cap at 200_000 for exactly this reason (intent-extractor.js
+  // detectToolIntentInNarrative / extractIntentFromNarrative); a repair source
+  // is best-effort, so the same head-of-message window applies here.
+  const source = maskNonActionableRegions(maskDocumentSpans(
+    latestRealUserText(messages).slice(0, 200_000)));
   for (const { command: requested, bounded } of extractRequestedBashCommands(source)) {
     if (bounded && isSafeCommandCompletion(current, requested)) {
       // Every surviving expansion is logged, because one shape CANNOT be

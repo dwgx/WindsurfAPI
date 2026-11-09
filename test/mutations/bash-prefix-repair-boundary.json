@@ -27,8 +27,8 @@
     {
       "name": "negation/fence masking dropped — a command the user forbade becomes the command the client runs",
       "file": "src/handlers/chat.js",
-      "anchor": "  const source = maskNonActionableRegions(maskDocumentSpans(latestRealUserText(messages)));",
-      "replacement": "  const source = maskDocumentSpans(latestRealUserText(messages));"
+      "anchor": "  const source = maskNonActionableRegions(maskDocumentSpans(\n    latestRealUserText(messages).slice(0, 200_000)));",
+      "replacement": "  const source = maskDocumentSpans(latestRealUserText(messages).slice(0, 200_000));"
     },
     {
       "name": "chaining set loses the redirect and separator characters, keeping only pipe and ampersand",
@@ -39,8 +39,8 @@
     {
       "name": "the command source reverts to recentUserText, so a <tool_result> user turn makes TOOL OUTPUT decide what the client runs",
       "file": "src/handlers/chat.js",
-      "anchor": "  const source = maskNonActionableRegions(maskDocumentSpans(latestRealUserText(messages)));",
-      "replacement": "  const source = maskNonActionableRegions(maskDocumentSpans(recentUserText(messages)));"
+      "anchor": "  const source = maskNonActionableRegions(maskDocumentSpans(\n    latestRealUserText(messages).slice(0, 200_000)));",
+      "replacement": "  const source = maskNonActionableRegions(maskDocumentSpans(recentUserText(messages).slice(0, 200_000)));"
     },
     {
       "name": "the guessed-boundary gate drops, so trailing English prose is swallowed into argv with no metacharacter for the chaining check to see",
@@ -75,8 +75,8 @@
     {
       "name": "the attachment span is not masked, so a decoded document decides what the client runs",
       "file": "src/handlers/chat.js",
-      "anchor": "  const source = maskNonActionableRegions(maskDocumentSpans(latestRealUserText(messages)));",
-      "replacement": "  const source = maskNonActionableRegions(latestRealUserText(messages));"
+      "anchor": "  const source = maskNonActionableRegions(maskDocumentSpans(\n    latestRealUserText(messages).slice(0, 200_000)));",
+      "replacement": "  const source = maskNonActionableRegions(latestRealUserText(messages).slice(0, 200_000));"
     },
     {
       "name": "the span regex requires a closing marker, so a TRUNCATED attachment stays readable as instruction text",
