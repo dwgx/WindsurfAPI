@@ -303,6 +303,48 @@ describe('G01 input side: replayed reasoning becomes signed thinking', () => {
     assert.equal(chat.messages[0].reasoning_content, 'ab');
     assert.equal('reasoning_signature' in chat.messages[0], false);
   });
+
+  it('drops the signature when unsigned summary text is mixed into the same turn', () => {
+    // sig_a seals ONLY 'a'; attaching it to the concatenated 'ab' would claim
+    // coverage the blob never had.
+    const chat = responsesToChat({
+      input: [
+        { type: 'reasoning', summary: [{ type: 'summary_text', text: 'a' }], encrypted_content: 'sig_a' },
+        { type: 'reasoning', summary: [{ type: 'summary_text', text: 'b' }], encrypted_content: null },
+        { role: 'assistant', content: 'ok' },
+      ],
+    });
+    assert.equal(chat.messages[0].reasoning_content, 'ab');
+    assert.equal('reasoning_signature' in chat.messages[0], false);
+  });
+
+  it('drops a blob-only signature when unsigned text arrives after it', () => {
+    // The signature seals no text at all here; 'b' is unsigned text, so the
+    // pair can never honestly claim 'b' is sealed.
+    const chat = responsesToChat({
+      input: [
+        { type: 'reasoning', summary: [], encrypted_content: 'sig_a' },
+        { type: 'reasoning', summary: [{ type: 'summary_text', text: 'b' }] },
+        { role: 'assistant', content: 'ok' },
+      ],
+    });
+    assert.equal(chat.messages[0].reasoning_content, 'b');
+    assert.equal('reasoning_signature' in chat.messages[0], false);
+  });
+
+  it('still drops the signature when unsigned text arrives BEFORE the signed item', () => {
+    // Same mispairing, other order: 'a' is unsigned, sig_b seals only 'b',
+    // and the replayed field would carry 'ab'.
+    const chat = responsesToChat({
+      input: [
+        { type: 'reasoning', summary: [{ type: 'summary_text', text: 'a' }], encrypted_content: null },
+        { type: 'reasoning', summary: [{ type: 'summary_text', text: 'b' }], encrypted_content: 'sig_b' },
+        { role: 'assistant', content: 'ok' },
+      ],
+    });
+    assert.equal(chat.messages[0].reasoning_content, 'ab');
+    assert.equal('reasoning_signature' in chat.messages[0], false);
+  });
 });
 
 describe('G01 input side: signed replay on the prompt-emulation path', () => {

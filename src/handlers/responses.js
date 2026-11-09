@@ -565,12 +565,16 @@ export function responsesToChat(body) {
   let pendingReasoning = null;
   const attachPendingReasoning = (message) => {
     if (!pendingReasoning) return message;
-    const { text, signature, signedSegments } = pendingReasoning;
+    const { text, signature, signedSegments, unsignedText } = pendingReasoning;
     pendingReasoning = null;
     if (text) message.reasoning_content = text;
     // A signature seals exactly `text`; without the text it seals nothing, and
     // two signed segments cannot ride one assistant frame (the Connect decoder
     // drops the signature for the same reason — `multipleSignedSegments`).
+    // `unsignedText` means some replayed item contributed summary text with no
+    // blob: the accumulated `text` is then a superset of what the single
+    // surviving signature sealed, and attaching it would claim coverage the
+    // blob never had — same lie as the two-signature mix, so it is dropped.
     //
     // It is ALSO withheld from a turn that carries tool_calls: when
     // signed-thinking replay is enabled in prompt-emulation mode, the chat layer
@@ -580,7 +584,7 @@ export function responsesToChat(body) {
     // summary text still rides the turn; the signature is dropped rather than
     // turning the default path into a 400.
     const signedToolTurn = Array.isArray(message.tool_calls) && message.tool_calls.length > 0;
-    if (text && signature && signedSegments === 1 && !signedToolTurn) {
+    if (text && signature && signedSegments === 1 && !unsignedText && !signedToolTurn) {
       message.reasoning_signature = signature;
     }
     return message;
@@ -664,13 +668,18 @@ export function responsesToChat(body) {
           : '';
         const signature = typeof item.encrypted_content === 'string' ? item.encrypted_content : '';
         if (text || signature) {
-          if (!pendingReasoning) pendingReasoning = { text: '', signature: '', signedSegments: 0 };
+          if (!pendingReasoning) pendingReasoning = { text: '', signature: '', signedSegments: 0, unsignedText: false };
           pendingReasoning.text += text;
           if (signature) {
             pendingReasoning.signedSegments += 1;
             // Keep only one unambiguous signature: a second one cannot seal the
             // concatenated text.
             pendingReasoning.signature = pendingReasoning.signedSegments === 1 ? signature : '';
+          } else if (text) {
+            // Summary text with no blob: it can never be part of what a
+            // signature seals, so its presence anywhere in the accumulated
+            // text must disqualify the attach (see attachPendingReasoning).
+            pendingReasoning.unsignedText = true;
           }
         }
       } else if (item.type === 'function_call') {
