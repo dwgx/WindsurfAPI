@@ -274,6 +274,21 @@ const CATALOGUE_LINE_ANCHOR = 'the most recent claude models are';
 const CATALOGUE_LINE_REPLACEMENT = 'The available models are';
 
 /**
+ * Markers of the catalogue's model-ID body on the same line as the anchor. Any one
+ * of them means the line is the client's catalogue, not a caller sentence that
+ * merely opens with the phrase, so the whole remainder of the line is fingerprint.
+ */
+const CATALOGUE_BODY_MARKERS = ['claude-', 'model ids', 'fable', 'opus', 'sonnet'];
+
+/** True when the model-ID body continues between `from` and `lineEnd`. */
+function catalogueBodyFollows(text, from, lineEnd) {
+  for (const marker of CATALOGUE_BODY_MARKERS) {
+    if (indexOfAsciiCI(text, marker, from, lineEnd) >= 0) return true;
+  }
+  return false;
+}
+
+/**
  * a4-catalogue-line: every `The most recent Claude models are` phrase (ASCII-CI),
  * rewritten to `The available models are` in place.
  *
@@ -282,13 +297,26 @@ const CATALOGUE_LINE_REPLACEMENT = 'The available models are';
  * client's own catalogue header, but the line is not always the client's: a caller
  * prompt that happens to carry the phrase lost everything after it on that line —
  * measured `'… are listed below; RULE: keep me\nnext'` → `'next'` (66 → 4 bytes),
- * the caller's RULE gone with no WARN. The fallback's job is only to neutralize the
- * fingerprint-bearing header, so it rewrites the phrase and leaves every other byte
- * of the line (and the newline) alone. The full a4-catalogue span still removes the
+ * the caller's RULE gone with no WARN. The full a4-catalogue span still removes the
  * whole catalogue when its `… most capable Claude models.` terminator is present.
  *
- * One pass over the lines; the cursor advances past each span so a line full of
- * anchors is scanned once.
+ * The span therefore depends on what follows the anchor ON ITS LINE:
+ *
+ *   - no catalogue body marker after the anchor: only the phrase is the fingerprint,
+ *     so the span is the phrase alone and every other byte of the line (prefix,
+ *     caller RULE, newline) survives.
+ *   - a body marker (`claude-`, `model ids`, `fable`, `opus`, `sonnet`) after the
+ *     anchor: this is the client's catalogue header and its model-ID body, and the
+ *     span runs from the anchor to the end of the line. Rewriting only the phrase
+ *     left `Model IDs — Fable 5: 'claude-fable-5', Opus 4.8: 'claude-opus-4-8'` on
+ *     the wire whenever the terminator sat in another paragraph and a4-catalogue
+ *     (correctly) declined to cross the break — measured 253 → 244 bytes with
+ *     `claude-fable-5` still present. The prefix before the anchor is still the
+ *     caller's and is preserved.
+ *
+ * One pass over the lines; the cursor advances past each phrase-only span so a line
+ * full of anchors is scanned once. A body span reaches the end of the line, so it is
+ * the last span that line can contribute.
  */
 function catalogueLineSpans(text) {
   const spans = [];
@@ -297,8 +325,13 @@ function catalogueLineSpans(text) {
     for (;;) {
       const anchor = indexOfAsciiCI(text, CATALOGUE_LINE_ANCHOR, cursor, lineEnd);
       if (anchor < 0) return;
-      spans.push({ start: anchor, end: anchor + CATALOGUE_LINE_ANCHOR.length });
-      cursor = anchor + CATALOGUE_LINE_ANCHOR.length;
+      const afterAnchor = anchor + CATALOGUE_LINE_ANCHOR.length;
+      if (catalogueBodyFollows(text, afterAnchor, lineEnd)) {
+        spans.push({ start: anchor, end: lineEnd });
+        return;
+      }
+      spans.push({ start: anchor, end: afterAnchor });
+      cursor = afterAnchor;
     }
   });
   return spans;
@@ -804,9 +837,13 @@ export function neutralizeClientIdentity(text, env = process.env, opts = {}) {
   // Same fallback shape as a4-cli-line: if the catalogue's opening sentence and its
   // "… most capable Claude models." tail end up in different paragraphs, the span
   // above (correctly) declines, and this neutralizes the fingerprint-bearing header
-  // on its own rather than leaving the model-ID catalogue header upstream. It rewrites
-  // ONLY the anchor phrase: the old rule deleted the rest of the line, so a caller
-  // RULE that shared the line with the phrase vanished (66 → 4 bytes, no WARN).
+  // on its own rather than leaving the model-ID catalogue header upstream. A line
+  // whose remainder carries the model-ID body (`claude-`, `Model IDs`, `Fable`,
+  // `Opus`, `Sonnet`) loses that body with the header — leaving it behind kept the
+  // model IDs on the wire (measured 253 → 244 bytes, `claude-fable-5` present). A
+  // line with no such marker is a caller sentence that merely opens with the phrase,
+  // so only the phrase is rewritten: the old rule deleted the rest of the line, and a
+  // caller RULE that shared the line with the phrase vanished (66 → 4 bytes, no WARN).
   applySpans('a4-catalogue-line', catalogueLineSpans(out), CATALOGUE_LINE_REPLACEMENT, true);
   // "You are powered by the model <claude-*/fable-*>." + the "The exact model ID
   // is <id>." sentence that follows it — a self-model fingerprint some entrypoints

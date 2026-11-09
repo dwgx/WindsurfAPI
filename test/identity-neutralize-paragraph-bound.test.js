@@ -224,6 +224,48 @@ describe('identity-neutralize — a Unicode-whitespace blank line is a paragraph
   }
 });
 
+// P2 (FinalReviewRecheck): with the anchor and the terminator in DIFFERENT
+// paragraphs, a4-catalogue correctly declines to cross the break and
+// a4-catalogue-line is the only rule left. While that fallback rewrote just the
+// anchor phrase, the model-ID body sitting on the anchor line stayed on the wire —
+// the very fingerprint the paragraph bound must not cost us. The span now runs to
+// the end of the anchor's line when a catalogue body marker follows it, and stays
+// phrase-only on a caller line that has none.
+const SPLIT_CAT = "The most recent Claude models are the Claude 5 family, Opus 4.8, and Haiku 4.5. Model IDs — Fable 5: 'claude-fable-5', Opus 4.8: 'claude-opus-4-8'.\n\nWhen building AI applications, default to the latest and most capable Claude models.\n\nNow do the task.";
+
+describe('identity-neutralize — the split-paragraph catalogue fallback removes the model-ID body', () => {
+  it('the measured shape: model IDs gone, terminator paragraph and task kept', () => {
+    assert.equal(bytes(SPLIT_CAT), 253, 'fixture is the measured 253-byte input');
+    const { out } = neutralize(SPLIT_CAT);
+    assert.equal(bytes(out), 128,
+      `expected 128 bytes, got ${bytes(out)}. The anchor-only fallback produced 244.`);
+    assert.equal(/Model IDs|claude-fable-5|claude-opus-4-8/i.test(out), false,
+      'the model-ID body is removed with the header');
+    assert.ok(out.startsWith('The available models are\n\n'),
+      'header rewritten in place; the line break is preserved');
+    assert.ok(out.includes('When building AI applications, default to the latest and most capable Claude models.'),
+      'the terminator paragraph is outside the span');
+    assert.ok(out.includes('Now do the task.'), 'the task is kept');
+  });
+
+  it('the caller prefix before the anchor and a RULE after the break survive', () => {
+    const src = "Always answer in French. The most recent Claude models are the Claude 5 family. Model IDs — Fable 5: 'claude-fable-5'.\n\nRULE: keep me\n\nmost capable Claude models.\n\nNow do the task.";
+    const { out } = neutralize(src);
+    assert.ok(out.startsWith('Always answer in French. The available models are\n\n'),
+      'the prefix before the anchor is the caller\'s and survives');
+    assert.ok(out.includes('RULE: keep me'), 'caller RULE kept');
+    assert.equal(/claude-fable-5|Model IDs/i.test(out), false, 'model IDs removed');
+    assert.ok(out.includes('most capable Claude models.'), 'the other paragraph untouched');
+  });
+
+  it('a caller line with NO catalogue marker keeps its RULE', () => {
+    const src = 'The most recent Claude models are listed below; RULE: keep me\nnext';
+    const { out } = neutralize(src);
+    assert.equal(out, 'The available models are listed below; RULE: keep me\nnext',
+      'no body marker ⇒ phrase-only span; every other byte of the line survives');
+  });
+});
+
 describe('identity-neutralize — an over-large deletion is observable', () => {
   // Threshold is 512 bytes per substitution, calibrated on the fixtures the 49
   // pinning tests use (largest legitimate removal: the security paragraph at 322,

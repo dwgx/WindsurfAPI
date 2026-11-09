@@ -181,13 +181,44 @@ describe('identity-neutralize — legitimate single-paragraph blocks are fully r
 // header that is the whole line; for a caller prompt that merely CONTAINS the phrase
 // it is the caller's text. Measured `'… are listed below; RULE: keep me\nnext'` →
 // `'next'` (66 → 4 bytes) with no WARN. The fallback now rewrites only the anchor
-// phrase, so the header is neutralized and every other byte of the line survives.
-describe('identity-neutralize — a4-catalogue-line rewrites only the anchor phrase', () => {
+// phrase on a caller line, so the header is neutralized and every other byte of the
+// line survives.
+//
+// P2 (FinalReviewRecheck): the phrase-only span was too small in the OTHER direction.
+// The fallback exists for the shape where the catalogue's terminator is in another
+// paragraph, and in that shape the anchor line carries the model-ID body
+// (`Model IDs — Fable 5: 'claude-fable-5', Opus 4.8: 'claude-opus-4-8'.`). Rewriting
+// just the phrase left the model IDs on the wire (measured 253 → 244 bytes). A body
+// marker after the anchor (`claude-`, `Model IDs`, `Fable`, `Opus`, `Sonnet`) now
+// extends the span to the end of the line.
+describe('identity-neutralize — a4-catalogue-line span depends on the line', () => {
   it('preserves the rest of the line, including a caller RULE', () => {
     const src = 'The most recent Claude models are listed below; RULE: keep me\nnext';
     assert.equal(neutralize(src),
       'The available models are listed below; RULE: keep me\nnext',
       'only the anchor phrase changes; the caller RULE and the newline survive');
+  });
+
+  it('the split-paragraph fallback removes the model-ID body', () => {
+    const CAT = "The most recent Claude models are the Claude 5 family, Opus 4.8, and Haiku 4.5. Model IDs — Fable 5: 'claude-fable-5', Opus 4.8: 'claude-opus-4-8'.";
+    const out = neutralize(CAT + '\n\nWhen building AI applications, default to the latest and most capable Claude models.\n\nNow do the task.');
+    assert.equal(out,
+      'The available models are\n\nWhen building AI applications, default to the latest and most capable Claude models.\n\nNow do the task.',
+      'the body goes with the header; the terminator paragraph and the task survive');
+    assert.equal(/Model IDs|claude-fable-5|claude-opus-4-8/i.test(out), false,
+      'the model IDs are absent');
+  });
+
+  it('a pure catalogue line with claude-* and no terminator loses its body', () => {
+    const src = "The most recent Claude models are the Claude 5 family. Model IDs — Fable 5: 'claude-fable-5'.\nnext";
+    assert.equal(neutralize(src), 'The available models are\nnext',
+      'span runs anchor → end of line; the newline survives');
+  });
+
+  it('an anchor-only line with no markers loses only the anchor', () => {
+    const src = 'The most recent Claude models are\nnext';
+    assert.equal(neutralize(src), 'The available models are\nnext',
+      'no body marker ⇒ the phrase-only span');
   });
 
   it('a pure catalogue line with its terminator still goes through the full span', () => {
@@ -208,6 +239,12 @@ describe('identity-neutralize — a4-catalogue-line rewrites only the anchor phr
     assert.equal(neutralize(src),
       'A The available models are B The available models are C\nnext',
       'both phrases rewritten in place (ASCII-case-insensitive); prefix, middle, suffix and newline preserved');
+  });
+
+  it('a body span ends the line, so a second anchor inside it cannot overlap', () => {
+    const src = "The most recent Claude models are Model IDs: 'claude-opus-4-8'. THE MOST RECENT CLAUDE MODELS ARE tail\nnext";
+    assert.equal(neutralize(src), 'The available models are\nnext',
+      'one span to EOL; the inner anchor is inside it, not a second overlapping span');
   });
 });
 
