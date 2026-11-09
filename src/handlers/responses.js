@@ -1279,7 +1279,12 @@ class ResponsesStreamTranslator {
       // context. Live-reproduced on three real failure shapes (HTTP/2 stream
       // cancel, provider deadline, ECONNRESET).
       if (choice.finish_reason) {
-        this.streamFinishReason = choice.finish_reason;
+        // 'error' is terminal for the turn: once recorded it must not be
+        // overwritten by a later chunk's 'stop'/'length', or finish() would
+        // close a failed upstream as response.completed.
+        if (this.streamFinishReason !== 'error') {
+          this.streamFinishReason = choice.finish_reason;
+        }
         // A06: an upstream-truncated length terminal is fabricated too; the
         // namespaced marker covers builds/routes that do not carry the private
         // __synthetic_finish flag.

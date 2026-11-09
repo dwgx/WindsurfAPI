@@ -142,6 +142,46 @@ describe('Responses stream: turns that DID terminate are unchanged', () => {
   });
 });
 
+describe('Responses stream: a finish_reason of "error" is terminal', () => {
+  // The decoder can emit finish_reason:'error' and then keep streaming chunks
+  // (a later synthetic close, a trailing choice). The recorded reason must
+  // latch: otherwise 'error' followed by 'stop' closes the failed turn as
+  // response.completed.
+  const errorThenStop = async () => ({
+    status: 200, stream: true,
+    handler: async (res) => {
+      res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'partial' } }] })}\n\n`);
+      res.write(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'error' }] })}\n\n`);
+      res.write(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'stop' }] })}\n\n`);
+      res.write('data: [DONE]\n\n');
+      res.end();
+    },
+  });
+
+  it('stays response.failed instead of being downgraded to response.completed', async () => {
+    const { out } = await runStream(errorThenStop);
+    assert.equal(lastEvent(out), 'response.failed',
+      'an error finish must latch; a later "stop" cannot relabel a failed turn');
+    assert.equal(out.includes('response.completed'), false);
+    assert.equal(eventData(out, 'response.failed').response.status, 'failed');
+  });
+
+  it('a stop BEFORE the error still ends failed', async () => {
+    const stopThenError = async () => ({
+      status: 200, stream: true,
+      handler: async (res) => {
+        res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'x' } }] })}\n\n`);
+        res.write(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'stop' }] })}\n\n`);
+        res.write(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'error' }] })}\n\n`);
+        res.write('data: [DONE]\n\n');
+        res.end();
+      },
+    });
+    const { out } = await runStream(stopThenError);
+    assert.equal(lastEvent(out), 'response.failed');
+  });
+});
+
 describe('a SYNTHETIC terminal chunk must not satisfy the truncation guard', () => {
   // The blocker this file originally missed. When a Cascade stream dies AFTER
   // delivering content, chat.js closes it with a FABRICATED finish_reason:'stop'
