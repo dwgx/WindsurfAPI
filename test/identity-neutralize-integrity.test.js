@@ -221,6 +221,25 @@ describe('identity-neutralize — WA-003 (H2): FREEFORM is scoped to the apply_p
     const src = 'FREEFORM tool note: do not wrap the patch in JSON.';
     assert.equal(neutralize(src), 'free-form tool note: provide the patch as plain text.');
   });
+
+  // The rule it replaces was `/FREEFORM/g` — uppercase only. A case-insensitive token
+  // search made the provenance clause license a lowercase `freeform` too, which is the
+  // caller's word (a SQL type, a column, an identifier) and must come back unchanged.
+  it('lowercase freeform on a JSON-wrap line is caller text and is preserved', () => {
+    const src = 'This is a freeform tool, so do not wrap the patch in JSON.';
+    assert.equal(neutralize(src), 'This is a freeform tool, so provide the patch as plain text.',
+      'the clause licenses the uppercase enum, not a lowercase identifier');
+  });
+
+  it('uppercase FREEFORM on the same clause-bearing line is still rewritten', () => {
+    const src = 'This is a FREEFORM tool, so do not wrap the patch in JSON.';
+    assert.equal(neutralize(src), 'This is a free-form tool, so provide the patch as plain text.');
+  });
+
+  it('case is decided per token: only the uppercase spelling on one line is rewritten', () => {
+    const src = 'freeform column plus FREEFORM enum: do not wrap the patch in JSON.';
+    assert.equal(neutralize(src), 'freeform column plus free-form enum: provide the patch as plain text.');
+  });
 });
 
 describe('identity-neutralize — neutralizeMessageContent reference semantics', () => {
@@ -289,6 +308,23 @@ describe('identity-neutralize — a4-cli-line is bounded to the clause on long l
   it('short line: the whole line is still replaced', () => {
     const src = 'Claude Code is available as a CLI in the terminal';
     assert.equal(neutralize(src), REPLACEMENT + '\n');
+  });
+
+  // The span starts at the ANCHOR, as the regex it replaces did. Starting it at the
+  // line start made a one-line caller prompt lose everything before the phrase —
+  // measured: a French rule followed by the CLI sentence came back with only the
+  // replacement, the rule gone.
+  it('short line with a caller prefix: the prefix survives, only the bullet goes', () => {
+    const src = 'Always answer in French. Claude Code is available as a CLI';
+    assert.equal(neutralize(src), 'Always answer in French. ' + REPLACEMENT + '\n',
+      'bytes before the anchor belong to the caller');
+  });
+
+  it('a 4096-byte short line with a prefix keeps every prefix byte', () => {
+    const prefix = 'P'.repeat(4096 - ANCHOR.length);
+    const src = prefix + ANCHOR;
+    assert.equal(Buffer.byteLength(src, 'utf8'), 4096, 'fixture sits on the short-line boundary');
+    assert.equal(neutralize(src), prefix + REPLACEMENT + '\n');
   });
 
   it('a long line WITHOUT the anchor is byte-identical', () => {

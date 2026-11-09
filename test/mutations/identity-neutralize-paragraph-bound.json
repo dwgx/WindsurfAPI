@@ -45,7 +45,7 @@
     {
       "name": "the a4-cli-line fallback is dropped — the bounded span declines and 'Claude Code' leaks upstream",
       "file": "src/handlers/identity-neutralize.js",
-      "anchor": "  rule('a4-cli-line', /Claude Code is available as a CLI[^\\n]*\\n?/gi, 'This coding assistant runs in a terminal.\\n');",
+      "anchor": "  applySpans('a4-cli-line', cli.short, CLI_LINE_REPLACEMENT, true);",
       "replacement": ""
     },
     {

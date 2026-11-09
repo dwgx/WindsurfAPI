@@ -41,6 +41,21 @@ function indexOfAsciiCI(text, needle, from, limit = text.length) {
   return -1;
 }
 
+/**
+ * First index at or after `from` where `needle` occurs, case-SENSITIVELY. Same
+ * `limit` contract as indexOfAsciiCI: it bounds where the needle may END (exclusive),
+ * so a line scan cannot leak into the next line. a7-freeform needs this — the rule it
+ * replaces was `/FREEFORM/g`, and the provenance clause does not license rewriting a
+ * lowercase `freeform` that the caller wrote.
+ */
+function indexOfExact(text, needle, from, limit = text.length) {
+  const last = Math.min(text.length, limit) - needle.length;
+  for (let i = from > 0 ? from : 0; i <= last; i++) {
+    if (text.startsWith(needle, i)) return i;
+  }
+  return -1;
+}
+
 // `\s` in the regexes this module replaces: space, tab, CR, LF, FF, VT and the
 // Unicode spaces. The ASCII fast path matters because the anchor gap is scanned
 // for every candidate anchor.
@@ -338,9 +353,12 @@ function lineByteLengthExceeds(text, start, end, limit) {
  * for that is correct; for a caller that sends a one-line payload it is the whole
  * prompt. Which span the rule takes therefore depends on the line:
  *
- *   - short line (<= CLI_SHORT_LINE_MAX_BYTES): the whole line plus its trailing
- *     newline, as before — this is a client identity bullet and nothing else
- *     lives there.
+ *   - short line (<= CLI_SHORT_LINE_MAX_BYTES): from the ANCHOR to the end of the
+ *     line, plus its trailing newline. The span must start at the anchor, not at the
+ *     line start: the regex this replaces matched from the anchor, so whatever the
+ *     caller wrote BEFORE the phrase is theirs. Starting at the line start deleted it
+ *     (measured: "Always answer in French. Claude Code is available as a CLI" lost
+ *     the French rule). A short line with no prefix is still replaced whole.
  *   - long line (> CLI_SHORT_LINE_MAX_BYTES): only the anchor phrase, in place and
  *     without a newline. Every other byte on the line is the caller's and comes
  *     back identical; the line structure is not ours to change.
@@ -363,7 +381,7 @@ function cliLineSpans(text) {
       }
       return;
     }
-    short.push({ start: lineStart, end: hasNewline ? lineEnd + 1 : lineEnd });
+    short.push({ start: at, end: hasNewline ? lineEnd + 1 : lineEnd });
   });
   return { short, long };
 }
@@ -451,7 +469,7 @@ function careSpans(text) {
 }
 
 const FREEFORM_CLAUSE = 'do not wrap the patch in json';
-const FREEFORM_TOKEN = 'freeform';
+const FREEFORM_TOKEN = 'FREEFORM';
 
 /**
  * a7-freeform: `FREEFORM` only on a line that ALSO carries the apply_patch
@@ -463,6 +481,11 @@ const FREEFORM_TOKEN = 'freeform';
  * is caller content and comes back byte-identical. Line-scoped on purpose: the
  * token and the clause sit in the same sentence, and a cross-line scan would let
  * any mention of the clause license rewriting FREEFORM tokens elsewhere.
+ *
+ * The token match is case-SENSITIVE, as the `/FREEFORM/g` it replaces was: the
+ * clause licenses the uppercase enum the tool description uses, not a lowercase
+ * `freeform` the caller wrote (a SQL type name, a column, an identifier). The
+ * CLAUSE check stays case-insensitive — it only establishes provenance.
  */
 function freeformSpans(text) {
   const spans = [];
@@ -470,7 +493,7 @@ function freeformSpans(text) {
     if (indexOfAsciiCI(text, FREEFORM_CLAUSE, lineStart, lineEnd) < 0) return;
     let at = lineStart;
     for (;;) {
-      at = indexOfAsciiCI(text, FREEFORM_TOKEN, at, lineEnd);
+      at = indexOfExact(text, FREEFORM_TOKEN, at, lineEnd);
       if (at < 0) return;
       spans.push({ start: at, end: at + FREEFORM_TOKEN.length });
       at += FREEFORM_TOKEN.length;
@@ -727,12 +750,12 @@ export function neutralizeClientIdentity(text, env = process.env, opts = {}) {
   // whitespace run from every position (676 ms on a 2 KB newline prompt).
   applySpans('a4-fastmode', fastmodeSpans(out), '\n', true);
   // a4-cli-line: line-scoped, but the span depends on the line. A short line is a
-  // client identity bullet and is replaced whole (unchanged behaviour); a LONG line
-  // is caller content that merely mentions the phrase, so only the phrase is
-  // rewritten and every other byte survives (measured before this bound: 512 KiB
-  // in, 42 B out). Long-line spans are applied FIRST: the short-line spans are
-  // offsets into `out`, and each phrase replacement shifts them, so they are
-  // re-scanned rather than adjusted.
+  // client identity bullet and is replaced from the anchor to its end, so any caller
+  // prefix before the phrase survives; a LONG line is caller content that merely
+  // mentions the phrase, so only the phrase is rewritten and every other byte
+  // survives (measured before this bound: 512 KiB in, 42 B out). Long-line spans are
+  // applied FIRST: the short-line spans are offsets into `out`, and each phrase
+  // replacement shifts them, so they are re-scanned rather than adjusted.
   const cli = cliLineSpans(out);
   if (cli.long.length > 0) {
     applySpans('a4-cli-line-long', cli.long, CLI_LONG_REPLACEMENT, true);
