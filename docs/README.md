@@ -51,7 +51,7 @@ flowchart TD
 
 | Goal | Go here |
 |---|---|
-| Tune behaviour without touching code | **[ENV-SWITCHES.md](ENV-SWITCHES.md)** — the 90 switches that exist only in source. Read its header first: it explains how to count them correctly, because a bare `env.` grep sees only 127 of the 185 (2026-11-09) |
+| Tune behaviour without touching code | **[ENV-SWITCHES.md](ENV-SWITCHES.md)** — the 90 switches that exist only in source. Read its header first: it explains how to count them correctly, because a bare `env.` grep sees only 127 of the 185 (2026-11-10) |
 | Update a Docker deployment in one command | **[DOCKER-UPDATE.md](DOCKER-UPDATE.md)** — pull/build → health gate → automatic rollback; data volumes untouched |
 | Measure the detached-cache rollout gates | **[DETACH-ROLLOUT.md](DETACH-ROLLOUT.md)** — gate 2 stress procedure and the two-week gate 1 serve/admit measurement; default stays OFF until both pass |
 | Take `DEVIN_CONNECT` to production | **[DEVIN-CONNECT-CUTOVER.md](DEVIN-CONNECT-CUTOVER.md)** — production runs with this ON while the code default is OFF, so this is not optional reading |

@@ -33,7 +33,7 @@ SSE JSON、队列字节预算、按未确认字节计 drain、history 预算改�
 e0c5c715..4b061af1`；`git diff --shortstat e0c5c715..4b061af1`；
 `git diff --name-only e0c5c715..4b061af1 -- src | wc -l`）：`c4931c40`（审计收口，
 49 文件 / +5,010 −324）、`0aea4ea3`（connect 显式错误终止与 catalogue 边界）、
-`911e6674` / `d0359733`（纯文档）、复审修复波 `04503830`–`5fb21e70`（含 spec
+`911e6674` / `d0359733`（纯文档）、复审修复波 `04503830`–`4b061af1`（含 spec
 基线重钉与文档订正）共 20 个提交。
 逐提交证据记入验收附录的增补段（acceptance addendum，另行补写）；本文件只登记
 范围与用户可见变化。
@@ -41,8 +41,9 @@ e0c5c715..4b061af1`；`git diff --shortstat e0c5c715..4b061af1`；
 **tag 目标。** `v3.141.592659` 必须打在合并后的 master tip 上（流程：把
 `origin/master` 合入本分支 → `master --ff-only` → 在 master tip 打 annotated tag →
 push），**不是** `e0c5c715`——否则 `c4931c40`/`0aea4ea3` 与复审修复会被关在版本外。
-写作时分支 HEAD 为 `4b061af1`（最后一个改 `src/` 的提交是 `5fb21e70`）；最终 tag
-目标记作 `<merge-tip>`，以合并提交的实际 SHA 为准。
+写作时分支 HEAD 为 `4b061af1`，其后 `8e89af65`/`1490fe10` 只动 docs/test/mutation；
+最后一个改 `src/` 的提交是 `5fb21e70`。最终 tag 目标记作 `<merge-tip>`，以合并
+提交的实际 SHA 为准。
 
 **复审修复波的用户可见变化**（`04503830`–`5fb21e70`，按面分组；`c4931c40` 已覆盖的
 面见上节）：
@@ -324,7 +325,8 @@ WIRE_EXPECTED_DIFFS {"byte_identical":270,"expected":0,"entries":0,"compared":27
 | `test/cascade-history-serialization.test.js` | 7（两个闭合标签、无关 XML、rebuild；`15fc5df1` 增补） |
 | `test/transport-matrix.test.js` | 22（四个协议族的流式/非流式矩阵，无产品变更） |
 
-上表用例数按 `5a3ec2a9` 树逐文件实跑（`node --import ./test/setup-env.mjs --test`）；
+上表用例数按 `5a3ec2a9` 树逐文件实跑（`node --import ./test/setup-env.mjs --test`；
+这 9 个文件在 `1490fe10` 未变）；
 §3 的 pass 计数是发布时点的实测值，复审修复波又给其中 7 个文件各增补了用例。
 
 mutation 语料同步：`identity-neutralize-paragraph-bound.json` 重钉锚点（`ad45bfb3` 把它指到
@@ -339,10 +341,12 @@ mutation 语料同步：`identity-neutralize-paragraph-bound.json` 重钉锚点�
 linear spec 扩到 12 条突变、`04503830` 再把两条锚点改指重写后的分类器并把基线推到
 **46**；`identity-neutralize-paragraph-bound.json` 基线 83→**89**、
 `neutralize-rewrite-visibility.json` 基线 92→**100**（`c4931c40`/`0aea4ea3` 随被测文件
-增补用例重钉）。截至 `5a3ec2a9`，`spec-baseline-check --all` 实测 **99 spec /
-3 drift / 0 untrustworthy**——`gemini-egress-parity`（79→88）、
-`gemini-schema-type-normalize`（98→107）、`think-text-reroute`（97→98）的
-`expectBaselinePass` 待重钉（见 §7），重钉前这三份 spec 的突变判定不作为证据。
+增补用例重钉）。`d142d06e` 把 `gemini-egress-parity`（→88）与
+`gemini-schema-type-normalize`（→107）的 `expectBaselinePass` 重钉到实测值，
+`1490fe10` 把 `responses-post-tool-text-item` 的锚点改指 sealed status 参数。
+截至 `1490fe10`，`spec-baseline-check --all` 实测 **99 spec / 1 drift /
+0 untrustworthy**——仅剩 `think-text-reroute`（实测 98、spec 期望 97）的
+`expectBaselinePass` 待重钉（见 §7），重钉前该 spec 的突变判定不作为证据。
 
 ## 5. 回滚
 
@@ -378,7 +382,7 @@ linear spec 扩到 12 条突变、`04503830` 再把两条锚点改指重写后�
    （`openai-api-key test/transport-matrix.helpers.mjs 93d6533f4255 SYNTHETIC: …`），
    扫描恢复 **exit 0（0 unbaselined）**。
 
-**当前阻断项（`5a3ec2a9` 时点）：** mutation 语料有 3 份 spec 的
+**当前阻断项（`1490fe10` 时点）：** mutation 语料有 1 份 spec（`think-text-reroute`）的
 `expectBaselinePass` 待重钉（§4、§7），重钉后需在 POSIX 上对最终树复跑 mutation
 sweep；`gate:release` 需在合并树上跑完（见 §7）。本机可跑的其余门禁绿。
 
@@ -393,10 +397,11 @@ sweep；`gate:release` 需在合并树上跑完（见 §7）。本机可跑的�
   截断的中间态，已被该次完整 sweep 取代；`spec-baseline-check` 只证明锚点与基线
   成立，不执行变异体。
 - **[UNVERIFIED] mutation 最终树复跑与基线重钉**：语料已扩到 **99 spec / 878
-  mutation**；HMC 侧对合并树 `5a3ec2a9` 的 99/99 覆盖已测，但
-  `spec-baseline-check --all` 本地实测 **99 spec / 3 drift / 0 untrustworthy**
-  （`gemini-egress-parity` 79→88、`gemini-schema-type-normalize` 98→107、
-  `think-text-reroute` 97→98 的 `expectBaselinePass` 待重钉）。重钉并在 POSIX 上
+  mutation**；HMC 侧对合并树 `5a3ec2a9` 的 99/99 覆盖已测（其后 `5fb21e70` 又改
+  `src/`），`spec-baseline-check --all` 本地实测（`1490fe10` 树）**99 spec /
+  1 drift / 0 untrustworthy**——`d142d06e` 已把 `gemini-egress-parity` 与
+  `gemini-schema-type-normalize` 的 `expectBaselinePass` 重钉到实测值，仅剩
+  `think-text-reroute`（实测 98、期望 97）待重钉。重钉并在 POSIX 上
   复跑 `node scripts/mutation-sweep.mjs --shard 0/1` 与 `--verify` 前，最终树的
   变异体结论不作为证据。
 - **[VERIFIED] mutation 全量基线（发布树）**：`spec-baseline-check.mjs --all`（97 spec）是 release
