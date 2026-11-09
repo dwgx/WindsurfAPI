@@ -3,7 +3,7 @@
     "test/identity-neutralize-complexity.test.js",
     "test/identity-neutralize-paragraph-bound.test.js"
   ],
-  "expectBaselinePass": 46,
+  "expectBaselinePass": 57,
   "mutations": [
     {
       "name": "b-security: the terminator search leaves the anchor's paragraph again — the caller RULE between two paragraphs is deleted (the WA-002 defect)",
