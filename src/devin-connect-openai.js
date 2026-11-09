@@ -717,6 +717,11 @@ export async function toChatCompletion(params, opts = {}) {
   let stopHit = false;
   let matchedStop = null;
   let toolCalls = [];
+  // The upstream's OWN terminal verdict (enum 13 → 'error'), captured before the
+  // tool-call arms below, which set 'tool_calls' unconditionally whenever a call
+  // was decoded. An error turn that happened to emit a decodable call is still an
+  // error — the call's arguments are as unverified as the rest of the turn.
+  const terminalError = finishReason === 'error';
   if (nativeToolCalls.length) {
     // arguments is the raw JSON string off the wire (decodeToolCalls); map it to
     // the same shape parseToolCallsFromText produces so the message builder below
@@ -823,15 +828,14 @@ export async function toChatCompletion(params, opts = {}) {
   // (the carrier below is gated on 'stop'). Tool calls / content_filter are
   // stronger states and applyOutputCap leaves them alone.
   //
-  // A turn whose upstream never named a stop reason is NOT a clean tool-call
-  // finish. The tool-call arms above set 'tool_calls' unconditionally (a call was
-  // decoded), which told every client "these arguments are complete" — but with no
-  // #5 the upstream may have been cut mid-arguments, and OpenAI clients execute
-  // whatever `tool_calls` they receive. Keep the producer's verdict: the finish
-  // event already reported 'error'/'unterminated', so this only has to stop the
-  // overwrite. Placed after ALL the tool-call arms so a future one cannot slip past
-  // it, and before applyOutputCap (which only upgrades 'stop').
-  if (finishUnterminated && finishReason === 'tool_calls') finishReason = 'error';
+  // A turn the upstream ended in ERROR (enum 13) stays an error even when a
+  // decodable tool call arrived with it — the tool-call arms above would otherwise
+  // launder a failed turn into a clean, executable `tool_calls` finish. Same for a
+  // turn that never named a stop reason at all. Placed after EVERY tool-call arm so
+  // a future one cannot slip past it, and before applyOutputCap (which only
+  // upgrades 'stop').
+  if (terminalError) finishReason = 'error';
+  else if (finishUnterminated && finishReason === 'tool_calls') finishReason = 'error';
   if (!stopHit) finishReason = applyOutputCap(finishReason, usage, params.completion?.maxTokens);
 
   // #236 log-only detector — AFTER emulation and the stop gate, on the text and
@@ -1085,6 +1089,11 @@ export async function streamChatCompletion(params, send, opts = {}) {
     }
   }
 
+  // The upstream's OWN terminal verdict (enum 13 → 'error'), captured before the
+  // tool-call arms below. Those arms set 'tool_calls' unconditionally, which turned
+  // an upstream ERROR that happened to carry a decodable call into a clean,
+  // executable finish.
+  const terminalError = finishReason === 'error';
   // Drain any tool_call still buffered at end-of-stream, plus the trailing text.
   // Skip when a stop sequence already ended the stream (stopHit) — the tail after
   // the stop must not leak out.
@@ -1166,12 +1175,14 @@ export async function streamChatCompletion(params, send, opts = {}) {
   // frame still follows every delivered delta: the answer is reported as over
   // budget, never retracted or cut mid-chunk. A local stop sequence keeps
   // 'stop' (the caller asked for that cause; the carrier below depends on it).
-  // A turn the upstream never terminated is not a clean tool-call finish — same
-  // rule as the non-stream twin. The calls were already emitted as deltas (a stream
-  // cannot retract them), so the terminal frame is the only place that can say
-  // "these arguments are unvalidated". Without this, every tool-call arm above
-  // (`toolParser.flush`, native #6, promoted reasoning) forced 'tool_calls'.
-  if (finishUnterminated && finishReason === 'tool_calls') finishReason = 'error';
+  // A turn the upstream ended in ERROR (enum 13) stays an error even when a
+  // decodable tool call arrived with it; a turn that never named a stop reason is
+  // not a clean tool-call finish either. The calls were already emitted as deltas
+  // (a stream cannot retract them), so the terminal frame is the only place that
+  // can say "these arguments are unverified". Without this, every tool-call arm
+  // above (`toolParser.flush`, native #6, promoted reasoning) forced 'tool_calls'.
+  if (terminalError) finishReason = 'error';
+  else if (finishUnterminated && finishReason === 'tool_calls') finishReason = 'error';
   if (!stopHit) finishReason = applyOutputCap(finishReason, usage, params.completion?.maxTokens);
 
   // #236 log-only detector — AFTER emulation and the stop gate, on what the

@@ -3,7 +3,7 @@
     "test/identity-neutralize-complexity.test.js",
     "test/identity-neutralize-paragraph-bound.test.js"
   ],
-  "expectBaselinePass": 42,
+  "expectBaselinePass": 45,
   "mutations": [
     {
       "name": "b-security: the terminator search leaves the anchor's paragraph again — the caller RULE between two paragraphs is deleted (the WA-002 defect)",
@@ -46,6 +46,18 @@
       "file": "src/handlers/identity-neutralize.js",
       "anchor": "function catalogueIdFollows(text, prefix, lineEnd) {\n  const head = prefix + CATALOGUE_ID_PREFIX.length;",
       "replacement": "function catalogueIdFollows(text, prefix, lineEnd) {\n  return true;\n  const head = prefix + CATALOGUE_ID_PREFIX.length;"
+    },
+    {
+      "name": "a4-catalogue-line: a digit head is an ID regardless of what follows — 'claude-3d.example.com' and 'claude-1password.example.com' lose the caller RULE (P3)",
+      "file": "src/handlers/identity-neutralize.js",
+      "anchor": "  if (isAsciiDigit(first)) {\n    let end = head;",
+      "replacement": "  if (isAsciiDigit(first)) {\n    return true;\n    let end = head;"
+    },
+    {
+      "name": "a4-catalogue-line: a family head accepts a domain dot — 'claude-opus.example.com' loses the caller RULE (P3 boundary)",
+      "file": "src/handlers/identity-neutralize.js",
+      "anchor": "    if (next === 46) return after + 1 >= lineEnd || !isAsciiLetter(text.charCodeAt(after + 1));",
+      "replacement": "    if (next === 46) return true;"
     },
     {
       "name": "a4-cli-line: the long-line bound is disabled — a 512 KiB caller line collapses to the anchor-to-EOL span (was 512 KiB in, 42 B out)",

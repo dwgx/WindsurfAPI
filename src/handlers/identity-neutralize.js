@@ -275,21 +275,47 @@ const CATALOGUE_LINE_REPLACEMENT = 'The available models are';
 const CATALOGUE_ID_PREFIX = 'claude-';
 const CATALOGUE_ID_WORDS = ['opus', 'sonnet', 'haiku', 'fable'];
 
+const isAsciiDigit = (code) => code >= 48 && code <= 57;
+const isAsciiLetter = (code) => (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
+
 /**
- * True when the `claude-` at `prefix` is followed by a MODEL-ID head: a catalogue
- * family name or a version digit.
+ * True when the `claude-` at `prefix` starts a MODEL ID rather than an ordinary
+ * word or hostname that happens to share the prefix.
  *
- * The shape matters, not merely the prefix. `claude-` alone also appears in prose
- * and URLs — `claude-docs.example.com` is a domain, not a model — and accepting
- * any `claude-[a-z0-9.-]+` extended the span to the end of the caller's line.
+ * The head alone is not enough — it must also END like an ID token:
+ *
+ *   - version head (a digit run): accepted when the run is followed by `-` (the
+ *     version separator), whitespace, EOL, or a dot followed by another digit
+ *     (`claude-3.5`). A letter after the run means the token continues, so
+ *     `claude-3d.example.com` and `claude-1password.example.com` are hostnames,
+ *     not IDs — classifying them as ID-shaped deleted the caller's RULE text.
+ *   - family head (`opus`/`sonnet`/`haiku`/`fable`): `-` or a digit continues the
+ *     ID (`claude-opus-4-8`, `claude-sonnet4.6`), whitespace/EOL and punctuation
+ *     end it, and a letter or `_` means the word continues (`claude-opusx`), so
+ *     it is caller prose.
  */
 function catalogueIdFollows(text, prefix, lineEnd) {
   const head = prefix + CATALOGUE_ID_PREFIX.length;
   if (head >= lineEnd) return false;
-  const code = text.charCodeAt(head);
-  if (code >= 48 && code <= 57) return true;
+  const first = text.charCodeAt(head);
+  if (isAsciiDigit(first)) {
+    let end = head;
+    while (end < lineEnd && isAsciiDigit(text.charCodeAt(end))) end++;
+    if (end >= lineEnd) return true;
+    const next = text.charCodeAt(end);
+    if (next === 45 || isSpaceCode(next)) return true;
+    return next === 46 && end + 1 < lineEnd && isAsciiDigit(text.charCodeAt(end + 1));
+  }
   for (const word of CATALOGUE_ID_WORDS) {
-    if (head + word.length <= lineEnd && matchesAsciiCI(text, head, word)) return true;
+    if (head + word.length > lineEnd || !matchesAsciiCI(text, head, word)) continue;
+    const after = head + word.length;
+    if (after >= lineEnd) return true;
+    const next = text.charCodeAt(after);
+    if (next === 45 || isAsciiDigit(next) || isSpaceCode(next)) return true;
+    // A dot ends the family token only when it is not a domain separator:
+    // `.` followed by a letter (`claude-opus.example.com`) continues a hostname.
+    if (next === 46) return after + 1 >= lineEnd || !isAsciiLetter(text.charCodeAt(after + 1));
+    return !isAsciiLetter(next) && next !== 95;
   }
   return false;
 }

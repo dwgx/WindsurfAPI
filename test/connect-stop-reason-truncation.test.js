@@ -225,3 +225,41 @@ describe('P2: a tool-call turn with no stopReason is not a clean tool_calls fini
     assert.equal(terminal?.finish_reason, 'tool_calls');
   });
 });
+
+// ─── P2b (external audit, SWE-2 Flash): an EXPLICIT error must survive too ────
+//
+// The first guard only covered "no stopReason at all". A turn that ends with the
+// upstream's own ERROR enum (13 → 'error') and ALSO carries a decodable tool call
+// was still laundered into `tool_calls` by the arms above, so a FAILED turn
+// reported a clean, executable finish. The snapshot (`terminalError`) is taken
+// before those arms and re-asserted after them.
+describe('P2b: an explicit ERROR (13) plus a tool call stays an error', () => {
+  it('non-stream: finish_reason is "error", the call is still delivered', async () => {
+    __setRequestImpl(mockTransport([toolCallFrame(), writeVarintField(5, 13)]));
+    try {
+      const out = await toChatCompletion(params({ DEVIN_CONNECT_TOOL_CALL_TAGS: CALL_TAGS }), { displayModel: MODEL });
+      assert.equal(out.body?.choices?.[0]?.finish_reason, 'error',
+        'an upstream ERROR turn must not be reported as a clean tool_calls finish');
+      assert.equal(out.body?.choices?.[0]?.message?.tool_calls?.[0]?.function?.name, 'Read');
+    } finally {
+      __setRequestImpl(null);
+    }
+  });
+
+  it('stream: the terminal frame reports "error" after the call deltas', async () => {
+    const frames = [];
+    __setRequestImpl(mockTransport([toolCallFrame(), writeVarintField(5, 13)]));
+    try {
+      await streamChatCompletion(
+        params({ DEVIN_CONNECT_TOOL_CALL_TAGS: CALL_TAGS }),
+        (f) => { frames.push(f); },
+        { displayModel: MODEL },
+      );
+    } finally {
+      __setRequestImpl(null);
+    }
+    const choices = frames.flatMap((f) => f?.choices || []);
+    assert.equal(choices.find((c) => c?.delta?.tool_calls?.length)?.delta?.tool_calls?.[0]?.function?.name, 'Read');
+    assert.equal(choices.filter((c) => c?.finish_reason).at(-1)?.finish_reason, 'error');
+  });
+});

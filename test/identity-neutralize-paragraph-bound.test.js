@@ -295,6 +295,33 @@ describe('identity-neutralize — the split-paragraph catalogue fallback removes
       'The available models are documented at claude-docs.example.com; RULE: keep me',
       'only the anchor phrase changes; the `claude-` prefix alone must not extend the span');
   });
+
+  // P3 (external audit): the head alone was not enough. A digit head accepted ANY
+  // following character, so hostnames whose first label starts with a digit were
+  // classified as model IDs and the span ate the caller's RULE.
+  it('a caller line mentioning claude-3d.example.com keeps its RULE (digit+letter is a hostname)', () => {
+    const src = 'The most recent Claude models are documented at claude-3d.example.com; RULE: keep me';
+    const { out } = neutralize(src);
+    assert.equal(out,
+      'The available models are documented at claude-3d.example.com; RULE: keep me',
+      'only the anchor phrase changes; a digit followed by an identifier letter is a hostname');
+  });
+
+  it('a caller line mentioning claude-1password.example.com keeps its RULE (digit run + letter is a hostname)', () => {
+    const src = 'The most recent Claude models are documented at claude-1password.example.com; RULE: keep me';
+    const { out } = neutralize(src);
+    assert.equal(out,
+      'The available models are documented at claude-1password.example.com; RULE: keep me',
+      'only the anchor phrase changes; a digit run followed by a letter is a hostname');
+  });
+
+  it('a caller line mentioning claude-opus.example.com keeps its RULE (family + domain dot is a hostname)', () => {
+    const src = 'The most recent Claude models are documented at claude-opus.example.com; RULE: keep me';
+    const { out } = neutralize(src);
+    assert.equal(out,
+      'The available models are documented at claude-opus.example.com; RULE: keep me',
+      'only the anchor phrase changes; a family name followed by a domain dot is not an ID token');
+  });
 });
 
 describe('identity-neutralize — an over-large deletion is observable', () => {
