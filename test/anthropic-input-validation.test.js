@@ -27,6 +27,18 @@ describe('validateMessagesRequest — V1 model required', () => {
   it('accepts a present model', () => {
     assert.equal(validateMessagesRequest({ model: MODEL, max_tokens: 16, messages: baseMsgs }), null);
   });
+
+  it('rejects a non-string model as invalid_request_error, not a TypeError 500', () => {
+    // {"model":123} used to pass the presence check and crash inside
+    // resolveModel's `.toLowerCase()` — a 500 for a client shape error.
+    for (const model of [123, 0, false, {}, []]) {
+      const err = validateMessagesRequest({ model, max_tokens: 16, messages: baseMsgs });
+      assert.equal(err.status, 400, `model=${JSON.stringify(model)} must 400`);
+      assert.equal(err.body.error.type, 'invalid_request_error');
+      assert.equal(err.body.type, 'error');
+      assert.match(err.body.error.message, /model/);
+    }
+  });
 });
 
 describe('validateMessagesRequest — C1 max_tokens required + positive integer', () => {

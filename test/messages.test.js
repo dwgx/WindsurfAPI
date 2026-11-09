@@ -147,6 +147,27 @@ describe('Anthropic messages request translation', () => {
     }
   });
 
+  it('a translator-thrown 400 carries the same {type:"error"} envelope as invalidRequest', async () => {
+    // anthropicToOpenAI throws tool_choice/signed-replay contract errors that
+    // handleMessages converts to a 400. Every other 400 on this surface emits
+    // the top-level `type:'error'` discriminator; this path used to omit it.
+    const result = await handleMessages({
+      model: 'claude-sonnet-4.6',
+      tools: [{ name: 'Read', description: 'read files', input_schema: { type: 'object' } }],
+      tool_choice: { type: 'tool', name: 'ghost_tool' },
+      messages: [{ role: 'user', content: 'hi' }],
+    }, {
+      async handleChatCompletions() {
+        throw new Error('must not reach the chat handler');
+      },
+    });
+    assert.equal(result.status, 400);
+    assert.equal(result.body.type, 'error', 'the Anthropic error envelope needs the top-level type discriminator');
+    assert.equal(result.body.error.type, 'invalid_request_error');
+    assert.equal(result.body.error.code, 'tool_choice_tool_not_declared');
+    assert.equal(result.body.error.param, 'tool_choice');
+  });
+
   it('annotates risky Read tool_result stubs before Cascade sees them', async () => {
     let capturedBody = null;
     await handleMessages({

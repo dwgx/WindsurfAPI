@@ -698,6 +698,10 @@ export function validateMessagesRequest(body) {
   // points asymmetric — a missing model would fall through to a downstream default
   // instead of a clean 400. Same wording as count_tokens for consistency.
   if (body.model == null || body.model === '') return invalidRequest('model: field required');
+  // A non-string model (e.g. {"model":123}) used to slip past the presence
+  // check and throw a TypeError inside resolveModel's `.toLowerCase()` — a 500
+  // for what is a client shape error. Refuse it as the same invalid_request.
+  if (typeof body.model !== 'string') return invalidRequest('model must be a string');
   // C1: max_tokens is required and must be a positive integer. The old
   // `max_tokens || 8192` fallback silently accepted a missing value or 0.
   const mt = body.max_tokens;
@@ -2393,6 +2397,11 @@ export async function handleMessages(body, context = {}) {
     return {
       status: 400,
       body: {
+        // Same envelope as invalidRequest(): every other 400 on this surface
+        // carries the top-level `type:'error'` discriminator Anthropic SDKs
+        // branch on — the signed-replay and tool_choice rejects that ride this
+        // catch must not be the one shape missing it.
+        type: 'error',
         error: {
           message: err.message,
           type: 'invalid_request_error',
