@@ -1704,10 +1704,21 @@ function repairedPathForKey(key, path) {
 }
 
 function extractRequestedReadPath(messages) {
-  const text = recentUserText(messages);
+  // CPU bound (S1 audit), two layers. The window: the bare-path pattern ran on
+  // the full last user message, and the second alternative
+  //   [A-Za-z0-9._-]+(?:[\\/][A-Za-z0-9._-]+)*\.[A-Za-z0-9]{1,12}
+  // is O(n²) on a long unbroken run of [A-Za-z0-9._-] — the `+` re-tries every
+  // split before the mandatory `\.ext` — so a pasted token/base64 blob of a
+  // few hundred KiB stalled the event loop for seconds per repair (measured:
+  // 128 KiB ≈ 9.8 s). 200_000 matches the bound the NLU entry points already
+  // use; a repair source is best-effort, so the head of the message is enough.
+  // The caps inside the pattern (a real path segment is ≤255 chars, a real
+  // path is far under 64 separators deep) bound the per-position backtracking
+  // that made the run quadratic; every realistic path still matches whole.
+  const text = recentUserText(messages).slice(0, 200_000);
   if (!text) return '';
   const backtick = [...text.matchAll(/`([^`\r\n]+)`/g)].map(m => m[1]);
-  const bare = [...text.matchAll(/((?:[A-Za-z]:[\\/]|\/|~[\\/]|\.{1,2}[\\/])[^"'`<>\s]+|[A-Za-z0-9._-]+(?:[\\/][A-Za-z0-9._-]+)*\.[A-Za-z0-9]{1,12})/g)].map(m => m[1]);
+  const bare = [...text.matchAll(/((?:[A-Za-z]:[\\/]|\/|~[\\/]|\.{1,2}[\\/])[^"'`<>\s]+|[A-Za-z0-9._-]{1,255}(?:[\\/][A-Za-z0-9._-]{1,255}){0,63}\.[A-Za-z0-9]{1,12})/g)].map(m => m[1]);
   for (const candidate of [...backtick, ...bare]) {
     const tail = internalWorkspaceTail(candidate);
     if (tail !== null) return tail || '';
