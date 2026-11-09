@@ -9,8 +9,20 @@
  * replayable. [signed, mixed] keep 1 therefore rejects (it drops the signed
  * turn) while [mixed, signed] keep 1 accepts (it drops only the mixed turn).
  * keep:"none" keeps none, so it is refused whenever a replayable signed turn
- * exists. keep:"all", absent keep, replay off and histories the translator does
- * not replay stay accepted.
+ * exists. keep:"all", {type:"all"}, replay off and histories the translator
+ * does not replay stay accepted.
+ *
+ * M1 — an ABSENT keep is not keep-all: upstream resolves the default per
+ * model class ([UNVERIFIED] keep-all on Opus 4.5+ / Sonnet 4.6+ / Fable,
+ * last-turn-only on Haiku ≤4.5 / Opus ≤4.1 / Sonnet ≤4.5). Only the keep-all
+ * class accepts outright; every other model — including names the resolver
+ * cannot classify — runs the same dropped-prefix check an explicit
+ * {thinking_turns:1} would.
+ *
+ * M2 — `redacted_thinking` IS a thinking block for the keep window (upstream
+ * preservation rules count it; [UNVERIFIED] against this backend), so a
+ * turn carrying only redacted_thinking blocks occupies a slot in
+ * thinkingTurnIndexes and shifts which turns a finite keep drops.
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -70,6 +82,19 @@ function mixedTurn(label) {
     content: [
       { type: 'thinking', thinking: `secret ${label}`, signature: SIG },
       { type: 'thinking', thinking: `unsigned ${label}`, signature: '' },
+      { type: 'text', text: `answer ${label}` },
+    ],
+  };
+}
+
+// M2: an assistant turn whose only thinking block is `redacted_thinking`.
+// The translator drops it like every non-signed block, but upstream counts it
+// as a thinking turn for the clear_thinking keep window.
+function redactedTurn(label) {
+  return {
+    role: 'assistant',
+    content: [
+      { type: 'redacted_thinking', data: `redacted-${label}` },
       { type: 'text', text: `answer ${label}` },
     ],
   };
@@ -220,10 +245,90 @@ describe('CTX-01 clear_thinking_20251015 finite keep vs signed replay', () => {
     });
   });
 
-  it('accepts keep:"all" and an absent keep with replay on and signed history', () => {
+  it('accepts keep:"all", {type:"all"} and an absent keep on a keep-all-class model', () => {
     withReplay(true, () => {
       assert.equal(validateMessagesRequest(request({ context_management: clearThinking('all') })), null);
+      assert.equal(validateMessagesRequest(request({ context_management: clearThinking({ type: 'all' }) })), null);
+      // MODEL is claude-opus-5-5-medium — the keep-all class, so an absent keep
+      // retains every thinking turn and must be accepted (M1).
       assert.equal(validateMessagesRequest(request({ context_management: clearThinking(undefined) })), null);
+    });
+  });
+
+  it('rejects an absent keep on a keep-1-class model when it would drop a signed turn (M1)', () => {
+    withReplay(true, () => {
+      // claude-haiku-4-5 resolves to claude-4.5-haiku: upstream's absent-keep
+      // default is the LAST thinking turn only, so over [signed, signed] the
+      // edit clears the older signed turn this bridge would re-attach.
+      const err = validateMessagesRequest(request({
+        model: 'claude-haiku-4-5',
+        context_management: clearThinking(undefined),
+      }));
+      assertUnsupportedKeep(err);
+    });
+  });
+
+  it('accepts an absent keep on a keep-1-class model when the kept turn covers every signed turn (M1)', () => {
+    withReplay(true, () => {
+      // keep-1 keeps the LAST thinking turn; with a single signed turn that is
+      // the replayed one, so nothing the edit clears is re-attached.
+      assert.equal(validateMessagesRequest(request({
+        model: 'claude-haiku-4-5',
+        messages: signedHistory(1),
+        context_management: clearThinking(undefined),
+      })), null);
+      // [redacted, signed]: the dropped prefix holds only the redacted turn.
+      assert.equal(validateMessagesRequest(request({
+        model: 'claude-haiku-4-5',
+        messages: turnHistory(redactedTurn('1'), signedTurn('2')),
+        context_management: clearThinking(undefined),
+      })), null);
+    });
+  });
+
+  it('treats an unclassifiable claude-* model as keep-1 for an absent keep (M1, conservative)', () => {
+    withReplay(true, () => {
+      // Not in the catalogue: signedThinkingReplayEnabled still resolves it to
+      // the anthropic provider via the claude- prefix, and the keep-all class
+      // table cannot prove keep-all — so the safe keep-1 check applies.
+      const err = validateMessagesRequest(request({
+        model: 'claude-opus-9-9-nonexistent',
+        context_management: clearThinking(undefined),
+      }));
+      assertUnsupportedKeep(err);
+    });
+  });
+
+  it('an absent keep is unaffected when replay is off, on any model class (M1)', () => {
+    withReplay(false, () => {
+      assert.equal(validateMessagesRequest(request({
+        model: 'claude-haiku-4-5',
+        context_management: clearThinking(undefined),
+      })), null);
+    });
+  });
+
+  it('counts a redacted_thinking-only turn in the keep window (M2)', () => {
+    withReplay(true, () => {
+      // [signed, redacted]: upstream counts BOTH as thinking turns, so keep 1
+      // retains only the redacted turn and clears the signed one — exactly the
+      // case CTX-01 must refuse. Before the fix the redacted turn was not
+      // counted, turns.length was 1, and keep 1 was wrongly accepted.
+      const err = validateMessagesRequest(request({
+        messages: turnHistory(signedTurn('1'), redactedTurn('2')),
+        context_management: clearThinking({ type: 'thinking_turns', value: 1 }),
+      }));
+      assertUnsupportedKeep(err);
+      // keep 2 retains both thinking turns — accepted.
+      assert.equal(validateMessagesRequest(request({
+        messages: turnHistory(signedTurn('1'), redactedTurn('2')),
+        context_management: clearThinking({ type: 'thinking_turns', value: 2 }),
+      })), null);
+      // [redacted, signed]: keep 1 drops only the redacted prefix — accepted.
+      assert.equal(validateMessagesRequest(request({
+        messages: turnHistory(redactedTurn('1'), signedTurn('2')),
+        context_management: clearThinking({ type: 'thinking_turns', value: 1 }),
+      })), null);
     });
   });
 

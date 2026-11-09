@@ -503,16 +503,20 @@ function unsupportedParameter(param, message) {
   };
 }
 
-// `keep` for clear_thinking_20251015: "all" | "none" | {type:"thinking_turns",
-// value:<positive integer>}. Anything else is a malformed request, not an
+// `keep` for clear_thinking_20251015: "all" | "none" | {type:"all"} |
+// {type:"thinking_turns", value:<positive integer>}. {type:"all"} is the
+// spec-legal object spelling of keep:"all" (documented beside the string and
+// the thinking_turns form). Anything else is a malformed request, not an
 // unsupported feature, so it gets invalid_request_error.
 function validateThinkingKeep(keep, where) {
   if (keep == null || keep === 'all' || keep === 'none') return null;
   if (typeof keep !== 'object' || Array.isArray(keep)) {
-    return invalidRequest(`${where}.keep must be 'all', 'none', or { type: 'thinking_turns', value: <positive integer> }`);
+    return invalidRequest(`${where}.keep must be 'all', 'none', { type: 'all' }, or { type: 'thinking_turns', value: <positive integer> }`);
   }
-  if (keep.type !== 'thinking_turns') return invalidRequest(`${where}.keep.type must be 'thinking_turns'`);
-  if (!Number.isInteger(keep.value) || keep.value < 1) {
+  if (keep.type !== 'thinking_turns' && keep.type !== 'all') {
+    return invalidRequest(`${where}.keep.type must be 'thinking_turns' or 'all'`);
+  }
+  if (keep.type === 'thinking_turns' && (!Number.isInteger(keep.value) || keep.value < 1)) {
     return invalidRequest(`${where}.keep.value must be a positive integer`);
   }
   return null;
@@ -571,17 +575,47 @@ function replayableSignedIndexes(messages) {
 // the keep decision must compare against their positions rather than against
 // the replayable subset's count: a keep can drop the oldest turns and with
 // them a signed turn while still keeping as many turns as happen to be signed.
+//
+// M2: `redacted_thinking` counts as a thinking block here — upstream's
+// preservation rules treat it as one, so a turn carrying ONLY redacted
+// thinking still occupies a slot in the keep window. [UNVERIFIED] against this
+// backend (the upstream counting rule is from Anthropic's docs, not measured);
+// counting it is the safe direction — an under-counted window computes a
+// shorter dropped prefix and can accept a keep that clears a replayable turn.
+// The replayable mirror (replayableSignedIndexes) is unchanged: the
+// translator only re-attaches `type:'thinking'` blocks, and a redacted block
+// never affects its signed/unsigned tally.
 function thinkingTurnIndexes(messages) {
   const indexes = [];
   if (!Array.isArray(messages)) return indexes;
   for (let i = 0; i < messages.length; i++) {
     const message = messages[i];
     if (message?.role !== 'assistant' || !Array.isArray(message.content)) continue;
-    if (message.content.some(block => block && typeof block === 'object' && block.type === 'thinking')) {
+    if (message.content.some(block => block && typeof block === 'object'
+        && (block.type === 'thinking' || block.type === 'redacted_thinking'))) {
       indexes.push(i);
     }
   }
   return indexes;
+}
+
+// CTX-01/M1: which models treat an ABSENT `keep` on clear_thinking_20251015
+// as keep-all. [UNVERIFIED] — the class boundary is from upstream docs
+// (AWS Bedrock documents keep's default as one thinking turn; Anthropic's
+// docs make the default model-dependent: keep-all on Opus 4.5+ / Sonnet 4.6+
+// / Fable, last-turn-only on Haiku ≤4.5 / Opus ≤4.1 / Sonnet ≤4.5). It is NOT
+// measured against this backend, so the table only whitelists the documented
+// keep-all families and EVERYTHING else — including names the resolver cannot
+// classify — resolves to the keep-1 default. That is the safe direction: the
+// validator may over-reject a keep-all model, never under-reject a keep-1 one.
+// Matched against the resolved catalogue name AND raw official spellings, so
+// both `claude-4.5-opus` and `claude-opus-4-5` forms classify.
+const CLEAR_THINKING_KEEP_ALL_MODEL =
+  /^claude-(?:4[.-]5-opus|opus-4[.-][5-9]|opus-5|sonnet-4[.-]6|sonnet-5|5-fable|fable-5)/;
+
+function clearThinkingAbsentKeepKeepsAll(model) {
+  const name = String(resolveModel(String(model ?? '').trim()) ?? model ?? '').toLowerCase();
+  return CLEAR_THINKING_KEEP_ALL_MODEL.test(name);
 }
 
 // CTX-01: a finite `keep` ("none" or {type:"thinking_turns"}) asks this bridge
@@ -613,7 +647,18 @@ function validateSignedReplayClearThinking(cm, messages, model) {
   for (let index = 0; index < edits.length; index++) {
     const edit = edits[index];
     if (edit?.type !== 'clear_thinking_20251015') continue;
-    const keep = edit.keep;
+    let keep = edit.keep;
+    // {type:"all"} is the spec-legal object spelling of keep:"all" — it retains
+    // every thinking turn, so nothing this edit asks to clear can be replayed.
+    if (keep != null && typeof keep === 'object' && keep.type === 'all') continue;
+    // M1: an ABSENT keep is not keep-all — upstream resolves the default per
+    // model class (see clearThinkingAbsentKeepKeepsAll). Only the keep-all
+    // class accepts outright here; every other model — including names the
+    // resolver cannot classify — is rewritten to the explicit {thinking_turns:1}
+    // the keep-1 default means, so it runs the same dropped-prefix check below.
+    if (keep == null) {
+      keep = clearThinkingAbsentKeepKeepsAll(model) ? 'all' : { type: 'thinking_turns', value: 1 };
+    }
     if (keep !== 'none' && (keep == null || typeof keep !== 'object')) continue;
     if (keep !== 'none' && keep.type === 'thinking_turns') {
       if (turns === null) turns = thinkingTurnIndexes(messages);

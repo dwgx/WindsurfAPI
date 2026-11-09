@@ -2,7 +2,7 @@
   "tests": [
     "test/context-management-signed-replay.test.js"
   ],
-  "expectBaselinePass": 18,
+  "expectBaselinePass": 23,
   "mutations": [
     {
       "name": "G-04: only the FIRST finite clear_thinking edit is validated again (`findIndex`) — edits [keep 2, keep 1] pass although the second drops a signed turn",
