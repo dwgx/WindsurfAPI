@@ -21,6 +21,7 @@
 
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import {
   neutralizeClientIdentity,
   neutralizeMessageContent,
@@ -188,9 +189,10 @@ describe('identity-neutralize — legitimate single-paragraph blocks are fully r
 // The fallback exists for the shape where the catalogue's terminator is in another
 // paragraph, and in that shape the anchor line carries the model-ID body
 // (`Model IDs — Fable 5: 'claude-fable-5', Opus 4.8: 'claude-opus-4-8'.`). Rewriting
-// just the phrase left the model IDs on the wire (measured 253 → 244 bytes). A body
-// marker after the anchor (`claude-`, `Model IDs`, `Fable`, `Opus`, `Sonnet`) now
-// extends the span to the end of the line.
+// just the phrase left the model IDs on the wire (measured 253 → 244 bytes). An
+// ID-shaped `claude-` model-ID token after the anchor now extends the span to the
+// end of the line — the earlier bare-marker list (`claude-`, `Model IDs`, `Fable`,
+// `Opus`, `Sonnet`) was tightened to the full token grammar by the P4 review below.
 describe('identity-neutralize — a4-catalogue-line span depends on the line', () => {
   it('preserves the rest of the line, including a caller RULE', () => {
     const src = 'The most recent Claude models are listed below; RULE: keep me\nnext';
@@ -246,6 +248,153 @@ describe('identity-neutralize — a4-catalogue-line span depends on the line', (
     assert.equal(neutralize(src), 'The available models are\nnext',
       'one span to EOL; the inner anchor is inside it, not a second overlapping span');
   });
+});
+
+// P4 (six-lane review of c4931c40+0aea4ea3): catalogueIdFollows only inspected the
+// HEAD after `claude-` and accepted almost any terminator, so hostnames, host:port
+// pairs, paths, emails and possessives were classified as model IDs and the
+// anchor→EOL span ate the caller's RULE. The classifier now validates the WHOLE
+// hyphenated token against the real selector grammar:
+//
+//   claude-<component> ('-' <component>)*   with ≥2 components total
+//
+// where a component is a digit run (optional `.`-joined version groups and an
+// optional `m` context suffix, e.g. `-1m`) or a catalogue word — family
+// (opus/sonnet/haiku/fable), effort/size (max/min/high/medium/low/xhigh) or the
+// fast/thinking/beta modifiers. A `-` followed by anything else, a letter/digit/`_`
+// glued to a component, or a non-clean terminator (`:port`, `/path`, `@host`,
+// `.`+letter/digit) makes the token prose, not an ID.
+//
+// Deliberate trade-off, documented per the review: `-`+lowercase-WORD continuations
+// use the component vocabulary rather than "any word". `claude-fable-svc` and
+// `claude-9-lives` are therefore prose (svc/lives are not catalogue components) —
+// lane D accepted `-<word>` continuation as a trade-off, but the committed
+// snapshot's component set is closed enough that the stricter reading costs no
+// real selector (verified below against every claude-* selector AND alias) while
+// keeping `claude-4-proxy` / `claude-3-internal:8443` prose.
+describe('identity-neutralize — a4-catalogue-line: the claude- token must be ID-shaped end to end', () => {
+  const CATALOGUE_PREFIX = 'The most recent Claude models are ';
+  const ID_BODY = (shape) => `${CATALOGUE_PREFIX}models: ${shape}.\nnext`;
+
+  it('every claude-* selector in the committed catalogue snapshot is still an ID body', () => {
+    const snapshot = JSON.parse(
+      readFileSync(new URL('../src/data/devin-catalog-snapshot.json', import.meta.url), 'utf8'),
+    );
+    const ids = new Set();
+    for (const m of snapshot.models) {
+      if (m.selector.startsWith('claude-')) ids.add(m.selector);
+      if (m.alias && m.alias.startsWith('claude-')) ids.add(m.alias);
+    }
+    assert.ok(ids.size >= 70, `fixture sanity: expected the ~68 selectors + aliases, got ${ids.size}`);
+    for (const id of ids) {
+      // quoted form (the real catalogue quotes its IDs) and bare-at-EOL form
+      for (const shape of [`'${id}'`, id]) {
+        const out = neutralize(ID_BODY(shape));
+        assert.equal(out, 'The available models are\nnext',
+          `${shape}: a real catalogue ID must extend the span to EOL`);
+        assert.equal(/claude-/i.test(out), false, `${shape}: no claude- token survives`);
+      }
+    }
+  });
+
+  it('real ID shapes in prose delimiters still count as bodies', () => {
+    for (const shape of [
+      'claude-fable-5',
+      'claude-opus-4-8',
+      'claude-opus-4-8-medium',
+      'claude-sonnet-4.6',          // dotted version group
+      'claude-5-fable-max',
+      'claude-opus-4-6-thinking-1m',// thinking + 1m context suffix
+      'claude-3-5-sonnet-20241022', // version-first + family + date stamp
+      'claude-sonnet4.6',           // family fused to version (no hyphen)
+      'CLAUDE-OPUS-4-8',            // ASCII-case-insensitive
+    ]) {
+      const out = neutralize(ID_BODY(`'${shape}'`));
+      assert.equal(out, 'The available models are\nnext',
+        `${shape}: ID-shaped body must be removed with the header`);
+    }
+  });
+
+  it('hostnames, ports, paths and possessives are prose, not IDs', () => {
+    for (const shape of [
+      'claude-opus-1.internal.example.com', // lane D: `-<digit>` then `.`+letter
+      'claude-3.5.example.com',             // lane D: version-dot then domain
+      'claude-opus.5x',                     // lane D: `.`+digit after a WORD head
+      'claude-5.5x',                        // lane D: `x` glued to the version
+      'claude-fable-svc',                   // lane D: `-`+non-component word
+      'claude-9-lives',                     // lane D: `-`+non-component word
+      'claude-4-proxy',                     // digit head + `-`+non-component
+      'claude-3-internal:8443',             // `-`+non-component then :port
+      'claude-opus:8080',                   // bare family head + :port
+      'claude-opus/path',                   // bare family head + /path
+      'claude-opus@h',                      // bare family head + @host
+      "claude-fable's",                     // bare family head + possessive
+      'claude-sonnet,x',                    // bare family head + comma
+      'claude-opus-4-8:8080',               // real-looking ID + :port → prose
+      'claude-opus-4-8/path',               // real-looking ID + /path → prose
+      'claude-opus-4-8@h',                  // real-looking ID + @host → prose
+      'claude-opus-4-8-extra',              // `-`+non-component glued on
+    ]) {
+      const src = `The most recent Claude models are documented at ${shape}; RULE: keep me`;
+      const out = neutralize(src);
+      assert.equal(out,
+        `The available models are documented at ${shape}; RULE: keep me`,
+        `${shape}: only the anchor phrase changes; the caller RULE survives`);
+    }
+  });
+});
+
+// P4 (same review): opusTerminatorEnd accepted a `[\d./]` run whose ONLY dot was
+// at offset 0 — `available on Opus .5x` ended the span right after the dot and
+// left `5x` behind, where the old `Opus [\d./]+\.` regex needed a class char
+// before the final dot and did not match at all. Parity: the run must contain a
+// dot that is NOT its first character.
+describe('identity-neutralize — a4-brand-span: `Opus .5x` is not a version terminator', () => {
+  it('a dot-led version run does not terminate the brand span', () => {
+    const src = 'Claude Code is available as a CLI\navailable on Opus .5x; RULE: keep me';
+    const out = neutralize(src);
+    assert.ok(out.includes('available on Opus .5x; RULE: keep me'),
+      'no `Opus [\\d./]+.` match ⇒ the second line is caller text and survives');
+    assert.ok(out.startsWith('This coding assistant runs in a terminal.'),
+      'the cli-line fallback still neutralizes the anchor phrase');
+  });
+
+  it('negative control: `Opus 4.` and `Opus 4.8/4.7.` still terminate', () => {
+    for (const tail of ['available on Opus 4. tail', 'available on Opus 4.8/4.7. tail']) {
+      const out = neutralize(`Claude Code is available as a CLI\n${tail}`);
+      assert.ok(!/available on Opus/i.test(out), `${tail}: the brand span still fires`);
+      assert.ok(out.includes('This coding assistant runs in a terminal.'),
+        `${tail}: replaced by the neutral line`);
+    }
+  });
+});
+
+// P4 (same review): the line-indent class was narrowed from `\s` to `[space,tab]`,
+// so a fastmode or billing line indented with NBSP/FF/VT/CR (all `\s` members the
+// old `\s*` ate) now survives upstream. Indentation is every `\s` code unit a
+// line can contain — LF cannot appear inside a line by construction.
+describe('identity-neutralize — line indent accepts the full `\\s` class minus LF', () => {
+  for (const [name, ws] of [
+    ['NBSP', '\u00A0'],
+    ['ideographic space', '\u3000'],
+    ['form feed', '\f'],
+    ['vertical tab', '\v'],
+    ['carriage return', '\r'],
+  ]) {
+    it(`a4-fastmode: ${name}-indented line is still removed`, () => {
+      const out = neutralize(`${ws}- Fast mode for Claude Code uses Opus.\nkeep`);
+      assert.equal(/fast mode for claude code/i.test(out), false,
+        `${name} indent: the fingerprint line is removed`);
+      assert.ok(out.includes('keep'), 'the following line survives');
+    });
+
+    it(`a3-billing: ${name}-indented header is still removed`, () => {
+      const out = neutralize(`${ws}x-anthropic-billing-header: cc_version=1.2;\nkeep`);
+      assert.equal(/x-anthropic-billing-header/i.test(out), false,
+        `${name} indent: the billing header line is removed`);
+      assert.ok(out.includes('keep'), 'the following line survives');
+    });
+  }
 });
 
 // P3: fastmodeSpans took the newline BEFORE each matched line even when the

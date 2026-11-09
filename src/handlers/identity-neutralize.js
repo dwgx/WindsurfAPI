@@ -62,10 +62,17 @@ function indexOfExact(text, needle, from, limit = text.length) {
 const isSpaceCode = (code) => code === 32 || (code >= 9 && code <= 13)
   || (code > 127 && /\s/.test(String.fromCharCode(code)));
 
-// "Horizontal" whitespace for the line-scoped rules: the old `\s*` also ate CR,
-// but a CR at this position belongs to the previous line's terminator, so a line
-// scan must not treat it as indentation.
-const isHorizontalSpaceCode = (code) => code === 32 || code === 9;
+// "Horizontal" whitespace for the line-scoped rules: every `\s` code unit a
+// line can contain at its start — space, tab, VT, FF, CR and the Unicode space
+// separators — EXCEPT LF, which cannot appear inside a line anyway
+// (forEachLine splits on it). The `[space,tab]`-only class let NBSP/FF/VT/CR-
+// indented fingerprint lines survive that the `\s*` these rules replaced used
+// to eat. Written as explicit ranges so the indent skip stays allocation-free:
+// isSpaceCode's `/\s/` test allocates a string per non-ASCII code unit.
+const isHorizontalSpaceCode = (code) => code === 32 || (code >= 9 && code <= 13 && code !== 10)
+  || code === 0xa0 || code === 0x1680 || (code >= 0x2000 && code <= 0x200a)
+  || code === 0x2028 || code === 0x2029 || code === 0x202f || code === 0x205f
+  || code === 0x3000 || code === 0xfeff;
 
 // `\w` without the `u` flag is ASCII-only: [A-Za-z0-9_].
 const isWordCode = (code) => (code >= 48 && code <= 57) || (code >= 65 && code <= 90)
@@ -224,8 +231,9 @@ function opusTerminatorEnd(text, from, limit) {
   for (;;) {
     at = indexOfAsciiCI(text, OPUS_TERMINATOR, at, limit);
     if (at < 0) return -1;
+    const runStart = at + OPUS_TERMINATOR.length;
     let lastDot = -1;
-    let j = at + OPUS_TERMINATOR.length;
+    let j = runStart;
     while (j < limit) {
       const c = text.charCodeAt(j);
       if ((c >= 48 && c <= 57) || c === 46 || c === 47) {
@@ -235,7 +243,9 @@ function opusTerminatorEnd(text, from, limit) {
       }
       break;
     }
-    if (lastDot >= 0) return lastDot + 1;
+    // Parity with `Opus [\d./]+\.`: the final dot needs at least one [\d./]
+    // character before it, so a run whose only dot leads (`Opus .5x`) is no match.
+    if (lastDot > runStart) return lastDot + 1;
     at += 1;
   }
 }
@@ -274,50 +284,171 @@ const CATALOGUE_LINE_ANCHOR = 'the most recent claude models are';
 const CATALOGUE_LINE_REPLACEMENT = 'The available models are';
 const CATALOGUE_ID_PREFIX = 'claude-';
 const CATALOGUE_ID_WORDS = ['opus', 'sonnet', 'haiku', 'fable'];
+// Words allowed as `-`-separated components AFTER the head. The family words
+// repeat because version-first IDs place them later (`claude-5-fable-medium`,
+// `claude-3-5-sonnet`); the rest are the effort/size modifiers and the
+// fast/thinking/beta suffixes real selectors carry. The set is CLOSED — it was
+// checked against every claude-* selector and alias in
+// src/data/devin-catalog-snapshot.json — so `-svc`, `-proxy`, `-internal` and
+// `-lives` are caller words, not ID components.
+const CATALOGUE_ID_COMPONENT_WORDS = [
+  'opus', 'sonnet', 'haiku', 'fable',
+  'max', 'min', 'high', 'medium', 'low', 'xhigh',
+  'fast', 'thinking', 'beta',
+];
 
 const isAsciiDigit = (code) => code >= 48 && code <= 57;
 const isAsciiLetter = (code) => (code >= 65 && code <= 90) || (code >= 97 && code <= 122);
 
 /**
+ * End of the digit component starting at `at`: a digit run with optional
+ * `.`-joined digit groups (version dots — `claude-opus-4.8`,
+ * `claude-sonnet-4.6`) and an optional `m`/`M` context suffix (`-1m`). Returns
+ * -1 when a letter or `_` is glued to the run (`claude-3d`, `claude-5.5x`,
+ * `claude-1mx`): the token continues past what a catalogue component can be.
+ */
+function catalogueDigitComponentEnd(text, at, lineEnd) {
+  let j = at;
+  for (;;) {
+    while (j < lineEnd && isAsciiDigit(text.charCodeAt(j))) j++;
+    // `.` continues the version only before another digit (`4.8`, not `4.x`)
+    if (j + 1 < lineEnd && text.charCodeAt(j) === 46 && isAsciiDigit(text.charCodeAt(j + 1))) {
+      j++;
+      continue;
+    }
+    break;
+  }
+  if (j >= lineEnd) return j;
+  const c = text.charCodeAt(j);
+  // `m` context suffix (`-1m`): only when `m` itself is not glued to more word
+  // characters — `1mx` stays prose.
+  if (c === 109 || c === 77) {
+    const after = j + 1;
+    if (after >= lineEnd) return after;
+    const n = text.charCodeAt(after);
+    if (isAsciiLetter(n) || isAsciiDigit(n) || n === 95) return -1;
+    return after;
+  }
+  if (isAsciiLetter(c) || c === 95) return -1;
+  return j;
+}
+
+/**
+ * End of the word component starting at `at`: one of `words` (ASCII-CI) that is
+ * NOT glued to more word characters — `-maxi` is not `-max`. Returns -1 when no
+ * listed word matches, which is what makes `-svc`, `-proxy` and `-lives` prose.
+ */
+function catalogueWordComponentEnd(text, at, words, lineEnd) {
+  for (const word of words) {
+    if (at + word.length > lineEnd || !matchesAsciiCI(text, at, word)) continue;
+    const after = at + word.length;
+    if (after >= lineEnd) return after;
+    const next = text.charCodeAt(after);
+    if (isAsciiLetter(next) || isAsciiDigit(next) || next === 95) continue;
+    return after;
+  }
+  return -1;
+}
+
+/**
+ * The character after an ID-shaped token must be a clean prose boundary:
+ * whitespace/EOL, a closing bracket or quote, sentence punctuation, or a `.`
+ * that does not continue a hostname or version (`.`+letter/digit ⇒ prose, so
+ * `claude-opus-4-8.example.com` and `claude-opus-beta.5` are not IDs). `:` is a
+ * boundary only before a non-digit — `id:8080` is host:port prose — while `/`
+ * and `@` always glue the token into path/host/email shapes and are never
+ * clean. Anything else (letters, digits, `_`, `+`, `=`, …) means the token
+ * continues and the whole thing is prose.
+ */
+function catalogueIdBoundary(text, at, lineEnd) {
+  if (at >= lineEnd) return true;
+  const t = text.charCodeAt(at);
+  if (isSpaceCode(t)) return true;
+  if (t === 41 || t === 93 || t === 125 || t === 62) return true; // ) ] } >
+  if (t === 39 || t === 34 || t === 8216 || t === 8217 || t === 8220 || t === 8221) return true; // ' " ‘ ’ “ ”
+  if (t === 44 || t === 59 || t === 33 || t === 63) return true; // , ; ! ?
+  if (t === 46) { // .
+    if (at + 1 >= lineEnd) return true;
+    const n = text.charCodeAt(at + 1);
+    return !(isAsciiLetter(n) || isAsciiDigit(n));
+  }
+  if (t === 58) { // :
+    if (at + 1 < lineEnd && isAsciiDigit(text.charCodeAt(at + 1))) return false; // :port
+    return true;
+  }
+  return false; // / @ and every other glued character
+}
+
+/**
  * True when the `claude-` at `prefix` starts a MODEL ID rather than an ordinary
  * word or hostname that happens to share the prefix.
  *
- * The head alone is not enough — it must also END like an ID token:
+ * The whole hyphenated token must be ID-shaped — `claude-<component>`
+ * (`-`<component>)*` with at least two components — and it must END at a clean
+ * prose boundary (catalogueIdBoundary). Checking only the head, as the previous
+ * version did, classified `claude-opus:8080`, `claude-opus/path`,
+ * `claude-fable's`, `claude-4-proxy` and `claude-3-internal:8443` as IDs, and
+ * the anchor→EOL span then ate the caller's RULE text.
  *
- *   - version head (a digit run): accepted when the run is followed by `-` (the
- *     version separator), whitespace, EOL, or a dot followed by another digit
- *     (`claude-3.5`). A letter after the run means the token continues, so
- *     `claude-3d.example.com` and `claude-1password.example.com` are hostnames,
- *     not IDs — classifying them as ID-shaped deleted the caller's RULE text.
- *   - family head (`opus`/`sonnet`/`haiku`/`fable`): `-` or a digit continues the
- *     ID (`claude-opus-4-8`, `claude-sonnet4.6`), whitespace/EOL and punctuation
- *     end it, and a letter or `_` means the word continues (`claude-opusx`), so
- *     it is caller prose.
+ *   - head: a digit component (`claude-5-fable-…`, `claude-3-5-sonnet-…`) or a
+ *     family word (`claude-opus-…`). A digit run followed by a letter
+ *     (`claude-3d`, `claude-1password`) or a family word followed by a letter
+ *     or `_` (`claude-opusx`) is a longer caller word — prose.
+ *   - family head may fuse a version directly (`claude-sonnet4.6`), the shape
+ *     the previous classifier accepted; hyphenated components use the full
+ *     component vocabulary.
+ *   - `-` followed by a non-component (`-svc`, `-proxy`, `-internal`, `-lives`)
+ *     makes the token prose, not "ID + trailing punctuation": the hyphen glues
+ *     it into one caller word.
+ *   - a bare `claude-<head>` (`claude-opus`, `claude-5`, `claude-fable`) has no
+ *     second component and is a name, not a selector — every real claude-*
+ *     selector carries a version or effort component.
  */
 function catalogueIdFollows(text, prefix, lineEnd) {
   const head = prefix + CATALOGUE_ID_PREFIX.length;
   if (head >= lineEnd) return false;
-  const first = text.charCodeAt(head);
-  if (isAsciiDigit(first)) {
-    let end = head;
-    while (end < lineEnd && isAsciiDigit(text.charCodeAt(end))) end++;
-    if (end >= lineEnd) return true;
-    const next = text.charCodeAt(end);
-    if (next === 45 || isSpaceCode(next)) return true;
-    return next === 46 && end + 1 < lineEnd && isAsciiDigit(text.charCodeAt(end + 1));
+  let at;
+  let components = 0;
+  if (isAsciiDigit(text.charCodeAt(head))) {
+    at = catalogueDigitComponentEnd(text, head, lineEnd);
+    if (at < 0) return false;
+    components = 1;
+  } else {
+    let wend = -1;
+    for (const word of CATALOGUE_ID_WORDS) {
+      if (head + word.length > lineEnd || !matchesAsciiCI(text, head, word)) continue;
+      const after = head + word.length;
+      if (after >= lineEnd) { wend = after; break; }
+      const next = text.charCodeAt(after);
+      // A letter or '_' glued on is a longer caller word (`claude-opusx`,
+      // `claude-opus_beta`); a digit is the fused version form handled below.
+      if (isAsciiLetter(next) || next === 95) continue;
+      wend = after;
+      break;
+    }
+    if (wend < 0) return false;
+    components = 1;
+    at = wend;
+    if (at < lineEnd && isAsciiDigit(text.charCodeAt(at))) {
+      const dend = catalogueDigitComponentEnd(text, at, lineEnd);
+      if (dend < 0) return false;
+      at = dend;
+      components = 2;
+    }
   }
-  for (const word of CATALOGUE_ID_WORDS) {
-    if (head + word.length > lineEnd || !matchesAsciiCI(text, head, word)) continue;
-    const after = head + word.length;
-    if (after >= lineEnd) return true;
-    const next = text.charCodeAt(after);
-    if (next === 45 || isAsciiDigit(next) || isSpaceCode(next)) return true;
-    // A dot ends the family token only when it is not a domain separator:
-    // `.` followed by a letter (`claude-opus.example.com`) continues a hostname.
-    if (next === 46) return after + 1 >= lineEnd || !isAsciiLetter(text.charCodeAt(after + 1));
-    return !isAsciiLetter(next) && next !== 95;
+  for (;;) {
+    if (at >= lineEnd || text.charCodeAt(at) !== 45) break; // not '-'
+    const compAt = at + 1;
+    if (compAt >= lineEnd) return false; // dangling '-' at EOL
+    const nextEnd = isAsciiDigit(text.charCodeAt(compAt))
+      ? catalogueDigitComponentEnd(text, compAt, lineEnd)
+      : catalogueWordComponentEnd(text, compAt, CATALOGUE_ID_COMPONENT_WORDS, lineEnd);
+    if (nextEnd < 0) return false; // '-' + non-component ⇒ prose token
+    at = nextEnd;
+    components++;
   }
-  return false;
+  if (components < 2) return false;
+  return catalogueIdBoundary(text, at, lineEnd);
 }
 
 /**
@@ -377,16 +508,27 @@ function catalogueBodyFollows(text, from, lineEnd) {
  * One pass over the lines; the cursor advances past each phrase-only span so a line
  * full of anchors is scanned once. A body span reaches the end of the line, so it is
  * the last span that line can contribute.
+ *
+ * The body test runs AT MOST ONCE per line. catalogueBodyFollows(from) scans the
+ * whole suffix to lineEnd, so a false answer proves no ID-shaped `claude-` exists
+ * anywhere in [from, lineEnd) — and every LATER anchor on the same line has a
+ * larger `from`, hence the same false answer. Re-running the suffix scan per anchor
+ * was O(anchors × line): a 512 KiB single line of repeated anchors with no `claude-`
+ * took ~3.4 s of synchronous event-loop time (measured). The tri-state below keeps
+ * the first answer and reuses it; a true answer still ends the line immediately.
  */
 function catalogueLineSpans(text) {
   const spans = [];
   forEachLine(text, (lineStart, lineEnd) => {
     let cursor = lineStart;
+    // -1 = not yet answered for this line, 0 = no ID-shaped body, 1 = body found.
+    let body = -1;
     for (;;) {
       const anchor = indexOfAsciiCI(text, CATALOGUE_LINE_ANCHOR, cursor, lineEnd);
       if (anchor < 0) return;
       const afterAnchor = anchor + CATALOGUE_LINE_ANCHOR.length;
-      if (catalogueBodyFollows(text, afterAnchor, lineEnd)) {
+      if (body < 0) body = catalogueBodyFollows(text, afterAnchor, lineEnd) ? 1 : 0;
+      if (body === 1) {
         spans.push({ start: anchor, end: lineEnd });
         return;
       }

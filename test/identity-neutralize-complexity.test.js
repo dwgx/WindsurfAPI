@@ -74,6 +74,27 @@ describe('identity-neutralize — linear scanners (no quadratic blow-up)', () =>
     assert.equal(out, src);
     assert.ok(ms < 500, `took ${ms.toFixed(1)} ms, bound is 500 ms`);
   });
+
+  // a4-catalogue-line: the "does an ID-shaped claude- body follow this anchor?"
+  // test used to re-scan the whole line suffix from EVERY anchor. On one line of
+  // repeated anchors with no `claude-` anywhere that is O(anchors × line): measured
+  // 64 KiB → 78 ms, 128 KiB → 246 ms, 256 KiB → 1010 ms (≈4× per doubling, so
+  // 512 KiB ≈ 4 s of synchronous event-loop time). The answer is monotone on a
+  // line — a false body scan rules out an ID-shaped `claude-` for every LATER
+  // anchor too — so the line is scanned once and each anchor is an O(1) check.
+  it('512 KiB single line of catalogue anchors with no claude- body: under 500 ms', () => {
+    const unit = 'The most recent Claude models are ' + 'x'.repeat(40) + ' ';
+    const reps = Math.floor((512 * KIB) / unit.length);
+    const src = unit.repeat(reps);
+    assert.ok(src.length > 500 * KIB, `fixture is ~512 KiB, got ${src.length}`);
+    assert.equal(src.includes('claude-'), false, 'fixture carries no ID-shaped claude- token');
+    const { ms, out } = timed(src);
+    assert.equal(/the most recent claude models are/i.test(out), false,
+      'every anchor phrase is still rewritten to "The available models are"');
+    assert.ok(out.includes('x'.repeat(40)), 'the caller padding between anchors survives');
+    assert.ok(ms < 500,
+      `took ${ms.toFixed(1)} ms, bound is 500 ms; the per-anchor suffix rescan was quadratic`);
+  });
 });
 
 // H1: paragraphEndAt now asks `isSpaceCode` about every character after a newline
