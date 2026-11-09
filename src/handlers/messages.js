@@ -2348,6 +2348,10 @@ function createCaptureRes(translator, realRes) {
       // further byte — a terminal frame must not be written into a socket that is
       // already gone. (The chat writer's own wait settles through fire('close').)
       translator.writer.dispose();
+      // Release whatever the SSE framer still retains (a partial line, queued
+      // data bytes): after teardown no push may reach it, and its "flood bytes
+      // unreachable" contract is only enforced if dispose actually runs here.
+      translator.sseFramer?.dispose();
       fire('close');
     },
     on(event, cb) {
