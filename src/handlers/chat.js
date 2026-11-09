@@ -963,6 +963,17 @@ export function detectFabricatedToolResult(text, { lastUserText = '' } = {}) {
  * model produces invalid JSON (the response still flows, parsing is the
  * caller's responsibility).
  */
+// CPU bound (S1 audit): the balanced-block scan below is O(starts × length) —
+// a reply of bare '{' characters walks the whole tail once per start (measured:
+// 64 KiB ≈ 6.2 s, ~4× per doubling), and every candidate that does close costs a
+// JSON.parse as large as the span scanned to reach it. Cap the work at 512
+// start positions and 4 MiB of cumulative inner scanning — the byte budget
+// bounds total parse effort too, since each candidate is a slice of what was
+// already scanned. Past either bound the trimmed fallback is returned, the
+// same answer an exhausted scan produces.
+const JSON_EXTRACT_MAX_STARTS = 512;
+const JSON_EXTRACT_MAX_SCAN_BYTES = 4 * 1024 * 1024;
+
 function extractJsonPayload(text) {
   if (!text) return text;
   // 1. Fenced code block — most common with Cascade
@@ -973,15 +984,19 @@ function extractJsonPayload(text) {
   }
   // 2. Scan for the first balanced {...} or [...] block that parses
   const trimmed = text.trim();
+  let starts = 0;
+  let scanned = 0;
   for (let start = 0; start < trimmed.length; start++) {
     const ch = trimmed[start];
     if (ch !== '{' && ch !== '[') continue;
+    if (++starts > JSON_EXTRACT_MAX_STARTS || scanned >= JSON_EXTRACT_MAX_SCAN_BYTES) return trimmed;
     const open = ch;
     const close = ch === '{' ? '}' : ']';
     let depth = 0;
     let inStr = false;
     let escape = false;
     for (let i = start; i < trimmed.length; i++) {
+      if (++scanned > JSON_EXTRACT_MAX_SCAN_BYTES) return trimmed;
       const c = trimmed[i];
       if (escape) { escape = false; continue; }
       if (c === '\\' && inStr) { escape = true; continue; }
