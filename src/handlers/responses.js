@@ -716,13 +716,19 @@ export function responsesToChat(body) {
   const responseFormat = normalizeResponseTextFormat(body.text?.format);
   // G02: `text.verbosity` is a first-class Responses parameter and the chat
   // surface carries it as a top-level `verbosity`. Only a non-empty string is
-  // forwarded; absence stays absent so a caller that never sent it is unaffected.
+  // forwarded; absence stays absent so a caller that never sent it is
+  // unaffected. The OpenAI enum is low/medium/high, but this bridge passes any
+  // non-empty string through verbatim: enum validation belongs to the upstream
+  // contract, and a local 400 here would reject requests a permissive backend
+  // might have served (compat risk — same policy as unknown `include` below).
   const textVerbosity = typeof body.text?.verbosity === 'string' && body.text.verbosity.trim()
     ? body.text.verbosity.trim()
     : null;
   // G01: `include` is response-side only (the chat wire has no such parameter),
   // so it rides the result as an internal field like the other bookkeeping below
-  // and is stripped before dispatch.
+  // and is stripped before dispatch. The supported subset is exactly
+  // 'reasoning.encrypted_content'; every other include value is silently
+  // ignored BY DESIGN — no local 400, same compat policy as verbosity above.
   const includeReasoningEncrypted = Array.isArray(body.include)
     && body.include.includes('reasoning.encrypted_content');
   let forwardedToolChoice = body.tool_choice != null
