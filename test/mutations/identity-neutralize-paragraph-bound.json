@@ -51,7 +51,7 @@
     {
       "name": "the a4-catalogue-line fallback is dropped — the catalogue header leaks when its tail is a paragraph away",
       "file": "src/handlers/identity-neutralize.js",
-      "anchor": "  rule('a4-catalogue-line', /The most recent Claude models are[^\\n]*\\n?/gi, '');",
+      "anchor": "  applySpans('a4-catalogue-line', catalogueLineSpans(out), CATALOGUE_LINE_REPLACEMENT, true);",
       "replacement": ""
     },
     {

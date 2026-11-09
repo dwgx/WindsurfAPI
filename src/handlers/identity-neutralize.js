@@ -270,6 +270,40 @@ function catalogueSpan(text) {
   }
 }
 
+const CATALOGUE_LINE_ANCHOR = 'the most recent claude models are';
+const CATALOGUE_LINE_REPLACEMENT = 'The available models are';
+
+/**
+ * a4-catalogue-line: every `The most recent Claude models are` phrase (ASCII-CI),
+ * rewritten to `The available models are` in place.
+ *
+ * The rule this replaces was `The most recent Claude models are[^\n]*\n?` with an
+ * empty replacement, i.e. it deleted the whole line. That is the right span for the
+ * client's own catalogue header, but the line is not always the client's: a caller
+ * prompt that happens to carry the phrase lost everything after it on that line —
+ * measured `'… are listed below; RULE: keep me\nnext'` → `'next'` (66 → 4 bytes),
+ * the caller's RULE gone with no WARN. The fallback's job is only to neutralize the
+ * fingerprint-bearing header, so it rewrites the phrase and leaves every other byte
+ * of the line (and the newline) alone. The full a4-catalogue span still removes the
+ * whole catalogue when its `… most capable Claude models.` terminator is present.
+ *
+ * One pass over the lines; the cursor advances past each span so a line full of
+ * anchors is scanned once.
+ */
+function catalogueLineSpans(text) {
+  const spans = [];
+  forEachLine(text, (lineStart, lineEnd) => {
+    let cursor = lineStart;
+    for (;;) {
+      const anchor = indexOfAsciiCI(text, CATALOGUE_LINE_ANCHOR, cursor, lineEnd);
+      if (anchor < 0) return;
+      spans.push({ start: anchor, end: anchor + CATALOGUE_LINE_ANCHOR.length });
+      cursor = anchor + CATALOGUE_LINE_ANCHOR.length;
+    }
+  });
+  return spans;
+}
+
 const FAST_ANCHOR = 'fast mode for claude code';
 
 /**
@@ -769,9 +803,11 @@ export function neutralizeClientIdentity(text, env = process.env, opts = {}) {
   if (catalogue) applySpans('a4-catalogue', [catalogue], '');
   // Same fallback shape as a4-cli-line: if the catalogue's opening sentence and its
   // "… most capable Claude models." tail end up in different paragraphs, the span
-  // above (correctly) declines, and this strips the fingerprint-bearing opening line
-  // on its own rather than leaving the model-ID catalogue header upstream.
-  rule('a4-catalogue-line', /The most recent Claude models are[^\n]*\n?/gi, '');
+  // above (correctly) declines, and this neutralizes the fingerprint-bearing header
+  // on its own rather than leaving the model-ID catalogue header upstream. It rewrites
+  // ONLY the anchor phrase: the old rule deleted the rest of the line, so a caller
+  // RULE that shared the line with the phrase vanished (66 → 4 bytes, no WARN).
+  applySpans('a4-catalogue-line', catalogueLineSpans(out), CATALOGUE_LINE_REPLACEMENT, true);
   // "You are powered by the model <claude-*/fable-*>." + the "The exact model ID
   // is <id>." sentence that follows it — a self-model fingerprint some entrypoints
   // inject into the Environment block.

@@ -104,11 +104,14 @@ describe('item 14 — the growth guard stays visible after H2 scoped a7-freeform
     assert.deepEqual(neutralize(doubled).multiHit, []);
   });
 
-  it('keeps the over-deletion warning working on the input it was written for', () => {
+  it('keeps the over-deletion warning working on a large catalogue deletion', () => {
     // The W2 guard. Its branch is byte-for-byte unchanged, and this pins that: a
     // large single deletion must still be reported, and must NOT be reclassified as
-    // a multi-hit rewrite.
-    const bigCatalogue = 'The most recent Claude models are ' + 'x'.repeat(600) + '\n';
+    // a multi-hit rewrite. The fixture now carries the catalogue TERMINATOR: the
+    // a4-catalogue-line fallback rewrites only its anchor phrase (it no longer
+    // deletes the line), so the full a4-catalogue span is the deletion path left.
+    const bigCatalogue = 'The most recent Claude models are ' + 'x'.repeat(600)
+      + ' most capable Claude models.\n';
     const { overDeletion, multiHit } = neutralize(bigCatalogue);
     assert.equal(overDeletion.length, 1, 'the over-deletion warning must still fire');
     assert.match(overDeletion[0], /removed \d+ bytes/);
@@ -119,10 +122,11 @@ describe('item 14 — the growth guard stays visible after H2 scoped a7-freeform
     // The two branches must stay EXCLUSIVE. A rule that deletes a lot AND matches
     // several times is one event, not two, and reporting it twice would make the
     // operator-facing count meaningless. Needs both conditions true at once —
-    // >512 bytes removed and >1 occurrence — which no other fixture here produces,
-    // so without it the exclusivity is untested (a mutation merging the branches
-    // SURVIVED before this case existed).
-    const line = 'The most recent Claude models are ' + 'x'.repeat(400) + '\n';
+    // >512 bytes removed and >1 occurrence. Two SHORT a4-cli-line bullets are that
+    // shape: each is replaced whole (293 bytes removed per line, 586 total) and the
+    // rule fires twice, so without the exclusivity the multi-hit branch would report
+    // it a second time.
+    const line = 'Claude Code is available as a CLI ' + 'x'.repeat(300) + '\n';
     const { overDeletion, multiHit } = neutralize(line + line);
     assert.equal(overDeletion.length, 1, 'the deletion must be reported');
     assert.deepEqual(multiHit, [], 'and must NOT also be reported as a rewrite');

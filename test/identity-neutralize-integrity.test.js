@@ -175,6 +175,42 @@ describe('identity-neutralize — legitimate single-paragraph blocks are fully r
   });
 });
 
+// H1 (red-team): the a4-catalogue-line fallback was
+// `rule('a4-catalogue-line', /The most recent Claude models are[^\n]*\n?/gi, '')` —
+// it deleted from the anchor to the end of the line. For the client's own catalogue
+// header that is the whole line; for a caller prompt that merely CONTAINS the phrase
+// it is the caller's text. Measured `'… are listed below; RULE: keep me\nnext'` →
+// `'next'` (66 → 4 bytes) with no WARN. The fallback now rewrites only the anchor
+// phrase, so the header is neutralized and every other byte of the line survives.
+describe('identity-neutralize — a4-catalogue-line rewrites only the anchor phrase', () => {
+  it('preserves the rest of the line, including a caller RULE', () => {
+    const src = 'The most recent Claude models are listed below; RULE: keep me\nnext';
+    assert.equal(neutralize(src),
+      'The available models are listed below; RULE: keep me\nnext',
+      'only the anchor phrase changes; the caller RULE and the newline survive');
+  });
+
+  it('a pure catalogue line with its terminator still goes through the full span', () => {
+    const CAT = "The most recent Claude models are the Claude 5 family, Opus 4.8, and Haiku 4.5. Model IDs — Fable 5: 'claude-fable-5', Opus 4.8: 'claude-opus-4-8'. When building AI applications, default to the latest and most capable Claude models.";
+    const out = neutralize(CAT + '\nnext');
+    assert.equal(out, '\nnext', 'the whole catalogue span is removed, not just the header');
+    assert.equal(/Model IDs|claude-fable-5|claude-opus-4-8/i.test(out), false,
+      'the model-ID body is gone with the span');
+  });
+
+  it('a line without the anchor is byte-identical', () => {
+    const src = 'Just an ordinary line.\nRULE: keep me';
+    assert.equal(neutralize(src), src, 'no anchor ⇒ no rewrite');
+  });
+
+  it('every anchor on one line is replaced and the rest of the line survives', () => {
+    const src = 'A The most recent Claude models are B THE MOST RECENT CLAUDE MODELS ARE C\nnext';
+    assert.equal(neutralize(src),
+      'A The available models are B The available models are C\nnext',
+      'both phrases rewritten in place (ASCII-case-insensitive); prefix, middle, suffix and newline preserved');
+  });
+});
+
 // P3: fastmodeSpans took the newline BEFORE each matched line even when the
 // previous span had already consumed it as its trailing newline, so two adjacent
 // matches produced overlapping spans ([{1,46},{45,90}]) while applySpans documents
