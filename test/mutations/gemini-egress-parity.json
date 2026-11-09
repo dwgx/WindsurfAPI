@@ -3,7 +3,7 @@
     "test/gemini-tool-args-parity.test.js",
     "test/gemini.test.js"
   ],
-  "expectBaselinePass": 79,
+  "expectBaselinePass": 88,
   "mutations": [
     {
       "name": "B4 parity reverted: malformed arguments collapse to {} again — every tool parameter lost with no trace",
