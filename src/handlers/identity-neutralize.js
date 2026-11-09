@@ -268,6 +268,7 @@ const FAST_ANCHOR = 'fast mode for claude code';
  */
 function fastmodeSpans(text) {
   const spans = [];
+  let lastEnd = 0;
   forEachLine(text, (lineStart, lineEnd, hasNewline) => {
     let at = lineStart;
     while (at < lineEnd && isHorizontalSpaceCode(text.charCodeAt(at))) at++;
@@ -276,10 +277,15 @@ function fastmodeSpans(text) {
       while (at < lineEnd && isHorizontalSpaceCode(text.charCodeAt(at))) at++;
     }
     if (!matchesAsciiCI(text, at, FAST_ANCHOR)) return;
-    const start = lineStart > 0 && text.charCodeAt(lineStart - 1) === 10
+    // Take the newline BEFORE the line too, unless the previous span already
+    // consumed it as its trailing newline: two adjacent matches used to share
+    // that character, violating applySpans' non-overlapping precondition.
+    const start = lineStart > 0 && text.charCodeAt(lineStart - 1) === 10 && lineStart - 1 >= lastEnd
       ? lineStart - 1
       : lineStart;
-    spans.push({ start, end: hasNewline ? lineEnd + 1 : lineEnd });
+    const end = hasNewline ? lineEnd + 1 : lineEnd;
+    spans.push({ start, end });
+    lastEnd = end;
   });
   return spans;
 }
@@ -366,6 +372,35 @@ function careSpans(text) {
   }
 }
 
+const FREEFORM_CLAUSE = 'do not wrap the patch in json';
+const FREEFORM_TOKEN = 'freeform';
+
+/**
+ * a7-freeform: `FREEFORM` only on a line that ALSO carries the apply_patch
+ * JSON-wrap clause ("do not wrap the patch in JSON"). The old rule was a global
+ * bare-token match, so it rewrote the CALLER's SQL enum literals and JavaScript
+ * identifiers (WA-003) — text it was never aimed at. The clause is the provenance
+ * boundary: the trigger is the codex apply_patch description sentence "This is a
+ * FREEFORM tool, so do not wrap the patch in JSON.", and a line without the clause
+ * is caller content and comes back byte-identical. Line-scoped on purpose: the
+ * token and the clause sit in the same sentence, and a cross-line scan would let
+ * any mention of the clause license rewriting FREEFORM tokens elsewhere.
+ */
+function freeformSpans(text) {
+  const spans = [];
+  forEachLine(text, (lineStart, lineEnd) => {
+    if (indexOfAsciiCI(text, FREEFORM_CLAUSE, lineStart, lineEnd) < 0) return;
+    let at = lineStart;
+    for (;;) {
+      at = indexOfAsciiCI(text, FREEFORM_TOKEN, at, lineEnd);
+      if (at < 0) return;
+      spans.push({ start: at, end: at + FREEFORM_TOKEN.length });
+      at += FREEFORM_TOKEN.length;
+    }
+  });
+  return spans;
+}
+
 /**
  * WARN above this many bytes removed by ONE substitution.
  *
@@ -385,8 +420,9 @@ const OVER_DELETION_WARN_BYTES = 512;
 // appears once or twice in a system prompt — a client repeating its own identity line
 // three times is already unusual. A bare-token rule firing more than that is far more
 // likely to be matching the CALLER's content, which is the case a7-freeform hit in
-// SQL DDL and in source code. Set above the plausible-identity count rather than at 1
-// so an ordinary two-mention prompt stays quiet.
+// SQL DDL and in source code before H2 scoped it to the apply_patch description.
+// Set above the plausible-identity count rather than at 1 so an ordinary
+// two-mention prompt stays quiet.
 const MULTI_HIT_REWRITE_WARN_COUNT = 1;
 
 /**
@@ -459,10 +495,12 @@ export function neutralizeClientIdentity(text, env = process.env, opts = {}) {
    * never reaches any useful byte figure, while an ordinary identity rewrite
    * (a4-cli-line replaces a clause with a longer sentence) trivially exceeds one and
    * would warn on every well-behaved request — training operators to ignore the line,
-   * which is the failure mode this is supposed to prevent. What distinguishes
-   * a7-freeform is that it is a GLOBAL BARE-TOKEN rule: it can hit an unbounded number
-   * of times in text it was never aimed at. So the signal is "this rule fired more
-   * times than a self-identification phrase plausibly appears".
+   * which is the failure mode this is supposed to prevent. What distinguished
+   * a7-freeform was that it was a GLOBAL BARE-TOKEN rule: it could hit an unbounded
+   * number of times in text it was never aimed at. H2 has since given that rule a
+   * line-scoped provenance boundary (freeformSpans); the occurrence guard stays as
+   * the safety net for any future bare-token rule. So the signal is "this rule fired
+   * more times than a self-identification phrase plausibly appears".
    *
    * The deletion branch is byte-for-byte unchanged, so the W2 guard it was written for
    * still holds exactly as before.
@@ -705,8 +743,13 @@ export function neutralizeClientIdentity(text, env = process.env, opts = {}) {
   // this neutralize pass AFTER preamble injection for the text to be reachable.
   // Live A/B: BOTH fragments must change (rewriting only one still blocks). The
   // tool NAME + JSON schema are untouched, so native function-calling is preserved.
+  // PROVENANCE BOUNDARY (H2/WA-003): FREEFORM is rewritten only on a line that also
+  // carries the JSON-wrap clause above; the old global `/FREEFORM/g` also rewrote the
+  // CALLER's SQL enum literals and JavaScript identifiers. The clause is still present
+  // here because this rule runs BEFORE a7-json-wrap — swapping the two lines would
+  // erase the provenance anchor first and leave FREEFORM in the description.
   // Live-confirmed ⇒ unconditional, on the main WINDSURFAPI_NEUTRALIZE_CLIENT_ID switch.
-  rule('a7-freeform', /FREEFORM/g, 'free-form');
+  applySpans('a7-freeform', freeformSpans(out), 'free-form', true);
   rule('a7-json-wrap', /do not wrap the patch in JSON\./g, 'provide the patch as plain text.');
   // (a8) Claude Code subagent system-prompt trigger (2026-10-24, Claude Code 2.1.310,
   // live-bisected via /v1/messages replay, 2/2 per variant). Every subagent (Agent tool,

@@ -175,23 +175,33 @@ describe('identity-neutralize — legitimate single-paragraph blocks are fully r
   });
 });
 
-describe('identity-neutralize — WA-003 pin: FREEFORM is still rewritten in caller code', () => {
-  // WA-003 (H2, OPEN) is a DIFFERENT defect from WA-001/WA-002: `a7-freeform` is a
-  // bare-token rule with no provenance boundary, so it rewrites the CALLER's own text
-  // — a SQL enum value and a JavaScript identifier below — not just the codex
-  // apply_patch tool description it was aimed at. It GROWS the text by one byte per
-  // hit, so the over-deletion WARN cannot see it either.
-  //
-  // This test PINS the current behaviour so the damage is visible and deliberate. An
-  // H2 fix that adds a provenance boundary MUST update this test; it must not be
-  // deleted to make a change look green.
-  it('rewrites FREEFORM inside SQL and JavaScript (current behaviour, H2 open)', () => {
+// P3: fastmodeSpans took the newline BEFORE each matched line even when the
+// previous span had already consumed it as its trailing newline, so two adjacent
+// matches produced overlapping spans ([{1,46},{45,90}]) while applySpans documents
+// a non-overlapping precondition. The second span now starts at its own lineStart,
+// so the spans abut. Output for this rule is unchanged (the overlap sliced an empty
+// string), which is why the regression test pins the visible result rather than the
+// private span list.
+describe('identity-neutralize — a4-fastmode spans abut on consecutive lines', () => {
+  it('two adjacent Fast mode lines are both removed', () => {
+    const src = 'before\n- Fast mode for Claude Code A\n- Fast mode for Claude Code B\nafter';
+    assert.equal(neutralize(src), 'before\n\nafter',
+      'both lines removed; the neighbours stay on separate lines');
+  });
+});
+
+// H2: a7-freeform had no provenance boundary — it rewrote the CALLER's own text, a
+// SQL enum value and a JavaScript identifier below, not just the codex apply_patch
+// tool description it was aimed at. It GROWS the text by one byte per hit, so the
+// over-deletion WARN could not see it either. H2 scopes it to a line that also
+// carries the apply_patch JSON-wrap clause; the tests below pin BOTH directions:
+// caller code is preserved, and the live-confirmed trigger is still neutralized.
+describe('identity-neutralize — WA-003 (H2): FREEFORM is scoped to the apply_patch description', () => {
+  it('preserves FREEFORM inside SQL and JavaScript', () => {
     const SQL = "CHECK (kind IN ('FREEFORM','STRUCTURED'))";
     const JS = 'if (mode === FREEFORM) { run(); }';
-    assert.equal(neutralize(SQL), "CHECK (kind IN ('free-form','STRUCTURED'))",
-      'SQL enum literal rewritten: WA-003 damage, pinned');
-    assert.equal(neutralize(JS), 'if (mode === free-form) { run(); }',
-      'JS identifier rewritten: WA-003 damage, pinned');
+    assert.equal(neutralize(SQL), SQL, 'SQL enum literal untouched');
+    assert.equal(neutralize(JS), JS, 'JS identifier untouched');
   });
 
   it('the apply_patch description it was aimed at is still neutralized', () => {
@@ -200,6 +210,16 @@ describe('identity-neutralize — WA-003 pin: FREEFORM is still rewritten in cal
     assert.equal(/do not wrap the patch in JSON\./.test(out), false, 'JSON-wrap fragment gone');
     assert.match(out, /free-form/);
     assert.match(out, /provide the patch as plain text\./);
+  });
+
+  it('a bare FREEFORM tool line WITHOUT the JSON-wrap clause is preserved', () => {
+    const src = 'This is a FREEFORM tool. Pass the patch however you like.';
+    assert.equal(neutralize(src), src, 'no provenance anchor ⇒ caller text survives');
+  });
+
+  it('the JSON-wrap clause elsewhere on the SAME line licenses the rewrite', () => {
+    const src = 'FREEFORM tool note: do not wrap the patch in JSON.';
+    assert.equal(neutralize(src), 'free-form tool note: provide the patch as plain text.');
   });
 });
 
