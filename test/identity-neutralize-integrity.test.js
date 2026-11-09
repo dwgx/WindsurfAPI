@@ -261,3 +261,51 @@ describe('identity-neutralize — neutralizeMessageContent reference semantics',
     assert.equal(neutralizeMessageContent(undefined, ENV), undefined);
   });
 });
+
+// A4-cli-line deleted from the anchor to the END OF ITS LINE. That is the right span
+// for the Environment bullet it was written for, but a caller prompt that is ONE long
+// line lost everything after the anchor — measured 512 KiB in, 42 bytes out, with a
+// single WARN. The rule is now line-scoped by WHAT the line is: a short line is
+// replaced whole (unchanged), a long line loses only the anchor phrase.
+describe('identity-neutralize — a4-cli-line is bounded to the clause on long lines', () => {
+  const ANCHOR = 'Claude Code is available as a CLI';
+  const REPLACEMENT = 'This coding assistant runs in a terminal.';
+  const KIB = 1024;
+
+  it('512 KiB single line: the anchor goes, the caller payload stays', () => {
+    const head = 'X'.repeat(512 * KIB);
+    const tail = ' rest of the caller payload must survive.';
+    const src = head + ANCHOR + ' in the terminal, desktop app.' + tail;
+    const out = neutralize(src);
+    assert.equal(out.includes(ANCHOR), false, 'the anchor phrase is gone');
+    assert.ok(out.startsWith(head), 'the 512 KiB prefix is byte-identical');
+    assert.ok(out.endsWith(tail), 'the caller tail is byte-identical');
+    assert.equal(out.length, src.length - ANCHOR.length + REPLACEMENT.length,
+      'only the phrase changed; the line was not collapsed');
+    assert.ok(Buffer.byteLength(out, 'utf8') > 512 * KIB,
+      `expected the payload to survive, got ${Buffer.byteLength(out, 'utf8')} bytes`);
+  });
+
+  it('short line: the whole line is still replaced', () => {
+    const src = 'Claude Code is available as a CLI in the terminal';
+    assert.equal(neutralize(src), REPLACEMENT + '\n');
+  });
+
+  it('a long line WITHOUT the anchor is byte-identical', () => {
+    const src = 'Y'.repeat(64 * KIB);
+    assert.equal(neutralize(src), src, 'length alone must never trigger a rewrite');
+  });
+
+  it('a long line with TWO anchors rewrites both and keeps the rest', () => {
+    const prefix = 'A'.repeat(8 * KIB);
+    const middle = ' first clause. ';
+    const suffix = ' second clause. TAIL';
+    const src = prefix + ANCHOR + middle + 'B'.repeat(8 * KIB) + ANCHOR + suffix;
+    const out = neutralize(src);
+    assert.equal(out.includes(ANCHOR), false, 'both anchors are gone');
+    assert.equal(out.split(REPLACEMENT).length - 1, 2, 'exactly two in-place rewrites');
+    assert.ok(out.startsWith(prefix), 'the prefix is preserved');
+    assert.ok(out.includes(middle), 'the text between the anchors is preserved');
+    assert.ok(out.endsWith(suffix), 'the text after the second anchor is preserved');
+  });
+});

@@ -290,6 +290,84 @@ function fastmodeSpans(text) {
   return spans;
 }
 
+const CLI_ANCHOR = 'claude code is available as a cli';
+const CLI_LINE_REPLACEMENT = 'This coding assistant runs in a terminal.\n';
+const CLI_LONG_REPLACEMENT = 'This coding assistant runs in a terminal.';
+
+/**
+ * Above this many BYTES a line is caller content, not a client identity bullet.
+ *
+ * The real Environment bullet is ~150 bytes; 4,096 leaves room for a long variant
+ * of it while staying far below a prompt-sized payload. Measured before this bound
+ * existed: a caller prompt that was ONE 512 KiB line containing the anchor was
+ * collapsed to 42 bytes, with a single WARN — the rule deleted from the anchor to
+ * the end of the line, which was the whole payload.
+ */
+const CLI_SHORT_LINE_MAX_BYTES = 4096;
+
+/**
+ * True when text[start, end) is longer than `limit` UTF-8 BYTES.
+ *
+ * Computed in place instead of `Buffer.byteLength(text.slice(...))` so a prompt
+ * with 100k short lines does not allocate 100k substrings, and it stops at the
+ * first byte past the bound. Surrogate pairs are counted as 4 bytes, not 6: the
+ * per-code-unit shortcut (each surrogate half is >= 0x800) would misclassify a
+ * short line of astral text as long.
+ */
+function lineByteLengthExceeds(text, start, end, limit) {
+  let bytes = 0;
+  for (let i = start; i < end; i++) {
+    const code = text.charCodeAt(i);
+    if (code < 0x80) bytes += 1;
+    else if (code < 0x800) bytes += 2;
+    else if (code >= 0xd800 && code <= 0xdbff && i + 1 < end) {
+      const next = text.charCodeAt(i + 1);
+      if (next >= 0xdc00 && next <= 0xdfff) { bytes += 4; i++; } else bytes += 3;
+    } else bytes += 3;
+    if (bytes > limit) return true;
+  }
+  return false;
+}
+
+/**
+ * a4-cli-line: `Claude Code is available as a CLI` on one line, with the span
+ * bounded by WHAT the line is rather than by the regex's greed.
+ *
+ * The old `/Claude Code is available as a CLI[^\n]*\n?/gi` deleted the anchor and
+ * everything to the end of its line. For the Environment bullet it was written
+ * for that is correct; for a caller that sends a one-line payload it is the whole
+ * prompt. Which span the rule takes therefore depends on the line:
+ *
+ *   - short line (<= CLI_SHORT_LINE_MAX_BYTES): the whole line plus its trailing
+ *     newline, as before — this is a client identity bullet and nothing else
+ *     lives there.
+ *   - long line (> CLI_SHORT_LINE_MAX_BYTES): only the anchor phrase, in place and
+ *     without a newline. Every other byte on the line is the caller's and comes
+ *     back identical; the line structure is not ours to change.
+ *
+ * A line without the anchor is never touched, however long it is. The phrase can
+ * repeat inside a long line and every occurrence is a fingerprint the 529 gate
+ * can see, so all of them are collected (one linear walk per line).
+ */
+function cliLineSpans(text) {
+  const short = [];
+  const long = [];
+  forEachLine(text, (lineStart, lineEnd, hasNewline) => {
+    const at = indexOfAsciiCI(text, CLI_ANCHOR, lineStart, lineEnd);
+    if (at < 0) return;
+    if (lineByteLengthExceeds(text, lineStart, lineEnd, CLI_SHORT_LINE_MAX_BYTES)) {
+      let cursor = at;
+      while (cursor >= 0) {
+        long.push({ start: cursor, end: cursor + CLI_ANCHOR.length });
+        cursor = indexOfAsciiCI(text, CLI_ANCHOR, cursor + CLI_ANCHOR.length, lineEnd);
+      }
+      return;
+    }
+    short.push({ start: lineStart, end: hasNewline ? lineEnd + 1 : lineEnd });
+  });
+  return { short, long };
+}
+
 const BILLING_HEADER = 'x-anthropic-billing-header:';
 
 /**
@@ -648,7 +726,20 @@ export function neutralizeClientIdentity(text, env = process.env, opts = {}) {
   // LINEAR: one pass over the lines; the old `(?:^|\n)\s*…` re-scanned the
   // whitespace run from every position (676 ms on a 2 KB newline prompt).
   applySpans('a4-fastmode', fastmodeSpans(out), '\n', true);
-  rule('a4-cli-line', /Claude Code is available as a CLI[^\n]*\n?/gi, 'This coding assistant runs in a terminal.\n');
+  // a4-cli-line: line-scoped, but the span depends on the line. A short line is a
+  // client identity bullet and is replaced whole (unchanged behaviour); a LONG line
+  // is caller content that merely mentions the phrase, so only the phrase is
+  // rewritten and every other byte survives (measured before this bound: 512 KiB
+  // in, 42 B out). Long-line spans are applied FIRST: the short-line spans are
+  // offsets into `out`, and each phrase replacement shifts them, so they are
+  // re-scanned rather than adjusted.
+  const cli = cliLineSpans(out);
+  if (cli.long.length > 0) {
+    applySpans('a4-cli-line-long', cli.long, CLI_LONG_REPLACEMENT, true);
+    applySpans('a4-cli-line', cliLineSpans(out).short, CLI_LINE_REPLACEMENT, true);
+  } else {
+    applySpans('a4-cli-line', cli.short, CLI_LINE_REPLACEMENT, true);
+  }
   // LINEAR: same paragraph-bounded shape as a4-brand-span; the terminator search
   // is bounded to the paragraph, and a paragraph without one is skipped whole.
   const catalogue = catalogueSpan(out);

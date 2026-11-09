@@ -158,3 +158,21 @@ describe('identity-neutralize — the linear pass still neutralizes a real 8 KiB
     assert.ok(out.includes('You have access to tools.'), 'tool preamble kept');
   });
 });
+
+// A4-cli-line: the phrase-only path must stay linear on the shape that used to be
+// collapsed. The scanner walks the line once and applySpans rebuilds the string once,
+// so 10k anchors inside a 512 KiB line is one pass — not a suffix copy per hit.
+describe('identity-neutralize — a4-cli-line on a 512 KiB single line', () => {
+  it('rewrites every anchor in place: under 500 ms, caller payload intact', () => {
+    const unit = 'Claude Code is available as a CLI in the terminal. ';
+    const reps = Math.floor((512 * KIB) / unit.length);
+    const src = unit.repeat(reps);
+    assert.ok(src.length > 500 * KIB, `fixture is ~512 KiB, got ${src.length}`);
+    const { ms, out } = timed(src);
+    assert.equal(/Claude Code/i.test(out), false, 'every anchor phrase is rewritten');
+    assert.equal(out.length,
+      reps * 'This coding assistant runs in a terminal. in the terminal. '.length,
+      'each unit lost only the anchor phrase');
+    assert.ok(ms < 500, `took ${ms.toFixed(1)} ms, bound is 500 ms`);
+  });
+});
