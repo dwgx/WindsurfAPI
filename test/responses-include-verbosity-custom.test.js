@@ -208,6 +208,30 @@ describe('G01: include reasoning.encrypted_content', () => {
       .find(item => item.type === 'reasoning');
     assert.equal('encrypted_content' in reasoningDone, false);
   });
+
+  it('does not emit an empty summary_text.done for a blob-only reasoning item', async () => {
+    // The blob can arrive on its own delta with no summary text; closing the
+    // item must not publish a done event for a summary part that never opened.
+    const events = await runStream(
+      { model: 'gpt-5.2', input: 'hi', stream: true, include: ['reasoning.encrypted_content'] },
+      [
+        chatChunk({ choices: [{ index: 0, delta: { reasoning_signature: 'sig_only' } }] }),
+        chatChunk({ choices: [{ index: 0, delta: { content: 'ok' } }] }),
+        chatChunk({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] }),
+        DONE,
+      ],
+    );
+    assert.equal(events.some(e => e.event === 'response.reasoning_summary_text.done'), false,
+      'no summary part exists, so no summary_text.done may be emitted');
+    const reasoningDone = events
+      .filter(e => e.event === 'response.output_item.done')
+      .map(e => e.data.item)
+      .find(item => item.type === 'reasoning');
+    assert.ok(reasoningDone, 'the blob-only reasoning item still closes');
+    assert.equal(reasoningDone.encrypted_content, 'sig_only');
+    assert.deepEqual(reasoningDone.summary, []);
+    assert.equal(events.at(-1).event, 'response.completed');
+  });
 });
 
 describe('G01 input side: replayed reasoning becomes signed thinking', () => {

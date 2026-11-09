@@ -1344,12 +1344,19 @@ class ResponsesStreamTranslator {
   finishReasoning() {
     if (!this.reasoningStarted || this.reasoningDone) return;
     this.reasoningDone = true;
-    this.send('response.reasoning_summary_text.done', {
-      item_id: this.reasoningId,
-      output_index: this.reasoningOutputIndex,
-      summary_index: 0,
-      text: this.reasoningText,
-    });
+    // The summary family opens only with the first reasoning_summary_text.delta.
+    // A blob-only item (noteReasoningEncrypted opened it, no summary text ever
+    // arrived) has no summary part to close, so a `summary_text.done` would be
+    // a done event for a part that does not exist. The item itself still
+    // closes below, carrying the blob.
+    if (this.reasoningText) {
+      this.send('response.reasoning_summary_text.done', {
+        item_id: this.reasoningId,
+        output_index: this.reasoningOutputIndex,
+        summary_index: 0,
+        text: this.reasoningText,
+      });
+    }
     const complete = reasoningItem(this.reasoningId, this.reasoningText, 'completed', this.reasoningEncryptedContent);
     this.send('response.output_item.done', { output_index: this.reasoningOutputIndex, item: complete });
     this.outputItems[this.reasoningOutputIndex] = complete;
