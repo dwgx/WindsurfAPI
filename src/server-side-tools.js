@@ -172,15 +172,38 @@ export function firstUnsupportedServerToolType(tools) {
 // the catch-all rather than widening the refusal without a measured caller.
 const GEMINI_SERVER_SIDE_TOOL_KEYS = ['googleSearch', 'googleSearchRetrieval', 'codeExecution', 'urlContext'];
 
+// Server-executed tools deliberately OUTSIDE the refusal set: googleMaps /
+// fileSearch / computerUse / mcpServers also run on Google's side, but no
+// client in the repo sends them and the audit scoped the 400 to the four
+// documented keys above. They are still dropped before translation, so the
+// handler warns once per request rather than letting a spec-shaped tool
+// vanish with no trace.
+const GEMINI_UNLISTED_SERVER_SIDE_TOOL_KEYS = ['googleMaps', 'fileSearch', 'computerUse', 'mcpServers'];
+
 /** First Gemini server-executed tool key declared in `tools`, or null. */
 export function firstUnsupportedGeminiServerTool(tools) {
   for (const tool of tools || []) {
     if (!tool || typeof tool !== 'object') continue;
     for (const key of GEMINI_SERVER_SIDE_TOOL_KEYS) {
-      if (tool[key]) return key;
+      // Presence, not truthiness: {googleSearch:false} or {googleSearch:null}
+      // is still a declaration of a tool this proxy cannot execute — the key
+      // being there at all is what asks this server to run it.
+      if (Object.hasOwn(tool, key)) return key;
     }
   }
   return null;
+}
+
+/** Unlisted Gemini server-side tool keys declared in `tools`, deduplicated. */
+export function droppedGeminiServerToolNames(tools) {
+  const found = new Set();
+  for (const tool of tools || []) {
+    if (!tool || typeof tool !== 'object') continue;
+    for (const key of GEMINI_UNLISTED_SERVER_SIDE_TOOL_KEYS) {
+      if (Object.hasOwn(tool, key)) found.add(key);
+    }
+  }
+  return [...found];
 }
 
 /**

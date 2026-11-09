@@ -30,7 +30,7 @@ import { SseFramer } from '../sse-framer.js';
 import { buildToolNameMap, restoreToolName, sanitizeToolName } from '../tool-names.js';
 import { createToolIdAllocator, normalizeToolIdsInMessages, sanitizeToolId, toolHygieneEnabled } from '../tool-ids.js';
 import { normalizeHistoryTail } from '../history-normalize.js';
-import { firstUnsupportedGeminiServerTool, geminiServerSideToolUnsupported } from '../server-side-tools.js';
+import { firstUnsupportedGeminiServerTool, geminiServerSideToolUnsupported, droppedGeminiServerToolNames } from '../server-side-tools.js';
 
 // ─── finish_reason mapping (OpenAI → Gemini) ────────────────────
 // Gemini has no dedicated finishReason for function calls — a turn that
@@ -309,6 +309,14 @@ export function geminiToOpenAI(body, modelFromPath) {
   // functionDeclarations are translated: one bad tool rejects the request.
   const unsupportedGeminiTool = firstUnsupportedGeminiServerTool(body?.tools);
   if (unsupportedGeminiTool) throw geminiServerSideToolUnsupported(unsupportedGeminiTool);
+  // The refused set above is the documented four; the remaining server-executed
+  // tools (googleMaps / fileSearch / computerUse / mcpServers) are deliberately
+  // not refused — no client in the repo sends them — but they are still dropped
+  // here, so warn once per request instead of letting them vanish silently.
+  const droppedGeminiTools = droppedGeminiServerToolNames(body?.tools);
+  if (droppedGeminiTools.length) {
+    log.warn(`gemini: dropped ${droppedGeminiTools.length} unlisted server-side tool declaration(s) [${droppedGeminiTools.join(', ')}] - the proxy has no executor for them; declare a normal functionDeclaration if the client runs them itself`);
+  }
   const tools = [];
   for (const t of (body?.tools || [])) {
     if (Array.isArray(t?.functionDeclarations)) {

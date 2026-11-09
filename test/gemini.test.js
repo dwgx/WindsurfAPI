@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { log } from '../src/config.js';
 import {
   geminiToOpenAI,
   openAIToGemini,
@@ -177,6 +178,59 @@ describe('geminiToOpenAI request translation', () => {
           return true;
         },
       );
+    }
+  });
+
+  it('refuses a server-side tool declared with a falsy value (presence, not truthiness)', () => {
+    // {googleSearch:false} / {googleSearch:null} slipped through the old
+    // `if (tool[key])` check and the tool vanished with a 200 — the same
+    // silent non-execution the gate exists to prevent. Presence of the key is
+    // the declaration; the value's truthiness is irrelevant.
+    for (const key of ['googleSearch', 'googleSearchRetrieval', 'codeExecution', 'urlContext']) {
+      for (const value of [false, null, 0, '']) {
+        assert.throws(
+          () => geminiToOpenAI({
+            contents: [{ role: 'user', parts: [{ text: 'x' }] }],
+            tools: [{ [key]: value }],
+          }),
+          (err) => {
+            assert.equal(err.code, 'unsupported_server_side_tool',
+              `${key}=${JSON.stringify(value)} must be refused`);
+            return true;
+          },
+        );
+      }
+    }
+  });
+
+  it('warns and drops unlisted server-side tools instead of vanishing silently', () => {
+    // googleMaps / fileSearch / computerUse / mcpServers are server-executed
+    // too, but deliberately outside the refusal set (no client in the repo
+    // sends them). They are still dropped before translation — the warn is
+    // the only trace the client gets that its tool never ran.
+    const warnings = [];
+    const original = log.warn;
+    log.warn = (...args) => warnings.push(args.join(' '));
+    try {
+      const out = geminiToOpenAI({
+        contents: [{ role: 'user', parts: [{ text: 'x' }] }],
+        tools: [
+          { googleMaps: {} },
+          { fileSearch: { fileSearchStoreNames: ['store'] } },
+          { computerUse: { environment: 'browser' } },
+          { mcpServers: [{ serverName: 's', httpUrl: 'https://mcp.example' }] },
+          { functionDeclarations: [{ name: 'lookup', parameters: { type: 'object' } }] },
+        ],
+      });
+      assert.equal(out.tools.length, 1, 'only the functionDeclaration is translated');
+      assert.equal(out.tools[0].function.name, 'lookup');
+      const logged = warnings.join('\n');
+      for (const key of ['googleMaps', 'fileSearch', 'computerUse', 'mcpServers']) {
+        assert.match(logged, new RegExp(key), `${key} must be named in the drop warning`);
+      }
+      assert.match(logged, /dropped|drop/i, 'the warning says the tools were dropped');
+    } finally {
+      log.warn = original;
     }
   });
 
