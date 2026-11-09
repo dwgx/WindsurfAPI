@@ -424,3 +424,113 @@ describe('identity-neutralize — an over-large deletion is observable', () => {
       + `Got:\n${warns.join('\n')}`);
   });
 });
+
+// Differential audit (OLD scanner vs NEW, .agent/diff-audit/REPORT.md): two
+// under-redaction regressions where NEW kept fingerprint bytes that OLD removed.
+// F1: `IMPORTANT:` alone on its line, then ONLY whitespace (including the blank
+// line the live preamble emits), then the security phrase — the paragraph-bound
+// gap refused to cross the break, so the whole sentence went upstream. F2: a
+// billing header behind a lone \r / U+2028 / U+2029 never anchored, because
+// forEachLine only split on \n while the old `/^…/m` rules accepted every JS
+// line terminator.
+describe('identity-neutralize — differential audit under-redaction fixes', () => {
+  const SEC_PHRASE = /Assist with authorized security testing/i;
+  const SEC_TAIL = 'defensive security, CTF challenges. Dual-use tools require authorization: security research, or defensive use cases.';
+
+  it('security: IMPORTANT: alone, blank line, then the phrase — still neutralized', () => {
+    const src = 'IMPORTANT:\n\nAssist with authorized security testing, ' + SEC_TAIL + '\n\nRULE: keep me';
+    const { out } = neutralize(src);
+    assert.equal(SEC_PHRASE.test(out), false,
+      'the all-whitespace gap must let IMPORTANT: pair with the phrase (F1)');
+    assert.ok(out.includes('RULE: keep me'), 'caller RULE kept');
+  });
+
+  it('security: same shape with a whitespace-only line between', () => {
+    const src = 'IMPORTANT:\n   \nAssist with authorized security testing, ' + SEC_TAIL + '\n\nRULE: keep me';
+    const { out } = neutralize(src);
+    assert.equal(SEC_PHRASE.test(out), false,
+      'a whitespace-only blank line is still whitespace for the gap');
+    assert.ok(out.includes('RULE: keep me'), 'caller RULE kept');
+  });
+
+  it('security: same shape with an NBSP-only line between', () => {
+    const src = 'IMPORTANT:\n \nAssist with authorized security testing, ' + SEC_TAIL + '\n\nRULE: keep me';
+    const { out } = neutralize(src);
+    assert.equal(SEC_PHRASE.test(out), false,
+      'an NBSP-only blank line is still whitespace for the gap');
+    assert.ok(out.includes('RULE: keep me'), 'caller RULE kept');
+  });
+
+  it('security: anchor mid-line keeps the pairing too', () => {
+    const src = 'preamble text IMPORTANT:\n\nAssist with authorized security testing, ' + SEC_TAIL + '\n\nRULE: keep me';
+    const { out } = neutralize(src);
+    assert.equal(SEC_PHRASE.test(out), false, 'fingerprint leaked');
+    assert.ok(out.includes('preamble text'), 'text before the anchor kept');
+    assert.ok(out.includes('RULE: keep me'), 'caller RULE kept');
+  });
+
+  // NEGATIVE CONTROL — the WA-002 bound still holds: when the anchor's own
+  // paragraph continues with real text, a phrase one paragraph later is NOT
+  // paired and must survive exactly as OLD left it.
+  it('security: anchor followed by real text still does NOT pair across the break', () => {
+    const src = 'IMPORTANT: keep this instruction.\n\nAssist with authorized security testing, ' + SEC_TAIL + '\n\nRULE: keep me';
+    const { out } = neutralize(src);
+    assert.ok(out.includes('keep this instruction.'), 'the anchor paragraph survives');
+    assert.ok(SEC_PHRASE.test(out),
+      'a phrase in the NEXT paragraph is not the anchor\'s sentence — OLD left it too');
+    assert.ok(out.includes('RULE: keep me'), 'caller RULE kept');
+  });
+
+  it('billing: a header behind a lone CR is still stripped', () => {
+    const src = 'preamble\rx-anthropic-billing-header: cc_version=2.1.0;\rtail keep me';
+    const { out } = neutralize(src);
+    assert.equal(out.includes('x-anthropic-billing-header'), false,
+      'a lone CR is a line terminator — the header must not leak (F2)');
+    assert.ok(out.includes('preamble'), 'text before kept');
+    assert.ok(out.includes('tail keep me'), 'text after kept');
+  });
+
+  it('billing: a header behind U+2028 / U+2029 is still stripped', () => {
+    for (const [name, sep] of [['U+2028', ' '], ['U+2029', ' ']]) {
+      const src = 'preamble' + sep + 'x-anthropic-billing-header: cc_version=2.1.0;' + sep + 'tail keep me';
+      const { out } = neutralize(src);
+      assert.equal(out.includes('x-anthropic-billing-header'), false,
+        `${name} is a JS line terminator — the header must not leak (F2)`);
+      assert.ok(out.includes('tail keep me'), `${name}: text after kept`);
+    }
+  });
+});
+
+// F5 (diff-audit): the FREEFORM provenance boundary was line-scoped, so a
+// preamble whose clause and token wrapped across lines leaked the token.
+// Paragraph scope covers the wrap while a bare token in caller text — the
+// WA-003 corruption the line bound exists to stop — still survives.
+describe('identity-neutralize — FREEFORM provenance is paragraph-scoped', () => {
+  it('token on the line AFTER the clause is still rewritten', () => {
+    const src = 'return the patch and do not wrap the patch in json,\nrespond in FREEFORM.\n\nRULE: keep me';
+    const { out } = neutralize(src);
+    assert.equal(out.includes('FREEFORM'), false, 'wrapped clause+token must not leak (F5)');
+    assert.ok(out.includes('free-form'), 'token rewritten to the benign form');
+    assert.ok(out.includes('RULE: keep me'), 'caller RULE kept');
+  });
+
+  it('token on the line BEFORE the clause is still rewritten', () => {
+    const src = 'respond in FREEFORM,\ndo not wrap the patch in json.\n\nRULE: keep me';
+    const { out } = neutralize(src);
+    assert.equal(out.includes('FREEFORM'), false, 'token-before-clause in one paragraph');
+    assert.ok(out.includes('RULE: keep me'), 'caller RULE kept');
+  });
+
+  it('clause in paragraph 1, token in paragraph 2 — the token survives', () => {
+    const src = 'do not wrap the patch in json.\n\nCHECK (kind IN (\'FREEFORM\',\'STRUCTURED\'))';
+    const { out } = neutralize(src);
+    assert.ok(out.includes("'FREEFORM'"),
+      'a token outside the clause paragraph is caller content — keep it');
+  });
+
+  it('a bare FREEFORM token with no clause anywhere still survives (WA-003)', () => {
+    const src = "if (mode === FREEFORM) { run(); }\nSELECT * FROM t WHERE kind = 'FREEFORM'";
+    const { out } = neutralize(src);
+    assert.equal(out, src, 'caller code tokens are not the fingerprint');
+  });
+});

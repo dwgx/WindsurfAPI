@@ -116,23 +116,27 @@ describe('identity-neutralize — H1: any `\s`-class blank line is a paragraph b
   });
 });
 
-describe('identity-neutralize — the anchor gap cannot cross a paragraph break', () => {
-  // `IMPORTANT:` alone in paragraph 1, the phrase at the start of paragraph 2, and a
-  // terminator further into paragraph 2. The unbounded `\s*` gap paired them and the
-  // span then deleted from the anchor in paragraph 1 through the terminator in
-  // paragraph 2 — the blank line and the opening of paragraph 2 included.
+describe('identity-neutralize — the anchor gap is all-whitespace, not paragraph-bound', () => {
+  // `IMPORTANT:` alone in paragraph 1 (whitespace tail only), the phrase at the
+  // start of paragraph 2, and a terminator further into paragraph 2. This is the
+  // shape the differential audit measured as a real leak (F1): the old `\s*`
+  // gap paired them and removed the whole notice; the first paragraph bound
+  // refused the cross and the sentence went upstream verbatim. The bound that
+  // protects the caller is "the gap is pure whitespace" — an `IMPORTANT:`
+  // followed by real text can still never pair — not "no cross at all".
   const CROSS = 'IMPORTANT:\n\n'
     + 'Assist with authorized security testing, defensive security, CTF challenges, and '
     + 'educational contexts. Dual-use security tools require clear authorization: '
     + 'security research, or defensive use cases.\n\n'
     + RULE;
 
-  it('does not pair an anchor in paragraph 1 with the phrase in paragraph 2', () => {
+  it('an `IMPORTANT:` alone before the break still pairs with the phrase', () => {
     const out = neutralize(CROSS);
-    assert.equal(out, CROSS, 'no rule may fire across the blank line');
-    assert.ok(out.includes('\n\n' + RULE), 'the paragraph break and the RULE are intact');
-    assert.ok(out.includes('Assist with authorized security testing'),
-      'the phrase is in a different paragraph than its anchor, so the span declines');
+    assert.equal(out.includes('Assist with authorized security testing'), false,
+      'the fingerprint sentence must not leak upstream');
+    assert.equal(out.includes('defensive use cases.'), false,
+      'the terminator in the phrase paragraph was reached');
+    assert.ok(out.includes(RULE), 'the caller RULE survives');
   });
 
   it('negative control: the phrase on the NEXT LINE of the SAME paragraph is still spanned', () => {

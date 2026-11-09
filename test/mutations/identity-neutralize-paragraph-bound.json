@@ -21,8 +21,8 @@
     {
       "name": "the original defect on the security-paragraph span",
       "file": "src/handlers/identity-neutralize.js",
-      "anchor": "    const limit = paraLimit;",
-      "replacement": "    const limit = text.length;"
+      "anchor": "    // it from the anchor's paragraph.\n    const limit = paragraphEndAt(text, from);",
+      "replacement": "    // it from the anchor's paragraph.\n    const limit = text.length;"
     },
     {
       "name": "WITHIN_PARAGRAPH loses the whole bound — every span crosses blank lines again",

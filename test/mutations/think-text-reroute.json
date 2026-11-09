@@ -3,7 +3,7 @@
     "test/response-classifier.test.js",
     "test/messages.test.js"
   ],
-  "expectBaselinePass": 97,
+  "expectBaselinePass": 98,
   "mutations": [
     {
       "name": "leading-marker reroute disabled entirely — think-tagged content is never rerouted",

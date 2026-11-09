@@ -109,16 +109,33 @@ function paragraphEndAt(text, from) {
   return text.length;
 }
 
-/** Visit every line once, left to right: (lineStart, lineEnd, hasNewline). */
+/**
+ * Visit every line once, left to right: (lineStart, lineEnd, hasNewline,
+ * nextStart). Lines break on every JavaScript line terminator — \n, \r,
+ * U+2028, U+2029 — the same set the `/^…/m` regexes this module replaced
+ * anchored at. A `\r\n` pair is ONE break; `nextStart` is the first index of
+ * the following line (past the whole terminator), which is what a span that
+ * means "delete the line WITH its newline" must consume.
+ */
 function forEachLine(text, visit) {
   let lineStart = 0;
   for (;;) {
-    let lineEnd = text.indexOf('\n', lineStart);
+    let lineEnd = -1;
+    for (let i = lineStart; i < text.length; i++) {
+      const c = text.charCodeAt(i);
+      if (c === 10 || c === 13 || c === 0x2028 || c === 0x2029) { lineEnd = i; break; }
+    }
     const hasNewline = lineEnd >= 0;
     if (!hasNewline) lineEnd = text.length;
-    visit(lineStart, lineEnd, hasNewline);
+    let nextStart = text.length;
+    if (hasNewline) {
+      nextStart = lineEnd + 1;
+      if (text.charCodeAt(lineEnd) === 13
+        && nextStart < text.length && text.charCodeAt(nextStart) === 10) nextStart++;
+    }
+    visit(lineStart, lineEnd, hasNewline, nextStart);
     if (!hasNewline) return;
-    lineStart = lineEnd + 1;
+    lineStart = nextStart;
   }
 }
 
@@ -144,26 +161,26 @@ const SECURITY_TERM_RESEARCH = 'security research';
  */
 function securitySpan(text) {
   let cursor = 0;
-  // Paragraph end of the anchor currently under test, cached so a paragraph full
-  // of `IMPORTANT:` tokens is walked once instead of once per anchor.
-  let paraLimit = -1;
   for (;;) {
     const anchor = indexOfAsciiCI(text, SECURITY_ANCHOR, cursor);
     if (anchor < 0) return null;
-    if (paraLimit <= anchor) paraLimit = paragraphEndAt(text, anchor);
-    // The gap belongs to the ANCHOR's paragraph. `\s*` used to eat the blank line,
-    // so an `IMPORTANT:` at the end of paragraph 1 paired with the phrase at the
-    // start of paragraph 2 and the span then deleted across the break.
+    // The gap is required to be ALL whitespace — that requirement, not the
+    // paragraph bound, is what keeps WA-002: an `IMPORTANT:` whose own
+    // paragraph continues with text still cannot pair. But an anchor that is
+    // alone before the break (`IMPORTANT:` + blank line(s) + phrase — the
+    // shape the live preamble emits) must still reach the phrase the way the
+    // old `\s*` did; refusing the cross let the whole sentence leak upstream.
     let at = anchor + SECURITY_ANCHOR.length;
-    while (at < paraLimit && isSpaceCode(text.charCodeAt(at))) at++;
-    if (at >= paraLimit || !matchesAsciiCI(text, at, SECURITY_PHRASE)) {
+    while (at < text.length && isSpaceCode(text.charCodeAt(at))) at++;
+    if (at >= text.length || !matchesAsciiCI(text, at, SECURITY_PHRASE)) {
       cursor = anchor + 1;
       continue;
     }
     const from = at + SECURITY_PHRASE.length;
-    // `from` is in the same paragraph as the anchor by construction, so the cached
-    // paragraph end is exactly the bound the terminator search needs.
-    const limit = paraLimit;
+    // The terminator belongs to the notice itself, so the bound is the
+    // paragraph the PHRASE sits in — the whitespace gap may have crossed into
+    // it from the anchor's paragraph.
+    const limit = paragraphEndAt(text, from);
     let end = -1;
     let researchDead = false;
     for (let i = from; i < limit; i++) {
@@ -196,22 +213,29 @@ function securitySpan(text) {
 function securityLineSpans(text) {
   const spans = [];
   let cursor = 0;
-  let paraLimit = -1;
   for (;;) {
     const anchor = indexOfAsciiCI(text, SECURITY_ANCHOR, cursor);
     if (anchor < 0) return spans;
-    if (paraLimit <= anchor) paraLimit = paragraphEndAt(text, anchor);
-    // Same paragraph bound as securitySpan(): the fallback may rewrite the line the
-    // anchor sits on, but it must never reach across a blank line into the next
-    // paragraph (the `\s*` gap used to carry the span over the break).
+    // Same all-whitespace gap rule as securitySpan(): the anchor's paragraph may
+    // continue only with whitespace before the phrase, which is what lets an
+    // `IMPORTANT:` that is alone before a blank line still pair — while an
+    // anchor followed by real text never reaches across the break.
     let at = anchor + SECURITY_ANCHOR.length;
-    while (at < paraLimit && isSpaceCode(text.charCodeAt(at))) at++;
-    if (at >= paraLimit || !matchesAsciiCI(text, at, SECURITY_PHRASE)) {
+    while (at < text.length && isSpaceCode(text.charCodeAt(at))) at++;
+    if (at >= text.length || !matchesAsciiCI(text, at, SECURITY_PHRASE)) {
       cursor = anchor + 1;
       continue;
     }
     let end = at + SECURITY_PHRASE.length;
-    while (end < text.length && text.charCodeAt(end) !== 10) end++;
+    // "To end of its line" — same terminator set forEachLine splits on: the
+    // whitespace gap may have carried the match across a \r / U+2028 / U+2029
+    // boundary, so the run must stop at the first terminator of ANY kind or a
+    // \r-terminated shape would swallow the next line too.
+    while (end < text.length) {
+      const c = text.charCodeAt(end);
+      if (c === 10 || c === 13 || c === 0x2028 || c === 0x2029) break;
+      end++;
+    }
     spans.push({ start: anchor, end });
     cursor = end;
   }
@@ -553,7 +577,7 @@ const FAST_ANCHOR = 'fast mode for claude code';
 function fastmodeSpans(text) {
   const spans = [];
   let lastEnd = 0;
-  forEachLine(text, (lineStart, lineEnd, hasNewline) => {
+  forEachLine(text, (lineStart, lineEnd, hasNewline, nextStart) => {
     let at = lineStart;
     while (at < lineEnd && isHorizontalSpaceCode(text.charCodeAt(at))) at++;
     if (at < lineEnd && text.charCodeAt(at) === 45) {
@@ -563,11 +587,19 @@ function fastmodeSpans(text) {
     if (!matchesAsciiCI(text, at, FAST_ANCHOR)) return;
     // Take the newline BEFORE the line too, unless the previous span already
     // consumed it as its trailing newline: two adjacent matches used to share
-    // that character, violating applySpans' non-overlapping precondition.
-    const start = lineStart > 0 && text.charCodeAt(lineStart - 1) === 10 && lineStart - 1 >= lastEnd
-      ? lineStart - 1
-      : lineStart;
-    const end = hasNewline ? lineEnd + 1 : lineEnd;
+    // that character, violating applySpans' non-overlapping precondition. The
+    // preceding terminator can be any of the JS line terminators, and a `\r\n`
+    // pair is consumed whole.
+    let start = lineStart;
+    if (lineStart > 0 && lineStart - 1 >= lastEnd) {
+      const prev = text.charCodeAt(lineStart - 1);
+      if (prev === 10 || prev === 13 || prev === 0x2028 || prev === 0x2029) {
+        start = lineStart - 1;
+        if (prev === 10 && lineStart - 2 >= lastEnd && lineStart >= 2
+          && text.charCodeAt(lineStart - 2) === 13) start = lineStart - 2;
+      }
+    }
+    const end = nextStart;
     spans.push({ start, end });
     lastEnd = end;
   });
@@ -639,7 +671,7 @@ function lineByteLengthExceeds(text, start, end, limit) {
 function cliLineSpans(text) {
   const short = [];
   const long = [];
-  forEachLine(text, (lineStart, lineEnd, hasNewline) => {
+  forEachLine(text, (lineStart, lineEnd, hasNewline, nextStart) => {
     const at = indexOfAsciiCI(text, CLI_ANCHOR, lineStart, lineEnd);
     if (at < 0) return;
     if (lineByteLengthExceeds(text, lineStart, lineEnd, CLI_SHORT_LINE_MAX_BYTES)) {
@@ -650,7 +682,7 @@ function cliLineSpans(text) {
       }
       return;
     }
-    short.push({ start: at, end: hasNewline ? lineEnd + 1 : lineEnd });
+    short.push({ start: at, end: nextStart });
   });
   return { short, long };
 }
@@ -664,11 +696,11 @@ const BILLING_HEADER = 'x-anthropic-billing-header:';
  */
 function billingSpans(text) {
   const spans = [];
-  forEachLine(text, (lineStart, lineEnd, hasNewline) => {
+  forEachLine(text, (lineStart, lineEnd, hasNewline, nextStart) => {
     let at = lineStart;
     while (at < lineEnd && isHorizontalSpaceCode(text.charCodeAt(at))) at++;
     if (!matchesAsciiCI(text, at, BILLING_HEADER)) return;
-    spans.push({ start: lineStart, end: hasNewline ? lineEnd + 1 : lineEnd });
+    spans.push({ start: lineStart, end: nextStart });
   });
   return spans;
 }
@@ -758,15 +790,36 @@ const FREEFORM_TOKEN = 'FREEFORM';
  */
 function freeformSpans(text) {
   const spans = [];
-  forEachLine(text, (lineStart, lineEnd) => {
-    if (indexOfAsciiCI(text, FREEFORM_CLAUSE, lineStart, lineEnd) < 0) return;
-    let at = lineStart;
+  // The provenance boundary is the PARAGRAPH, not the line: a wrapped preamble
+  // can carry `FREEFORM` on the line after its JSON-wrap clause, and a bare
+  // token anywhere else is caller text (the WA-003 global rewrite corrupted
+  // exactly that). A blank line — all non-terminator whitespace — ends the
+  // scope, same paragraph model the security rules use.
+  let paraHasClause = false;
+  let paraStart = 0;
+  const flush = (paraEnd) => {
+    if (!paraHasClause) return;
+    let at = paraStart;
     for (;;) {
-      at = indexOfExact(text, FREEFORM_TOKEN, at, lineEnd);
-      if (at < 0) return;
+      at = indexOfExact(text, FREEFORM_TOKEN, at, paraEnd);
+      if (at < 0) break;
       spans.push({ start: at, end: at + FREEFORM_TOKEN.length });
       at += FREEFORM_TOKEN.length;
     }
+  };
+  forEachLine(text, (lineStart, lineEnd, hasNewline, nextStart) => {
+    let blank = true;
+    for (let i = lineStart; i < lineEnd; i++) {
+      if (!isSpaceCode(text.charCodeAt(i))) { blank = false; break; }
+    }
+    if (blank) {
+      flush(lineStart);
+      paraHasClause = false;
+      paraStart = nextStart;
+      return;
+    }
+    if (indexOfAsciiCI(text, FREEFORM_CLAUSE, lineStart, lineEnd) >= 0) paraHasClause = true;
+    if (!hasNewline) flush(text.length);
   });
   return spans;
 }
@@ -868,7 +921,7 @@ export function neutralizeClientIdentity(text, env = process.env, opts = {}) {
    * which is the failure mode this is supposed to prevent. What distinguished
    * a7-freeform was that it was a GLOBAL BARE-TOKEN rule: it could hit an unbounded
    * number of times in text it was never aimed at. H2 has since given that rule a
-   * line-scoped provenance boundary (freeformSpans); the occurrence guard stays as
+   * paragraph-scoped provenance boundary (freeformSpans); the occurrence guard stays as
    * the safety net for any future bare-token rule. So the signal is "this rule fired
    * more times than a self-identification phrase plausibly appears".
    *

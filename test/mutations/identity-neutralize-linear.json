@@ -8,14 +8,14 @@
     {
       "name": "b-security: the terminator search leaves the anchor's paragraph again — the caller RULE between two paragraphs is deleted (the WA-002 defect)",
       "file": "src/handlers/identity-neutralize.js",
-      "anchor": "    const limit = paraLimit;",
-      "replacement": "    const limit = text.length;"
+      "anchor": "    // it from the anchor's paragraph.\n    const limit = paragraphEndAt(text, from);",
+      "replacement": "    // it from the anchor's paragraph.\n    const limit = text.length;"
     },
     {
       "name": "b-security-line: the fallback loses its end-of-line bound — the span runs from the anchor to the end of the prompt",
       "file": "src/handlers/identity-neutralize.js",
-      "anchor": "    while (end < text.length && text.charCodeAt(end) !== 10) end++;",
-      "replacement": "    end = text.length;"
+      "anchor": "      if (c === 10 || c === 13 || c === 0x2028 || c === 0x2029) break;",
+      "replacement": "      if (false) break;"
     },
     {
       "name": "a4-brand-span: the span leaves its paragraph again — the caller instructions between the anchors are deleted (measured 213 -> 59 bytes)",
