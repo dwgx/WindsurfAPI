@@ -22,7 +22,7 @@ export const TRANSPORT_MODEL = 'claude-haiku-5-5-low';
  * client key or the env token fails the run.
  */
 export const TRANSPORT_SECRETS = Object.freeze([
-  { label: 'client api key', value: 'sk-transport-matrix-client-8f3c2a7e' },
+  { label: 'client api key', value: 'sk-fixture-transport-matrix-client-8f3c2a7e' },
   { label: 'connect env token', value: 'transport-matrix-connect-token-4b7d9e1c' },
 ]);
 
