@@ -24,6 +24,87 @@
 
 const MAX_REF_DEPTH = 32;
 
+// A caller-supplied `pattern` is compiled with the platform RegExp engine,
+// which backtracks: catastrophic nesting makes the match cost exponential in
+// the length of the MODEL's output — i.e. a caller can aim a regex bomb at
+// this process's event loop on the request path. Three cheap bounds keep
+// `pattern` a judgement we can afford:
+//   1. MAX_PATTERN_CHARS caps the pattern text. No real-world schema needs
+//      more, and the tripwire scan below is O(len²) worst case.
+//   2. hasNestedQuantifier() is a static tripwire for the classic
+//      catastrophic shape — see its comment for the covered list and the
+//      documented gaps.
+//   3. MAX_PATTERN_TARGET_CHARS caps the string a pattern is run on. Even a
+//      safe pattern is a real bill against unbounded model output; a caller
+//      who needs a bound there has `maxLength`, which stays enforced.
+// A refused pattern is treated exactly like an unparseable one — skipped,
+// never a conformance failure. Failing open keeps the module's standing rule:
+// a judgement we cannot safely make is an annotation, not a violation.
+const MAX_PATTERN_CHARS = 1024;
+const MAX_PATTERN_TARGET_CHARS = 256 * 1024;
+
+function isEscapedAt(s, i) {
+  let backslashes = 0;
+  for (let j = i - 1; j >= 0 && s[j] === '\\'; j--) backslashes++;
+  return backslashes % 2 === 1;
+}
+
+// True when `s` holds an unescaped `*`, `+` or `{` outside a character class
+// (inside `[…]` those are literals — `[{]+` is safe and must not trip).
+function hasQuantifierAtom(s) {
+  let inClass = false;
+  for (let k = 0; k < s.length; k++) {
+    const ch = s[k];
+    if (isEscapedAt(s, k)) continue;
+    if (inClass) { if (ch === ']') inClass = false; continue; }
+    if (ch === '[') { inClass = true; continue; }
+    if (ch === '*' || ch === '+' || ch === '{') return true;
+  }
+  return false;
+}
+
+// Static tripwire for the catastrophic-backtracking shape: a quantifier
+// applied to a group whose OWN body carries a quantifier —
+// `(a+)+`, `(\w*)*`, `([a-z]+)+`, `(\d{2,}){2,}`, `((x|y)+)+`, `(?:a+)*`,
+// `(?<n>a+)+`. The same closer check runs on `}` (`(x{2}){3}`-style stacking);
+// `]` closers are skipped outright because a character-class body is literal
+// text that cannot hold a quantifier — `([a-z]+)+` is still caught at its `)`.
+// A `?` after a closer is NOT an outer quantifier here: it runs the group at
+// most once and covers ubiquitous legitimate shapes like `(\.\d+)?`.
+//
+// KNOWN GAPS, accepted: overlapping alternations (`^(a|aa)+$`), adjacent
+// quantified atoms (`a*a*a*…$`), backreference forms, and bounded-but-large
+// inner repeats can still backtrack exponentially even on SHORT input — the
+// target-length cap does not save them. They are detected only by a real
+// regex-structure analysis, which is out of scope for a dependency-free
+// validator; this is a tripwire for the canonical bomb, not a proof of
+// linearity.
+function hasNestedQuantifier(pattern) {
+  for (let i = 0; i + 1 < pattern.length; i++) {
+    const c = pattern[i];
+    if (c === ']' || isEscapedAt(pattern, i)) continue;
+    if (c !== ')' && c !== '}') continue;
+    const n = pattern[i + 1];
+    const quantified = n === '*' || n === '+'
+      || (n === '{' && /^\{\d+(,\d*)?\}/.test(pattern.slice(i + 1)));
+    if (!quantified) continue;
+    const open = c === ')' ? '(' : '{';
+    let depth = 0;
+    for (let j = i - 1; j >= 0; j--) {
+      if (isEscapedAt(pattern, j)) continue;
+      if (pattern[j] === c) depth++;
+      else if (pattern[j] === open) {
+        if (depth === 0) {
+          if (hasQuantifierAtom(pattern.slice(j + 1, i))) return true;
+          break;
+        }
+        depth--;
+      }
+    }
+  }
+  return false;
+}
+
 function isPlainObject(v) {
   return v !== null && typeof v === 'object' && !Array.isArray(v);
 }
@@ -131,10 +212,14 @@ export function validateJsonSchema(value, schema, { path = '$', root = schema, d
     if (typeof schema.maxLength === 'number' && value.length > schema.maxLength) {
       return { ok: false, path, message: `must be at most ${schema.maxLength} characters` };
     }
-    if (typeof schema.pattern === 'string') {
+    if (typeof schema.pattern === 'string'
+        && schema.pattern.length <= MAX_PATTERN_CHARS
+        && !hasNestedQuantifier(schema.pattern)
+        && value.length <= MAX_PATTERN_TARGET_CHARS) {
       let re = null;
       try { re = new RegExp(schema.pattern); } catch { re = null; }
-      // An unparseable pattern is an annotation we cannot judge, not a failure.
+      // An unparseable — or refused — pattern is an annotation we cannot
+      // judge, not a failure.
       if (re && !re.test(value)) return { ok: false, path, message: `must match ${schema.pattern}` };
     }
   }

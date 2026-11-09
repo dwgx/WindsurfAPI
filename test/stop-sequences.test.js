@@ -104,3 +104,50 @@ describe('StopSequenceGate (streaming)', () => {
     assert.equal(out, 'the quick brown fox');
   });
 });
+
+// Per-sequence length cap — pinned numerically here (1024); the same bound is
+// declared as MAX_STOP_SEQUENCE_CHARS in src/stop-sequences.js. A longer entry
+// is DROPPED (never truncated): a truncated sequence could match where the
+// caller's full sequence never would, which is a wrong truncation; a dropped
+// one can only fail open, i.e. behave as if it were absent.
+const STOP_CAP = 1024;
+
+describe('per-sequence length cap', () => {
+  it('drops an over-long bare-string sequence instead of truncating it', () => {
+    const huge = 'x'.repeat(STOP_CAP + 1);
+    assert.deepEqual(normalizeStop(huge), []);
+  });
+
+  it('keeps a sequence exactly at the cap', () => {
+    const edge = 'y'.repeat(STOP_CAP);
+    assert.deepEqual(normalizeStop(edge), [edge]);
+  });
+
+  it('drops only the over-long entries in an array', () => {
+    const huge = 'x'.repeat(STOP_CAP + 1);
+    assert.deepEqual(normalizeStop(['END', huge, 'STOP']), ['END', 'STOP']);
+  });
+
+  it('an over-long stop leaves the gate inactive — passthrough, no invented match', () => {
+    const g = new StopSequenceGate('x'.repeat(STOP_CAP + 1));
+    assert.equal(g.active, false);
+    assert.deepEqual(g.push('x'.repeat(2000)), { emit: 'x'.repeat(2000), hit: false });
+    assert.equal(g.flush(), '');
+  });
+
+  it('a dropped sequence is never enforced by applyStop either', () => {
+    const huge = 'END' + 'x'.repeat(STOP_CAP); // 1027 chars > cap
+    const text = `text ${huge} tail`;
+    const r = applyStop(text, huge);
+    assert.equal(r.hit, false);
+    assert.equal(r.text, text);
+  });
+
+  it('a capped gate can still enforce the remaining under-cap sequences', () => {
+    const g = new StopSequenceGate(['x'.repeat(STOP_CAP + 1), 'STOP']);
+    const r = g.push('abcSTOPtail');
+    assert.equal(r.hit, true);
+    assert.equal(r.emit, 'abc');
+    assert.equal(g.matched, 'STOP');
+  });
+});

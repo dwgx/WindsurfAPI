@@ -15,12 +15,27 @@
  * stop text is not included in the returned content).
  */
 
+// OpenAI documents only the count limit (4 sequences); no per-sequence length
+// is published. Locally a sequence's length IS the enforcement cost: the
+// streaming gate holds back (len - 1) chars per delta and indexOf-scans that
+// window for every upstream chunk, so an unbounded sequence is an unbounded
+// per-delta scan AND an unbounded holdback buffer. Cap each entry at 1024
+// chars — far past any real-world sentinel. An over-limit sequence is DROPPED,
+// not truncated: a truncated sequence could match where the caller's full
+// sequence never would, cutting output upstream would have returned (wrong
+// truncation). Dropping is fail-open — the request behaves as if that sequence
+// were absent, exactly like the non-string / empty entries already discarded
+// here — and can never invent a stop the caller did not write.
+export const MAX_STOP_SEQUENCE_CHARS = 1024;
+
 // OpenAI allows a bare string or an array of up to 4 strings. Normalize to a
-// clean string[] (drop non-strings / empties); return [] when nothing usable.
+// clean string[] (drop non-strings / empties / over-long entries); return []
+// when nothing usable.
 export function normalizeStop(stop) {
-  if (typeof stop === 'string') return stop ? [stop] : [];
+  const usable = (s) => typeof s === 'string' && s.length > 0 && s.length <= MAX_STOP_SEQUENCE_CHARS;
+  if (typeof stop === 'string') return usable(stop) ? [stop] : [];
   if (Array.isArray(stop)) {
-    return stop.filter(s => typeof s === 'string' && s.length > 0).slice(0, 4);
+    return stop.filter(usable).slice(0, 4);
   }
   return [];
 }
