@@ -23,7 +23,7 @@
 //   1. a span cannot cross a blank line (this file's namesake), AND the passages the
 //      529 / content-policy defence exists to remove are STILL removed — bounding a
 //      span is only a fix if the defence survives it. Those negative controls are the
-//      reason the 49 tests in client-identity-neutralize.test.js and
+//      reason the 53 tests in client-identity-neutralize.test.js and
 //      identity-neutralize-shapes.test.js are the specification, not this file.
 //   2. an over-large single substitution reaches the operator as a WARN carrying the
 //      real byte delta, and an ordinary prompt logs NOTHING (a line per request is

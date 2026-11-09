@@ -24,6 +24,63 @@ SSE JSON、队列字节预算、按未确认字节计 drain、history 预算改�
 通过 / 0 失败 / 103 跳过 / 847.7 s，exit 0**（`wave4-test-release.log`）。这是 hardening
 提交，**不是新 tag**：`v3.141.592659` 仍未创建，也没有 push/部署。
 
+## Post-release 增补：复审修复波与范围更正（2026-11-10）
+
+**范围更正。** §0 与文首的计数（36 提交 / 45 文件 / +4,996 −501 / 6 个 `src/` 文件）
+度量的是 `v3.141.592658..deeb2539` 审计分支在发布提交前的冻结范围，**不包含**
+`e0c5c715` 之后的 hardening 与复审修复。发布提交之后本分支另有 **19 个提交 /
+59 个文件 / +6,402 −366 / 16 个 `src/` 文件**（`git rev-list --count
+e0c5c715..5a3ec2a9`；`git diff --shortstat e0c5c715..5a3ec2a9`；
+`git diff --name-only e0c5c715..5a3ec2a9 -- src | wc -l`）：`c4931c40`（审计收口，
+49 文件 / +5,010 −324）、`0aea4ea3`（connect 显式错误终止与 catalogue 边界）、
+`911e6674` / `d0359733`（纯文档）与复审修复波 `04503830`–`5a3ec2a9` 共 15 个提交。
+逐提交证据记入验收附录的增补段（acceptance addendum，另行补写）；本文件只登记
+范围与用户可见变化。
+
+**tag 目标。** `v3.141.592659` 必须打在合并后的 master tip 上（流程：把
+`origin/master` 合入本分支 → `master --ff-only` → 在 master tip 打 annotated tag →
+push），**不是** `e0c5c715`——否则 `c4931c40`/`0aea4ea3` 与复审修复会被关在版本外。
+写作时分支 HEAD 为 `5a3ec2a9`（`src/` 与合并后 tip 相同）；最终 tag 目标记作
+`<merge-tip>`，以合并提交的实际 SHA 为准。
+
+**复审修复波的用户可见变化**（`04503830`–`5a3ec2a9`，按面分组；`c4931c40` 已覆盖的
+面见上节）：
+
+- **auth/server**：`/v1/messages` 的 401 改用 Anthropic 错误形状（`type:'error'` +
+  `authentication_error` + `request-id`）；Gemini 面（`/v1beta/*` 与
+  `/v1/models/*:generateContent` 别名）的 401 改用 Gemini `UNAUTHENTICATED` 信封；
+  凭据载体按 surface 收窄——`x-api-key` 不再能打开 `/v1/chat/completions`、
+  `/v1/completions`、`/v1/responses`（这些面只认 Bearer），`x-goog-api-key` 与
+  `?key=` 只在 `/v1/models` 与 Gemini 面有效，Bearer 处处有效，错配载体一律 401；
+  压缩请求体按面返回 415 `unsupported_content_encoding`（不再是含混的 400）。
+- **streaming**：SSE 队列字节预算改为只计行开销（修复 64 MB 帧帽被 8 MB 预算提前
+  触发的回归；载荷仍由 64 MB 帧帽约束）；drain 等待的固定下限锚定在等待开始时刻，
+  不再被后续背压帧无限推后；`c4931c40` 新增的 `WINDSURFAPI_MIN_CLIENT_RATE_BPS`
+  （默认 8192 B/s）给按字节背压预算定最短客户端吞吐假设。
+- **responses**：`finish_reason:'error'` 一旦记录即终态，后续 chunk 不再把轮次降级为
+  `response.completed`；未正常终止/出错轮次的 tool-call item 标 `incomplete`；
+  blob-only reasoning 不再发空 `summary_text.done`；同一轮里无签名文本与签名
+  reasoning 共存时丢弃回放签名（`41c560f6`）。
+- **messages**：缺省 `keep` 按模型族解析——keep-all 家族（Opus 4.5+/5、Sonnet 4.6+/5、
+  Fable）照旧接受，其余模型（含无法分类的名字）按保守 keep-1 校验，宁可多拒不漏放；
+  `redacted_thinking` 计入 keep 窗口；`{keep:{type:'all'}}` 与 `keep:'all'` 等价接受；
+  非字符串 `model` 返回 400，translator 抛出的 400 补齐 `type:'error'`。
+- **gemini**：`googleSearch`/`googleSearchRetrieval`/`codeExecution`/`urlContext`
+  按键存在性拒绝（`{googleSearch:false}` 等 falsy 声明同样拒绝），返回 400
+  `unsupported_server_side_tool`；未列入拒绝集的 server-side 工具
+  （`googleMaps`/`fileSearch`/`computerUse`/`mcpServers`）丢弃时按请求 warn 留痕。
+- **connect**：`0aea4ea3` 让显式错误 stop reason 优先于可解码 tool call 保留为
+  `finish_reason=error`，chat/completions、messages、responses、gemini 四个协议面一致；
+  catalogue 正文要求真实模型 ID 边界（`claude-3d.example.com`、
+  `claude-1password.example.com`、`claude-opus.example.com` 等散文/主机形状不再误吞
+  调用方文本）。
+- **identity**：catalogue 行内 ID 扫描改为每行 memo（512 KiB 单行 3,439 ms → ~21 ms，
+  消掉 `04503830` 复审发现的 anchors×line 二次复杂度）；`claude-` ID 语法收紧为
+  封闭词表 + 干净边界；`isHorizontalSpaceCode` 恢复 `\s` 全类（除 LF）。
+- **client/image**：prepend 进 Cascade 的 system prompt 在 fresh 单轮、多轮与 resume
+  重建三处统一转义 `</human>`/`</assistant>` 闭合标签；`extractImages` 在最后一个块
+  之后也拒绝已取消的轮次；translator SSE framer 在客户端断连时 dispose。
+
 ## 0. 范围
 
 | 项 | 值 | 命令 |
@@ -146,10 +203,13 @@ WA-002 要防的形状。
 - 被清掉的轮次里有签名轮 → 400 `unsupported_parameter`（`keep:"none"` 同理）。
 
 影响面：只在 replay 开启 + 有限 keep + 带签名历史时触发；两个开关都默认关。400 的
-param/message/code 形状不变。`test/context-management-signed-replay.test.js` 16 个用例，
+param/message/code 形状不变。`test/context-management-signed-replay.test.js` 23 个用例
+（发布时点 16，`c4931c40`/`29197941` 扩充），
 `test/cc-claude-2-1-306.test.js` 12 个兼容用例。
 
-残留：只独立校验第一个有限 keep 编辑（既有行为，本版未改）；本版没有在真实上游复跑。
+残留（发布时点）：只独立校验第一个有限 keep 编辑。后续已修：`c4931c40` 改为逐条校验
+每个 `clear_thinking` 编辑，`29197941` 让缺省 `keep` 按模型族解析（见文末增补）；
+本版没有在真实上游复跑。
 
 ### 1.6 dashboard 写请求先过门、再读 body（S03）
 
@@ -234,8 +294,9 @@ WIRE_EXPECTED_DIFFS {"byte_identical":270,"expected":0,"entries":0,"compared":27
 （`git status --porcelain` 只有 `??` 行），基线 `base_dirty:false`。CI 的干净 checkout 上该
 字段为 false。
 
-**没有在本版实测的**（不得写成已通过）：mutation 变异体本身、托管 CI、HMC
-部署与真实上游。原因与替代命令见 §6–§7；Node 22 全量后来已补测，证据见 §7。
+**没有在本版实测的**（不得写成已通过）：托管 CI、HMC 部署与真实上游。原因与替代命令
+见 §6–§7；Node 22 全量后来已补测，证据见 §7。mutation 变异体在发布提交后已由 HMC
+在 `c4931c40` 上完成 97/97 sweep（§7），最终树的基线重钉与复跑仍 `[UNVERIFIED]`。
 
 ## 4. 变更文件与测试
 
@@ -246,21 +307,35 @@ WIRE_EXPECTED_DIFFS {"byte_identical":270,"expected":0,"entries":0,"compared":27
 
 | 文件 | 用例 |
 |---|---|
-| `test/identity-neutralize-complexity.test.js` | 9（复杂度上界：2,049 B / 512 KiB × 4 形状 / Unicode 前缀） |
-| `test/identity-neutralize-integrity.test.js` | 36（含 WA-002 的 24 码元循环、H2 边界与大小写、A4 前缀保留、catalogue 短语/正文保留与删除） |
-| `test/identity-neutralize-paragraph-bound.test.js` | 30（ASCII + Unicode 段落边界） |
-| `test/neutralize-rewrite-visibility.test.js` | 9（WARN 语义） |
-| `test/context-management-signed-replay.test.js` | 16（接受/拒绝表 + 顺序前缀） |
+| `test/identity-neutralize-complexity.test.js` | 10（复杂度上界：2,049 B / 512 KiB × 4 形状 / Unicode 前缀；`04503830` 增补） |
+| `test/identity-neutralize-integrity.test.js` | 51（含 WA-002 的 24 码元循环、H2 边界与大小写、A4 前缀保留、catalogue 短语/正文保留与删除；`04503830` 增补） |
+| `test/identity-neutralize-paragraph-bound.test.js` | 36（ASCII + Unicode 段落边界；`c4931c40`/`0aea4ea3` 增补） |
+| `test/neutralize-rewrite-visibility.test.js` | 11（WARN 语义；`c4931c40` 增补） |
+| `test/context-management-signed-replay.test.js` | 23（接受/拒绝表 + 顺序前缀 + 缺省 keep 模型族；`c4931c40`/`29197941` 增补） |
 | `test/dashboard-preauth-body.test.js` | 4（body 前 401、单次响应、单次计数） |
-| `test/cascade-image-cancel.test.js` | 6（checkpoint、abort、settle once、404 对照） |
-| `test/cascade-history-serialization.test.js` | 4（两个闭合标签、无关 XML、rebuild） |
+| `test/cascade-image-cancel.test.js` | 7（checkpoint、abort、settle once、404 对照、末块后取消；`a96c2ab4` 增补） |
+| `test/cascade-history-serialization.test.js` | 7（两个闭合标签、无关 XML、rebuild；`15fc5df1` 增补） |
 | `test/transport-matrix.test.js` | 22（四个协议族的流式/非流式矩阵，无产品变更） |
+
+上表用例数按 `5a3ec2a9` 树逐文件实跑（`node --import ./test/setup-env.mjs --test`）；
+§3 的 pass 计数是发布时点的实测值，复审修复波又给其中 7 个文件各增补了用例。
 
 mutation 语料同步：`identity-neutralize-paragraph-bound.json` 重钉锚点（`ad45bfb3` 把它指到
 `applySpans('a4-cli-line', cli.short, CLI_LINE_REPLACEMENT, true)`），`8131848c` 加测试后
 `bb81fa16` 把基线从 80 重钉到 **83**；`neutralize-rewrite-visibility.json` 的基线从 89
 重钉到 **92**；`request-tail-contract.json` 等三份 spec 在 #282 时已重钉。
 `spec-static-check` 现在 exit 0，锚点唯一；两份 spec 的基线实测 0 drift。
+
+发布后语料又变为 **99 spec / 878 mutation**（`node scripts/spec-static-check.mjs` 实测）：
+`c4931c40` 新增 `context-management-signed-replay.json` 与 `identity-neutralize-linear.json`
+两份 spec；`29197941` 把 signed-replay 基线重钉到 **23**（3 条突变），`0aea4ea3` 把
+linear spec 扩到 12 条突变、`04503830` 再把两条锚点改指重写后的分类器并把基线推到
+**46**；`identity-neutralize-paragraph-bound.json` 基线 83→**89**、
+`neutralize-rewrite-visibility.json` 基线 92→**100**（`c4931c40`/`0aea4ea3` 随被测文件
+增补用例重钉）。截至 `5a3ec2a9`，`spec-baseline-check --all` 实测 **99 spec /
+3 drift / 0 untrustworthy**——`gemini-egress-parity`（79→88）、
+`gemini-schema-type-normalize`（98→107）、`think-text-reroute`（97→98）的
+`expectBaselinePass` 待重钉（见 §7），重钉前这三份 spec 的突变判定不作为证据。
 
 ## 5. 回滚
 
@@ -296,19 +371,30 @@ mutation 语料同步：`identity-neutralize-paragraph-bound.json` 重钉锚点�
    （`openai-api-key test/transport-matrix.helpers.mjs 93d6533f4255 SYNTHETIC: …`），
    扫描恢复 **exit 0（0 unbaselined）**。
 
-**当前阻断项：无。** 本机可跑的门禁全部绿（含 `spec-baseline-check --all`）；发布前仍需在
-POSIX 上补跑 mutation sweep 与 `gate:release`（见 §7）。
+**当前阻断项（`5a3ec2a9` 时点）：** mutation 语料有 3 份 spec 的
+`expectBaselinePass` 待重钉（§4、§7），重钉后需在 POSIX 上对最终树复跑 mutation
+sweep；`gate:release` 需在合并树上跑完（见 §7）。本机可跑的其余门禁绿。
 
 ## 7. 已知 / 尚未验证
 
 > 全部历史缺口见 [尚未验证登记册](../UNVERIFIED.md)；本版新增条目也在其中。
 
-- **[UNVERIFIED] mutation 变异体本身**：POSIX 全量 sweep 在 1800 s 上限前跑了 **56/97** 个
-  spec，剩 **41** 个未跑；`spec-baseline-check` 只证明锚点与基线成立，不执行变异体。发布前在
-  POSIX 上补跑 `node scripts/mutation-sweep.mjs --shard 0/1` 与 `--verify`。
-- **[VERIFIED] mutation 全量基线**：`spec-baseline-check.mjs --all`（97 spec）是 release
+- **[VERIFIED] mutation 全量 sweep（HMC，`c4931c40`）**：POSIX `mutation-sweep.mjs`
+  在 HMC clone `c4931c40` 上跑完 **97/97 spec 按预期行为，0 unexpected survivors，
+  0 mismatch**（`.agent/HANDOFF.md` 记录，local evidence；日志 `/tmp/wsa-mutate2.log`，
+  99 个 `SPEC_EXIT` 中 2 个零突变 spec）。旧的「1800 s 上限前 56/97、剩 41」是中途
+  截断的中间态，已被该次完整 sweep 取代；`spec-baseline-check` 只证明锚点与基线
+  成立，不执行变异体。
+- **[UNVERIFIED] mutation 最终树复跑与基线重钉**：语料已扩到 **99 spec / 878
+  mutation**；HMC 侧对合并树 `5a3ec2a9` 的 99/99 覆盖已测，但
+  `spec-baseline-check --all` 本地实测 **99 spec / 3 drift / 0 untrustworthy**
+  （`gemini-egress-parity` 79→88、`gemini-schema-type-normalize` 98→107、
+  `think-text-reroute` 97→98 的 `expectBaselinePass` 待重钉）。重钉并在 POSIX 上
+  复跑 `node scripts/mutation-sweep.mjs --shard 0/1` 与 `--verify` 前，最终树的
+  变异体结论不作为证据。
+- **[VERIFIED] mutation 全量基线（发布树）**：`spec-baseline-check.mjs --all`（97 spec）是 release
   workflow 的模式；发布树实测 **97 spec measured, 0 drift, 0 untrustworthy**，wall 202.5 s
-  （`releasecommit-spec-baseline-all.log`，`sha256 da0d49db…`）。
+  （`releasecommit-spec-baseline-all.log`，`sha256 da0d49db…`）。当前树的对应实测见 §4。
 - **[VERIFIED] Node 22 全量**：`test:release` 的分片（`scripts/run-test-shard.mjs 0 1`）由
   Node 22.23.4 二进制直接运行，实测 **605 文件 / 7,455 测试 / 7,352 通过 / 0 失败 / 103 跳过 /
   801.6 s**（`node22-release-2.log`；
@@ -322,6 +408,10 @@ POSIX 上补跑 mutation sweep 与 `gate:release`（见 §7）。
   没有把病态 payload 发给真实服务，也没有真实客户端复跑。HMC 的旧模块计时用的是 `/tmp`
   副本，生产 `:18999` 未被写入。
 - **[UNVERIFIED] CTX-01 live**：没有在真实上游跑 replay + 有限 keep 的组合。
+- **[UNVERIFIED] `clear_thinking` 缺省 keep 的模型族边界**：`29197941` 按上游文档把
+  缺省 `keep` 分为 keep-all 家族（Opus 4.5+/5、Sonnet 4.6+/5、Fable）与保守 keep-1，
+  边界来自上游文档而非本后端实测（`src/handlers/messages.js` 注释同样标
+  `[UNVERIFIED]`）；无法分类的模型名一律按 keep-1 校验，方向是多拒不少放。
 - **[UNVERIFIED] S03 真实 dashboard 客户端**：只有隔离的排序测试（声明 10 MiB、不发 body）。
 - **[UNVERIFIED] IMG-01 真实 Cascade abort**：取消语义由注入 signal 的测试覆盖；没有在
   真实长轮次里按 Ctrl-C/断连。
@@ -331,7 +421,8 @@ POSIX 上补跑 mutation sweep 与 `gate:release`（见 §7）。
   之后由 release workflow 生成；本文件不代表它们已经存在。
 - **[FIXED] G01（`reasoning.encrypted_content` 从不发出）**：`c4931c40` 在
   `include:["reasoning.encrypted_content"]` 且上游提供值时发出该字段，并补了回放分支；
-  证据 `test/responses-include-verbosity-custom.test.js`（12 条）。
+  证据 `test/responses-include-verbosity-custom.test.js` 的 G01 专项用例（现 17 条，
+  全文件 30 条）。
 - **[FIXED] G02（`text.verbosity` 未解析/未转发）**：`c4931c40` 解析 `text.verbosity` 并带入
   adapter 边界（`completionOverrides.verbosity`）；chat-compatible 上游没有该字段，因此这是
   有意记录的边界 no-op，不再是静默丢弃。证据同上测试文件。
@@ -339,7 +430,9 @@ POSIX 上补跑 mutation sweep 与 `gate:release`（见 §7）。
   `response.custom_tool_call_input.delta` / `.done` 与最终 `custom_tool_call` item 的 `input`/`id`；
   证据同上测试文件。
 - **[FIXED] G06（Gemini 静默丢弃 server-side tools）**：`c4931c40` 改为与其他协议面一致的
-  400 `unsupported_server_side_tool`，不再只写日志；证据 `test/gemini.test.js` 的 G06 三条。
+  400 `unsupported_server_side_tool`，不再只写日志；`b65e0446` 补 falsy 键按存在性拒绝
+  与未列入工具的 warn。证据 `test/gemini.test.js`：2 个 `(G06)` 具名 `it`（translator 级
+  拒绝 + `handleGemini` 路由级 400）加 falsy-presence 断言面。
 - **[UNVERIFIED] G01–G03/G06 的真实客户端抓包**：上述修复由 hermetic 测试覆盖；没有真实
   Codex/Devin 客户端抓包确认 `reasoning.encrypted_content`、`text.verbosity`、custom-tool
   input delta 与 Gemini server-tool 400 在真实上游/客户端上的线上形状。
