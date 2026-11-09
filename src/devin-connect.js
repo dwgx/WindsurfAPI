@@ -167,11 +167,19 @@ function validatedAccountConnectHost(host) {
 // defaults to <cwd>/.wire-dump. Filenames carry a timestamp + model + kind. This
 // is a temporary self-use debug aid, never a served endpoint.
 let _wireSeq = 0;
+let _wireDumpWarned = false;
 function dumpWire(kind, bytes, meta = {}) {
   const wireDump = String(process.env.DEVIN_CONNECT_WIRE_DUMP || '') === '1';
   const traced = String(process.env.WINDSURFAPI_TRACE || '') === '1' && meta.traceId;
   if (!wireDump && !traced) return;
   if (!bytes || !bytes.length) return;
+  // S6-F2: the dumped request protobuf carries the live account session token
+  // (metadata field #3) in cleartext. The dirs are gitignored, but say so once
+  // so an operator who greps a dump later knows what they are holding.
+  if (!_wireDumpWarned) {
+    _wireDumpWarned = true;
+    log.warn('wire-dump/trace active: dumped protobufs carry the live account session token — treat .wire-dump/.trace as credential material and delete after use');
+  }
   try {
     // Full-chain trace mode: drop the raw bytes into this request's trace dir
     // under the fixed leg name (03=req, 04=res) the manifest expects, so the

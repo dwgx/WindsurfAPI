@@ -240,3 +240,13 @@ describe('credential store — corruption resilience (C6)', () => {
     assert.deepEqual(listCredentialEmails(env), []);
   });
 });
+
+describe('S6-F5: a sub-16-char master key does not silently enable the store', () => {
+  it('reports disabled below the entropy floor (fail-closed with a loud error)', () => {
+    assert.equal(isCredStoreEnabled({ DEVIN_CONNECT_CRED_KEY: 'x' }), false);
+    assert.equal(isCredStoreEnabled({ DEVIN_CONNECT_CRED_KEY: 'short-key' }), false);
+    assert.equal(isCredStoreEnabled({ DEVIN_CONNECT_CRED_KEY: 'f'.repeat(15) }), false);
+    assert.equal(isCredStoreEnabled({ DEVIN_CONNECT_CRED_KEY: 'f'.repeat(16) }), true, 'boundary: 16 chars is the floor');
+    assert.equal(isCredStoreEnabled(mkEnv()), true, 'the 19-char fixture still enables');
+  });
+});

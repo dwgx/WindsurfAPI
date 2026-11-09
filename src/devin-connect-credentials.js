@@ -69,8 +69,23 @@ export function getCredKey(env = process.env) {
 
 /** True when credential storage is enabled (a master key is configured). */
 export function isCredStoreEnabled(env = process.env) {
-  return getCredKey(env).length > 0;
+  const key = getCredKey(env);
+  if (key.length === 0) return false;
+  // S6-F5: any non-empty key used to enable the store — `DEVIN_CONNECT_CRED_KEY=x`
+  // silently wrapped records under a trivially brute-forceable KEK. Below the
+  // floor the store reports disabled; a loud error names exactly why.
+  if (key.length < MIN_CRED_KEY_CHARS) {
+    if (!_shortKeyWarned) {
+      _shortKeyWarned = true;
+      log.error(`DEVIN_CONNECT_CRED_KEY is ${key.length} chars (< ${MIN_CRED_KEY_CHARS}) — too weak as a key-encryption key; credential store DISABLED. Set a longer key or unset it.`);
+    }
+    return false;
+  }
+  return true;
 }
+
+export const MIN_CRED_KEY_CHARS = 16;
+let _shortKeyWarned = false;
 
 function normalizeEmail(email) {
   return String(email || '').trim().toLowerCase();
