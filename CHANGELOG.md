@@ -2,7 +2,7 @@
 
 <p align="center">
   <a href="#最近的版本">最近的版本</a> ·
-  <a href="docs/releases/">全部 218 份发布说明</a> ·
+  <a href="docs/releases/">全部 219 份发布说明</a> ·
   <a href="README.md">← 主 README</a>
 </p>
 
@@ -19,9 +19,9 @@
 
 | | |
 |---|---|
-| 发布说明 | **218** 份,v2.0.6 → v3.141.592658（生成：`node scripts/sync-changelog-counts.mjs`；口径 `ls docs/releases/RELEASE_NOTES_*.md \| wc -l`） |
+| 发布说明 | **219** 份,v2.0.6 → v3.141.592659（生成：`node scripts/sync-changelog-counts.mjs`；口径 `ls docs/releases/RELEASE_NOTES_*.md \| wc -l`） |
 | git tag | 228 个（生成：`node scripts/sync-changelog-counts.mjs`；口径 `git tag \| wc -l`） |
-| 当前 | **v3.141.592658**(2026-10-30) |
+| 当前 | **v3.141.592659**(2026-11-09) |
 | 运行时依赖 | **0** —— 从第一个版本保持到现在 |
 
 ```mermaid
@@ -41,6 +41,10 @@ flowchart LR
 ## 最近的版本
 
 下面是 3.9.x 全系。更早的版本请直接翻 [`docs/releases/`](docs/releases/)。
+
+### [v3.141.592659](docs/releases/RELEASE_NOTES_3.141.592659.md) · 2026-11-09
+
+审计收口补丁版，**默认路径 wire 对 v3.141.592658 270/270 逐字节一致**。身份中和器（`identity-neutralize.js`）从“连续空行上立方增长、能阻塞整个 event-loop”改为有界线性扫描（WA-001，CWE-1333；2,049 B 连续空行 1,140 ms → 2.57 ms，512 KiB 连续空行 >300 s → 26.88 ms），段落边界改用与 `\s` 等价的 24 个空白码元（WA-002，Unicode 分隔符下丢失调用方 `RULE` 的例数 85 → 17，且 17 例全部是设计上全局的 `b-security-line` 形状），`FREEFORM` 只在 apply_patch 描述行内改写（WA-003）；`a4-cli-line` / `a4-catalogue-line` 不再吃掉整行（A4：524,152 B 单行输入 42 B → 524,160 B；catalogue 锚点行无模型 ID 标记时只改短语、有 `claude-`/`model ids`/`fable`/`opus`/`sonnet` 正文时删到行尾）；CTX-01 把有限 `clear_thinking` 与签名回放的冲突改为按顺序判断（只拒绝真正会丢掉签名轮的 keep）；dashboard 写请求在 `readBody` 之前过门（S03）；Cascade 图片提取可取消（IMG-01）且 `</human>`/`</assistant>` 闭合标签在计量/渲染/插入三处统一转义（TRN-01）。release shard **605 文件 / 7,455 测试 / 7,352 pass / 0 fail / 103 skip**，身份 147、CTX 28、Cascade 39、transport 22、docs guard 47、spec 97/863 全绿；mutation 变异体、Node 22 全量、托管 CI 与 HMC 部署仍 `[UNVERIFIED]`，逐项见发布附录。
 
 ### [v3.141.592658](docs/releases/RELEASE_NOTES_3.141.592658.md) · 2026-10-30
 

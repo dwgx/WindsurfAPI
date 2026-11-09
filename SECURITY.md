@@ -78,3 +78,13 @@ You can expect a first response within **72 hours**. Valid reports will be credi
 - 方便联系的方式
 
 一般 **72 小时内**会首次回复。有效报告会在 release notes 里致谢（除非你要求匿名）。
+
+---
+
+## Acknowledgments / 致谢
+
+Thanks to 周fish for the responsible disclosure of the CWE-1333 event-loop blocking issue in
+the client-identity neutralizer (reported 2026-11-08).
+
+感谢 周fish 负责任地披露客户端身份中和器中的 CWE-1333（event-loop 阻塞）问题
+（2026-11-08 报告）。修复见 [v3.141.592659 发布说明](docs/releases/RELEASE_NOTES_3.141.592659.md)。

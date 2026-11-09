@@ -13,18 +13,19 @@
 
 | 项 | 值 |
 |---|---|
-| 扫描 | `docs/releases/*.md` 共 218 个文件 |
-| 命中 | 28 个文件 / 28 个小节 |
-| bullet | 120 条 |
-| 已复核 | 2 |
-| 仍缺 | 118 |
+| 扫描 | `docs/releases/*.md` 共 219 个文件 |
+| 命中 | 29 个文件 / 29 个小节 |
+| bullet | 132 条 |
+| 已复核 | 3 |
+| 仍缺 | 129 |
 | 已修 | 0 |
-| 无 marker | 55 |
+| 无 marker | 56 |
 
 ## 按 release
 
 | release | 小节 | bullet | 已复核 | 仍缺 | 已修 | 无 marker |
 |---|---:|---:|---:|---:|---:|---:|
+| [3.141.592659](releases/RELEASE_NOTES_3.141.592659.md) | 1 | 12 | 1 | 11 | 0 | 1 |
 | [3.141.592658](releases/RELEASE_NOTES_3.141.592658.md) | 1 | 7 | 0 | 7 | 0 | 7 |
 | [3.141.592657](releases/RELEASE_NOTES_3.141.592657.md) | 1 | 16 | 0 | 16 | 0 | 16 |
 | [3.141.592656](releases/RELEASE_NOTES_3.141.592656.md) | 1 | 16 | 0 | 16 | 0 | 16 |
@@ -53,6 +54,27 @@
 | [3.9.41](releases/RELEASE_NOTES_3.9.41.md) | 1 | 6 | 0 | 6 | 0 | 0 |
 | [3.9.40](releases/RELEASE_NOTES_3.9.40.md) | 1 | 3 | 0 | 3 | 0 | 0 |
 | [3.9.39](releases/RELEASE_NOTES_3.9.39.md) | 1 | 3 | 0 | 3 | 0 | 0 |
+
+## 3.141.592659 — `docs/releases/RELEASE_NOTES_3.141.592659.md`
+
+1 个小节 · 12 条：已复核 1 · 仍缺 11 · 已修 0（无 marker 1）
+
+小节 `## 7. 已知 / 尚未验证`（`:288`）
+
+| # | 位置 | bullet | marker | 状态 |
+|---:|---|---|---|---|
+| 1 | `RELEASE_NOTES_3.141.592659.md:292` | mutation 变异体本身**：本版没有跑 sweep。`spec-baseline-check` 只证明 “锚点仍指向正确代码、基线值仍成立”，不执行变异体。A4 与 messages 的改动动了 spec 覆盖的 文件，不能沿用旧 sweep 的结论。发布前在 POSIX 上补跑 `node scripts/mutation-sweep.mjs --shard 0/1` 与 `--verify`。 | `[UNVERIFIED]` | 仍缺 |
+| 2 | `RELEASE_NOTES_3.141.592659.md:296` | mutation 全量基线**：`spec-baseline-check.mjs --all`（97 spec）是 release workflow 的模式；发布树实测 **97 spec measured, 0 drift, 0 untrustworthy**，wall 202.5 s （`releasecommit-spec-baseline-all.log`，`sha256 da0d49db…`）。 | `[VERIFIED]` | 已复核 |
+| 3 | `RELEASE_NOTES_3.141.592659.md:299` | Node 22 下限**：本版只在 Node 24.19.0 上实测；`engines >=22.13.0` 的 floor 本身没有在 CI 或本机复跑。release workflow 的单元测试 job 只用 Node 24，Node 22 只用于 构建二进制。 | `[UNVERIFIED]` | 仍缺 |
+| 4 | `RELEASE_NOTES_3.141.592659.md:302` | 托管 CI**：分支 `fix/audit-wave-20261109` 没有 upstream，本版所有 CI 结论 都是本机测量。 | `[UNVERIFIED]` | 仍缺 |
+| 5 | `RELEASE_NOTES_3.141.592659.md:304` | HMC 部署与回滚演练（592659）**：本版没有部署；回滚命令见 §5 与 `ReleasePrep.md` §7，未执行。 | `[UNVERIFIED]` | 仍缺 |
+| 6 | `RELEASE_NOTES_3.141.592659.md:306` | live 上游**：WA-001/002/003/A4 的验证全部是隔离函数与 hermetic 测试； 没有把病态 payload 发给真实服务，也没有真实客户端复跑。HMC 的旧模块计时用的是 `/tmp` 副本，生产 `:18999` 未被写入。 | `[UNVERIFIED]` | 仍缺 |
+| 7 | `RELEASE_NOTES_3.141.592659.md:309` | CTX-01 live**：没有在真实上游跑 replay + 有限 keep 的组合。 | `[UNVERIFIED]` | 仍缺 |
+| 8 | `RELEASE_NOTES_3.141.592659.md:310` | S03 真实 dashboard 客户端**：只有隔离的排序测试（声明 10 MiB、不发 body）。 | `[UNVERIFIED]` | 仍缺 |
+| 9 | `RELEASE_NOTES_3.141.592659.md:311` | IMG-01 真实 Cascade abort**：取消语义由注入 signal 的测试覆盖；没有在 真实长轮次里按 Ctrl-C/断连。 | `[UNVERIFIED]` | 仍缺 |
+| 10 | `RELEASE_NOTES_3.141.592659.md:313` | TRN-01 上游角色语义**：只证明序列化可逆、闭合标签计数正确；不证明上游 会因未转义文本产生角色越权（本版不声称这是越权漏洞）。 | `[UNVERIFIED]` | 仍缺 |
+| 11 | `RELEASE_NOTES_3.141.592659.md:315` | 发布产物**：资产、cosign 签名、SHA256SUMS、release attestation 都要在 tag 之后由 release workflow 生成；本文件不代表它们已经存在。 | `[UNVERIFIED]` | 仍缺 |
+| 12 | `RELEASE_NOTES_3.141.592659.md:317` | **沿用 592658 的边界**：M4 rescue 未在真实上游触发、多段 `#10`/`#21` 未线上观测、 官方 `pr-gate` 仍 `INCOMPLETE`（relogin 真实密码缺口）。这些不因本版改变。 | — | 仍缺 |
 
 ## 3.141.592658 — `docs/releases/RELEASE_NOTES_3.141.592658.md`
 
