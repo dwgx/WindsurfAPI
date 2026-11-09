@@ -5,7 +5,7 @@
     "test/identity-neutralize-shapes.test.js",
     "test/client-identity-neutralize.test.js"
   ],
-  "expectBaselinePass": 89,
+  "expectBaselinePass": 92,
   "mutations": [
     {
       "name": "the original defect — deletion-only accounting, so a length-increasing rewrite of caller content stays silent",
