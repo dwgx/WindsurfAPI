@@ -632,6 +632,12 @@ export async function toChatCompletion(params, opts = {}) {
   let signedSegment = false;
   let multipleSignedSegments = false;
   let finishReason = 'stop';
+  // The upstream ended the stream without ever naming a stop reason (devin-connect
+  // raises `reason:'error'` + `unterminated:true` for a delivered payload with no
+  // #5). Remembered separately because the tool-call arms below overwrite
+  // finishReason with 'tool_calls' whenever a call exists — which would report a
+  // turn whose arguments were never validated as a clean, executable finish.
+  let finishUnterminated = false;
   let usage = null;
   // Per-request billing detail (credit / ACU cost) when the operator has calibrated
   // DEVIN_CONNECT_BILLING_TAGS. devin-connect.js has always yielded this on the
@@ -644,11 +650,11 @@ export async function toChatCompletion(params, opts = {}) {
   let nativeToolCalls = [];
   for (let attempt = 0; ; attempt++) {
     try {
-      content = ''; reasoning = ''; reasoningSignature = ''; signedSegment = false; multipleSignedSegments = false; finishReason = 'stop'; usage = null; nativeToolCalls = [];
+      content = ''; reasoning = ''; reasoningSignature = ''; signedSegment = false; multipleSignedSegments = false; finishReason = 'stop'; finishUnterminated = false; usage = null; nativeToolCalls = [];
       for await (const ev of streamChatWithEmptyRetry(params, undefined, opts)) {
         // A rescue attempt REPLACES the previous one; drop what it produced or the
         // client is handed every attempt concatenated.
-        if (ev.type === 'attempt_reset') { content = ''; reasoning = ''; reasoningSignature = ''; signedSegment = false; multipleSignedSegments = false; nativeToolCalls = []; billing = null; continue; }
+        if (ev.type === 'attempt_reset') { content = ''; reasoning = ''; reasoningSignature = ''; signedSegment = false; multipleSignedSegments = false; nativeToolCalls = []; finishUnterminated = false; billing = null; continue; }
         if (ev.type === 'content') content += ev.text;
         else if (ev.type === 'reasoning') {
           if (signedSegment) multipleSignedSegments = true;
@@ -663,6 +669,7 @@ export async function toChatCompletion(params, opts = {}) {
         }
         else if (ev.type === 'finish') {
           if (ev.reason) finishReason = ev.reason;
+          if (ev.unterminated === true) finishUnterminated = true;
           if (ev.usage) usage = ev.usage;
           if (ev.billing) billing = ev.billing;
           if (ev.toolCalls && ev.toolCalls.length) nativeToolCalls = ev.toolCalls;
@@ -815,6 +822,16 @@ export async function toChatCompletion(params, opts = {}) {
   // that terminal cause and the Messages route carries it as `stop_sequence`
   // (the carrier below is gated on 'stop'). Tool calls / content_filter are
   // stronger states and applyOutputCap leaves them alone.
+  //
+  // A turn whose upstream never named a stop reason is NOT a clean tool-call
+  // finish. The tool-call arms above set 'tool_calls' unconditionally (a call was
+  // decoded), which told every client "these arguments are complete" — but with no
+  // #5 the upstream may have been cut mid-arguments, and OpenAI clients execute
+  // whatever `tool_calls` they receive. Keep the producer's verdict: the finish
+  // event already reported 'error'/'unterminated', so this only has to stop the
+  // overwrite. Placed after ALL the tool-call arms so a future one cannot slip past
+  // it, and before applyOutputCap (which only upgrades 'stop').
+  if (finishUnterminated && finishReason === 'tool_calls') finishReason = 'error';
   if (!stopHit) finishReason = applyOutputCap(finishReason, usage, params.completion?.maxTokens);
 
   // #236 log-only detector — AFTER emulation and the stop gate, on the text and
@@ -912,6 +929,10 @@ export async function streamChatCompletion(params, send, opts = {}) {
   let content = '';
   let reasoning = '';
   let finishReason = 'stop';
+  // Same guard as the non-stream twin: the tool-call arms below force
+  // finish_reason='tool_calls' whenever a call was emitted, which would label a
+  // turn the upstream never terminated as a clean, executable finish.
+  let finishUnterminated = false;
   let usage = null;
   // Exactly what the client received as visible content, after tool-markup
   // stripping and the stop gate. `content` is the RAW upstream accumulator and
@@ -1031,6 +1052,7 @@ export async function streamChatCompletion(params, send, opts = {}) {
           }
         } else if (ev.type === 'finish') {
           if (ev.reason) finishReason = ev.reason;
+          if (ev.unterminated === true) finishUnterminated = true;
           if (ev.usage) usage = ev.usage;
           if (ev.billing) streamBilling = ev.billing;
           if (ev.toolCalls && ev.toolCalls.length) nativeToolCalls = ev.toolCalls;
@@ -1055,7 +1077,7 @@ export async function streamChatCompletion(params, send, opts = {}) {
       if (budget && !budget.canStartAttempt()) throw err;
       if (params.signal?.aborted) throw err;
       // Nothing was emitted, so a clean restart cannot duplicate output.
-      content = ''; reasoning = ''; finishReason = 'stop'; usage = null;
+      content = ''; reasoning = ''; finishReason = 'stop'; finishUnterminated = false; usage = null;
       streamBilling = null; nativeToolCalls = []; delivered = '';
       collectedToolCalls.length = 0;
       stopGate = new StopSequenceGate(stop);
@@ -1144,6 +1166,12 @@ export async function streamChatCompletion(params, send, opts = {}) {
   // frame still follows every delivered delta: the answer is reported as over
   // budget, never retracted or cut mid-chunk. A local stop sequence keeps
   // 'stop' (the caller asked for that cause; the carrier below depends on it).
+  // A turn the upstream never terminated is not a clean tool-call finish — same
+  // rule as the non-stream twin. The calls were already emitted as deltas (a stream
+  // cannot retract them), so the terminal frame is the only place that can say
+  // "these arguments are unvalidated". Without this, every tool-call arm above
+  // (`toolParser.flush`, native #6, promoted reasoning) forced 'tool_calls'.
+  if (finishUnterminated && finishReason === 'tool_calls') finishReason = 'error';
   if (!stopHit) finishReason = applyOutputCap(finishReason, usage, params.completion?.maxTokens);
 
   // #236 log-only detector — AFTER emulation and the stop gate, on what the

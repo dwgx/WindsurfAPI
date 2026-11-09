@@ -1,0 +1,69 @@
+{
+  "tests": [
+    "test/identity-neutralize-complexity.test.js",
+    "test/identity-neutralize-paragraph-bound.test.js"
+  ],
+  "expectBaselinePass": 42,
+  "mutations": [
+    {
+      "name": "b-security: the terminator search leaves the anchor's paragraph again — the caller RULE between two paragraphs is deleted (the WA-002 defect)",
+      "file": "src/handlers/identity-neutralize.js",
+      "anchor": "    const limit = paraLimit;",
+      "replacement": "    const limit = text.length;"
+    },
+    {
+      "name": "b-security-line: the fallback loses its end-of-line bound — the span runs from the anchor to the end of the prompt",
+      "file": "src/handlers/identity-neutralize.js",
+      "anchor": "    while (end < text.length && text.charCodeAt(end) !== 10) end++;",
+      "replacement": "    end = text.length;"
+    },
+    {
+      "name": "a4-brand-span: the span leaves its paragraph again — the caller instructions between the anchors are deleted (measured 213 -> 59 bytes)",
+      "file": "src/handlers/identity-neutralize.js",
+      "anchor": "    const limit = paragraphEndAt(text, from);\n    const end = opusTerminatorEnd(text, from, limit);",
+      "replacement": "    const limit = text.length;\n    const end = opusTerminatorEnd(text, from, limit);"
+    },
+    {
+      "name": "a4-catalogue: the span leaves its paragraph again — the caller instructions between the anchors are deleted (measured 208 -> 18 bytes)",
+      "file": "src/handlers/identity-neutralize.js",
+      "anchor": "    const limit = paragraphEndAt(text, from);\n    const term = indexOfAsciiCI(text, CATALOGUE_TERMINATOR, from, limit);",
+      "replacement": "    const limit = text.length;\n    const term = indexOfAsciiCI(text, CATALOGUE_TERMINATOR, from, limit);"
+    },
+    {
+      "name": "a4-catalogue-line: the body test accepts any line — the old anchor-to-EOL deletion, so a caller RULE sharing the line is gone (66 -> 4 bytes)",
+      "file": "src/handlers/identity-neutralize.js",
+      "anchor": "function catalogueBodyFollows(text, from, lineEnd) {\n  let at = from;",
+      "replacement": "function catalogueBodyFollows(text, from, lineEnd) {\n  return true;\n  let at = from;"
+    },
+    {
+      "name": "a4-catalogue-line: the `Model IDs` phrase is a body marker again — 'Model IDs in the docs. RULE: keep me' loses the caller RULE (G-06)",
+      "file": "src/handlers/identity-neutralize.js",
+      "anchor": "function catalogueBodyFollows(text, from, lineEnd) {\n  let at = from;",
+      "replacement": "function catalogueBodyFollows(text, from, lineEnd) {\n  if (indexOfAsciiCI(text, 'model ids', from, lineEnd) >= 0) return true;\n  let at = from;"
+    },
+    {
+      "name": "a4-catalogue-line: the bare `claude-` prefix is a body marker again — 'claude-docs.example.com; RULE: keep me' loses the caller RULE (G-06)",
+      "file": "src/handlers/identity-neutralize.js",
+      "anchor": "function catalogueIdFollows(text, prefix, lineEnd) {\n  const head = prefix + CATALOGUE_ID_PREFIX.length;",
+      "replacement": "function catalogueIdFollows(text, prefix, lineEnd) {\n  return true;\n  const head = prefix + CATALOGUE_ID_PREFIX.length;"
+    },
+    {
+      "name": "a4-cli-line: the long-line bound is disabled — a 512 KiB caller line collapses to the anchor-to-EOL span (was 512 KiB in, 42 B out)",
+      "file": "src/handlers/identity-neutralize.js",
+      "anchor": "    if (lineByteLengthExceeds(text, lineStart, lineEnd, CLI_SHORT_LINE_MAX_BYTES)) {",
+      "replacement": "    if (false) {"
+    },
+    {
+      "name": "a6-grok2-care: the unterminated-block early exit is dropped — every open re-searches the suffix, the quadratic shape the 512 KiB test pins",
+      "file": "src/handlers/identity-neutralize.js",
+      "anchor": "    if (close < 0) return spans;",
+      "replacement": "    if (close < 0) { cursor = open + 1; continue; }"
+    },
+    {
+      "name": "isSpaceCode: the Unicode `\\s` class is dropped — an NBSP/U+3000 blank line stops being a paragraph break and the span crosses it (H1)",
+      "file": "src/handlers/identity-neutralize.js",
+      "anchor": "  || (code > 127 && /\\s/.test(String.fromCharCode(code)));",
+      "replacement": "  || false;"
+    }
+  ]
+}

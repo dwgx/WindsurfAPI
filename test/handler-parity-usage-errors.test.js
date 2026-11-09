@@ -19,6 +19,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { handleGemini } from '../src/handlers/gemini.js';
 import { connectErrorToHttp } from '../src/handlers/chat.js';
+import { handleResponses } from '../src/handlers/responses.js';
 
 describe('gemini streaming asks the chat layer for the usage frame', () => {
   it('threads stream_options.include_usage into the delegated chat request', async () => {
@@ -77,8 +78,51 @@ describe('responses streaming error frame resolves the DEVIN_CONNECT code', () =
     const src = readFileSync(new URL('../src/handlers/responses.js', import.meta.url), 'utf8');
     assert.ok(/import \{[^}]*connectErrorToHttp[^}]*\} from '\.\/chat\.js'/.test(src),
       'responses.js must import the shared classifier');
-    const errorFn = src.slice(src.indexOf('  error(err) {'), src.indexOf('  feed(rawChunk) {'));
-    assert.ok(errorFn.includes('connectErrorToHttp(err.code)'),
+    // The classifier moved into the shared failure sender so the mid-stream error
+    // path and the G3 `error`/`unterminated` terminal emit ONE failure frame. The
+    // slice starts there and ends at the delegating error(err) method.
+    const start = src.indexOf('  sendFailed(err) {');
+    const end = src.indexOf('  error(err) {');
+    assert.ok(start >= 0 && end > start, 'the shared failure sender must sit before error(err)');
+    const failedFn = src.slice(start, end);
+    assert.ok(failedFn.includes('connectErrorToHttp(err.code)'),
       'the stream error frame must resolve err.code, not read err.type alone');
+  });
+
+  it('emits the classified failure frame for an in-band RATE_LIMITED error', async () => {
+    // Behavioural twin of the structural check: if the frame read err.type alone,
+    // the missing type would default to api_error; resolving the code yields the
+    // 429 type and keeps the raw code on the wire.
+    const result = await handleResponses(
+      { model: 'gpt-5.2', input: 'hi', stream: true },
+      {
+        async handleChatCompletions() {
+          return {
+            status: 200,
+            stream: true,
+            async handler(res) {
+              res.write(`data: ${JSON.stringify({ error: { code: 'RATE_LIMITED', message: 'upstream throttled' } })}\n\n`);
+              res.end();
+            },
+          };
+        },
+        context: { callerKey: 'api:parity:user:t' },
+      },
+    );
+    assert.equal(result.status, 200);
+    const res = {
+      body: '', writableEnded: false,
+      write(chunk) { this.body += String(chunk); return true; },
+      end(chunk) { if (chunk) this.write(chunk); this.writableEnded = true; },
+      on() { return this; }, once() { return this; },
+      setHeader() {}, writeHead() { return this; }, flushHeaders() {},
+    };
+    await result.handler(res);
+    const frame = res.body.split('\n\n').find(part => part.startsWith('event: response.failed'));
+    assert.ok(frame, 'the in-band error must close the stream with response.failed');
+    const data = JSON.parse(frame.split('\n').find(line => line.startsWith('data: ')).slice(6));
+    assert.equal(data.response.status, 'failed');
+    assert.equal(data.response.error.code, 'RATE_LIMITED', 'the raw code survives for a relay');
+    assert.equal(data.response.error.type, 'rate_limit_error', 'the classifier chose the 429 type');
   });
 });

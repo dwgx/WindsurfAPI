@@ -4753,12 +4753,24 @@ export function isAllRateLimited(modelKey, connectSelector = null) {
   const now = Date.now();
   let soonestExpiry = Infinity;
   let anyEligible = false;
+  // Connect selection asks with modelKey=null + a resolved selector, so a
+  // cooldown written under the SELECTOR dimension must gate this preflight just
+  // like one written under modelKey. Without it, a model-scoped 429 (the
+  // upstream's "rate limit for this model ... Resets in: 3h") that the handler
+  // scopes to the selector is invisible here: the pool fast-path reports
+  // "available", spends the whole queue wait, and only then discovers every
+  // account is cooled for that selector. The scheduler's own admission
+  // predicate (isCooledForRequest) already ORs the two dimensions; this is the
+  // preflight's copy of that conjunction.
+  const selectorKey = connectSelector && connectSelector !== modelKey ? connectSelector : null;
   for (const a of accounts) {
     if (a.status !== 'active') continue;
     if (modelKey && !isModelAllowedForAccount(a, modelKey)) continue;
     if (connectSelector && !isConnectSelectorAllowedForAccount(a, connectSelector)) continue;
     anyEligible = true;
-    if (!isRateLimitedForModel(a, modelKey, now)) return { allLimited: false };
+    const cooled = isRateLimitedForModel(a, modelKey, now)
+      || (selectorKey ? isRateLimitedForModel(a, selectorKey, now) : false);
+    if (!cooled) return { allLimited: false };
     // Track the soonest expiry across both global and per-model limits
     if (a.rateLimitedUntil && a.rateLimitedUntil > now) {
       soonestExpiry = Math.min(soonestExpiry, a.rateLimitedUntil);
@@ -4772,6 +4784,9 @@ export function isAllRateLimited(modelKey, connectSelector = null) {
     if (modelKey && a._modelRateLimits?.[modelKey] > now) {
       soonestExpiry = Math.min(soonestExpiry, a._modelRateLimits[modelKey]);
     }
+    if (selectorKey && a._modelRateLimits?.[selectorKey] > now) {
+      soonestExpiry = Math.min(soonestExpiry, a._modelRateLimits[selectorKey]);
+    }
   }
   if (!anyEligible) return { allLimited: false };
   const retryAfterMs = soonestExpiry === Infinity ? 60000 : Math.max(1000, soonestExpiry - now);
@@ -4782,6 +4797,14 @@ export function isAllTemporarilyUnavailable(modelKey, connectSelector = null) {
   const now = Date.now();
   let anyEligible = false;
   let soonestExpiry = Infinity;
+  // Same dimension split as isAllRateLimited: connect selection asks with
+  // modelKey=null + a resolved selector, and isCooledForRequestReadOnly excludes
+  // an account cooled for that selector. If this view ignored the selector, the
+  // chat preflight would read a selector-cooled pool as "rate-limited but still
+  // degradable" (rl true, tu false) and skip its fast 429, spending the queue
+  // wait before failing. Reporting it unavailable restores the fast 429 with the
+  // upstream reset as Retry-After.
+  const selectorKey = connectSelector && connectSelector !== modelKey ? connectSelector : null;
 
   for (const a of accounts) {
     if (a.status !== 'active') continue;
@@ -4811,6 +4834,15 @@ export function isAllTemporarilyUnavailable(modelKey, connectSelector = null) {
         continue;
       }
       if (until && until <= now) delete a._modelRateLimits[modelKey];
+    }
+
+    if (selectorKey && a._modelRateLimits) {
+      const until = a._modelRateLimits[selectorKey];
+      if (until && until > now) {
+        soonestExpiry = Math.min(soonestExpiry, until);
+        continue;
+      }
+      if (until && until <= now) delete a._modelRateLimits[selectorKey];
     }
 
     const used = pruneRpmHistory(a, now);

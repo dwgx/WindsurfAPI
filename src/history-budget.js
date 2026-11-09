@@ -16,11 +16,18 @@
 // finish.
 //
 // UNITS. `turns` is `messages.length` — every entry the encoder will see, system
-// turns included, because they all ride the wire. `bytes` counts the payload
-// fields the encoder forwards (content text and non-text parts, tool-call ids /
-// names / arguments, reasoning_content, reasoning_signature, name, tool_call_id) as UTF-8, the same
-// unit proto.js writes. Transport framing is not counted; the number is a
-// deliberate lower bound on the wire size, not an estimate of it.
+// turns included, because they all ride the wire. `bytes` counts every field the
+// encoder forwards: the `messages` payload fields (content text and non-text
+// parts, tool-call ids / names / arguments, reasoning_content,
+// reasoning_signature, name, tool_call_id) as UTF-8, plus the JSON-serialized
+// `tools[]` schemas — the same unit proto.js writes. Transport framing is not
+// counted; the number is a deliberate lower bound on the wire size, not an
+// estimate of it. Tool schemas are the largest component of a Claude Code
+// request, so measuring `messages` alone could pass exactly the shape the budget
+// exists to refuse. A top-level `system` field is NOT counted: no surface
+// forwards it (the Messages/Responses translators fold it into `messages`
+// before this check, and the OpenAI chat route ignores it), so counting it would
+// refuse bytes that never go on the wire.
 //
 // DEFAULTS. The turn ceiling sits below the measured failure (113 turns) so the
 // reported shape is refused locally instead of dying mid-reply; the byte ceiling
@@ -98,12 +105,40 @@ function messageBytes(message) {
   return total;
 }
 
-/** Measure the transcript the caller asked us to forward. */
-export function measureOutboundHistory(messages) {
-  if (!Array.isArray(messages)) return { turns: 0, bytes: 0 };
-  let bytes = 0;
-  for (const message of messages) bytes += messageBytes(message);
-  return { turns: messages.length, bytes };
+/** Tool definitions are forwarded as JSON schemas; count their serialized size. */
+function toolsBytes(tools) {
+  if (Array.isArray(tools)) {
+    let total = 0;
+    for (const tool of tools) {
+      if (tool == null) continue;
+      if (typeof tool === 'string') { total += textBytes(tool); continue; }
+      try { total += textBytes(JSON.stringify(tool)); } catch { /* non-serializable tool: count nothing */ }
+    }
+    return total;
+  }
+  if (tools && typeof tools === 'object') {
+    try { return textBytes(JSON.stringify(tools)); } catch { return 0; }
+  }
+  return 0;
+}
+
+/**
+ * Measure everything the request forwards: `messages` plus `tools[]`. Returns
+ * the total plus the per-contributor breakdown so a refusal can name the
+ * dominant one.
+ */
+export function measureOutboundHistory(messages, { tools = null } = {}) {
+  const turns = Array.isArray(messages) ? messages.length : 0;
+  let messagesBytes = 0;
+  if (Array.isArray(messages)) {
+    for (const message of messages) messagesBytes += messageBytes(message);
+  }
+  const toolsTotal = toolsBytes(tools);
+  return {
+    turns,
+    bytes: messagesBytes + toolsTotal,
+    breakdown: { messages: messagesBytes, tools: toolsTotal },
+  };
 }
 
 /**
@@ -112,9 +147,9 @@ export function measureOutboundHistory(messages) {
  *
  * Returns `{ ok, measured, budget, overTurns, overBytes }`.
  */
-export function checkOutboundHistory(messages, { env = process.env } = {}) {
+export function checkOutboundHistory(messages, { env = process.env, tools = null } = {}) {
   const budget = resolveHistoryBudget({ env });
-  const measured = measureOutboundHistory(messages);
+  const measured = measureOutboundHistory(messages, { tools });
   const overTurns = budget.maxTurns > 0 && measured.turns > budget.maxTurns;
   const overBytes = budget.maxBytes > 0 && measured.bytes > budget.maxBytes;
   return { ok: !overTurns && !overBytes, measured, budget, overTurns, overBytes };
@@ -124,17 +159,39 @@ function kb(bytes) {
   return `${Math.round(bytes / 1024)} KB`;
 }
 
+const CONTRIBUTOR_LABEL = {
+  messages: 'messages',
+  tools: 'tool schemas',
+};
+
+/** The largest measured contributor, or null when everything is empty. */
+export function dominantContributor(breakdown) {
+  if (!breakdown || typeof breakdown !== 'object') return null;
+  let best = null;
+  for (const [name, value] of Object.entries(breakdown)) {
+    if (!(value > 0)) continue;
+    if (!best || value > best.bytes) best = { name, bytes: value };
+  }
+  return best;
+}
+
 /**
  * Caller-facing explanation. Names the exceeded dimension(s), the measured
  * values, the knobs, and what to do — the point of the check is to replace an
- * opaque mid-stream timeout with something the caller can act on.
+ * opaque mid-stream timeout with something the caller can act on. When the
+ * measurement includes the breakdown, it also names the largest contributor so
+ * "8 MB of history" is actionable (usually the tool schemas, not the turns).
  */
 export function historyBudgetErrorMessage({ measured, budget, overTurns, overBytes }) {
   const parts = [];
   if (overTurns) parts.push(`${measured.turns} messages (budget ${budget.maxTurns}, ${HISTORY_BUDGET_TURNS_ENV})`);
   if (overBytes) parts.push(`${kb(measured.bytes)} of history (budget ${kb(budget.maxBytes)}, ${HISTORY_BUDGET_BYTES_ENV})`);
+  const dominant = dominantContributor(measured?.breakdown);
+  const contributor = dominant
+    ? ` Largest contributor: ${CONTRIBUTOR_LABEL[dominant.name] || dominant.name} (${kb(dominant.bytes)} of ${kb(measured.bytes)}).`
+    : '';
   return `Conversation history is too large to forward: ${parts.join('; ')}. `
     + 'The upstream stalls and the stream dies mid-reply on transcripts this large, so the request was refused before it was sent. '
     + 'Start a new session or compact/summarise the transcript. Operators can raise the budget with '
-    + `${HISTORY_BUDGET_TURNS_ENV} / ${HISTORY_BUDGET_BYTES_ENV} (0 disables a dimension).`;
+    + `${HISTORY_BUDGET_TURNS_ENV} / ${HISTORY_BUDGET_BYTES_ENV} (0 disables a dimension).${contributor}`;
 }

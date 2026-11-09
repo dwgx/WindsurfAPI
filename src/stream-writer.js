@@ -15,7 +15,12 @@
  *   * closed/aborted is re-checked before every write and after every wait, so a
  *     client that vanished while we waited receives no further bytes;
  *   * a half-open client (no 'drain' ever) is bounded: `onTimeout` runs, the
- *     writer stops accepting waits, and the caller tears the stream down.
+ *     writer stops accepting waits, and the caller tears the stream down;
+ *   * that bound is proportional to the UNACKNOWLEDGED bytes (`fixed +
+ *     pendingBytes / minClientRate`), not a fixed 120s and not a cumulative
+ *     stream total: a frame the socket accepted buys no budget, and `'drain'`
+ *     resets the backlog. A slow reader of a multi-megabyte frame keeps its
+ *     full budget, while a stalled 4KB frame aborts in roughly the fixed wait.
  *
  * `enabled: false` keeps a legacy synchronous producer byte-identical to its old
  * behaviour: the verdict is still returned, but no drain waiter is armed (the
@@ -24,14 +29,61 @@
  */
 
 /**
- * 120s mirrors the historical Cascade constant. Overridable per deployment with
- * WINDSURFAPI_MAX_DRAIN_MS (a stalled reader should not pin a request forever).
+ * The fixed part of one drain wait. A stalled reader on a small frame is cut
+ * off after this plus the time the bytes written so far need at the minimum
+ * client rate (see `drainDeadlineMs`), so 30s here — not the historical fixed
+ * 120s — is what makes a fully stalled 4KB frame abort early while a slow but
+ * real reader of a 5MB frame keeps its full proportional budget.
+ *
+ * Overridable per deployment with WINDSURFAPI_MAX_DRAIN_MS (the fixed part).
  */
-export const MAX_DRAIN_WAIT_DEFAULT_MS = 120_000;
+export const MAX_DRAIN_WAIT_DEFAULT_MS = 30_000;
+
+/**
+ * The slowest client the gateway budgets for, in bytes per second. 8 KiB/s is
+ * the reference implementation's floor (new-api `streamMinClientRate`): every
+ * byte written buys `1000 / rate` ms of extra drain wait, so a 5MB image gets
+ * ~640s of budget and completes, while a stalled 4KB frame gets ~0.5s on top
+ * of the fixed wait.
+ *
+ * Overridable with WINDSURFAPI_MIN_CLIENT_RATE_BPS.
+ */
+export const MIN_CLIENT_RATE_BPS_DEFAULT = 8 * 1024;
+export const MIN_CLIENT_RATE_ENV = 'WINDSURFAPI_MIN_CLIENT_RATE_BPS';
+
+/**
+ * Node clamps a `setTimeout` delay above 2^31-1 ms to 1 ms, which would turn a
+ * very large proportional budget into an immediate abort. Cap the delay here so
+ * the budget degrades to "practically unbounded" instead of "instant timeout".
+ */
+export const MAX_TIMER_MS = 2_147_483_647;
 
 export function resolveMaxDrainWaitMs(raw = process.env.WINDSURFAPI_MAX_DRAIN_MS) {
   const parsed = parseInt(raw || '', 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : MAX_DRAIN_WAIT_DEFAULT_MS;
+}
+
+export function resolveMinClientRateBps(raw = process.env[MIN_CLIENT_RATE_ENV]) {
+  const parsed = parseInt(raw || '', 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : MIN_CLIENT_RATE_BPS_DEFAULT;
+}
+
+/**
+ * Deadline for one drain wait: `fixed + bytes / minClientRate`, in ms, capped
+ * at the largest delay Node's timer accepts. Pure so the formula can be
+ * asserted without waiting for a timer.
+ */
+export function drainDeadlineMs({
+  bytes = 0,
+  fixedMs = MAX_DRAIN_WAIT_DEFAULT_MS,
+  minClientRateBps = MIN_CLIENT_RATE_BPS_DEFAULT,
+} = {}) {
+  const fixed = Number.isFinite(fixedMs) && fixedMs > 0 ? fixedMs : 0;
+  const rate = Number.isFinite(minClientRateBps) && minClientRateBps > 0
+    ? minClientRateBps
+    : MIN_CLIENT_RATE_BPS_DEFAULT;
+  const written = Number.isFinite(bytes) && bytes > 0 ? bytes : 0;
+  return Math.min(MAX_TIMER_MS, fixed + Math.ceil((written * 1000) / rate));
 }
 
 /** The abort shape every awaiting producer in this repo already recognises. */
@@ -48,7 +100,8 @@ export function clientGoneError(message = 'stream aborted while waiting for the 
  * @param {object}   opts.res      Writable-ish response (real `ServerResponse` or a translator capture).
  * @param {AbortSignal|null} [opts.signal]  Handler-local abort signal (client gone / shutdown).
  * @param {boolean}  [opts.enabled=true]     Arm the drain waiter on a false verdict.
- * @param {number}   [opts.maxWaitMs]        Bound on one drain wait.
+ * @param {number}   [opts.maxWaitMs]        Fixed part of one drain wait.
+ * @param {number}   [opts.minClientRateBps] Slowest client budgeted, bytes/second.
  * @param {Function} [opts.onTimeout]        Called once when a drain wait expires, BEFORE the
  *                                           writer stops arming. The caller owns the teardown
  *                                           (error frame, abort, registry detach).
@@ -58,12 +111,28 @@ export function createBoundedWriter({
   signal = null,
   enabled = true,
   maxWaitMs = resolveMaxDrainWaitMs(),
+  minClientRateBps = resolveMinClientRateBps(),
   onTimeout = null,
 } = {}) {
   let pending = null;
   let settleCurrent = null;
   let timedOut = false;
   let disposed = false;
+  const fixedWaitMs = Number.isFinite(maxWaitMs) && maxWaitMs > 0 ? maxWaitMs : MAX_DRAIN_WAIT_DEFAULT_MS;
+  const minRate = Number.isFinite(minClientRateBps) && minClientRateBps > 0
+    ? minClientRateBps
+    : MIN_CLIENT_RATE_BPS_DEFAULT;
+  // Only UNACKNOWLEDGED bytes buy stall budget: a frame whose `res.write()`
+  // returned true was accepted by the socket and must not accrue a wait. The
+  // set is emptied by `'drain'` (the kernel accepted the backlog), so a healthy
+  // long stream never accumulates minutes-to-hours of budget it does not need.
+  let pendingBytes = 0;
+  let extendDrain = null;
+  const deadlineMs = () => drainDeadlineMs({
+    bytes: pendingBytes,
+    fixedMs: fixedWaitMs,
+    minClientRateBps: minRate,
+  });
 
   const gone = () => !!disposed || res.writableEnded === true || signal?.aborted === true;
 
@@ -74,10 +143,24 @@ export function createBoundedWriter({
     const operation = new Promise((resolve) => { settleDrain = resolve; });
     let settled = false;
     let timer = null;
+    // (Re)arm the single timer from the current unacknowledged-byte count. A
+    // second false write while this wait is outstanding extends it: those bytes
+    // joined the same backlog.
+    const armTimer = () => {
+      if (timer) { clearTimeout(timer); timer = null; }
+      if (settled || timedOut || gone()) return;
+      timer = setTimeout(onDrainTimeout, deadlineMs());
+      // Never keep the process alive for a wait that belongs to one request.
+      timer.unref?.();
+    };
     const finishDrain = () => {
       if (settled) return;
       settled = true;
       if (timer) { clearTimeout(timer); timer = null; }
+      // The backlog is settled (drained, closed, aborted or timed out): no
+      // unacknowledged bytes remain, so the next wait starts from zero.
+      pendingBytes = 0;
+      if (extendDrain === armTimer) extendDrain = null;
       if (pending === operation) pending = null;
       if (settleCurrent === finishDrain) settleCurrent = null;
       // Some embedders hand this handler a minimal writable; only real streams
@@ -93,14 +176,21 @@ export function createBoundedWriter({
     const onDrainTimeout = () => {
       if (settled) return;
       timedOut = true;
-      try { onTimeout?.({ maxWaitMs }); } catch { /* teardown is the caller's, never ours */ }
+      try {
+        onTimeout?.({
+          maxWaitMs: fixedWaitMs,
+          minClientRateBps: minRate,
+          pendingBytes,
+          // Total budget this wait was given: fixed + unacknowledged/rate.
+          budgetMs: drainDeadlineMs({ bytes: pendingBytes, fixedMs: fixedWaitMs, minClientRateBps: minRate }),
+        });
+      } catch { /* teardown is the caller's, never ours */ }
       finishDrain();
     };
     pending = operation;
     settleCurrent = finishDrain;
-    timer = setTimeout(onDrainTimeout, maxWaitMs);
-    // Never keep the process alive for a wait that belongs to one request.
-    timer.unref?.();
+    extendDrain = armTimer;
+    armTimer();
     res.on?.('drain', finishDrain);
     res.on?.('close', finishDrain);
     res.on?.('error', finishDrain);
@@ -122,7 +212,13 @@ export function createBoundedWriter({
   const write = (text) => {
     if (gone()) return true;
     const ok = res.write(text) !== false;
-    if (ok === false) beginDrain();
+    if (!ok && enabled && !timedOut) {
+      // Only a frame the socket did NOT accept buys stall budget. A true
+      // verdict is already acknowledged, so it must not accrue a wait.
+      pendingBytes += Buffer.isBuffer(text) ? text.length : Buffer.byteLength(String(text), 'utf8');
+      if (pending) extendDrain?.();
+      else beginDrain();
+    }
     return ok;
   };
 
@@ -157,6 +253,7 @@ export function createBoundedWriter({
     disposed = true;
     // Settle (never hang) a producer parked on this writer.
     settleCurrent?.();
+    pendingBytes = 0;
   };
 
   return {
@@ -168,5 +265,9 @@ export function createBoundedWriter({
     gone,
     get pending() { return pending; },
     get timedOut() { return timedOut; },
+    // Budget for the next drain wait: fixed + the unacknowledged bytes at the
+    // minimum client rate, capped at the largest timer delay.
+    get deadlineMs() { return deadlineMs(); },
+    get pendingBytes() { return pendingBytes; },
   };
 }

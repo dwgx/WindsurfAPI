@@ -303,4 +303,33 @@ describe('CTX-01 clear_thinking_20251015 finite keep vs signed replay', () => {
       assertUnsupportedKeep(err, 1);
     });
   });
+
+  // G-04: `edits.findIndex` stopped at the FIRST finite keep, so a satisfiable edit
+  // earlier in the list hid a later edit that drops a replayable signed turn. Each
+  // edit is a directive of its own; the request must be refused at the offending
+  // index instead of reaching the upstream with an edit this bridge cannot honour.
+  it('rejects edits [keep 2, keep 1] for [signed, signed]: the SECOND edit drops a signed turn', () => {
+    withReplay(true, () => {
+      const err = validateMessagesRequest(request({
+        messages: turnHistory(signedTurn('1'), signedTurn('2')),
+        context_management: { edits: [
+          { type: 'clear_thinking_20251015', keep: { type: 'thinking_turns', value: 2 } },
+          { type: 'clear_thinking_20251015', keep: { type: 'thinking_turns', value: 1 } },
+        ] },
+      }));
+      assertUnsupportedKeep(err, 1);
+    });
+  });
+
+  it('accepts edits [keep 2, keep 2] for [signed, signed]: every edit is satisfiable', () => {
+    withReplay(true, () => {
+      assert.equal(validateMessagesRequest(request({
+        messages: turnHistory(signedTurn('1'), signedTurn('2')),
+        context_management: { edits: [
+          { type: 'clear_thinking_20251015', keep: { type: 'thinking_turns', value: 2 } },
+          { type: 'clear_thinking_20251015', keep: { type: 'thinking_turns', value: 2 } },
+        ] },
+      })), null);
+    });
+  });
 });

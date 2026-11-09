@@ -26,6 +26,7 @@ import { cacheClear } from '../src/cache.js';
 import { handleChatCompletions, __setConnectDeps, __resetConnectDeps } from '../src/handlers/chat.js';
 import {
   checkOutboundHistory,
+  dominantContributor,
   historyBudgetErrorMessage,
   measureOutboundHistory,
   resolveHistoryBudget,
@@ -102,8 +103,35 @@ describe('measureOutboundHistory', () => {
   });
 
   it('is total on malformed input (never throws, never counts a missing transcript)', () => {
-    assert.deepEqual(measureOutboundHistory(null), { turns: 0, bytes: 0 });
-    assert.deepEqual(measureOutboundHistory([null, {}, { content: 42 }]), { turns: 3, bytes: 0 });
+    const missing = measureOutboundHistory(null);
+    assert.equal(missing.turns, 0);
+    assert.equal(missing.bytes, 0);
+    const malformed = measureOutboundHistory([null, {}, { content: 42 }]);
+    assert.equal(malformed.turns, 3);
+    assert.equal(malformed.bytes, 0);
+  });
+
+  it('counts the tool schemas, not just messages', () => {
+    const messages = [{ role: 'user', content: 'hi' }];
+    const tools = [{ type: 'function', function: { name: 'f', parameters: { type: 'object' } } }];
+    const toolBytes = JSON.stringify(tools[0]).length;
+    const measured = measureOutboundHistory(messages, { tools });
+    assert.equal(measured.turns, 1);
+    assert.equal(measured.breakdown.messages, 2);
+    assert.equal(measured.breakdown.tools, toolBytes);
+    assert.equal(measured.bytes, 2 + toolBytes);
+  });
+
+  it('an 8.7MB request is measured as 8.7MB, not as its 0.2MB messages slice', () => {
+    const messages = Array.from({ length: 10 }, (_, i) => ({
+      role: i === 9 ? 'user' : (i % 2 === 0 ? 'user' : 'assistant'),
+      content: 'x'.repeat(20 * 1024),
+    }));
+    const tools = [{ type: 'function', function: { name: 'big', description: 'y'.repeat(8_500_000), parameters: { type: 'object' } } }];
+    const measured = measureOutboundHistory(messages, { tools });
+    assert.ok(measured.breakdown.messages < 250_000, 'messages are a small slice');
+    assert.ok(measured.bytes > DEFAULT_HISTORY_BUDGET_BYTES, `total ${measured.bytes} must exceed the 8MB budget`);
+    assert.equal(dominantContributor(measured.breakdown).name, 'tools');
   });
 });
 
@@ -150,6 +178,25 @@ describe('checkOutboundHistory', () => {
     assert.equal(over.ok, false);
     assert.equal(over.overTurns, false);
     assert.equal(over.overBytes, true);
+  });
+
+  it('counts tools toward the byte budget even when messages are small', () => {
+    const messages = [{ role: 'user', content: 'hi' }];
+    const tools = [{ type: 'function', function: { name: 'f', parameters: { description: 'x'.repeat(200) } } }];
+    const over = checkOutboundHistory(messages, { env, tools });
+    assert.equal(over.ok, false);
+    assert.equal(over.overBytes, true);
+    assert.equal(over.measured.breakdown.tools > 100, true);
+  });
+
+  it('names the dominant contributor in the refusal', () => {
+    const messages = [{ role: 'user', content: 'hi' }];
+    const tools = [{ type: 'function', function: { name: 'f', parameters: { description: 'x'.repeat(200) } } }];
+    const over = checkOutboundHistory(messages, { env, tools });
+    const message = historyBudgetErrorMessage(over);
+    assert.match(message, /Largest contributor: tool schemas/);
+    assert.match(message, /of history \(budget/);
+    assert.match(message, /WINDSURFAPI_HISTORY_BUDGET_BYTES/);
   });
 
   it('reports both dimensions when both are exceeded', () => {
@@ -239,6 +286,24 @@ describe('handleChatCompletions refuses an over-budget transcript before the ups
     assert.equal(res.status, 413);
     assert.equal(res.stream, undefined, 'a refusal must not open an SSE stream');
     assert.equal(calls, 0);
+  });
+
+  it('counts tools: an 8.7MB request is refused naming the tool schemas, not "0.2 MB"', async () => {
+    const messages = transcript(10, () => 'x'.repeat(20 * 1024));
+    const tools = [{
+      type: 'function',
+      function: {
+        name: 'big_schema',
+        description: 'y'.repeat(8_500_000),
+        parameters: { type: 'object', properties: { blob: { type: 'string' } } },
+      },
+    }];
+    const res = await handleChatCompletions(chatBody(messages, { tools }), { callerKey: CALLER });
+    assert.equal(res.status, 413);
+    assert.equal(res.body.error.code, HISTORY_BUDGET_ERROR_CODE);
+    assert.match(res.body.error.message, /Largest contributor: tool schemas/);
+    assert.doesNotMatch(res.body.error.message, /0\.2 MB of history/);
+    assert.equal(calls, 0, 'the refusal must land before any upstream call');
   });
 
   it('refuses before account acquisition: an empty pool gets the 413, not a pool 429', async () => {

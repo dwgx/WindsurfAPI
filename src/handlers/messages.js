@@ -44,6 +44,16 @@ function mapStopReason(finishReason) {
   return STOP_REASON_MAP[finishReason] || 'end_turn';
 }
 
+// G3: the connect layer's truncation terminal. A payload that arrived with no
+// upstream stopReason is reported as finish_reason:'error' (with
+// `unterminated:true` on the connect event), and `resolveFinishReason` never
+// produces that value for any other shape. Anthropic's stop_reason enum has no
+// error member, so the Messages surface must refuse the turn instead of rendering
+// it as a normal end_turn.
+function isUnterminatedFinish(body) {
+  return body?.choices?.[0]?.finish_reason === 'error';
+}
+
 // Item 1 (loop break) classifier moved to the connect layer: leading think-tagged
 // CONTENT is now reclassified into the reasoning channel at the stream-event level
 // in devin-connect-openai.js (streamChatWithEmptyRetry), BEFORE the #238 rescue
@@ -585,25 +595,40 @@ function thinkingTurnIndexes(messages) {
 // merely when N reaches the replayable count. keep:"none" keeps no turn, so it
 // is refused whenever a replayable signed turn exists. Other keep shapes are
 // already rejected by validateThinkingKeep.
+//
+// EVERY matching edit is checked, not just the first. `edits.findIndex(...)` used
+// to stop at the first finite keep, so `edits: [keep 2, keep 1]` over two signed
+// turns accepted the satisfiable first edit and never looked at the second one,
+// which drops a signed turn — the request then reached the upstream with an edit
+// this bridge cannot honour. Each edit is a directive of its own, so the first one
+// that cannot be honoured refuses the whole request (at its own index).
 function validateSignedReplayClearThinking(cm, messages, model) {
   if (!signedThinkingReplayEnabled(process.env, model)) return null;
   const edits = Array.isArray(cm?.edits) ? cm.edits : [];
-  const index = edits.findIndex(edit => edit?.type === 'clear_thinking_20251015'
-    && (edit.keep === 'none' || (edit.keep != null && typeof edit.keep === 'object')));
-  if (index === -1) return null;
   const signedIndexes = replayableSignedIndexes(messages);
   if (signedIndexes.length === 0) return null;
-  const keep = edits[index].keep;
-  if (keep !== 'none' && keep.type === 'thinking_turns') {
-    const turns = thinkingTurnIndexes(messages);
-    if (keep.value >= turns.length) return null;
-    const dropped = new Set(turns.slice(0, turns.length - keep.value));
-    if (!signedIndexes.some(turn => dropped.has(turn))) return null;
+  // Computed lazily: a request whose edits are all keep:"all" never pays for the
+  // second message walk.
+  let turns = null;
+  for (let index = 0; index < edits.length; index++) {
+    const edit = edits[index];
+    if (edit?.type !== 'clear_thinking_20251015') continue;
+    const keep = edit.keep;
+    if (keep !== 'none' && (keep == null || typeof keep !== 'object')) continue;
+    if (keep !== 'none' && keep.type === 'thinking_turns') {
+      if (turns === null) turns = thinkingTurnIndexes(messages);
+      if (keep.value >= turns.length) continue;
+      const dropped = new Set(turns.slice(0, turns.length - keep.value));
+      if (!signedIndexes.some(turn => dropped.has(turn))) continue;
+    }
+    // keep:"none" keeps no turn, so it drops every replayable signed turn; any
+    // object keep that is not a satisfiable thinking_turns lands here too.
+    return unsupportedParameter(
+      `context_management.edits[${index}].keep`,
+      `context_management.edits[${index}].keep cannot be honoured while signed thinking replay is enabled (DEVIN_CONNECT_REPLAY_SIGNED_THINKING=1): the proxy would re-attach the signed thinking this edit asks to clear, and the upstream verifies each signature so a partial keep cannot be replayed. Use keep:"all", disable signed thinking replay, or remove the signed thinking history from the request.`,
+    );
   }
-  return unsupportedParameter(
-    `context_management.edits[${index}].keep`,
-    `context_management.edits[${index}].keep cannot be honoured while signed thinking replay is enabled (DEVIN_CONNECT_REPLAY_SIGNED_THINKING=1): the proxy would re-attach the signed thinking this edit asks to clear, and the upstream verifies each signature so a partial keep cannot be replayed. Use keep:"all", disable signed thinking replay, or remove the signed thinking history from the request.`,
-  );
+  return null;
 }
 
 // C4: a cache_control breakpoint must be { type: 'ephemeral', ttl?: '5m'|'1h' }.
@@ -1540,6 +1565,12 @@ class AnthropicStreamTranslator {
     // frame. finish() uses this to tell a clean completion apart from an
     // abnormal cutoff (network drop / upstream abort / deadline) — see BUG1.
     this.sawTerminalSignal = false;
+    // G3: the connect layer reports a payload that arrived with NO upstream
+    // stopReason as finish_reason:'error' (its `unterminated` terminal). That is a
+    // TRUNCATED turn, and Anthropic's stop_reason enum has no error value — a
+    // normal message_delta would report end_turn and the client would accept half
+    // an answer as final. finish() turns this into an `error` event instead.
+    this.upstreamError = false;
     // True when the ONLY finish frame seen was one chat.js fabricated to close a
     // stream that died mid-answer. It suppresses the `[DONE]` shortcut below, since
     // chat.js emits `[DONE]` on that path too — so both signals must be discounted
@@ -1975,6 +2006,10 @@ class AnthropicStreamTranslator {
         // truncated answer was complete.
         if (chunk.__synthetic_finish || chunk.__windsurf_end_reason === 'upstream_truncated') this.sawSyntheticFinish = true;
         else this.sawTerminalSignal = true;
+        // G3: 'error' is the connect layer's truncation terminal (a payload with no
+        // stopReason). It must never be folded into the normal stop_reason map —
+        // finish() refuses the turn before message_delta when this is set.
+        if (choice.finish_reason === 'error') this.upstreamError = true;
         // SEED-C3a: the generation layer reports WHICH stop sequence truncated
         // the answer on this terminal choice (only the internal Messages route
         // opts into the carrier, so a direct OpenAI client never sends one).
@@ -2024,6 +2059,19 @@ class AnthropicStreamTranslator {
     // is the sequence a pre-content upstream error chunk already produces today
     // (processChunk returns on chunk.error before startMessage), so a lone `error`
     // event is a shape Anthropic clients already handle.
+    if (this.upstreamError) {
+      // G3: finish_reason:'error' is the connect layer's truncation terminal — a
+      // payload arrived with no upstream stopReason, so the turn is incomplete.
+      // Anthropic's stop_reason enum has no error value; reporting end_turn would
+      // certify a half answer as final, so fail the stream with the same retryable
+      // shape as the BUG1 guard below (502 → 529 overloaded_error).
+      this.error({
+        status: 502,
+        type: 'upstream_error',
+        message: 'Upstream ended the turn without a stop reason (truncated response)',
+      });
+      return;
+    }
     if (!this.sawTerminalSignal) {
       this.error({
         status: 502,
@@ -2362,6 +2410,14 @@ export async function handleMessages(body, context = {}) {
       // comment on the streaming twin of this branch already says the mapping exists
       // "so the SDK applies correct retry/backoff" — which is precisely the header.
       return toAnthropicChatError(result);
+    }
+    // G3: a truncated turn (payload arrived, upstream named no stopReason) must
+    // not be rendered as a 200 end_turn. `toAnthropicError` maps the 502 to a
+    // retryable 529 overloaded_error, so the SDK backs off instead of accepting a
+    // half answer as final.
+    if (isUnterminatedFinish(result.body)) {
+      return toAnthropicError(502, 'upstream_error',
+        'Upstream ended the turn without a stop reason (truncated response)');
     }
     return { status: 200, body: openAIToAnthropic(result.body, requestedModel, msgId, cachePolicy, body.stop_sequences, toolNameMap) };
   }

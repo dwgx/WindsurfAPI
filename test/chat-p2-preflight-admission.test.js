@@ -19,6 +19,7 @@
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { handleChatCompletions, __setConnectDeps, __resetConnectDeps } from '../src/handlers/chat.js';
+import { createRequestBudget } from '../src/request-budget.js';
 import {
   addAccountByKey, removeAccount, getAccountInternal, setAccountTier, markSelectorIneligible,
   markRateLimited,
@@ -203,5 +204,30 @@ describe('P2-7: preflight applies the scheduler admission conjunction', () => {
     assert.equal(result.status, 429);
     assert.ok(result.body.error.retry_after_ms >= 60 * 1000, 'the precise cooldown is still advertised');
     assert.equal(up.hits, 0);
+  });
+
+  it('fast-fails 429 when the only account is cooled for the requested selector', async () => {
+    // A model-scoped 429 with an upstream reset — the shape finalizeConnectAccount
+    // writes for "Reached message rate limit for this model ... Resets in: 3h".
+    // It benches the account for THIS selector only, so the preflight must read
+    // BOTH dimensions: rl.allLimited and tu.allUnavailable true. If tu stayed
+    // selector-blind, `degradable` would be true and the request would spend the
+    // queue wait (and fall through to the env token) instead of a fast 429.
+    const a = seed('sel-rl');
+    markRateLimited(a.apiKey, 3 * 60 * 60 * 1000, FREE_SELECTOR, 'r');
+    const up = stubUpstream();
+
+    const result = await handleChatCompletions(
+      { model: FREE_SELECTOR, stream: false, messages: [{ role: 'user', content: 'hi' }] },
+      // Bound the regression path: without the fix this test would wait the full
+      // 30s queue before answering.
+      { callerKey: '', budget: createRequestBudget({ deadlineMs: 2_000 }) },
+    );
+
+    assert.equal(result.status, 429, 'a selector-cooled pool must fast-fail, not queue');
+    assert.equal(result.body.error.type, 'rate_limit_exceeded');
+    assert.ok(result.body.error.retry_after_ms >= 60 * 1000, 'the upstream reset is advertised');
+    assert.ok(result.headers['Retry-After'], 'sets the Retry-After header');
+    assert.equal(up.hits, 0, 'no upstream turn and no env-token fallback');
   });
 });

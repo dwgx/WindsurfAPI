@@ -556,6 +556,35 @@ export function responsesToChat(body) {
   // than tagged onto the message objects: those get deep-compared in tests and
   // shipped upstream, so they must stay pristine.
   let instructionsLead = 0;
+  // G01 (input side): a replayed `reasoning` item carries the previous turn's
+  // summary text and, when the client asked for it, the opaque blob this route
+  // emitted as `encrypted_content`. The Connect builder consumes that pair as
+  // signed thinking on the assistant frame it precedes (#11 text + #12
+  // signature — see devin-connect.js `signedThinking`), so the item is buffered
+  // and attached to the NEXT assistant message instead of vanishing.
+  let pendingReasoning = null;
+  const attachPendingReasoning = (message) => {
+    if (!pendingReasoning) return message;
+    const { text, signature, signedSegments } = pendingReasoning;
+    pendingReasoning = null;
+    if (text) message.reasoning_content = text;
+    // A signature seals exactly `text`; without the text it seals nothing, and
+    // two signed segments cannot ride one assistant frame (the Connect decoder
+    // drops the signature for the same reason — `multipleSignedSegments`).
+    //
+    // It is ALSO withheld from a turn that carries tool_calls: when
+    // signed-thinking replay is enabled in prompt-emulation mode, the chat layer
+    // refuses exactly that shape with 400
+    // `signed_thinking_tool_history_unsupported` (chat.js) — and a Codex
+    // `store:false` replay puts every reasoning item before a tool call. The
+    // summary text still rides the turn; the signature is dropped rather than
+    // turning the default path into a 400.
+    const signedToolTurn = Array.isArray(message.tool_calls) && message.tool_calls.length > 0;
+    if (text && signature && signedSegments === 1 && !signedToolTurn) {
+      message.reasoning_signature = signature;
+    }
+    return message;
+  };
   const flushToolCalls = (() => {
     let pending = [];
     return {
@@ -571,8 +600,9 @@ export function responsesToChat(body) {
       },
       flush() {
         if (!pending.length) return;
-        messages.push({ role: 'assistant', content: null, tool_calls: pending });
+        const message = attachPendingReasoning({ role: 'assistant', content: null, tool_calls: pending });
         pending = [];
+        messages.push(message);
       },
     };
   })();
@@ -608,17 +638,41 @@ export function responsesToChat(body) {
         // both lose priority and bypass the 529 fingerprint gate. Matches kiro's
         // Codex developer→system mapping.
         const role = item.role === 'developer' ? 'system' : (item.role || 'user');
-        messages.push({
-          role,
-          content: normalizeMessageContent(item.content),
-        });
+        const message = { role, content: normalizeMessageContent(item.content) };
+        if (role === 'assistant') {
+          messages.push(attachPendingReasoning(message));
+        } else {
+          // A user/system message opens a new turn: reasoning buffered before it
+          // belongs to the previous one and must not leak forward.
+          pendingReasoning = null;
+          messages.push(message);
+        }
       } else if (item.type === 'input_file' || item.type === 'file' || item.type === 'document') {
         // P-03: a file item sent at the top level of `input` (instead of inside
         // a message's content array) used to fall through every branch and
         // vanish before the backend saw it. Materialise it as a user content
         // part so Cascade can extract it and the Connect guard can reject it.
         flushToolCalls.flush();
+        pendingReasoning = null;
         messages.push({ role: 'user', content: normalizeMessageContent([item]) });
+      } else if (item.type === 'reasoning') {
+        // G01 (input side): see pendingReasoning above. `summary` is the
+        // human-readable text; `encrypted_content` is the opaque blob this route
+        // emitted (absent/null when the upstream supplied none — keep it absent).
+        const text = Array.isArray(item.summary)
+          ? item.summary.map(part => (part && typeof part.text === 'string' ? part.text : '')).join('')
+          : '';
+        const signature = typeof item.encrypted_content === 'string' ? item.encrypted_content : '';
+        if (text || signature) {
+          if (!pendingReasoning) pendingReasoning = { text: '', signature: '', signedSegments: 0 };
+          pendingReasoning.text += text;
+          if (signature) {
+            pendingReasoning.signedSegments += 1;
+            // Keep only one unambiguous signature: a second one cannot seal the
+            // concatenated text.
+            pendingReasoning.signature = pendingReasoning.signedSegments === 1 ? signature : '';
+          }
+        }
       } else if (item.type === 'function_call') {
         flushToolCalls.add(item);
       } else if (item.type === 'function_call_output') {
@@ -651,6 +705,17 @@ export function responsesToChat(body) {
     if (t?.function?.name) t.function.name = toolNameMap?.toUpstream.get(t.function.name) ?? t.function.name;
   }
   const responseFormat = normalizeResponseTextFormat(body.text?.format);
+  // G02: `text.verbosity` is a first-class Responses parameter and the chat
+  // surface carries it as a top-level `verbosity`. Only a non-empty string is
+  // forwarded; absence stays absent so a caller that never sent it is unaffected.
+  const textVerbosity = typeof body.text?.verbosity === 'string' && body.text.verbosity.trim()
+    ? body.text.verbosity.trim()
+    : null;
+  // G01: `include` is response-side only (the chat wire has no such parameter),
+  // so it rides the result as an internal field like the other bookkeeping below
+  // and is stripped before dispatch.
+  const includeReasoningEncrypted = Array.isArray(body.include)
+    && body.include.includes('reasoning.encrypted_content');
   let forwardedToolChoice = body.tool_choice != null
     ? pruneResponseToolChoice(body.tool_choice, tools)
     : undefined;
@@ -683,10 +748,12 @@ export function responsesToChat(body) {
     ...(body.parallel_tool_calls != null ? { parallel_tool_calls: body.parallel_tool_calls } : {}),
     ...(forwardedToolChoice != null ? { tool_choice: forwardedToolChoice } : {}),
     ...(responseFormat ? { response_format: responseFormat } : {}),
+    ...(textVerbosity ? { verbosity: textVerbosity } : {}),
     // Internal, stripped before the upstream call (same convention as __route).
     ...(instructionsLead ? { __instructionsLead: instructionsLead } : {}),
     ...(hasNameRewrites && toolNameMap ? { __toolNameMap: toolNameMap } : {}),
     ...(metadata ? { __responseMetadata: metadata } : {}),
+    ...(includeReasoningEncrypted ? { __includeReasoningEncrypted: true } : {}),
   };
 }
 
@@ -739,13 +806,93 @@ function textMessageItem(id, text, status = 'completed') {
   };
 }
 
-function reasoningItem(id, text, status = 'completed') {
+function reasoningItem(id, text, status = 'completed', encryptedContent = '') {
   return {
     type: 'reasoning',
     id,
     status,
     summary: text ? [{ type: 'summary_text', text }] : [],
+    // G01: only ever a value the UPSTREAM supplied, and only when the caller
+    // asked for it via include:["reasoning.encrypted_content"]. Nothing on this
+    // bridge can produce that blob, so an absent upstream field stays absent —
+    // an invented value would be replayed by the client as if the model had
+    // produced it.
+    ...(encryptedContent ? { encrypted_content: encryptedContent } : {}),
   };
+}
+
+/**
+ * The opaque reasoning blob an upstream attached, if any.
+ *
+ * The Responses contract exposes it as `encrypted_content`, gated on
+ * `include:["reasoning.encrypted_content"]`. Two carriers reach this bridge:
+ * a chat-compatible upstream that emits `encrypted_content` directly, and the
+ * Connect thinking signature (`reasoning_signature`) that seals the very same
+ * reasoning text (the established signature carrier for this field — see the
+ * openai-responses conversion table: `reasoning.encrypted_content` ↔
+ * `thinking.signature`). Both are upstream-supplied opaque values; neither is
+ * synthesized here.
+ */
+function upstreamEncryptedContent(source) {
+  if (!source || typeof source !== 'object') return '';
+  if (typeof source.encrypted_content === 'string' && source.encrypted_content) {
+    return source.encrypted_content;
+  }
+  return typeof source.reasoning_signature === 'string' ? source.reasoning_signature : '';
+}
+
+/**
+ * The `input` of a custom tool call as the client must see it: the RAW string,
+ * not the `{"input":"…"}` envelope this bridge declares to the chat upstream.
+ * Falls back to the arguments text when the upstream did not send that shape
+ * (nothing is lost, and no value is invented).
+ */
+function customToolInput(argsText) {
+  const parsed = safeJsonParse(argsText);
+  return parsed && typeof parsed === 'object' && parsed.input != null
+    ? stringifyMaybe(parsed.input)
+    : argsText;
+}
+
+/**
+ * Decode the longest COMPLETE prefix of the `input` string in a partially
+ * streamed custom-tool argument object.
+ *
+ * Upstream streams `{"input":"…"}` a few characters at a time, so the raw input
+ * the client is owed (`response.custom_tool_call_input.delta`) has to be
+ * recovered incrementally: the closing quote may not have arrived yet and an
+ * escape sequence can be split across chunks. Anything not yet decodable is
+ * withheld (returns the prefix so far) — a guessed character would corrupt the
+ * tool input the client executes. Returns '' when the value is not a JSON
+ * string (e.g. `{"input":123}`), in which case only the final item carries it.
+ */
+function customToolInputPrefix(argsText) {
+  if (typeof argsText !== 'string' || !argsText) return '';
+  const match = /"input"\s*:\s*"/.exec(argsText);
+  if (!match) return '';
+  const simpleEscapes = { '"': '"', '\\': '\\', '/': '/', b: '\b', f: '\f', n: '\n', r: '\r', t: '\t' };
+  let out = '';
+  for (let i = match.index + match[0].length; i < argsText.length; i++) {
+    const ch = argsText[i];
+    if (ch === '"') return out;
+    if (ch !== '\\') {
+      out += ch;
+      continue;
+    }
+    const esc = argsText[i + 1];
+    if (esc === undefined) return out; // escape split across chunks
+    if (esc === 'u') {
+      const hex = argsText.slice(i + 2, i + 6);
+      if (!/^[0-9a-fA-F]{4}$/.test(hex)) return out;
+      out += String.fromCharCode(parseInt(hex, 16));
+      i += 5;
+      continue;
+    }
+    if (!(esc in simpleEscapes)) return out; // unknown escape: stop at a safe boundary
+    out += simpleEscapes[esc];
+    i += 1;
+  }
+  return out;
 }
 
 function clientToolId(id) {
@@ -768,16 +915,15 @@ function functionCallItem(toolCall, status = 'completed', requestedTools = [], t
     ? (allocateId ? allocateId(toolCall.id) : clientToolId(toolCall.id))
     : '';
   if (responseTool?.type === 'custom') {
-    const parsed = safeJsonParse(argsText);
-    const input = parsed && typeof parsed === 'object' && parsed.input != null
-      ? stringifyMaybe(parsed.input)
-      : argsText;
     return {
       type: 'custom_tool_call',
+      // Every output item carries an id; the streaming translator names its
+      // custom_tool_call_input events with the same field, so both paths agree.
+      id: genFunctionCallId(),
       call_id: callId || `call_${randomUUID().slice(0, 8)}`,
       name: responseTool.originalName || name,
       ...(responseTool.namespace ? { namespace: responseTool.namespace } : {}),
-      input,
+      input: customToolInput(argsText),
       status,
     };
   }
@@ -796,13 +942,28 @@ function functionCallItem(toolCall, status = 'completed', requestedTools = [], t
   };
 }
 
-export function chatToResponse(chatBody, requestedModel, responseId = genResponseId(), msgId = genMessageId(), requestedTools = [], toolNameMap = null, metadata = null) {
+/**
+ * G3 (Q1 audit §7): the one message both exits report when the upstream closed a
+ * turn without saying how it ended. The Connect decoder surfaces that shape as
+ * `finish_reason:'error'` (an end-of-stream frame with a payload but no
+ * stopReason); it must never reach a client as a clean completion.
+ */
+const UPSTREAM_UNTERMINATED_MESSAGE =
+  'The upstream ended the turn without a completion reason (truncated response).';
+
+export function chatToResponse(chatBody, requestedModel, responseId = genResponseId(), msgId = genMessageId(), requestedTools = [], toolNameMap = null, metadata = null, options = {}) {
   const choice = chatBody.choices?.[0] || {};
   const message = choice.message || {};
   const finishReason = choice.finish_reason || 'stop';
   const text = message.content || '';
   const output = [];
-  if (message.reasoning_content) output.push(reasoningItem('rs_' + msgId.slice(4), message.reasoning_content));
+  // G01: the blob is emitted ONLY when the caller opted in through `include` and
+  // the upstream actually supplied one. An upstream that sends reasoning without
+  // it (this bridge's Connect path) yields no field at all — see reasoningItem.
+  const encryptedContent = options.includeReasoningEncrypted ? upstreamEncryptedContent(message) : '';
+  if (message.reasoning_content || encryptedContent) {
+    output.push(reasoningItem('rs_' + msgId.slice(4), message.reasoning_content, 'completed', encryptedContent));
+  }
   if (text) output.push(textMessageItem(msgId, text));
   // One allocator per turn: duplicate upstream call ids become distinct wire ids.
   const allocateCallId = toolHygieneEnabled() ? createToolIdAllocator() : null;
@@ -823,12 +984,26 @@ export function chatToResponse(chatBody, requestedModel, responseId = genRespons
   // report `upstream_incomplete` (not max_output_tokens) and must not be
   // committed to the response store (see commit() below).
   const upstreamTruncated = choice._windsurf_end_reason === 'upstream_truncated';
-  const truncated = upstreamTruncated || finishReason === 'length' || finishReason === 'content_filter';
+  // G3 (Q1 audit §7): the Connect decoder reports an end-of-stream frame that
+  // carried an answer but NO stopReason as `finish_reason:'error'` (with
+  // `unterminated:true` when the signal rides the choice). That is a FAILED
+  // turn, not a finished one: closing it as `completed` — the old behaviour —
+  // told the client a half answer was whole. `incomplete` is wrong too; it is
+  // reserved for caller-imposed caps and benign content filters.
+  const upstreamUnterminated = finishReason === 'error' || choice.unterminated === true;
+  const truncated = !upstreamUnterminated
+    && (upstreamTruncated || finishReason === 'length' || finishReason === 'content_filter');
   return {
     id: responseId,
     object: 'response',
     created_at: chatBody.created || Math.floor(Date.now() / 1000),
-    status: truncated ? 'incomplete' : 'completed',
+    status: upstreamUnterminated ? 'failed' : (truncated ? 'incomplete' : 'completed'),
+    ...(upstreamUnterminated ? {
+      error: {
+        code: 'UPSTREAM_UNTERMINATED',
+        message: UPSTREAM_UNTERMINATED_MESSAGE,
+      },
+    } : {}),
     ...(truncated ? {
       incomplete_details: {
         reason: upstreamTruncated
@@ -863,7 +1038,7 @@ export function chatToResponse(chatBody, requestedModel, responseId = genRespons
 }
 
 class ResponsesStreamTranslator {
-  constructor(res, responseId, model, requestedTools = [], toolNameMap = null, metadata = null) {
+  constructor(res, responseId, model, requestedTools = [], toolNameMap = null, metadata = null, options = {}) {
     this.res = res;
     this.responseId = responseId;
     this.model = model;
@@ -871,6 +1046,9 @@ class ResponsesStreamTranslator {
     // the stream publishes (created / in_progress / completed / failed) when the
     // caller sent it, absent otherwise.
     this.metadata = metadata;
+    // G01: include:["reasoning.encrypted_content"]. The reasoning item carries the
+    // upstream blob only when this is set AND the upstream supplied one.
+    this.includeReasoningEncrypted = !!options.includeReasoningEncrypted;
     this.requestedTools = Array.isArray(requestedTools) ? requestedTools : [];
     this.toolNameMap = toolNameMap;
     this.createdAt = Math.floor(Date.now() / 1000);
@@ -899,6 +1077,9 @@ class ResponsesStreamTranslator {
     this.reasoningOutputIndex = null;
     this.reasoningStarted = false;
     this.reasoningText = '';
+    // Opaque upstream reasoning blob(s), concatenated in arrival order. Empty
+    // unless the caller asked for it via include AND the upstream sent one.
+    this.reasoningEncryptedContent = '';
     this.reasoningDone = false;
     this.nextOutputIndex = 0;
     this.outputItems = [];
@@ -919,6 +1100,10 @@ class ResponsesStreamTranslator {
     // separate from streamFinishReason because `null` there is ambiguous: it is also
     // what a stream that is still running looks like.
     this.sawTerminalChunk = false;
+    // G3: the upstream said it finished but named no reason (or named `error`).
+    // Kept apart from sawTerminalChunk: a chunk DID arrive, so this is not the
+    // dropped-connection shape; the turn is failed, not merely incomplete.
+    this.sawUnterminated = false;
     // V-08: one abort-aware bounded writer for this egress. `res` here is the
     // real response (the Chat handler writes into `createCaptureRes`, which
     // reports THIS writer's pressure back to it), so a slow Responses client now
@@ -1066,6 +1251,10 @@ class ResponsesStreamTranslator {
     this.start();
 
     const choice = chunk.choices?.[0];
+    // G3: the Connect decoder's additive `unterminated` marker (it also sets
+    // finish_reason:'error'). Accepted on either the chunk or its choice so the
+    // signal is not lost to envelope shape.
+    if (chunk.unterminated === true || choice?.unterminated === true) this.sawUnterminated = true;
     if (choice) {
       // Remember the terminal reason: the Responses API signals truncation through
       // status:'incomplete' + incomplete_details, and without capturing it here the
@@ -1091,6 +1280,10 @@ class ResponsesStreamTranslator {
       }
       const delta = choice.delta || {};
       if (delta.reasoning_content) this.emitReasoningDelta(delta.reasoning_content);
+      // G01: the opaque blob can arrive on its own delta (the Connect signature
+      // does), so it is captured independently of the summary text. It never
+      // OPENS an item by itself unless the caller asked for it.
+      if (this.includeReasoningEncrypted) this.noteReasoningEncrypted(delta);
       if (delta.content) this.emitTextDelta(delta.content);
       if (Array.isArray(delta.tool_calls)) {
         for (const tc of delta.tool_calls) this.emitToolCallDelta(tc);
@@ -1099,16 +1292,32 @@ class ResponsesStreamTranslator {
     if (chunk.usage) this.finalUsage = chunk.usage;
   }
 
+  /** Publish the reasoning item once; shared by summary text and the blob. */
+  startReasoning() {
+    if (this.reasoningStarted) return;
+    this.reasoningStarted = true;
+    this.reasoningOutputIndex = this.nextOutputIndex++;
+    this.send('response.output_item.added', {
+      output_index: this.reasoningOutputIndex,
+      item: reasoningItem(this.reasoningId, '', 'in_progress'),
+    });
+  }
+
+  /**
+   * Accumulate an upstream-supplied opaque reasoning blob. A reasoning item with
+   * an empty summary is still the truthful shape for a blob-only delta, so the
+   * item is opened here when the text never arrives.
+   */
+  noteReasoningEncrypted(source) {
+    const blob = upstreamEncryptedContent(source);
+    if (!blob) return;
+    this.reasoningEncryptedContent += blob;
+    this.startReasoning();
+  }
+
   emitReasoningDelta(text) {
     if (!text) return;
-    if (!this.reasoningStarted) {
-      this.reasoningStarted = true;
-      this.reasoningOutputIndex = this.nextOutputIndex++;
-      this.send('response.output_item.added', {
-        output_index: this.reasoningOutputIndex,
-        item: reasoningItem(this.reasoningId, '', 'in_progress'),
-      });
-    }
+    this.startReasoning();
     this.reasoningText += text;
     this.send('response.reasoning_summary_text.delta', {
       item_id: this.reasoningId,
@@ -1127,7 +1336,7 @@ class ResponsesStreamTranslator {
       summary_index: 0,
       text: this.reasoningText,
     });
-    const complete = reasoningItem(this.reasoningId, this.reasoningText);
+    const complete = reasoningItem(this.reasoningId, this.reasoningText, 'completed', this.reasoningEncryptedContent);
     this.send('response.output_item.done', { output_index: this.reasoningOutputIndex, item: complete });
     this.outputItems[this.reasoningOutputIndex] = complete;
   }
@@ -1221,6 +1430,9 @@ class ResponsesStreamTranslator {
     const item = responseTool?.type === 'custom'
       ? {
           type: 'custom_tool_call',
+          // The item id is what the custom_tool_call_input events name; every
+          // output item carries one (function calls already did).
+          id: genFunctionCallId(),
           call_id: tc.callId || `call_${randomUUID().slice(0, 8)}`,
           name: responseTool.originalName || clientName,
           ...(responseTool.namespace ? { namespace: responseTool.namespace } : {}),
@@ -1241,7 +1453,12 @@ class ResponsesStreamTranslator {
     // Arguments buffered while the name was unsettled belong to this item. Emit
     // them now in their original chunk boundaries and mark them sent, or
     // finishToolCalls would replay the same deltas a second time.
-    if (!tc.custom && !tc.suppressArgDeltas && tc.pendingArgDeltas?.length) {
+    if (tc.custom) {
+      // G03: a custom tool's input streams through its own event family, as the
+      // RAW string the client executes — not through function_call_arguments.
+      this.emitCustomInputDelta(tc);
+      tc.pendingArgDeltas = [];
+    } else if (!tc.suppressArgDeltas && tc.pendingArgDeltas?.length) {
       for (const delta of tc.pendingArgDeltas) {
         this.send('response.function_call_arguments.delta', {
           item_id: item.id,
@@ -1254,6 +1471,27 @@ class ResponsesStreamTranslator {
     }
   }
 
+  /**
+   * G03: publish the not-yet-emitted tail of a custom call's decoded input.
+   *
+   * The upstream streams the `{"input":"…"}` envelope, so only the COMPLETE
+   * decodable prefix can be sent (customToolInputPrefix withholds a partial
+   * escape). Idempotent: it always compares against the full accumulated
+   * arguments, so a replayed chunk emits nothing.
+   */
+  emitCustomInputDelta(tc) {
+    if (!tc?.custom || !tc.item) return;
+    const prefix = customToolInputPrefix(tc.argChunks.join(''));
+    if (prefix.length <= tc.emittedInputLength) return;
+    const delta = prefix.slice(tc.emittedInputLength);
+    tc.emittedInputLength = prefix.length;
+    this.send('response.custom_tool_call_input.delta', {
+      item_id: tc.item.id,
+      output_index: tc.outputIndex,
+      delta,
+    });
+  }
+
   emitToolCallDelta(toolCall) {
     const idx = toolCall.index ?? 0;
     let existing = this.toolCalls.get(idx);
@@ -1263,6 +1501,7 @@ class ResponsesStreamTranslator {
         outputIndex: this.nextOutputIndex++,
         argChunks: [],
         emittedArgsLength: 0,
+        emittedInputLength: 0,
         done: false,
         custom: false,
         suppressArgDeltas: false,
@@ -1339,7 +1578,9 @@ class ResponsesStreamTranslator {
 
     if (existing.callId) existing.item.call_id = existing.callId;
 
-    if (!existing.custom && !existing.suppressArgDeltas) {
+    if (existing.custom) {
+      this.emitCustomInputDelta(existing);
+    } else if (!existing.suppressArgDeltas) {
       const allArgs = existing.argChunks.join('');
       const pendingArgs = allArgs.slice(existing.emittedArgsLength);
       if (pendingArgs) {
@@ -1364,10 +1605,17 @@ class ResponsesStreamTranslator {
       if (!tc.item) this.openToolItem(tc, { seal: false });
       const args = tc.argChunks.join('');
       if (tc.custom) {
-        const parsed = safeJsonParse(args);
-        const input = parsed && typeof parsed === 'object' && parsed.input != null
-          ? stringifyMaybe(parsed.input)
-          : args;
+        // G03: flush the last decodable prefix, then close the event family with
+        // the authoritative full input. `output_item.added` legitimately carried
+        // input:'' (the in-progress shape); THIS done item is what the client
+        // executes, so it must carry the whole value.
+        this.emitCustomInputDelta(tc);
+        const input = customToolInput(args);
+        this.send('response.custom_tool_call_input.done', {
+          item_id: tc.item.id,
+          output_index: tc.outputIndex,
+          input,
+        });
         const complete = { ...tc.item, input, status: 'completed' };
         this.send('response.output_item.done', { output_index: tc.outputIndex, item: complete });
         this.outputItems[tc.outputIndex] = complete;
@@ -1484,6 +1732,17 @@ class ResponsesStreamTranslator {
     // pre-tool narration, so this gate closed an EMPTY trailing message item on
     // every turn that narrated and then called a tool.
     if (this.messageStarted || this.segmentText) this.finishMessage();
+    const reason = this.streamFinishReason;
+    // G3 (Q1 audit §7): an upstream that ended the turn with `error` (Connect:
+    // an end-of-stream frame carrying a payload but no stopReason) or flagged it
+    // `unterminated` did NOT finish. Closing as `response.completed` — the old
+    // behaviour — told the client a half answer was whole. The partial items are
+    // already closed above; the terminal is a failure, and `failed` keeps the
+    // turn out of the response store and suppresses the `[DONE]` sentinel.
+    if (reason === 'error' || this.sawUnterminated) {
+      this.sendFailed({ code: 'UPSTREAM_UNTERMINATED', message: UPSTREAM_UNTERMINATED_MESSAGE });
+      return;
+    }
     // Same truncation rule as the non-streaming path (see chatToResponse):
     // 'incomplete' is reserved for length / content_filter, everything else closes
     // as 'completed'.
@@ -1495,7 +1754,6 @@ class ResponsesStreamTranslator {
     // response store, where it became the next turn's context — a silent corruption
     // that outlived the request. It closes as 'incomplete' instead, and `truncated`
     // also gates the store commit below.
-    const reason = this.streamFinishReason;
     const aborted = !this.sawTerminalChunk;
     const truncated = reason === 'length' || reason === 'content_filter' || aborted;
     const status = truncated ? 'incomplete' : 'completed';
@@ -1527,14 +1785,17 @@ class ResponsesStreamTranslator {
     });
   }
 
-  error(err) {
-    if (this.finished) return;
-    this.finished = true;
-    // Marks the turn as NOT committable to the response store: a failed stream
-    // has no complete assistant reply to chain from.
+  /**
+   * Emit the terminal `response.failed` frame.
+   *
+   * Shared by the mid-stream error path and by finish() when the upstream closed
+   * a turn with `error` / `unterminated` instead of a completion reason — one
+   * failure shape whether the stream died or the upstream merely failed to say
+   * it finished. Setting `failed` is what keeps the turn out of the response
+   * store and suppresses the `[DONE]` sentinel.
+   */
+  sendFailed(err) {
     this.failed = true;
-    this.deferred = null;
-    this.start();
     // Resolve the authoritative {status,type} from the DEVIN_CONNECT classification
     // first, exactly like messages.js and gemini.js do. Reading only err.type
     // collapsed every mid-stream CAPACITY / RATE_LIMITED / MODEL_BLOCKED into a
@@ -1556,6 +1817,15 @@ class ResponsesStreamTranslator {
         },
       },
     });
+  }
+
+  error(err) {
+    if (this.finished) return;
+    this.finished = true;
+    // A failed stream has no complete assistant reply to chain from.
+    this.deferred = null;
+    this.start();
+    this.sendFailed(err);
   }
 
   feed(rawChunk) {
@@ -1958,6 +2228,7 @@ export async function handleResponses(body, deps = {}) {
   let chatBody;
   let toolNameMap = null;
   let responseMetadata = null;
+  let includeReasoningEncrypted = false;
   try {
     chatBody = responsesToChat(body);
     toolNameMap = chatBody.__toolNameMap || null;
@@ -1969,6 +2240,13 @@ export async function handleResponses(body, deps = {}) {
     if ('__responseMetadata' in chatBody) {
       chatBody = { ...chatBody };
       delete chatBody.__responseMetadata;
+    }
+    // G01: `include` is response-side only. Stripped from the dispatch body and
+    // carried to the two translators that build the reasoning items.
+    includeReasoningEncrypted = chatBody.__includeReasoningEncrypted === true;
+    if ('__includeReasoningEncrypted' in chatBody) {
+      chatBody = { ...chatBody };
+      delete chatBody.__includeReasoningEncrypted;
     }
   } catch (err) {
     return {
@@ -2124,6 +2402,10 @@ export async function handleResponses(body, deps = {}) {
     // A LEGITIMATE length/content_filter truncation is still chainable — only
     // `upstream_incomplete` (the upstream never finished) is excluded.
     if (terminal.incompleteReason === 'upstream_incomplete') return;
+    // G3: a FAILED turn (finish_reason 'error' / unterminated) has no complete
+    // assistant reply either. Storing it would hand the next chained request a
+    // half answer the client was explicitly told had failed.
+    if (terminal.status === 'failed') return;
     try {
       const stored = putResponse(
         responseId,
@@ -2175,7 +2457,7 @@ export async function handleResponses(body, deps = {}) {
     const result = await chatHandler({ ...chatBody, messages: dispatchMessages, stream: false, __route: 'responses' }, context);
     if (result.status !== 200) return result;
     const msg = result.body?.choices?.[0]?.message;
-    const responseBody = chatToResponse(result.body, requestedModel, responseId, genMessageId(), requestedTools, toolNameMap, responseMetadata);
+    const responseBody = chatToResponse(result.body, requestedModel, responseId, genMessageId(), requestedTools, toolNameMap, responseMetadata, { includeReasoningEncrypted });
     // Record the status THIS response reported, so retrieval agrees with it.
     commit(msg ? {
       role: 'assistant',
@@ -2209,7 +2491,7 @@ export async function handleResponses(body, deps = {}) {
       'X-Accel-Buffering': 'no',
     },
     async handler(realRes) {
-      const translator = new ResponsesStreamTranslator(realRes, responseId, requestedModel, requestedTools, toolNameMap, responseMetadata);
+      const translator = new ResponsesStreamTranslator(realRes, responseId, requestedModel, requestedTools, toolNameMap, responseMetadata, { includeReasoningEncrypted });
       const captureRes = createCaptureRes(translator, realRes);
 
       realRes.on('close', () => {

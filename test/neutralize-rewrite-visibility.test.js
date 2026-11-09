@@ -132,6 +132,39 @@ describe('item 14 — the growth guard stays visible after H2 scoped a7-freeform
     assert.deepEqual(multiHit, [], 'and must NOT also be reported as a rewrite');
   });
 
+  // The two tests above drive applySpans' accounting. `rule()` carries its OWN copy
+  // of both branches, and the regex rules are the only path where a single
+  // substitution can both grow the text and match repeatedly. Without the two tests
+  // below, switching `rule()`'s growth branch off — or making its two branches
+  // non-exclusive — survives the whole suite.
+  it('reports a multi-hit length-increasing rewrite through the REGEX path too', () => {
+    // a7-json-wrap is a GLOBAL rule() that GROWS: "do not wrap the patch in JSON."
+    // → "provide the patch as plain text." (+2 bytes per hit). Two hits is the
+    // smallest shape that crosses MULTI_HIT_REWRITE_WARN_COUNT, and the byte figures
+    // must show the prompt got LONGER — the deletion-only guard could not fire.
+    const src = 'do not wrap the patch in JSON. Also do not wrap the patch in JSON.';
+    const { out, multiHit } = neutralize(src);
+    assert.equal(out.includes('do not wrap the patch in JSON'), false, 'both clauses rewritten');
+    assert.equal(multiHit.length, 1, 'the rule() growth branch must report it');
+    assert.match(multiHit[0], /a7-json-wrap/);
+    assert.match(multiHit[0], /2 occurrences/);
+    const m = multiHit[0].match(/prompt (\d+) → (\d+) bytes/);
+    assert.ok(m, `expected byte figures in: ${multiHit[0]}`);
+    assert.ok(Number(m[2]) > Number(m[1]), `expected growth, got ${m[1]} → ${m[2]}`);
+  });
+
+  it('classifies a large multi-occurrence deletion through the REGEX path as a deletion only', () => {
+    // Same exclusivity contract, for `rule()`: 30 identity lines are ONE global
+    // substitution that removes 780 bytes (> 512) and matches 30 times, so both
+    // branches' conditions are true at once. Reporting the deletion a second time as
+    // a rewrite would make the operator-facing count meaningless.
+    const line = "You are Claude Code, Anthropic's official CLI for Claude.";
+    const { out, overDeletion, multiHit } = neutralize(Array(30).fill(line).join('\n'));
+    assert.equal(out.includes('Claude Code'), false, 'every identity line rewritten');
+    assert.equal(overDeletion.length, 1, 'the deletion must be reported exactly once');
+    assert.deepEqual(multiHit, [], 'and must NOT also be reported as a rewrite');
+  });
+
   it('no non-global rule carries a capture group', () => {
     // Pins the premise that makes the growth branch's `re.global` test currently
     // undrivable, so a mutation removing it is a documented survivor rather than an

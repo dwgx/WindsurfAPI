@@ -147,17 +147,37 @@ describe('geminiToOpenAI request translation', () => {
     assert.equal(toolMsg.tool_call_id, 'g_native_1', 'response pairs via native id');
   });
 
-  it('maps functionDeclarations to OpenAI tools and drops server-side tools', () => {
+  it('maps functionDeclarations to OpenAI tools', () => {
     const out = geminiToOpenAI({
       contents: [{ role: 'user', parts: [{ text: 'x' }] }],
       tools: [
         { functionDeclarations: [{ name: 'lookup', description: 'd', parameters: { type: 'object' } }] },
-        { googleSearch: {} },
       ],
     });
     assert.equal(out.tools.length, 1);
     assert.equal(out.tools[0].function.name, 'lookup');
     assert.equal(out.tools[0].type, 'function');
+  });
+
+  it('refuses a server-side tool instead of dropping it (G06)', () => {
+    // Measured before this: the translator counted googleSearch/codeExecution/
+    // urlContext and dropped them with a log line, so the client got a 200 for
+    // a turn whose search never ran. Every other surface returns a typed 400;
+    // the translator now throws the same code and handleGemini maps it.
+    for (const key of ['googleSearch', 'googleSearchRetrieval', 'codeExecution', 'urlContext']) {
+      assert.throws(
+        () => geminiToOpenAI({
+          contents: [{ role: 'user', parts: [{ text: 'x' }] }],
+          tools: [{ [key]: {} }],
+        }),
+        (err) => {
+          assert.equal(err.code, 'unsupported_server_side_tool', `${key} must be refused`);
+          assert.equal(err.param, 'tools');
+          assert.match(err.message, new RegExp(key), 'the error names the offending tool');
+          return true;
+        },
+      );
+    }
   });
 
   it('maps generationConfig (maxOutputTokens, temperature, topP, stopSequences)', () => {
@@ -225,6 +245,20 @@ describe('openAIToGemini response translation', () => {
       choices: [{ message: { content: 'x' }, finish_reason: 'length' }],
     });
     assert.equal(g.candidates[0].finishReason, 'MAX_TOKENS');
+  });
+
+  it('maps error/unterminated to OTHER, never a clean STOP (G3)', () => {
+    // The Connect decoder's truncation terminal: a payload arrived but no
+    // stopReason did. `finish_reason:'error'` (and the additive unterminated
+    // marker) must not fall through the map's default to STOP.
+    for (const choice of [
+      { message: { content: 'half' }, finish_reason: 'error' },
+      { message: { content: 'half' }, finish_reason: 'stop', unterminated: true },
+    ]) {
+      const g = openAIToGemini({ choices: [choice] });
+      assert.equal(g.candidates[0].finishReason, 'OTHER',
+        `${JSON.stringify(choice)} must not certify the partial answer as STOP`);
+    }
   });
 
   it('maps tool_calls to functionCall parts with STOP', () => {
@@ -343,6 +377,47 @@ describe('handleGemini non-stream', () => {
     }, { stream: false });
     assert.equal(result.status, 503);
     assert.equal(result.body.error.status, 'UNAVAILABLE');
+  });
+
+  it('fails a 200 body whose finish_reason is error instead of returning STOP (G3)', async () => {
+    for (const choice of [
+      { message: { content: 'half an answer' }, finish_reason: 'error' },
+      { message: { content: 'half an answer' }, finish_reason: 'stop', unterminated: true },
+    ]) {
+      const result = await handleGemini('gemini-2.5-pro', {
+        contents: [{ role: 'user', parts: [{ text: 'hi' }] }],
+      }, {
+        async handleChatCompletions() {
+          return { status: 200, body: { choices: [choice] } };
+        },
+      }, { stream: false });
+      assert.equal(result.status, 503, 'a truncated turn must be an error, not a 200 candidate');
+      assert.equal(result.body.error.status, 'UNAVAILABLE');
+      assert.match(result.body.error.message, /without a completion reason|truncated/i);
+      assert.equal(result.body.candidates, undefined, 'no candidate may certify the partial answer');
+    }
+  });
+
+  it('returns 400 unsupported_server_side_tool for googleSearch/codeExecution/urlContext (G06)', async () => {
+    let upstreamCalls = 0;
+    for (const key of ['googleSearch', 'codeExecution', 'urlContext']) {
+      const result = await handleGemini('gemini-2.5-pro', {
+        contents: [{ role: 'user', parts: [{ text: 'search the web' }] }],
+        tools: [{ [key]: {} }],
+      }, {
+        async handleChatCompletions() {
+          upstreamCalls++;
+          return { status: 200, body: { choices: [] } };
+        },
+      }, { stream: false });
+      assert.equal(result.status, 400, `${key} must be a 400, not a 200 with the tool gone`);
+      assert.equal(result.body.error.status, 'INVALID_ARGUMENT');
+      assert.equal(result.body.error.code, 400);
+      assert.equal(result.body.error.type, 'unsupported_server_side_tool');
+      assert.equal(result.body.error.param, 'tools');
+      assert.match(result.body.error.message, new RegExp(key));
+    }
+    assert.equal(upstreamCalls, 0, 'the rejected request must never reach the upstream');
   });
 });
 
@@ -545,6 +620,37 @@ describe('handleGemini streaming', () => {
     assert.equal(errFrame.error.status, 'UNAVAILABLE');
   });
 
+  it('streams a finish_reason:error terminal as an error frame, never STOP (G3)', async () => {
+    const result = await handleGemini('gemini-2.5-pro', {
+      contents: [{ role: 'user', parts: [{ text: 'go' }] }],
+    }, {
+      async handleChatCompletions() {
+        return {
+          stream: true,
+          status: 200,
+          async handler(res) {
+            res.write(chatChunk({ choices: [{ delta: { content: 'half an answer' } }] }));
+            res.write(chatChunk({ choices: [{ delta: {}, finish_reason: 'error' }] }));
+            res.end();
+          },
+        };
+      },
+    }, { stream: true, alt: 'sse' });
+
+    const res = fakeRes();
+    await result.handler(res);
+    const frames = parseSseFrames(res.body);
+    const errFrame = frames.find(f => f.error);
+    assert.ok(errFrame, 'the truncation terminal must surface as an error frame');
+    assert.equal(errFrame.error.status, 'UNAVAILABLE');
+    assert.match(errFrame.error.message, /completion reason|truncated/i);
+    const terminalCandidate = frames
+      .flatMap(f => f.candidates || [])
+      .find(c => c.finishReason);
+    assert.equal(terminalCandidate, undefined,
+      'a failed turn must not emit a terminal candidate (STOP/OTHER) after the error');
+  });
+
   it('maps a pre-stream error to a Gemini error body', async () => {
     const result = await handleGemini('gemini-2.5-pro', {
       contents: [{ role: 'user', parts: [{ text: 'go' }] }],
@@ -567,6 +673,41 @@ describe('GeminiStreamTranslator edge cases', () => {
     // finish on an empty stream still emits a terminal candidate frame, then ].
     const arr = JSON.parse(res.body);
     assert.ok(Array.isArray(arr));
+  });
+
+  it('fails the turn on a finish_reason:error terminal (G3, array mode too)', () => {
+    for (const mode of ['sse', 'array']) {
+      const res = fakeRes();
+      const t = new GeminiStreamTranslator(res, 'gemini-2.5-pro', { mode });
+      t.processChunk({ choices: [{ delta: { content: 'half' } }] });
+      t.processChunk({ choices: [{ delta: {}, finish_reason: 'error' }] });
+      t.finish();
+      const frames = mode === 'sse' ? parseSseFrames(res.body) : JSON.parse(res.body);
+      const err = frames.find(f => f.error);
+      assert.ok(err, `${mode}: the truncation terminal must surface as an error frame`);
+      assert.equal(err.error.status, 'UNAVAILABLE');
+      assert.equal(frames.some(f => (f.candidates || []).some(c => c.finishReason)), false,
+        `${mode}: no terminal candidate may follow the error`);
+    }
+  });
+
+  it('fails the turn when the frame carries the unterminated marker', () => {
+    // responses.js accepts the marker on the chunk OR its choice; this route
+    // must read the same shapes. A 'stop' finish_reason alongside it must not
+    // win — the marker says the turn never actually completed.
+    for (const chunk of [
+      { unterminated: true, choices: [{ delta: {}, finish_reason: 'stop' }] },
+      { choices: [{ delta: {}, finish_reason: 'stop', unterminated: true }] },
+    ]) {
+      const res = fakeRes();
+      const t = new GeminiStreamTranslator(res, 'gemini-2.5-pro', { mode: 'sse' });
+      t.processChunk({ choices: [{ delta: { content: 'half' } }] });
+      t.processChunk(chunk);
+      t.finish();
+      const frames = parseSseFrames(res.body);
+      assert.ok(frames.find(f => f.error), `${JSON.stringify(chunk)} must fail the turn`);
+      assert.equal(frames.some(f => (f.candidates || []).some(c => c.finishReason === 'STOP')), false);
+    }
   });
 });
 
@@ -665,12 +806,21 @@ describe('geminiToOpenAI supplemental part + config coverage', () => {
     assert.deepEqual(out.tools[0].function.parameters, { type: 'object', properties: { q: { type: 'string' } } });
   });
 
-  it('omits the tools key entirely when only server-side tools are declared', () => {
-    const out = geminiToOpenAI({
-      contents: [{ role: 'user', parts: [{ text: 'x' }] }],
-      tools: [{ googleSearch: {} }, { codeExecution: {} }],
-    });
-    assert.equal(out.tools, undefined, 'no function tools -> no tools key (avoids preamble injection)');
+  it('refuses a request whose only tools are server-side (no silent empty tools key)', () => {
+    // Companion to the per-key test above: the old behaviour omitted `tools`
+    // entirely, which made the dropped declaration indistinguishable from a
+    // client that never declared one (and re-enabled the preamble injection
+    // this route avoids when there are no function tools).
+    assert.throws(
+      () => geminiToOpenAI({
+        contents: [{ role: 'user', parts: [{ text: 'x' }] }],
+        tools: [{ googleSearch: {} }, { codeExecution: {} }],
+      }),
+      (err) => {
+        assert.equal(err.code, 'unsupported_server_side_tool');
+        return true;
+      },
+    );
   });
 });
 
@@ -892,17 +1042,32 @@ describe('GeminiStreamTranslator + handleGemini streaming supplemental', () => {
     assert.equal(finishFrame.candidates[0].finishReason, 'MAX_TOKENS');
   });
 
-  it('ignores SSE [DONE] sentinels and tolerates malformed data lines', () => {
+  it('ignores SSE [DONE] sentinels and surfaces an unrepairable data line as a typed error', () => {
+    // [DONE] is a sentinel, not content: it must not disturb the frames around it.
     const res = fakeRes();
     const t = new GeminiStreamTranslator(res, 'gemini-2.5-pro', { mode: 'sse' });
-    t.feed('data: {not valid json}\n\n');     // malformed: should be swallowed
-    t.feed('data: [DONE]\n\n');                // sentinel: skipped
+    t.feed('data: [DONE]\n\n');
     t.feed(chatChunk({ choices: [{ delta: { content: 'ok' } }] }));
     t.feed(chatChunk({ choices: [{ delta: {}, finish_reason: 'stop' }] }));
     t.finish();
     const frames = parseSseFrames(res.body);
-    const text = frames.flatMap(f => f.candidates[0].content.parts).map(p => p.text || '').join('');
+    const text = frames
+      .flatMap(f => (f.candidates || []).flatMap(c => c.content?.parts || []))
+      .map(p => p.text || '').join('');
     assert.ok(text.includes('ok'));
+
+    // A malformed `data:` line is NOT silently swallowed any more: sse-framer
+    // classifies an unrepairable JSON payload as SSE_MALFORMED_JSON and the
+    // translator emits it as a typed error frame. Dropping it instead ends the
+    // turn with zero content and a clean STOP — the exact failure the framer
+    // exists to prevent. Pinned here because this route used to log-and-skip.
+    const badRes = fakeRes();
+    const bad = new GeminiStreamTranslator(badRes, 'gemini-2.5-pro', { mode: 'sse' });
+    bad.feed('data: {not valid json}\n\n');
+    const errFrame = parseSseFrames(badRes.body).find(f => f.error);
+    assert.ok(errFrame, 'an unrepairable data line must surface, not vanish');
+    assert.equal(errFrame.error.__upstream_code, 'SSE_MALFORMED_JSON');
+    assert.equal(errFrame.error.status, 'UNAVAILABLE');
   });
 
   it('is idempotent on a second finish() (no duplicate terminal frame)', () => {

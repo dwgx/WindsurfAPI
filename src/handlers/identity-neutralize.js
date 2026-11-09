@@ -272,20 +272,53 @@ function catalogueSpan(text) {
 
 const CATALOGUE_LINE_ANCHOR = 'the most recent claude models are';
 const CATALOGUE_LINE_REPLACEMENT = 'The available models are';
+const CATALOGUE_ID_PREFIX = 'claude-';
+const CATALOGUE_ID_WORDS = ['opus', 'sonnet', 'haiku', 'fable'];
 
 /**
- * Markers of the catalogue's model-ID body on the same line as the anchor. Any one
- * of them means the line is the client's catalogue, not a caller sentence that
- * merely opens with the phrase, so the whole remainder of the line is fingerprint.
+ * True when the `claude-` at `prefix` is followed by a MODEL-ID head: a catalogue
+ * family name or a version digit.
+ *
+ * The shape matters, not merely the prefix. `claude-` alone also appears in prose
+ * and URLs — `claude-docs.example.com` is a domain, not a model — and accepting
+ * any `claude-[a-z0-9.-]+` extended the span to the end of the caller's line.
  */
-const CATALOGUE_BODY_MARKERS = ['claude-', 'model ids', 'fable', 'opus', 'sonnet'];
-
-/** True when the model-ID body continues between `from` and `lineEnd`. */
-function catalogueBodyFollows(text, from, lineEnd) {
-  for (const marker of CATALOGUE_BODY_MARKERS) {
-    if (indexOfAsciiCI(text, marker, from, lineEnd) >= 0) return true;
+function catalogueIdFollows(text, prefix, lineEnd) {
+  const head = prefix + CATALOGUE_ID_PREFIX.length;
+  if (head >= lineEnd) return false;
+  const code = text.charCodeAt(head);
+  if (code >= 48 && code <= 57) return true;
+  for (const word of CATALOGUE_ID_WORDS) {
+    if (head + word.length <= lineEnd && matchesAsciiCI(text, head, word)) return true;
   }
   return false;
+}
+
+/**
+ * True when an ID-SHAPED model-ID body continues between `from` and `lineEnd`:
+ * `claude-<family|version>` — `claude-fable-5`, `claude-opus-4-8`,
+ * `claude-3-5-sonnet` — and nothing looser.
+ *
+ * The test this replaces accepted bare English words (`claude-`, `fable`, `opus`,
+ * `sonnet`) and the phrase `Model IDs` anywhere after the anchor. All of those are
+ * ordinary caller prose, so lines such as
+ *
+ *   The most recent Claude models are documented at /docs; Sonnet is our default.
+ *   The most recent Claude models are documented under Model IDs in the docs.
+ *   The most recent Claude models are documented at claude-docs.example.com.
+ *
+ * were taken for the client's catalogue and lost everything to the end of the line
+ * (the caller's RULE included). `Model IDs` is an English phrase, not a fingerprint,
+ * and `claude-` needs a family name or version digit after it to be an ID.
+ */
+function catalogueBodyFollows(text, from, lineEnd) {
+  let at = from;
+  for (;;) {
+    const prefix = indexOfAsciiCI(text, CATALOGUE_ID_PREFIX, at, lineEnd);
+    if (prefix < 0) return false;
+    if (catalogueIdFollows(text, prefix, lineEnd)) return true;
+    at = prefix + CATALOGUE_ID_PREFIX.length;
+  }
 }
 
 /**
@@ -302,11 +335,12 @@ function catalogueBodyFollows(text, from, lineEnd) {
  *
  * The span therefore depends on what follows the anchor ON ITS LINE:
  *
- *   - no catalogue body marker after the anchor: only the phrase is the fingerprint,
- *     so the span is the phrase alone and every other byte of the line (prefix,
- *     caller RULE, newline) survives.
- *   - a body marker (`claude-`, `model ids`, `fable`, `opus`, `sonnet`) after the
- *     anchor: this is the client's catalogue header and its model-ID body, and the
+ *   - no ID-shaped body after the anchor: only the phrase is the fingerprint, so
+ *     the span is the phrase alone and every other byte of the line (prefix, caller
+ *     RULE, newline) survives. A bare model NAME ("Sonnet is our default") is
+ *     caller prose, not a catalogue body, and stays.
+ *   - an ID-shaped body (`claude-<family|version>`) after the anchor: this is
+ *     the client's catalogue header and its model-ID body, and the
  *     span runs from the anchor to the end of the line. Rewriting only the phrase
  *     left `Model IDs — Fable 5: 'claude-fable-5', Opus 4.8: 'claude-opus-4-8'` on
  *     the wire whenever the terminator sat in another paragraph and a4-catalogue
@@ -838,10 +872,10 @@ export function neutralizeClientIdentity(text, env = process.env, opts = {}) {
   // "… most capable Claude models." tail end up in different paragraphs, the span
   // above (correctly) declines, and this neutralizes the fingerprint-bearing header
   // on its own rather than leaving the model-ID catalogue header upstream. A line
-  // whose remainder carries the model-ID body (`claude-`, `Model IDs`, `Fable`,
-  // `Opus`, `Sonnet`) loses that body with the header — leaving it behind kept the
+  // whose remainder carries an ID-SHAPED model-ID body (`claude-<family|version>`)
+  // loses that body with the header — leaving it behind kept the
   // model IDs on the wire (measured 253 → 244 bytes, `claude-fable-5` present). A
-  // line with no such marker is a caller sentence that merely opens with the phrase,
+  // line with no such body is a caller sentence that merely opens with the phrase,
   // so only the phrase is rewritten: the old rule deleted the rest of the line, and a
   // caller RULE that shared the line with the phrase vanished (66 → 4 bytes, no WARN).
   applySpans('a4-catalogue-line', catalogueLineSpans(out), CATALOGUE_LINE_REPLACEMENT, true);

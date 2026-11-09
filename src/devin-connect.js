@@ -3323,6 +3323,21 @@ export async function* streamChat({
   // answer was reported as a finished turn — on /v1/responses closing the turn as
   // `response.completed` and entering the response store as the next turn's context.
   let sawEndOfStream = false;
+  // Did ANY frame carry the terminal stopReason (#5)? The end-of-stream frame
+  // proves the RPC completed; it says nothing about whether the TURN completed.
+  // Live evidence (Q1 audit §3 S01, docs/upstream-protocol.md:106): every provider
+  // observed so far (STOP_PATTERN / MIN_LOG_PROB / UNSPECIFIED) reports a value on
+  // a clean finish, and "clean EOF with no stopReason IS truncation, not a normal
+  // end" — their decoder raises a stream error instead of synthesizing end_turn.
+  // Without this flag the two shapes were indistinguishable: lastFinish stayed
+  // null, and null defaults to 'stop' at every consumer, so a truncated turn was
+  // reported as a completed one.
+  let sawStopReason = false;
+  // Was any answer payload delivered? A stream that ends with nothing on it and no
+  // stopReason is the EMPTY-turn shape (the adapter's empty/rescue retry owns it),
+  // not a truncated answer — it must keep its null reason so that machinery is
+  // untouched.
+  let sawPayload = false;
   let lastFinish = null;
   let lastUsage = null;
   let lastBilling = null;
@@ -3526,10 +3541,14 @@ export async function* streamChat({
         }
         if (reasoning) { pushEvent({ type: 'reasoning', text: reasoning }); }
         if (content) { pushEvent({ type: 'content', text: content }); }
-        if (finish != null) lastFinish = finish;
+        if (finish != null) { lastFinish = finish; sawStopReason = true; }
+        if (content || reasoning || signature) sawPayload = true;
         if (usage) lastUsage = usage;
         if (billing) lastBilling = { ...lastBilling, ...billing };
-        if (toolCalls) { for (const tc of toolCalls) mergeToolCallFragment(nativeToolCalls, tc); }
+        if (toolCalls) {
+          for (const tc of toolCalls) mergeToolCallFragment(nativeToolCalls, tc);
+          sawPayload = true;
+        }
         if (reasoning || content || frameDump || metaDump || signature) pump();
       }
     });
@@ -3593,8 +3612,8 @@ export async function* streamChat({
         // the invariant that all received bytes are emitted.
         const tailContent = contentDecoder.end();
         const tailReasoning = reasoningDecoder.end();
-        if (tailReasoning) yield { type: 'reasoning', text: tailReasoning };
-        if (tailContent) yield { type: 'content', text: tailContent };
+        if (tailReasoning) { sawPayload = true; yield { type: 'reasoning', text: tailReasoning }; }
+        if (tailContent) { sawPayload = true; yield { type: 'content', text: tailContent }; }
         // The socket ended without the mandatory end-of-stream frame: the answer is
         // TRUNCATED, not finished. Throwing here (rather than yielding a finish
         // event) is what keeps a partial answer out of every "completed turn"
@@ -3612,6 +3631,24 @@ export async function* streamChat({
         // One terminal event carrying finish_reason + usage for the caller to
         // close out an OpenAI-shaped response.
         const finishUsage = normalizeConnectUsage(lastUsage);
+        // G3 (Q1 audit §7): an end-of-stream frame with an ANSWER on it but NO
+        // stopReason is a truncated turn, not a finished one (S01
+        // docs/upstream-protocol.md:106: "缺 stopReason 的干净 EOF = 截断不是正常结束",
+        // measured on a real incident where a coding agent marked the task complete
+        // on a half answer). `lastFinish === null` therefore cannot be allowed to
+        // reach a consumer as "no reason yet", because every consumer defaults a
+        // null reason to 'stop' (devin-connect-openai.js: `if (ev.reason)`).
+        //
+        // Reported as the finish_reason 'error' — the vocabulary entry the enum's
+        // own ERROR value (13) already uses — instead of throwing: the bytes are
+        // already on the client's wire by this point, and the missing end-of-stream
+        // frame above is the case that genuinely cannot be trusted at all. A stream
+        // that delivered NOTHING and named no reason keeps its null reason: that is
+        // the empty-turn shape the adapter's empty/rescue retry exists for.
+        const unterminated = !sawStopReason && sawPayload;
+        const terminalReason = unterminated
+          ? 'error'
+          : resolveFinishReason(lastFinish, finishUsage, completion?.maxTokens ?? WIRE_DEFAULT_MAX_TOKENS, env);
         yield {
           type: 'finish',
           // Truncation is inferred from completion_tokens hitting the cap that was
@@ -3622,7 +3659,11 @@ export async function* streamChat({
           // no cap, so reading the caller's (absent) value here would leave every
           // defaulted call's truncation undetectable — the stream would stop at the
           // wire cap and still report a clean 'stop'.
-          reason: resolveFinishReason(lastFinish, finishUsage, completion?.maxTokens ?? WIRE_DEFAULT_MAX_TOKENS, env),
+          reason: terminalReason,
+          // Additive, and only for the shape above: a consumer that wants to tell
+          // "the model errored" from "the upstream never said how the turn ended"
+          // does not have to infer it from a missing enum.
+          ...(unterminated ? { unterminated: true } : {}),
           // Normalized at the birth point, so all four protocol routes read one
           // object: prompt_tokens is the FULL input (fresh + cache_read +
           // cache_write), cached_tokens is its SUBSET detail, and total_tokens is

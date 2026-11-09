@@ -134,8 +134,11 @@ WIRE_EXPECTED_DIFFS {"byte_identical":270,"expected":0,"entries":0,"compared":27
 
 - **mutation 变异体本身未跑**：`spec-baseline-check` 只证明锚点与基线成立，不执行变异体。
   A4、messages、identity 的改动动了 spec 覆盖的文件，不能沿用旧 sweep 的结论。
-- **Node 22 下限未实测**：本版只在 Node 24.19.0 上实测；`engines >=22.13.0` 的 floor 本身
-  仍是 `[UNVERIFIED]`。
+- **Node 22 全量已实测**：`test:release` 的分片（`scripts/run-test-shard.mjs 0 1`）由
+  Node 22.23.4 二进制直接运行，**605 文件 / 7,455 测试 / 7,352 通过 / 0 失败 / 103 跳过 /
+  801.6 s**（`node22-release-2.log`；
+  `TEST_SHARD_SUMMARY {"files":605,"tests":7455,"pass":7352,"fail":0,"skipped":103}`）。
+  `engines >=22.13.0` 的精确 floor（22.13.x）仍未单独跑矩阵。
 - **托管 CI 未运行**：分支没有 upstream；所有 CI 结论都是本机测量。
 - **HMC 部署/回滚未执行**：发布说明 §5 与 `ReleasePrep.md` §7 只有命令，没有运行记录。
 - **live 上游/真实客户端未复跑**：WA-001/002/003/A4、CTX-01、S03、IMG-01、TRN-01 的验证

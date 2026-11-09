@@ -140,6 +140,63 @@ function sendBodyTooLargeIfNeeded(res, err, style = 'openai') {
   return true;
 }
 
+// ─── Inbound Content-Encoding refusal (Q2 T04) ─────────────────────────────
+//
+// readBody() hands the raw bytes to JSON.parse as UTF-8; it has never
+// decompressed anything. A compressed body therefore always ended as a
+// confusing "Invalid JSON" 400 — and any future attempt to "fix" that by
+// inflating the body would hand an attacker a gzip bomb (a few KB on the wire,
+// gigabytes in memory). Refuse the encoding explicitly, BEFORE the body is
+// read, and never decompress: the caller must resend uncompressed.
+//
+// The check keys on the header alone, so it also fires for a chunked request
+// with no Content-Length (nothing about the body's declared size is trusted).
+const SUPPORTED_CONTENT_ENCODINGS = new Set(['', 'identity']);
+
+/** The unsupported Content-Encoding value on a request, or '' when usable. */
+export function unsupportedContentEncoding(req) {
+  const raw = String(req?.headers?.['content-encoding'] ?? '').trim();
+  if (!raw) return '';
+  return SUPPORTED_CONTENT_ENCODINGS.has(raw.toLowerCase()) ? '' : raw;
+}
+
+export function unsupportedContentEncodingPayload(encoding, style = 'openai') {
+  const message = `Content-Encoding "${encoding}" is not supported. Send the request body uncompressed `
+    + '(omit Content-Encoding, or send Content-Encoding: identity). This proxy does not decompress request bodies.';
+  if (style === 'dashboard') {
+    return { ok: false, error: 'unsupported_content_encoding', message };
+  }
+  if (style === 'legacy') {
+    return { error: message, code: 'unsupported_content_encoding' };
+  }
+  if (style === 'anthropic') {
+    return { type: 'error', error: { type: 'unsupported_content_encoding', message } };
+  }
+  if (style === 'gemini') {
+    // Gemini's envelope needs a numeric code + status enum; the shared typed
+    // string rides as `type` for clients that branch on it (unknown fields are
+    // ignored by the Google SDKs).
+    return { error: { code: 415, message, status: 'INVALID_ARGUMENT', type: 'unsupported_content_encoding' } };
+  }
+  return { error: { message, type: 'unsupported_content_encoding' } };
+}
+
+function rejectUnsupportedContentEncoding(req, res, style = 'openai') {
+  const encoding = unsupportedContentEncoding(req);
+  if (!encoding) return false;
+  json(res, 415, unsupportedContentEncodingPayload(encoding, style));
+  return true;
+}
+
+function contentEncodingErrorStyle(path) {
+  if (isAnthropicPath(path)) return 'anthropic';
+  if (typeof path === 'string'
+      && (path === '/v1beta' || path.startsWith('/v1beta/')
+        || /\/models\/[^:/]+:(generateContent|streamGenerateContent)$/.test(path))) return 'gemini';
+  if (typeof path === 'string' && path.startsWith('/auth/')) return 'legacy';
+  return 'openai';
+}
+
 /**
  * Bind an AbortController to the HTTP response so a client hang-up mid-await
  * tears down the in-flight upstream call.
@@ -157,7 +214,56 @@ export function bindClientAbort(res) {
   return abortController;
 }
 
-export function extractToken(req) {
+// ─── Credential carriers are SURFACE-scoped (Q2 T03) ───────────────────────
+//
+// Every accepted carrier used to authenticate every route: a Gemini query key
+// (`?key=`) or `x-goog-api-key` opened /v1/chat/completions, and `x-api-key`
+// opened any route. That let a credential minted for one protocol be replayed
+// against another (and put a chat POST's key in the URL, where proxies log it).
+// The carriers are now matched to the surface that actually defines them:
+//
+//   openai   : Authorization: Bearer only            (chat/completions/responses)
+//   messages : Bearer + x-api-key                    (Anthropic SDK shape)
+//   models   : Bearer + x-api-key + x-goog-api-key + ?key
+//   gemini   : Bearer + x-goog-api-key + ?key        (Google GenAI SDK shape)
+//   operator : Bearer + x-api-key                    (/auth/* — unchanged operator flow)
+//   any      : every carrier                          (direct callers + /health)
+//
+// `any` is the default so a pure-function caller that does not know a route is
+// not silently narrowed; the router always passes the surface explicitly.
+const CREDENTIAL_CARRIERS = {
+  openai: ['bearer'],
+  messages: ['bearer', 'x-api-key'],
+  models: ['bearer', 'x-api-key', 'x-goog-api-key', 'query'],
+  gemini: ['bearer', 'x-goog-api-key', 'query'],
+  operator: ['bearer', 'x-api-key'],
+  any: ['bearer', 'x-api-key', 'x-goog-api-key', 'query'],
+};
+
+/**
+ * Which carrier set applies to a request path. Operator surfaces (/auth/*) and
+ * /health keep their historical carriers: the audit's scoping rule is about the
+ * protocol API surfaces, and narrowing operator auth would break the documented
+ * account-management flow.
+ */
+export function credentialSurfaceFor(path) {
+  const p = typeof path === 'string' ? path : '';
+  if (p === '/v1/messages' || p.startsWith('/v1/messages/')) return 'messages';
+  // A generate call is Gemini-native even when it rides the /v1/models alias:
+  // `/v1/models/{model}:generateContent` must use the Gemini carrier set, not
+  // the looser `models` set, or x-api-key (an Anthropic carrier) would reach
+  // handleGemini through the alias while /v1beta rejects it. Checked BEFORE the
+  // `/v1/models/` prefix for exactly that reason.
+  if (/\/models\/[^:/]+:(generateContent|streamGenerateContent)$/.test(p)) return 'gemini';
+  if (p === '/v1/models' || p.startsWith('/v1/models/')) return 'models';
+  if (p === '/v1beta' || p.startsWith('/v1beta/')) return 'gemini';
+  if (p === '/health' || p === '/auth' || p.startsWith('/auth/')) return 'operator';
+  return 'openai';
+}
+
+export function extractToken(req, surface = 'any') {
+  const carriers = CREDENTIAL_CARRIERS[surface] || CREDENTIAL_CARRIERS.any;
+  const allows = (carrier) => carriers.includes(carrier);
   // Anthropic SDK + OAI SDK compatibility: accept either header.
   const authHeader = String(req.headers['authorization'] || '').trim();
   // TOK-3 (audit P3): a comma used to blanket-clear the token — so a caller
@@ -173,17 +279,23 @@ export function extractToken(req) {
     const first = m[1].split(',')[0].trim();
     if (first) return first;
   }
-  const xApiKey = req.headers['x-api-key'] || '';
-  if (xApiKey) return xApiKey;
+  if (allows('x-api-key')) {
+    const xApiKey = req.headers['x-api-key'] || '';
+    if (xApiKey) return xApiKey;
+  }
   // Gemini-native auth: the Google GenAI SDK sends the key as `x-goog-api-key`
-  // or a `?key=` query param, not Bearer/x-api-key. Accept both so real Gemini
-  // clients can hit /v1beta/models/*:generateContent without a custom header.
-  const xGoog = String(req.headers['x-goog-api-key'] || '').trim();
-  if (xGoog) return xGoog;
-  try {
-    const qKey = new URL(req.url, 'http://localhost').searchParams.get('key');
-    if (qKey) return qKey.trim();
-  } catch { /* malformed url → no query key */ }
+  // or a `?key=` query param, not Bearer/x-api-key. Accept both only where a
+  // Gemini client can legitimately send them.
+  if (allows('x-goog-api-key')) {
+    const xGoog = String(req.headers['x-goog-api-key'] || '').trim();
+    if (xGoog) return xGoog;
+  }
+  if (allows('query')) {
+    try {
+      const qKey = new URL(req.url, 'http://localhost').searchParams.get('key');
+      if (qKey) return qKey.trim();
+    } catch { /* malformed url → no query key */ }
+  }
   return '';
 }
 
@@ -402,7 +514,7 @@ async function route(req, res) {
       accounts: counts,
     };
     const qs = new URL(req.url, 'http://localhost').searchParams;
-    if (qs.get('verbose') === '1' && validateApiKey(extractToken(req))) {
+    if (qs.get('verbose') === '1' && validateApiKey(extractToken(req, 'operator'))) {
       try {
         const { poolStats } = await import('./conversation-pool.js');
         const { cacheStats } = await import('./cache.js');
@@ -465,6 +577,7 @@ async function route(req, res) {
     if (!preflightDashboardRequest(method, subpath, req, res)) return;
     let body = {};
     if (method === 'POST' || method === 'PUT' || method === 'PATCH') {
+      if (rejectUnsupportedContentEncoding(req, res, 'dashboard')) return;
       let raw;
       try {
         raw = await readBody(req);
@@ -535,17 +648,48 @@ async function route(req, res) {
     if (!validateDashboardRequestHost(req, res)) return;
   }
 
-  if (!validateApiKey(extractToken(req))) {
+  const credentialSurface = credentialSurfaceFor(path);
+  const presentedToken = extractToken(req, credentialSurface);
+  if (!validateApiKey(presentedToken)) {
     // v2.0.61 (#110): clearer error so operators know the issue is
     // configuration (no API_KEY set on a public-bind instance) rather
     // than a bad client header. The chat client side rarely shows a
     // verbose error so we cram the diagnosis into the message itself.
-    const tokenSent = !!extractToken(req);
+    const tokenSent = !!presentedToken;
+    // Name only the carriers this surface actually accepts (T03). Telling a chat
+    // caller to retry with x-api-key — which the same gate now rejects there —
+    // would send them in a loop.
+    const carrierHint = credentialSurface === 'gemini'
+      ? '`Authorization: Bearer <key>`, `x-goog-api-key: <key>` or `?key=<key>`'
+      : credentialSurface === 'models'
+        ? '`Authorization: Bearer <key>`, `x-api-key: <key>`, `x-goog-api-key: <key>` or `?key=<key>`'
+        : credentialSurface === 'messages' || credentialSurface === 'operator'
+          ? '`Authorization: Bearer <key>` or `x-api-key: <key>`'
+          : '`Authorization: Bearer <key>`';
     const message = tokenSent
       ? 'Invalid API key. Either the key is wrong, or the server has API_KEY configured to a different value than the one your client sent.'
-      : 'Missing API key. This server runs in fail-closed mode: requests must include `Authorization: Bearer <key>` (or `x-api-key: <key>`) matching the configured API_KEY env var. If you intend to run open (no auth), bind the server to localhost (HOST=127.0.0.1).';
+      : `Missing API key. This server runs in fail-closed mode: requests must include ${carrierHint} matching the configured API_KEY env var. If you intend to run open (no auth), bind the server to localhost (HOST=127.0.0.1).`;
+    // Q2 T02: the Anthropic SDK parses ONLY the Anthropic error envelope and
+    // reads the request id from the `request-id` header. The shared gate used to
+    // answer every family with the OpenAI {error:{type:'auth_error'}} body and
+    // no Anthropic header, so a Claude client saw an unparseable 401. Keep the
+    // OpenAI (and Gemini, which reuses it here) shape byte-identical.
+    if (isAnthropicPath(path)) {
+      res.setHeader('request-id', fallbackRequestId);
+      return json(res, 401, withRequestId(401, {
+        type: 'error',
+        error: { type: 'authentication_error', message },
+      }, fallbackRequestId));
+    }
     return json(res, 401, withRequestId(401, { error: { message, type: 'auth_error' } }, fallbackRequestId));
   }
+
+  // Q2 T04: refuse a compressed request body before any route reads it. The
+  // check sits after the credential wall (an unauthenticated caller still gets
+  // the 401 it earned) and before every no-account/route guard, so the answer
+  // does not depend on pool state.
+  if ((method === 'POST' || method === 'PUT' || method === 'PATCH')
+      && rejectUnsupportedContentEncoding(req, res, contentEncodingErrorStyle(path))) return;
 
   // ─── Auth management (admin — gated by API key above) ──
 
@@ -722,7 +866,7 @@ async function route(req, res) {
     }
 
     const reqStartedAt = Date.now();
-    const token = extractToken(req);
+    const token = extractToken(req, 'openai');
     const callerKey = callerKeyFromRequest(req, token, body);
     // Thread a client-disconnect AbortSignal into the handler context so a
     // caller that hangs up mid-flight tears down the in-flight upstream call
@@ -810,7 +954,7 @@ async function route(req, res) {
     }
 
     const reqStartedAt = Date.now();
-    const token = extractToken(req);
+    const token = extractToken(req, 'openai');
     const callerKey = callerKeyFromRequest(req, token, body);
     const abortController = bindClientAbort(res);
     const budget = createRequestBudget({ stream: false });
@@ -874,7 +1018,7 @@ async function route(req, res) {
     }
 
     const reqStartedAt = Date.now();
-    const token = extractToken(req);
+    const token = extractToken(req, 'openai');
     const callerKey = callerKeyFromRequest(req, token, body);
     const abortController = bindClientAbort(res);
     const budget = createRequestBudget({ stream: body.stream === true });
@@ -951,7 +1095,7 @@ async function route(req, res) {
   if ((method === 'GET' || method === 'DELETE') && path.startsWith('/v1/responses/')) {
     const responseId = path.slice('/v1/responses/'.length);
     if (/^[A-Za-z0-9_-]{1,128}$/.test(responseId)) {
-      const token = extractToken(req);
+      const token = extractToken(req, 'openai');
       // Identity for a BODYLESS request.
       //
       // The original comment here claimed the ip/ua fingerprint was "exactly what a
@@ -1078,7 +1222,7 @@ async function route(req, res) {
     // validity (ephemeral type, ttl ∈ {5m,1h}, ≤4 breakpoints) at the entry.
     const invalid = validateMessagesRequest(body);
     if (invalid) return json(res, invalid.status, invalid.body);
-    const token = extractToken(req);
+    const token = extractToken(req, 'messages');
     const callerKey = callerKeyFromRequest(req, token, body);
     // G1: read the anthropic-version request header (warn+default when missing,
     // accept-as-is when unknown). Passed into context as a seam for future
@@ -1175,7 +1319,7 @@ async function route(req, res) {
     }
     const wantStream = parsed.method === 'streamGenerateContent';
     const alt = new URL(req.url, 'http://localhost').searchParams.get('alt');
-    const token = extractToken(req);
+    const token = extractToken(req, credentialSurfaceFor(path));
     const callerKey = callerKeyFromRequest(req, token, body);
     const reqStartedAt = Date.now();
     const geminiHeaders = { 'request-id': 'req_' + randomUUID() };

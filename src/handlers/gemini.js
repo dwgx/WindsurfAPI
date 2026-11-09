@@ -30,32 +30,44 @@ import { SseFramer } from '../sse-framer.js';
 import { buildToolNameMap, restoreToolName, sanitizeToolName } from '../tool-names.js';
 import { createToolIdAllocator, normalizeToolIdsInMessages, sanitizeToolId, toolHygieneEnabled } from '../tool-ids.js';
 import { normalizeHistoryTail } from '../history-normalize.js';
+import { firstUnsupportedGeminiServerTool, geminiServerSideToolUnsupported } from '../server-side-tools.js';
 
 // ─── finish_reason mapping (OpenAI → Gemini) ────────────────────
 // Gemini has no dedicated finishReason for function calls — a turn that
 // ends in functionCall parts still reports STOP. content_filter → SAFETY.
 //
-// The `|| 'STOP'` default below is safe only because of a premise that lives in
-// another file, so it is stated here and pinned by a test rather than assumed:
-// every finish_reason this proxy can emit is a key above. Measured — the
-// internal producers are special-agent.js's own mapFinishReason (range: stop /
-// length / tool_calls / content_filter) and devin-connect's resolveFinishReason
-// ('length'). The one exception, `finish_reason:'error'` from a special-agent
-// stream that failed after headers were sent, never reaches this map: that path
-// emits its error frame FIRST, and `error()` sets `this.finished`, so the finish
-// chunk is dropped before translation. Were that ordering to change, a failed
-// run would arrive here and default to STOP — i.e. report as a clean completion,
-// exactly what special-agent.js's "H2" comment set out to prevent. Gemini's enum
-// carries OTHER for that case if it ever becomes reachable.
+// G3/Q2: the Connect decoder reports a turn that DELIVERED a payload but never
+// named a stop reason as `finish_reason:'error'` (with `unterminated:true` when
+// the marker rides the frame). That is a FAILED/truncated turn, not a finished
+// one. It must never reach a client as STOP: Gemini's enum has OTHER for
+// "ended for a reason this enum cannot express", and both egress paths below
+// fail the turn with an error frame/body before a terminal candidate is
+// emitted. The OTHER rows exist so a direct caller of this map (or a future
+// path that forgets the guard) still cannot certify a half answer as clean.
 const FINISH_MAP = {
   stop: 'STOP',
   length: 'MAX_TOKENS',
   tool_calls: 'STOP',
   content_filter: 'SAFETY',
+  error: 'OTHER',
+  unterminated: 'OTHER',
 };
 function mapFinishReason(openaiReason) {
   if (!openaiReason) return 'STOP';
   return FINISH_MAP[openaiReason] || 'STOP';
+}
+
+// The one message both Gemini exits report when the upstream closed a turn
+// without saying how it ended. Mirrors messages.js / responses.js (G3).
+const UPSTREAM_UNTERMINATED_MESSAGE =
+  'The upstream ended the turn without a completion reason (truncated response).';
+
+// G3: the Connect decoder's truncation terminal, on either the choice or the
+// frame (responses.js accepts both shapes, so this route must too).
+function isUnterminatedFinish(chunk) {
+  return chunk?.unterminated === true
+    || chunk?.choices?.[0]?.unterminated === true
+    || chunk?.choices?.[0]?.finish_reason === 'error';
 }
 
 // Parse a tool call's `arguments` string into Gemini's functionCall.args struct.
@@ -288,11 +300,16 @@ export function geminiToOpenAI(body, modelFromPath) {
   }
 
   // tools.functionDeclarations → OpenAI tools. Gemini also allows server-side
-  // tools (googleSearch, codeExecution) as bare keys on a tool object; the
-  // proxy can't honor those, so they're dropped (parity with the Anthropic
-  // server-side tool drop in messages.js).
+  // tools (googleSearch, codeExecution, urlContext) as bare keys on a tool
+  // object. The proxy cannot execute those, and the old behaviour — count and
+  // drop them with a log line — returned a 200 for a turn whose search/exec
+  // never ran (Q4 G06). Refuse the request instead, through the same
+  // `unsupported_server_side_tool` code the OpenAI/Anthropic surfaces use, so
+  // no caller has to guess why the tool disappeared. Checked before any
+  // functionDeclarations are translated: one bad tool rejects the request.
+  const unsupportedGeminiTool = firstUnsupportedGeminiServerTool(body?.tools);
+  if (unsupportedGeminiTool) throw geminiServerSideToolUnsupported(unsupportedGeminiTool);
   const tools = [];
-  let droppedServerTools = 0;
   for (const t of (body?.tools || [])) {
     if (Array.isArray(t?.functionDeclarations)) {
       for (const fd of t.functionDeclarations) {
@@ -310,12 +327,6 @@ export function geminiToOpenAI(body, modelFromPath) {
         });
       }
     }
-    if (t?.googleSearch || t?.googleSearchRetrieval || t?.codeExecution || t?.urlContext) {
-      droppedServerTools++;
-    }
-  }
-  if (droppedServerTools) {
-    log.info(`gemini: dropped ${droppedServerTools} server-side tool(s) (googleSearch/codeExecution/urlContext) - proxy does not implement them`);
   }
 
   const gc = body?.generationConfig || {};
@@ -436,7 +447,11 @@ export function openAIToGemini(result, model, toolNameMap = null) {
 
   const candidate = {
     content: { role: 'model', parts },
-    finishReason: mapFinishReason(choice?.finish_reason),
+    // G3: the unterminated marker can ride next to a fabricated 'stop'
+    // finish_reason. It wins: the turn did not complete, so never render it as
+    // a clean STOP (OTHER is the non-clean fallback for direct callers; the
+    // route itself fails the turn before reaching this map).
+    finishReason: isUnterminatedFinish(result) ? 'OTHER' : mapFinishReason(choice?.finish_reason),
     index: 0,
   };
 
@@ -481,6 +496,12 @@ class GeminiStreamTranslator {
     // chat.js emits `[DONE]` on that path too — so both signals must be discounted
     // together or BUG1's guard stays defeated.
     this.sawSyntheticFinish = false;
+    // G3: set when the upstream's terminal frame says the turn was NOT completed
+    // (`finish_reason:'error'` / `unterminated:true`). finish() fails the turn
+    // with an error frame instead of emitting a terminal candidate — otherwise
+    // mapFinishReason would have to invent a reason and the client would read a
+    // truncated answer as final.
+    this.upstreamError = false;
     // V-08/D8: one abort-aware bounded writer for this egress. `res` is the REAL
     // response; the Chat producer writes into `createCaptureRes`, which reports
     // THIS writer's pressure back to it. Without the wait the translator consumed
@@ -601,6 +622,10 @@ class GeminiStreamTranslator {
       this.error(chunk.error);
       return;
     }
+    // G3: the Connect decoder's truncation terminal. Checked before the normal
+    // finish-reason branch so the turn is failed in finish() even though the
+    // frame itself is a terminal signal.
+    if (isUnterminatedFinish(chunk)) this.upstreamError = true;
     // Adopt the upstream's model name before the first frame is emitted.
     //
     // Constructed with the REQUESTED name (it must exist before the upstream call), so a
@@ -666,6 +691,20 @@ class GeminiStreamTranslator {
     // #238 is about a strict client erroring on an empty answer), and it keeps a
     // clean STOP terminal because sawTerminalSignal is set. Only the ABSENCE of the
     // signal is the fault.
+    // G3: the upstream named a truncation terminal (`finish_reason:'error'` /
+    // `unterminated:true`). It IS a terminal signal, so the guard below would
+    // let it through; fail the turn explicitly with the same retryable shape as
+    // an abnormally cut-off stream instead of emitting a terminal candidate.
+    // Gemini's enum has no "truncated", and mapFinishReason's OTHER fallback is
+    // a last resort for direct callers — a real client must see the error.
+    if (this.upstreamError) {
+      this.error({
+        status: 502,
+        type: 'upstream_error',
+        message: UPSTREAM_UNTERMINATED_MESSAGE,
+      });
+      return;
+    }
     if (!this.sawTerminalSignal) {
       this.error({
         status: 502,
@@ -909,7 +948,22 @@ export async function handleGemini(model, body, context = {}, { stream = false, 
       'This proxy only supports candidateCount=1. The upstream backend returns a single candidate per request; set generationConfig.candidateCount to 1 (or omit it).',
     );
   }
-  const openaiBody = geminiToOpenAI(body, requestedModel);
+  let openaiBody;
+  try {
+    openaiBody = geminiToOpenAI(body, requestedModel);
+  } catch (err) {
+    if (err?.code === 'unsupported_server_side_tool') {
+      // The translator refuses a server-executed tool (G06). Gemini's envelope
+      // carries a numeric `code` + status enum, so the shared string code rides
+      // as `type` (the field OpenAI-family clients branch on) instead of
+      // clobbering the numeric code.
+      const mapped = geminiError(err.status || 400, null, err.message);
+      mapped.body.error.type = err.code;
+      if (err.param) mapped.body.error.param = err.param;
+      return mapped;
+    }
+    throw err;
+  }
   const toolNameMap = openaiBody.__toolNameMap || null;
   delete openaiBody.__toolNameMap;
   if (toolHygieneEnabled()) {
@@ -924,6 +978,14 @@ export async function handleGemini(model, body, context = {}, { stream = false, 
     const result = await chatHandler({ ...openaiBody, stream: false, __route: 'gemini' }, context);
     if (result.status !== 200) {
       return withUpstreamHeaders(geminiError(result.status, result.body?.error?.type, result.body?.error?.message), result.headers);
+    }
+    // G3: a 200 body whose terminal choice says the turn was NOT completed
+    // (`finish_reason:'error'` / `unterminated:true`) is a truncated answer, not
+    // a clean one. Surface it through the route's error path — Gemini has no
+    // candidate status for "incomplete", and a STOP/OTHER candidate would tell
+    // the client the partial answer is final.
+    if (isUnterminatedFinish(result.body)) {
+      return withUpstreamHeaders(geminiError(502, 'upstream_error', UPSTREAM_UNTERMINATED_MESSAGE), result.headers);
     }
     return { status: 200, body: openAIToGemini(result.body, requestedModel, toolNameMap) };
   }

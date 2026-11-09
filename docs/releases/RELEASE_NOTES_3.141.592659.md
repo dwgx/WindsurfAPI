@@ -220,8 +220,8 @@ WIRE_EXPECTED_DIFFS {"byte_identical":270,"expected":0,"entries":0,"compared":27
 （`git status --porcelain` 只有 `??` 行），基线 `base_dirty:false`。CI 的干净 checkout 上该
 字段为 false。
 
-**没有在本版实测的**（不得写成已通过）：mutation 变异体本身、Node 22 全量、托管 CI、HMC
-部署与真实上游。原因与替代命令见 §6–§7。
+**没有在本版实测的**（不得写成已通过）：mutation 变异体本身、托管 CI、HMC
+部署与真实上游。原因与替代命令见 §6–§7；Node 22 全量后来已补测，证据见 §7。
 
 ## 4. 变更文件与测试
 
@@ -283,7 +283,7 @@ mutation 语料同步：`identity-neutralize-paragraph-bound.json` 重钉锚点�
    扫描恢复 **exit 0（0 unbaselined）**。
 
 **当前阻断项：无。** 本机可跑的门禁全部绿（含 `spec-baseline-check --all`）；发布前仍需在
-POSIX 上补跑 mutation sweep、Node 22 与 `gate:release`（见 §7）。
+POSIX 上补跑 mutation sweep 与 `gate:release`（见 §7）。
 
 ## 7. 已知 / 尚未验证
 
@@ -296,9 +296,11 @@ POSIX 上补跑 mutation sweep、Node 22 与 `gate:release`（见 §7）。
 - **[VERIFIED] mutation 全量基线**：`spec-baseline-check.mjs --all`（97 spec）是 release
   workflow 的模式；发布树实测 **97 spec measured, 0 drift, 0 untrustworthy**，wall 202.5 s
   （`releasecommit-spec-baseline-all.log`，`sha256 da0d49db…`）。
-- **[UNVERIFIED] Node 22 下限**：本版只在 Node 24.19.0 上实测；`engines >=22.13.0` 的 floor
-  本身没有在 CI 或本机复跑。release workflow 的单元测试 job 只用 Node 24，Node 22 只用于
-  构建二进制。
+- **[VERIFIED] Node 22 全量**：`test:release` 的分片（`scripts/run-test-shard.mjs 0 1`）由
+  Node 22.23.4 二进制直接运行，实测 **605 文件 / 7,455 测试 / 7,352 通过 / 0 失败 / 103 跳过 /
+  801.6 s**（`node22-release-2.log`；
+  `TEST_SHARD_SUMMARY {"files":605,"tests":7455,"pass":7352,"fail":0,"skipped":103}`）。
+  `engines >=22.13.0` 的精确 floor（22.13.x）仍未单独跑矩阵，但 22.x 全量已不再是「未实测」。
 - **[UNVERIFIED] 托管 CI**：分支 `fix/audit-wave-20261109` 没有 upstream，本版所有 CI 结论
   都是本机测量。
 - **[UNVERIFIED] HMC 部署与回滚演练（592659）**：本版没有部署；回滚命令见 §5 与
@@ -314,6 +316,21 @@ POSIX 上补跑 mutation sweep、Node 22 与 `gate:release`（见 §7）。
   会因未转义文本产生角色越权（本版不声称这是越权漏洞）。
 - **[UNVERIFIED] 发布产物**：资产、cosign 签名、SHA256SUMS、release attestation 都要在 tag
   之后由 release workflow 生成；本文件不代表它们已经存在。
+- **[UNVERIFIED] G01（`reasoning.encrypted_content` 从不发出）**：发布提交 `e0c5c715` 上
+  `reasoningItem()` 只返回 `summary`，不携带上游的 `encrypted_content`（locator
+  `src/handlers/responses.js:742-749`）。修复在另一条 lane，未进入本发布提交。
+- **[UNVERIFIED] G02（`text.verbosity` 未解析/未转发）**：发布提交只读 `text.format`，不读也不
+  转发 `text.verbosity`（locator `src/handlers/responses.js:653`）。修复未进入本发布提交。
+- **[UNVERIFIED] G03（custom-tool 输入未流式）**：发布提交的 custom tool 调用以 `input:''`
+  发出，没有 `response.custom_tool_call_input.delta` 渐进事件（locator
+  `src/handlers/responses.js:776-783,1223-1229`，来自 `prior-takeover.md`，本版未再探针）。
+- **[UNVERIFIED] G06（Gemini 静默丢弃 server-side tools）**：发布提交在 Gemini 面只写日志，
+  其他协议面对同类工具返回 400（locator `src/handlers/gemini.js:290-318`；代码读取，未在真实
+  Gemini 上游复跑）。
+- **[UNVERIFIED] support-bundle 生产形态**：`test/support-bundle.test.js:227` 断言
+  `health.commit` 是 git sha，但 `src/version.js:40-47` 在非 git checkout 下回退为空串——
+  HMC 生产形态正是 `commit:""`（`SYNTHESIS.md` §2）。测试只在 git checkout 内通过，打包部署
+  形态未覆盖；本版只诊断，未改测试。
 - **沿用 592658 的边界**：M4 rescue 未在真实上游触发、多段 `#10`/`#21` 未线上观测、
   官方 `pr-gate` 仍 `INCOMPLETE`（relogin 真实密码缺口）。这些不因本版改变。
 

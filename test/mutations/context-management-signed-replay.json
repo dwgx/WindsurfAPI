@@ -1,0 +1,26 @@
+{
+  "tests": [
+    "test/context-management-signed-replay.test.js"
+  ],
+  "expectBaselinePass": 18,
+  "mutations": [
+    {
+      "name": "G-04: only the FIRST finite clear_thinking edit is validated again (`findIndex`) — edits [keep 2, keep 1] pass although the second drops a signed turn",
+      "file": "src/handlers/messages.js",
+      "anchor": "  for (let index = 0; index < edits.length; index++) {\n    const edit = edits[index];",
+      "replacement": "  const only = edits.findIndex(edit => edit?.type === 'clear_thinking_20251015'\n    && (edit.keep === 'none' || (edit.keep != null && typeof edit.keep === 'object')));\n  if (only === -1) return null;\n  for (let index = only; index < edits.length; index++) {\n    if (index > only) break;\n    const edit = edits[index];"
+    },
+    {
+      "name": "the keep threshold compares against the SIGNED count instead of the thinking-turn count — [signed, mixed] keep 1 is accepted",
+      "file": "src/handlers/messages.js",
+      "anchor": "      if (keep.value >= turns.length) continue;",
+      "replacement": "      if (keep.value >= signedIndexes.length) continue;"
+    },
+    {
+      "name": "the dropped prefix is computed from the signed subset's positions instead of the thinking turns' — [signed, mixed] keep 1 is accepted",
+      "file": "src/handlers/messages.js",
+      "anchor": "      const dropped = new Set(turns.slice(0, turns.length - keep.value));",
+      "replacement": "      const dropped = new Set(signedIndexes.slice(0, signedIndexes.length - keep.value));"
+    }
+  ]
+}

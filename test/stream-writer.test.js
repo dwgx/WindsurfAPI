@@ -18,14 +18,18 @@
 //
 // Deliberately no server and no `src/index.js`: the module has no imports of its
 // own, so this suite stays hermetic and runs in milliseconds.
-import { describe, it } from 'node:test';
+import { describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter, getEventListeners } from 'node:events';
 import {
   MAX_DRAIN_WAIT_DEFAULT_MS,
+  MAX_TIMER_MS,
+  MIN_CLIENT_RATE_BPS_DEFAULT,
   clientGoneError,
   createBoundedWriter,
+  drainDeadlineMs,
   resolveMaxDrainWaitMs,
+  resolveMinClientRateBps,
 } from '../src/stream-writer.js';
 
 /**
@@ -211,7 +215,10 @@ describe('createBoundedWriter: bounded half-open client', () => {
     assert.equal(res.listenerCount('drain'), 1);
 
     await withDeadline(pending, 2_000, 'half-open drain wait to expire');
-    assert.deepEqual(timeouts, [{ maxWaitMs: 25 }], 'onTimeout must run exactly once');
+    assert.equal(timeouts.length, 1, 'onTimeout must run exactly once');
+    assert.equal(timeouts[0].maxWaitMs, 25);
+    assert.equal(timeouts[0].pendingBytes, 'frame-1'.length);
+    assert.equal(timeouts[0].minClientRateBps, MIN_CLIENT_RATE_BPS_DEFAULT);
     assert.equal(w.timedOut, true);
     assert.equal(w.pending, null);
     assertNoListeners(res);
@@ -337,7 +344,7 @@ describe('createBoundedWriter: legacy synchronous mode', () => {
 
 describe('resolveMaxDrainWaitMs', () => {
   it('honours a positive override and falls back on invalid or empty input', () => {
-    assert.equal(MAX_DRAIN_WAIT_DEFAULT_MS, 120_000);
+    assert.equal(MAX_DRAIN_WAIT_DEFAULT_MS, 30_000);
     assert.equal(resolveMaxDrainWaitMs('2500'), 2_500);
     assert.equal(resolveMaxDrainWaitMs('1'), 1);
     for (const raw of ['0', '-5', '', '   ', 'abc', null]) {
@@ -360,5 +367,131 @@ describe('resolveMaxDrainWaitMs', () => {
       if (saved === undefined) delete process.env.WINDSURFAPI_MAX_DRAIN_MS;
       else process.env.WINDSURFAPI_MAX_DRAIN_MS = saved;
     }
+  });
+});
+
+describe('resolveMinClientRateBps', () => {
+  it('defaults to 8 KiB/s and honours a positive override', () => {
+    assert.equal(MIN_CLIENT_RATE_BPS_DEFAULT, 8 * 1024);
+    assert.equal(resolveMinClientRateBps('4096'), 4_096);
+    for (const raw of ['0', '-1', '', 'nope', null]) {
+      assert.equal(resolveMinClientRateBps(raw), MIN_CLIENT_RATE_BPS_DEFAULT);
+    }
+  });
+});
+
+describe('drainDeadlineMs', () => {
+  it('is fixed + bytes/minClientRate', () => {
+    const fixed = MAX_DRAIN_WAIT_DEFAULT_MS;
+    assert.equal(drainDeadlineMs({ bytes: 0, fixedMs: fixed }), fixed);
+    assert.equal(drainDeadlineMs({ bytes: 8 * 1024, fixedMs: fixed }), fixed + 1_000);
+    assert.equal(drainDeadlineMs({ bytes: 5 * 1024 * 1024, fixedMs: fixed }), fixed + 640_000);
+  });
+
+  it('bounds a stalled 4KB frame well under the old fixed 120s and a 5MB frame above it', () => {
+    const small = drainDeadlineMs({ bytes: 4 * 1024 });
+    const large = drainDeadlineMs({ bytes: 5 * 1024 * 1024 });
+    assert.ok(small < 120_000, `4KB budget ${small} must be under the old 120s`);
+    assert.ok(large > 120_000, `5MB budget ${large} must exceed the old 120s`);
+  });
+});
+
+describe('createBoundedWriter: proportional drain budget', () => {
+  const MB = 1024 * 1024;
+
+  it('a slow reader of a 5MB frame survives past the old fixed 120s', async () => {
+    mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 0 });
+    try {
+      const res = fakeRes({ writeDefault: false });
+      const w = createBoundedWriter({ res, maxWaitMs: 30_000 });
+      assert.equal(w.write('x'.repeat(5 * MB)), false);
+      assert.equal(w.pendingBytes, 5 * MB);
+      assert.ok(w.deadlineMs > 120_000, `budget ${w.deadlineMs} must exceed the old fixed 120s`);
+
+      // Past the old fixed deadline, the wait is still live: the 5MB frame has
+      // earned ~640s of proportional budget.
+      mock.timers.tick(130_000);
+      assert.equal(w.timedOut, false, 'a 5MB frame must not abort at the old 120s');
+
+      res.emit('drain');
+      assert.equal(w.pending, null);
+      assert.equal(w.pendingBytes, 0, 'drain acknowledges the backlog');
+      assert.equal(w.deadlineMs, 30_000, 'the budget resets to the fixed wait');
+      await w.awaitDrain();
+      assert.equal(w.timedOut, false);
+      assertNoListeners(res);
+    } finally {
+      mock.timers.reset();
+    }
+  });
+
+  it('a fully stalled 4KB frame aborts at fixed + 4KB/rate, not at 120s', async () => {
+    mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 0 });
+    try {
+      const res = fakeRes({ writeDefault: false });
+      const timeouts = [];
+      const w = createBoundedWriter({
+        res,
+        maxWaitMs: 30_000,
+        onTimeout: (info) => timeouts.push(info),
+      });
+      assert.equal(w.write('x'.repeat(4 * 1024)), false);
+      const budget = w.deadlineMs;
+      assert.ok(budget < 120_000, `4KB budget ${budget} must be under the old 120s`);
+      assert.equal(budget, 30_000 + 500);
+
+      mock.timers.tick(budget - 1);
+      assert.equal(w.timedOut, false, 'the wait must not expire one ms early');
+      mock.timers.tick(1);
+      assert.equal(w.timedOut, true, 'the stalled 4KB frame aborts at its budget');
+      assert.equal(timeouts.length, 1, 'onTimeout must run exactly once');
+      assert.equal(timeouts[0].pendingBytes, 4 * 1024);
+      assert.ok(timeouts[0].budgetMs < 120_000);
+      assertNoListeners(res);
+
+      // The writer stops arming waits; no second timeout, no leaked listener.
+      assert.equal(w.write('frame-2'), false);
+      assert.equal(w.pending, null);
+      assert.equal(timeouts.length, 1);
+      assertNoListeners(res);
+    } finally {
+      mock.timers.reset();
+    }
+  });
+
+  it('a healthy long stream never accrues stall budget', () => {
+    const res = fakeRes({ writeDefault: true });
+    const w = createBoundedWriter({ res, maxWaitMs: 1_000, minClientRateBps: 1_024 });
+    for (let i = 0; i < 100; i += 1) w.write('x'.repeat(1024));
+    assert.equal(w.pendingBytes, 0, 'accepted writes buy no budget');
+    assert.equal(w.deadlineMs, 1_000);
+    assert.equal(w.pending, null);
+  });
+
+  it('resets the backlog on drain instead of carrying it across waits', () => {
+    mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 0 });
+    try {
+      const res = fakeRes({ verdicts: [false, false] });
+      const w = createBoundedWriter({ res, maxWaitMs: 1_000, minClientRateBps: 1_024 });
+      assert.equal(w.write('x'.repeat(1_024)), false);
+      assert.equal(w.pendingBytes, 1_024);
+      assert.equal(w.deadlineMs, 2_000, '1KB at 1 KiB/s plus the fixed wait');
+
+      res.emit('drain');
+      assert.equal(w.pendingBytes, 0);
+      assert.equal(w.deadlineMs, 1_000, 'drain must not leave a carried horizon');
+
+      // A later stall starts from its own bytes, not the earlier 1KB.
+      assert.equal(w.write('x'.repeat(2 * 1_024)), false);
+      assert.equal(w.pendingBytes, 2 * 1_024);
+      assert.equal(w.deadlineMs, 3_000);
+    } finally {
+      mock.timers.reset();
+    }
+  });
+
+  it('caps the timer delay at the largest value Node accepts', () => {
+    assert.equal(MAX_TIMER_MS, 2_147_483_647);
+    assert.equal(drainDeadlineMs({ bytes: Number.MAX_SAFE_INTEGER }), MAX_TIMER_MS);
   });
 });

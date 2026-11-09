@@ -10,7 +10,7 @@
 // the error-body shape. The first integration is the OpenAI chat route.
 
 import { Buffer } from 'node:buffer';
-import { findFrameEnd, parseSseLine } from './sse-framer.js';
+import { findFrameEnd, parseSseLine, parseSseDataJson } from './sse-framer.js';
 import { connectErrorToHttp, normalizeOpenAIErrorType, clientRetryAfterSeconds } from './handlers/chat.js';
 
 const DEFAULT_MAX_FRAMES = 48;
@@ -65,41 +65,62 @@ function dataPayload(frame) {
   return data.join('\n');
 }
 
-function parseFrameJson(frame) {
-  try {
-    return JSON.parse(dataPayload(frame));
-  } catch {
-    return null;
-  }
+// Every JSON document a frame carries. An upstream may concatenate documents
+// on one `data:` line; `parseSseDataJson` repairs that per line. A payload that
+// starts like a JSON object but cannot be parsed into complete documents is
+// malformed — the gate must surface a typed error, never treat it as "no error
+// frame" and let the stream finish cleanly with zero content.
+function frameDocuments(frame) {
+  return parseSseDataJson(dataPayload(frame));
+}
+
+function malformedDataError() {
+  const err = new Error('Upstream sent an SSE data payload that is not valid JSON and could not be repaired');
+  // No `type`: `api_error` maps to 500 in TYPE_STATUS, but this is a transport
+  // failure (the payload could not be parsed at all), so the status must come
+  // from the unclassified-code path — 502 — and the body type is normalized
+  // from that status.
+  err.code = 'SSE_MALFORMED_JSON';
+  return err;
+}
+
+function isOpenAIBootstrapChunk(obj) {
+  // Role-only prime chunk: no content, no tool call, no finish. Holding it is
+  // safe because a client cannot observe anything from it alone.
+  if (!Array.isArray(obj?.choices) || obj.choices.length === 0) return false;
+  return obj.choices.every((c) => {
+    const d = c?.delta;
+    if (!d || c?.finish_reason) return false;
+    return Object.keys(d).every((k) => k === 'role'
+      || ((k === 'content' || k === 'reasoning' || k === 'reasoning_content') && !d[k]));
+  });
 }
 
 function isBootstrapFrame(frame, protocol, isBootstrap = null) {
   if (isCommentFrame(frame)) return true;
   if (isKeepaliveFrame(frame)) return true;
-  const obj = parseFrameJson(frame);
-  if (!obj) return false;
-  if (typeof isBootstrap === 'function') return !!isBootstrap(obj);
-  if (protocol === 'openai') {
-    // Role-only prime chunk: no content, no tool call, no finish. Holding it is
-    // safe because a client cannot observe anything from it alone.
-    if (Array.isArray(obj.choices) && obj.choices.length > 0) {
-      return obj.choices.every((c) => {
-        const d = c?.delta;
-        if (!d || c?.finish_reason) return false;
-        return Object.keys(d).every((k) => k === 'role'
-          || ((k === 'content' || k === 'reasoning' || k === 'reasoning_content') && !d[k]));
-      });
-    }
-  }
+  const { docs, malformed } = frameDocuments(frame);
+  if (malformed || !docs || docs.length === 0) return false;
+  // Every document must be bootstrap. One content document in the frame is a
+  // real payload and must commit the gate.
+  if (typeof isBootstrap === 'function') return docs.every((obj) => !!isBootstrap(obj));
+  if (protocol === 'openai') return docs.every((obj) => isOpenAIBootstrapChunk(obj));
   return false;
 }
 
 function errorFromFrame(frame, parseError = null) {
-  const obj = parseFrameJson(frame);
-  if (!obj) return null;
-  if (typeof parseError === 'function') return parseError(obj);
-  if (!obj.error || typeof obj.error !== 'object') return null;
-  return obj.error;
+  const { docs, malformed } = frameDocuments(frame);
+  if (malformed) return malformedDataError();
+  if (!docs) return null;
+  for (const obj of docs) {
+    if (typeof parseError === 'function') {
+      const parsed = parseError(obj);
+      if (parsed) return parsed;
+      continue;
+    }
+    if (obj && typeof obj === 'object' && obj.error && typeof obj.error === 'object') return obj.error;
+  }
+  return null;
 }
 
 const GRPC_STATUS = {
@@ -406,8 +427,10 @@ export function createDeferredSseResponse(realRes, {
     once(event, listener) { realRes.once(event, listener); return this; },
     removeListener(event, listener) { realRes.removeListener?.(event, listener); return this; },
     emit(event, ...args) { return realRes.emit?.(event, ...args); },
-    dispose() { disposed = true; ended = true; clearTimer(); },
-    destroy(error) { disposed = true; ended = true; clearTimer(); return realRes.destroy?.(error); },
+    // Cancellation releases the queued bytes, not just the timer: a route that
+    // aborts before commit must not keep a held burst reachable from the gate.
+    dispose() { disposed = true; ended = true; clearTimer(); pending = []; pendingBytes = 0; pendingFrames = 0; scanCarry = Buffer.alloc(0); },
+    destroy(error) { disposed = true; ended = true; clearTimer(); pending = []; pendingBytes = 0; pendingFrames = 0; scanCarry = Buffer.alloc(0); return realRes.destroy?.(error); },
     get socket() { return realRes.socket; },
   };
 }

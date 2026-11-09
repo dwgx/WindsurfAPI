@@ -643,6 +643,71 @@ describe('Anthropic messages request translation', () => {
     assert.ok(events.some(e => e.event === 'message_stop'), 'message_stop sent after [DONE]');
   });
 
+  // G3: the connect layer reports a payload that arrived with NO upstream
+  // stopReason as finish_reason:'error' (+ unterminated:true). That is a TRUNCATED
+  // turn, and STOP_REASON_MAP has no 'error' entry — the old default folded it into
+  // end_turn, telling the client a half answer was complete.
+  it('surfaces an error event when the terminal finish_reason is "error" (G3 unterminated upstream)', async () => {
+    const result = await handleMessages({
+      model: 'claude-sonnet-4.6',
+      stream: true,
+      messages: [{ role: 'user', content: 'write a long answer' }],
+    }, {
+      async handleChatCompletions() {
+        return {
+          status: 200,
+          stream: true,
+          async handler(res) {
+            res.write(chatChunk({ choices: [{ index: 0, delta: { role: 'assistant', content: 'half an ' }, finish_reason: null }] }));
+            res.write(chatChunk({ choices: [{ index: 0, delta: { content: 'answer' }, finish_reason: null }] }));
+            // G3 terminal: bytes arrived, the upstream named no stopReason.
+            res.write(chatChunk({ choices: [{ index: 0, delta: {}, finish_reason: 'error', unterminated: true }] }));
+            res.end('data: [DONE]\n\n');
+          },
+        };
+      },
+    });
+
+    const res = fakeRes();
+    await result.handler(res);
+    const events = parseAnthropicEvents(res.body);
+    const errEvent = events.find(e => e.event === 'error' || e.data.type === 'error');
+    assert.ok(errEvent, 'an "error" finish must emit an error event');
+    assert.equal(errEvent.data.error.type, 'overloaded_error', 'truncation maps to a retryable 529 overloaded_error');
+    assert.ok(!events.some(e => e.event === 'message_delta'), 'no message_delta on a truncated turn');
+    assert.ok(!events.some(e => e.event === 'message_stop'), 'no message_stop on a truncated turn');
+  });
+
+  // G3 (non-stream twin): the same terminal reaches the buffered path as
+  // choices[0].finish_reason:'error'; a 200 end_turn there would certify the half
+  // answer just as the stream did.
+  it('refuses a non-stream turn whose finish_reason is "error" (G3 unterminated upstream)', async () => {
+    const result = await handleMessages({
+      model: 'claude-sonnet-4.6',
+      messages: [{ role: 'user', content: 'write a long answer' }],
+    }, {
+      async handleChatCompletions(body) {
+        return {
+          status: 200,
+          body: {
+            model: body.model,
+            choices: [{
+              index: 0,
+              message: { role: 'assistant', content: 'half an answer' },
+              finish_reason: 'error',
+              unterminated: true,
+            }],
+            usage: { prompt_tokens: 1, completion_tokens: 2, total_tokens: 3 },
+          },
+        };
+      },
+    });
+    assert.equal(result.status, 529, 'a truncated turn is a retryable upstream error, not a 200');
+    assert.equal(result.body.type, 'error');
+    assert.equal(result.body.error.type, 'overloaded_error');
+    assert.match(result.body.error.message, /truncated response/i);
+  });
+
   // A1: message_start.usage must carry a non-zero local input estimate when the
   // request has input — official SDKs read input_tokens from message_start and
   // only accumulate output_tokens from message_delta, so an all-zero start made

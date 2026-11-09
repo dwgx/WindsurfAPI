@@ -23,6 +23,14 @@ import { budgetExceededError, isBudgetExceededError } from '../request-budget.js
 import { checkOutboundHistory, historyBudgetErrorMessage, HISTORY_BUDGET_ERROR_CODE } from '../history-budget.js';
 import { neutralizeClientIdentity, neutralizeMessageContent } from './identity-neutralize.js';
 import { chatServerSideToolUnsupported, firstUnsupportedServerToolType, forEachTool } from '../server-side-tools.js';
+// Tool-name charset hygiene on the OpenAI Chat surface (Q1 audit G1). The
+// Anthropic (messages.js) and Responses (responses.js) surfaces have built this
+// map since tool hygiene shipped; this surface never imported it, so an invalid
+// client tool name (`mcp::x`, `a.b`, `tool with space`) reached the Connect wire
+// and the upstream answered with a misleading `invalid_argument` ("an internal
+// error occurred") mid-stream. Same helper, same map shape, same reverse leg.
+import { buildToolNameMap, restoreToolName } from '../tool-names.js';
+import { toolHygieneEnabled } from '../tool-ids.js';
 import { normalizeStop, applyStop, StopSequenceGate } from '../stop-sequences.js';
 import { normalizeToolCallArgs, recordArgRepair } from './cline-compat.js';
 
@@ -96,8 +104,12 @@ const HEARTBEAT_MS = 15_000;
 // ../stream-writer.js — one implementation for every SSE exit. A slow reader
 // gets a bounded wait, not an unbounded one: a half-open client (stops reading,
 // keeps TCP open) never emits 'drain', so without a ceiling the poll loop and
-// the account checkout would be pinned for the life of the connection. Two
-// minutes is eight heartbeat periods. Override with WINDSURFAPI_MAX_DRAIN_MS.
+// the account checkout would be pinned for the life of the connection. The
+// bound is proportional — a fixed 30s plus the time the bytes written so far
+// need at a minimum client rate — so a stalled 4KB frame aborts early while a
+// slow reader of a multi-megabyte frame keeps its full budget. Override the
+// fixed part with WINDSURFAPI_MAX_DRAIN_MS, the rate with
+// WINDSURFAPI_MIN_CLIENT_RATE_BPS.
 const QUEUE_RETRY_MS = 1_000;
 const QUEUE_MAX_WAIT_MS = 30_000;
 const IP_RATE_LIMIT_BURST_FLOOR_MS = 30_000;
@@ -491,6 +503,65 @@ export function effectiveToolsForToolChoice(tools, toolChoice) {
 function toolNameList(tools) {
   if (!Array.isArray(tools)) return [];
   return tools.map(t => t?.function?.name || t?.name || '').filter(Boolean);
+}
+
+// Tool names a conversation's HISTORY already carries. The Anthropic surface
+// collects these before building its name map (messages.js historyToolNames)
+// because a replayed assistant `tool_use` is re-encoded upstream: under the
+// native Connect path it becomes a #6 ChatToolCall whose `name` the upstream
+// validates against the declared #10 ToolDefs. A history name the map does not
+// cover would therefore be sent as "a tool that was never declared".
+function historyToolNamesOf(messages) {
+  const names = [];
+  if (!Array.isArray(messages)) return names;
+  for (const m of messages) {
+    if (m?.role !== 'assistant' || !Array.isArray(m.tool_calls)) continue;
+    for (const tc of m.tool_calls) {
+      const name = tc?.function?.name || tc?.name;
+      if (typeof name === 'string' && name) names.push(name);
+    }
+  }
+  return names;
+}
+
+// Apply the wire names to the history's assistant tool_calls. Fresh objects, never
+// in-place mutation: the same `messages` array is re-passed on retry/failover and
+// is the caller's input. `wireName` is the request-scoped lookup.
+function renameHistoryToolNames(messages, wireName) {
+  if (!Array.isArray(messages)) return messages;
+  let changed = false;
+  const out = messages.map((m) => {
+    if (m?.role !== 'assistant' || !Array.isArray(m.tool_calls) || !m.tool_calls.length) return m;
+    let localChanged = false;
+    const calls = m.tool_calls.map((tc) => {
+      const raw = tc?.function?.name || tc?.name;
+      if (typeof raw !== 'string' || !raw) return tc;
+      const wire = wireName(raw);
+      if (!wire || wire === raw) return tc;
+      localChanged = true;
+      return tc?.function ? { ...tc, function: { ...tc.function, name: wire } } : { ...tc, name: wire };
+    });
+    if (!localChanged) return m;
+    changed = true;
+    return { ...m, tool_calls: calls };
+  });
+  return changed ? out : messages;
+}
+
+// `tool_choice` carries a tool NAME when the caller forces one, so it has to be
+// rewritten with the same request-scoped map as the declarations. Strings
+// ('auto'/'required'/'none') and shapes without a name pass through untouched —
+// the upstream contract check (validateToolChoiceContract) already ran against
+// the CALLER's spelling, which is what the caller can see.
+function mapToolChoiceToWire(toolChoice, wireName) {
+  if (!toolChoice || typeof toolChoice !== 'object') return toolChoice;
+  const raw = toolChoice.function?.name || toolChoice.name;
+  if (typeof raw !== 'string' || !raw) return toolChoice;
+  const wire = wireName(raw);
+  if (!wire || wire === raw) return toolChoice;
+  return toolChoice.function
+    ? { ...toolChoice, function: { ...toolChoice.function, name: wire } }
+    : { ...toolChoice, name: wire };
 }
 
 export function summarizeToolRoutingDiagnostics({ tools, effectiveTools, toolChoice, toolRouting, preambleBudget = null }) {
@@ -2798,21 +2869,22 @@ export function finalizeConnectAccount(acct, { model, selector = null, startTime
     }
     else if (err.code === 'RATE_LIMITED') {
       // Honor an explicit upstream reset window when the classifier parsed one
-      // (e.g. "message rate limit ... Resets in: 3h0m0s" → err.resetMs). Apply it
-      // ACCOUNT-WIDE (modelKey=null), not model-scoped: acquireConnectAccount
-      // selects the pool via getApiKey(triedKeys, null, ...) with modelKey=null,
-      // and isRateLimitedForModel only consults _modelRateLimits when modelKey is
-      // truthy — so a model-scoped cooldown is structurally invisible to
-      // DEVIN_CONNECT selection and the pool immediately re-picks the account that
-      // just 429'd, ignoring the reset window entirely. (The account-wide choice is
-      // still right for a hard reset window, but note the premise has narrowed
-      // since: isCooledForRequest also honors the connect-selector dimension now,
-      // so rateLimitedUntil is no longer the ONLY dimension a modelKey=null lookup
-      // sees.) Falls back to a burst cooldown when no window was given (generic
-      // 429 with no retry-after); F2: that burst duration is the `rlBurstMs`
-      // tunable (default 300000 = the historical 5min).
+      // (e.g. "message rate limit ... Resets in: 3h0m0s" → err.resetMs). Scope it
+      // to the model/selector that was throttled, NOT the account: a 429 for one
+      // model is no evidence about the others, and the old account-wide write
+      // benched a healthy account for every other model it could still serve.
+      // The old account-wide choice existed because connect selection calls
+      // getApiKey(triedKeys, null, ...) with modelKey=null and
+      // isRateLimitedForModel only consults _modelRateLimits for a truthy key —
+      // so a model-scoped cooldown used to be structurally invisible. That
+      // premise is gone: isCooledForRequest also checks the connect-selector
+      // dimension, which is exactly what this write keys on (`selector || model`,
+      // the same dimension the CAPACITY arm below uses). Falls back to a burst
+      // cooldown when no window was given (generic 429 with no retry-after);
+      // F2: that burst duration is the `rlBurstMs` tunable (default 300000 =
+      // the historical 5min).
       if (Number.isFinite(err.resetMs) && err.resetMs > 0) {
-        markRateLimited(apiKey, err.resetMs, null, 'r');
+        markRateLimited(apiKey, err.resetMs, selector || model, 'r');
       } else {
         markRateLimited(apiKey, getBreakerTunable('rlBurstMs'), null);
       }
@@ -3305,9 +3377,14 @@ async function _handleChatCompletionsInner(body, context = {}) {
   const {
     stream = false,
     tools,
-    tool_choice,
     response_format,
   } = body;
+  // `tool_choice` is `let`, not a destructured const: the DEVIN_CONNECT branch
+  // rewrites a FORCED tool name to the upstream charset (G1) once it has built the
+  // request-scoped name map, and the preamble/description builders downstream must
+  // see the same spelling the #10 ToolDefs advertise. Validation and the Cascade
+  // path read the caller's spelling, which is what the caller can see.
+  let tool_choice = body.tool_choice;
   // F3 (evidence/DataAuditTools/findings.md): this route had no tool-type gate at
   // all. Every consumer filters `type === 'function'` — the text preamble in
   // tool-emulation.js and the native #10 ToolDef encoder in devin-connect.js — so
@@ -3504,9 +3581,10 @@ async function _handleChatCompletionsInner(body, context = {}) {
   // Both dimensions are independent; a dimension set to 0 is disabled.
   // See src/history-budget.js for the units and the default rationale.
   {
-    const history = checkOutboundHistory(messages);
+    const history = checkOutboundHistory(messages, { tools: effectiveTools });
     if (!history.ok) {
-      log.warn(`Chat[${reqId}]: outbound history over budget — turns=${history.measured.turns}/${history.budget.maxTurns} bytes=${history.measured.bytes}/${history.budget.maxBytes} (overTurns=${history.overTurns} overBytes=${history.overBytes}); rejecting before the upstream call`);
+      const b = history.measured.breakdown || {};
+      log.warn(`Chat[${reqId}]: outbound history over budget — turns=${history.measured.turns}/${history.budget.maxTurns} bytes=${history.measured.bytes}/${history.budget.maxBytes} (messages=${b.messages || 0} tools=${b.tools || 0}; overTurns=${history.overTurns} overBytes=${history.overBytes}); rejecting before the upstream call`);
       return {
         status: 413,
         body: {
@@ -3913,9 +3991,73 @@ async function _handleChatCompletionsInner(body, context = {}) {
     const _trim = nativeToolFlag
       ? { tools: effectiveTools, trimmed: false, kept: Array.isArray(effectiveTools) ? effectiveTools.length : 0, dropped: 0 }
       : trimToolsForWeakModel(effectiveTools, reqModelName, { toolChoice: tool_choice });
-    const connectTools = _trim.tools;
+    let connectTools = _trim.tools;
     if (_trim.trimmed) log.warn(`Chat[${reqId}]: DEVIN_CONNECT weak model ${safeLogValue(reqModelName)} — trimmed tools ${effectiveTools.length}→${_trim.kept} (dropped ${_trim.dropped}) to avoid upstream overload`);
     const emulateTools = Array.isArray(connectTools) && connectTools.length > 0;
+    // G1 (Q1 audit §7): the upstream accepts only `^[A-Za-z0-9_-]{1,64}$` tool
+    // names and rejects anything else with a MISLEADING `invalid_argument`
+    // ("an internal error occurred", mid-stream) — so `mcp::x`, `a.b` or
+    // `tool with space` looked like a proxy bug. messages.js and responses.js
+    // already rewrite names through buildToolNameMap; this surface did not, and
+    // it is the one every OpenAI-shaped client (Codex, Cline, omp) uses.
+    //
+    // The rewrite is reversible and request-scoped, and it must cover BOTH legs:
+    //  - declarations (#10 ToolDef AND the prompt preamble the model reads) so the
+    //    model can only ever emit a legal name;
+    //  - history (assistant `tool_calls[].function.name`, re-encoded natively as
+    //    #6 ChatToolCall) so a follow-up turn does not name a tool the upstream
+    //    considers undeclared;
+    //  - `tool_choice.function.name` (#12) so a forced call names the same tool
+    //    the definitions advertise.
+    // Every valid name (incl. `mcp__a__b`) maps to itself, so a client that
+    // already sends legal names sees a byte-identical request.
+    const toolNameMap = toolHygieneEnabled()
+      ? buildToolNameMap([
+        ...toolNameList(connectTools),
+        ...toolNameList(effectiveTools),
+        ...historyToolNamesOf(messages),
+      ])
+      : null;
+    const wireToolName = (n) => (toolNameMap && typeof n === 'string' && n
+      ? (toolNameMap.toUpstream.get(n) ?? n)
+      : n);
+    if (toolNameMap) {
+      const renamed = connectTools.map((t) => {
+        const raw = t?.function?.name || t?.name;
+        const wire = wireToolName(raw);
+        if (!wire || wire === raw) return t;
+        return t?.function ? { ...t, function: { ...t.function, name: wire } } : { ...t, name: wire };
+      });
+      if (renamed.some((t, i) => t !== connectTools[i])) {
+        log.info(`Chat[${reqId}]: DEVIN_CONNECT tool names rewritten to the upstream charset (${connectTools.length} tool(s))`);
+        connectTools = renamed;
+      }
+      messages = renameHistoryToolNames(messages, wireToolName);
+      // Same map for a FORCED tool_choice (#12) and for every builder downstream
+      // that names the tool (the prompt preamble, the description preamble). It is
+      // rewritten HERE rather than at the `connectParams` literal so the preamble
+      // cannot disagree with the #10 ToolDefs.
+      tool_choice = mapToolChoiceToWire(tool_choice, wireToolName);
+    }
+    // Client-visible leg: the upstream echoes (or reverse-looks-up) the WIRE name,
+    // so every name leaving this handler is mapped back through toClient. No-op
+    // for names the caller sent legally, and null when hygiene is off.
+    const clientToolName = (n) => (toolNameMap ? restoreToolName(n, toolNameMap) : n);
+    // Non-stream twin of the frame rewrite above: the adapter's completion body
+    // carries the upstream's (wire) name. Restore before anything downstream reads
+    // it — the caller's response, the session-continuity pair-chain (built from
+    // `connectMessages`, which is caller-shaped) and the response cache.
+    const restoreOutToolNames = (out) => {
+      if (!toolNameMap) return out;
+      const calls = out?.body?.choices?.[0]?.message?.tool_calls;
+      if (Array.isArray(calls)) {
+        for (const tc of calls) {
+          const name = tc?.function?.name;
+          if (typeof name === 'string' && name) tc.function.name = clientToolName(name);
+        }
+      }
+      return out;
+    };
     // Double-send guard (#49): when the native ToolDef gate is calibrated, tools
     // also ride natively in the #10 `tools` field (connectParams.tools below), so
     // re-describing them in the prompt preamble is redundant and gives the model
@@ -4326,6 +4468,14 @@ async function _handleChatCompletionsInner(body, context = {}) {
     if (Number.isFinite(body.top_p)) completionOverrides.topP = body.top_p;
     if (Number.isFinite(body.top_k)) completionOverrides.topK = body.top_k;
     if (Number.isFinite(max_tokens)) completionOverrides.maxTokens = max_tokens;
+    // G02: the Responses surface forwards `text.verbosity` as a top-level
+    // `verbosity` (responses.js). `buildCompletionConfig` has no verbosity
+    // field, so this is accepted and intentionally a no-op on the wire —
+    // carried here so the caller's value is not silently dropped at the proxy
+    // boundary (the override set records that the request asked for it).
+    if (typeof body.verbosity === 'string' && body.verbosity) {
+      completionOverrides.verbosity = body.verbosity;
+    }
     if (Object.keys(completionOverrides).length) connectParams.completion = completionOverrides;
     // Native tool definitions (groundwork, #49). The connect request builder only
     // emits a real `tools` field when DEVIN_CONNECT_TOOL_DEF_TAGS is calibrated;
@@ -4472,6 +4622,20 @@ async function _handleChatCompletionsInner(body, context = {}) {
             // O9/O12: connect 流 chunk 由 adapter 预置 fp；此处幂等补
             // system_fingerprint 与 service_tier。error 帧不动。
             applyChatCompletionCompatFields(data, fp);
+            // G1 reverse leg: the model was told the WIRE names, so the tool_call
+            // deltas it produces carry them. Map back before serialization, or an
+            // OpenAI client receives a name it never declared (and the tool_result
+            // it sends next cannot be matched by its own registry).
+            if (toolNameMap && Array.isArray(data?.choices)) {
+              for (const choice of data.choices) {
+                const calls = choice?.delta?.tool_calls;
+                if (!Array.isArray(calls)) continue;
+                for (const tc of calls) {
+                  const name = tc?.function?.name;
+                  if (typeof name === 'string' && name) tc.function.name = clientToolName(name);
+                }
+              }
+            }
             if (isOpenAIClient && data && data.error && typeof data.error.type === 'string') {
               data.error.type = normalizeOpenAIErrorType(data.error.type);
             }
@@ -4771,6 +4935,14 @@ async function _handleChatCompletionsInner(body, context = {}) {
                   // path (initial, transient replay, re-login retry) so the commit
                   // fires even after an upstream wobble — exactly when reuse helps.
                   try {
+                    // Session continuity hashes the message pair (session-continuity
+                    // canonicalize(): name + id + args). The NEXT turn's
+                    // `connectMessages` carries the WIRE name, because this handler
+                    // renames history before the wire — so the committed assistant
+                    // turn must carry the same spelling, or the pair never matches
+                    // and a fresh session_id is minted after every rewritten call.
+                    // Ids are untouched by the name map and already client-normalized
+                    // by the adapter, so `r.sr.toolCalls` is exactly the right shape.
                     const tc = r.sr?.toolCalls;
                     const commitMsgs = [...connectMessages, {
                       role: 'assistant',
@@ -5023,6 +5195,12 @@ async function _handleChatCompletionsInner(body, context = {}) {
         // next turn resolves to this session_id via pair-chain overlap. The
         // response tool_calls already ride the OpenAI function shape here.
         // Gate-checked + best-effort (no-op when reuse is off).
+        //
+        // This runs BEFORE `restoreOutToolNames` on purpose. `canonicalize()` hashes
+        // the tool name, and the NEXT turn's `connectMessages` carries the WIRE
+        // spelling (this handler renames history before the wire). Committing the
+        // caller's spelling here made the pair never match, so a new session_id was
+        // minted after every rewritten tool call.
         try {
           const msg = r.out?.body?.choices?.[0]?.message;
           const commitMsgs = [...connectMessages, {
@@ -5043,7 +5221,9 @@ async function _handleChatCompletionsInner(body, context = {}) {
             log.info('[STREAM-CACHE-STORE] ckey=' + __sCkey);
           }
         } catch (e) { log.info('[STREAM-CACHE-ERR] store ' + (e && e.message)); }
-        return r.out;
+        // G1 client leg: everything above (pair-chain, cache, billing) has already
+        // consumed the response, so restore the caller's own tool names last.
+        return restoreOutToolNames(r.out);
       }
       if (r.kind === 'abort') {
         log.info(`Chat[${reqId}]: DEVIN_CONNECT non-stream aborted (client gone) — not failing over`);

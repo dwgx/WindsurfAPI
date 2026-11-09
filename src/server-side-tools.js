@@ -153,3 +153,49 @@ export function firstUnsupportedServerToolType(tools) {
   });
   return found;
 }
+
+// ─── Gemini native server-side tools ────────────────────────────────────────
+//
+// Gemini declares server-executed tools as BARE KEYS on a tool object
+// (`{googleSearch:{}}`, `{codeExecution:{}}`, `{urlContext:{}}`) rather than as
+// a `type` string. The translator used to count them and drop them with a log
+// line, so a spec-conforming Gemini client received a normal answer for a turn
+// whose search/execution never happened — the same silent non-execution that
+// the OpenAI-family gates above exist to prevent (Q4 G06). They are refused
+// here, through the same `unsupported_server_side_tool` code, so every surface
+// reports the same typed error.
+//
+// `googleSearchRetrieval` is the pre-2.0 alias for googleSearch; both spellings
+// ask this server to run the search. googleMaps / fileSearch / computerUse /
+// mcpServers are also server-executed, but no client in the repo sends them and
+// the audit scoped this gate to the three documented tools; leave the rest to
+// the catch-all rather than widening the refusal without a measured caller.
+const GEMINI_SERVER_SIDE_TOOL_KEYS = ['googleSearch', 'googleSearchRetrieval', 'codeExecution', 'urlContext'];
+
+/** First Gemini server-executed tool key declared in `tools`, or null. */
+export function firstUnsupportedGeminiServerTool(tools) {
+  for (const tool of tools || []) {
+    if (!tool || typeof tool !== 'object') continue;
+    for (const key of GEMINI_SERVER_SIDE_TOOL_KEYS) {
+      if (tool[key]) return key;
+    }
+  }
+  return null;
+}
+
+/**
+ * Gemini-surface refusal for a server-executed tool. The Gemini error envelope
+ * is built by `geminiError`; this only carries the typed code + the message so
+ * the handler can map it without inventing a second vocabulary.
+ */
+export function geminiServerSideToolUnsupported(name, param = 'tools') {
+  const err = new Error(
+    `Gemini server-side tool "${name}" is not supported by this proxy: it requires an executor that runs on `
+    + 'this server, and this proxy has none. Remove it and, if the client will run the tool itself, declare '
+    + `a normal functionDeclaration instead. Rejected tools: ${GEMINI_SERVER_SIDE_TOOL_KEYS.join(', ')}.`,
+  );
+  err.param = param;
+  err.code = 'unsupported_server_side_tool';
+  err.status = 400;
+  return err;
+}

@@ -1,11 +1,14 @@
 // Two blockers in the #224 x #225 interaction, and the invariant that separates
 // them.
 //
-// #224 made a RATE_LIMITED verdict write the upstream's real reset window to the
-// account-wide cooldown. #225 made a client disconnect stop penalizing the
-// account. Both are right on their own, but #225's abort arm sat FIRST in
-// finalizeConnectAccount's else-if chain, so a disconnect that raced an in-flight
-// upstream 429 skipped the WHOLE classification — including that cooldown.
+// #224 made a RATE_LIMITED verdict write the upstream's real reset window to a
+// cooldown. That dimension is now the throttled SELECTOR (`selector || model`),
+// not the whole account: a 429 for one model is no evidence about the others, so
+// the account stays eligible for every model it can still serve (T10).
+// #225 made a client disconnect stop penalizing the account. Both are right on
+// their own, but #225's abort arm sat FIRST in finalizeConnectAccount's else-if
+// chain, so a disconnect that raced an in-flight upstream 429 skipped the WHOLE
+// classification — including that cooldown.
 // Measured before the fix: a declared 3h window became 0ms and the account was
 // immediately re-selectable. Agent clients (Claude Code / Codex) cancel mid-turn
 // constantly, so every cancelled turn re-armed an already-throttled account and
@@ -79,17 +82,21 @@ describe('a client disconnect does not discard an upstream-declared cooldown', (
     const left = finalize('rl-left', { err: rateLimited(), aborted: true });
 
     // The window is wall-clock derived, so assert it landed near the declared
-    // value rather than to the millisecond.
+    // value rather than to the millisecond. It is scoped to the throttled
+    // SELECTOR (`selector || model`), not the account: a 429 for one model is
+    // no evidence about the others, and the account-wide dimension stays clear.
     for (const [name, r] of [['connected', stayed], ['disconnected', left]]) {
+      const remaining = (r.modelCooldowns['gpt-5-5-low'] || 0) - Date.now();
       assert.ok(
-        r.cooldownMs > RESET_MS - 60_000 && r.cooldownMs <= RESET_MS,
-        `${name}: expected ~${RESET_MS}ms account-wide cooldown, got ${r.cooldownMs}ms`,
+        remaining > RESET_MS - 60_000 && remaining <= RESET_MS,
+        `${name}: expected ~${RESET_MS}ms selector cooldown, got ${remaining}ms`,
       );
+      assert.equal(r.cooldownMs, 0, `${name}: the account-wide dimension must stay clear`);
     }
     // The whole point: the disconnect must not shorten or drop the window.
     assert.ok(
-      Math.abs(stayed.cooldownMs - left.cooldownMs) < 60_000,
-      `a disconnect changed the cooldown: connected=${stayed.cooldownMs}ms disconnected=${left.cooldownMs}ms`,
+      Math.abs(stayed.modelCooldowns['gpt-5-5-low'] - left.modelCooldowns['gpt-5-5-low']) < 60_000,
+      `a disconnect changed the cooldown: connected=${stayed.modelCooldowns['gpt-5-5-low']} disconnected=${left.modelCooldowns['gpt-5-5-low']}`,
     );
   });
 
@@ -158,8 +165,9 @@ describe('a client disconnect does not discard an upstream-declared cooldown', (
       );
     }
     const fresh = getAccountInternal(a.id);
-    const remaining = fresh.rateLimitedUntil - Date.now();
-    assert.ok(remaining > RESET_MS - 60_000, `expected the window to hold, got ${remaining}ms`);
+    const remaining = (fresh._modelRateLimits?.['gpt-5-5-low'] || 0) - Date.now();
+    assert.ok(remaining > RESET_MS - 60_000, `expected the selector window to hold, got ${remaining}ms`);
+    assert.ok(!(fresh.rateLimitedUntil > Date.now()), 'the account-wide dimension must stay clear');
     assert.equal(fresh.errorCount || 0, 0);
   });
 });
@@ -219,7 +227,9 @@ describe('an upstream fault mentioning "aborted" is not a client disconnect', ()
     assert.equal(upstream.code, 'RATE_LIMITED', 'precondition: classified as a rate limit');
     const err = Object.assign(new Error(upstream.message), upstream);
     const r = finalize('rl-aborted-word', { err, aborted: false });
-    assert.ok(r.cooldownMs > 60_000, `expected a real cooldown, got ${r.cooldownMs}ms`);
+    const remaining = (r.modelCooldowns['gpt-5-5-low'] || 0) - Date.now();
+    assert.ok(remaining > 60_000, `expected a real selector cooldown, got ${remaining}ms`);
+    assert.equal(r.cooldownMs, 0, 'the account-wide dimension must stay clear');
   });
 
   it('an undici abort carrying neither name nor code is still recognised', () => {

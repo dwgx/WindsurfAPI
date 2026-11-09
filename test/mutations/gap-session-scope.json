@@ -14,8 +14,8 @@
     {
       "name": "G-1: a session header becomes an accepted credential",
       "file": "src/server.js",
-      "anchor": "  const xApiKey = req.headers['x-api-key'] || '';\n  if (xApiKey) return xApiKey;",
-      "replacement": "  const xApiKey = req.headers['x-api-key'] || '';\n  if (xApiKey) return xApiKey;\n  const sessionAsCredential = req.headers['x-dashboard-session'] || '';\n  if (sessionAsCredential) return sessionAsCredential;",
+      "anchor": "    const xApiKey = req.headers['x-api-key'] || '';\n    if (xApiKey) return xApiKey;",
+      "replacement": "    const xApiKey = req.headers['x-api-key'] || '';\n    if (xApiKey) return xApiKey;\n    const sessionAsCredential = req.headers['x-dashboard-session'] || '';\n    if (sessionAsCredential) return sessionAsCredential;",
       "expectCaught": true
     },
     {
@@ -28,8 +28,8 @@
     {
       "name": "GPT-07: the outer API-key gate stops refusing, so /v1 routes are reached unauthenticated",
       "file": "src/server.js",
-      "anchor": "  if (!validateApiKey(extractToken(req))) {",
-      "replacement": "  if (false && !validateApiKey(extractToken(req))) {",
+      "anchor": "  if (!validateApiKey(presentedToken)) {",
+      "replacement": "  if (false && !validateApiKey(presentedToken)) {",
       "expectCaught": true
     }
   ]

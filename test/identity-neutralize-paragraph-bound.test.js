@@ -264,6 +264,37 @@ describe('identity-neutralize — the split-paragraph catalogue fallback removes
     assert.equal(out, 'The available models are listed below; RULE: keep me\nnext',
       'no body marker ⇒ phrase-only span; every other byte of the line survives');
   });
+
+  // G-06: the body test accepted bare English (`claude-`, `fable`, `opus`,
+  // `sonnet`) and the phrase `Model IDs` anywhere after the anchor, so a caller
+  // sentence that merely mentions one of them was taken for the client's catalogue
+  // and lost everything to the end of its line. The body must be ID-SHAPED:
+  // `claude-<family|version>` (`claude-fable-5`, `claude-opus-4-8`,
+  // `claude-3-5-sonnet`). `Model IDs` alone is a phrase, and `claude-` alone is a
+  // prefix that also starts domains (`claude-docs.example.com`).
+  it('a caller line mentioning Sonnet keeps its RULE (a bare model name is not a body)', () => {
+    const src = 'The most recent Claude models are documented at /docs; Sonnet is our default. RULE: keep me';
+    const { out } = neutralize(src);
+    assert.equal(out,
+      'The available models are documented at /docs; Sonnet is our default. RULE: keep me',
+      'only the anchor phrase changes; a bare model NAME must not extend the span');
+  });
+
+  it('a caller line mentioning "Model IDs" keeps its RULE (a phrase is not a body)', () => {
+    const src = 'The most recent Claude models are documented under Model IDs in the docs. RULE: keep me';
+    const { out } = neutralize(src);
+    assert.equal(out,
+      'The available models are documented under Model IDs in the docs. RULE: keep me',
+      'only the anchor phrase changes; the phrase "Model IDs" must not extend the span');
+  });
+
+  it('a caller line mentioning claude-docs.example.com keeps its RULE (a domain is not a model ID)', () => {
+    const src = 'The most recent Claude models are documented at claude-docs.example.com; RULE: keep me';
+    const { out } = neutralize(src);
+    assert.equal(out,
+      'The available models are documented at claude-docs.example.com; RULE: keep me',
+      'only the anchor phrase changes; the `claude-` prefix alone must not extend the span');
+  });
 });
 
 describe('identity-neutralize — an over-large deletion is observable', () => {

@@ -99,7 +99,7 @@ describe('finalizeConnectAccount', () => {
     }
   });
 
-  it('F2: a 429 WITH a reset window cools account-wide for the real window, ignoring rlBurstMs', () => {
+  it('F2: a 429 WITH a reset window cools the throttled selector for the real window, ignoring rlBurstMs', () => {
     setBreakerTunables({ rlBurstMs: 15000 });
     try {
       const acct = seed('rl-window');
@@ -108,13 +108,13 @@ describe('finalizeConnectAccount', () => {
         { id: acct.id, apiKey: acct.apiKey },
         { model: 'swe-1-6-slow', startTime: t0, err: Object.assign(new Error('resets in 3h'), { code: 'RATE_LIMITED', resetMs: 3 * 60 * 60 * 1000 }) },
       );
-      // The DEVIN_CONNECT pool selects with modelKey=null (acquireConnectAccount →
-      // getApiKey(triedKeys, null, ...)), and isRateLimitedForModel only consults
-      // _modelRateLimits when modelKey is truthy — so the reset window MUST land on
-      // the account-wide rateLimitedUntil to be visible to selection, not on a
-      // model-scoped cooldown the pool never reads for this path.
-      assert.ok(acct.rateLimitedUntil > t0 + 2 * 60 * 60 * 1000, 'account-wide cooldown honours the 3h window');
-      assert.ok(!(acct._modelRateLimits?.['swe-1-6-slow'] > t0), 'no dead model-scoped cooldown for a path selected with modelKey=null');
+      // T10: the reset window is scoped to the throttled model/selector, not the
+      // whole account. Connect selection consults the selector dimension through
+      // isCooledForRequest (it no longer relies on rateLimitedUntil alone), so a
+      // model-scoped window IS visible to the pool while every other model stays
+      // eligible on the same account.
+      assert.ok(acct._modelRateLimits?.['swe-1-6-slow'] > t0 + 2 * 60 * 60 * 1000, 'selector cooldown honours the 3h window');
+      assert.ok(!(acct.rateLimitedUntil > t0), 'the account-wide dimension must stay clear');
     } finally {
       setBreakerTunables({ rlBurstMs: null });
     }
