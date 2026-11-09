@@ -51,10 +51,14 @@ describe('untrusted workspace recovery (#107 follow-up)', () => {
     assert.match(CLIENT_JS, /Untrusted workspace on Send/,
       'must log a distinct message for untrusted-workspace retries so operators can grep them');
     // The classifier and the loop must be in the same function body — a
-    // simple sanity check is that both are within ~5 KB of each other.
+    // simple sanity check is that both are within ~25 KB of each other. The
+    // Send function legitimately spans image extraction and cascade building
+    // between them (~15 KB at 2026-11), so the budget has headroom, not an
+    // exact bound — the guard exists to catch a refactor that splits them
+    // into different functions, not to pin a distance.
     const ciIdx = CLIENT_JS.search(/const isUntrustedWorkspace =/);
     const useIdx = CLIENT_JS.search(/!isPanelMissing\(e\) && !expired && !untrusted/);
-    assert.ok(ciIdx > 0 && useIdx > 0 && Math.abs(useIdx - ciIdx) < 15000,
+    assert.ok(ciIdx > 0 && useIdx > 0 && Math.abs(useIdx - ciIdx) < 25000,
       `classifier (idx ${ciIdx}) and use site (idx ${useIdx}) drifted apart — likely moved out of the same function scope`);
   });
 
