@@ -1251,6 +1251,13 @@ export class WindsurfClient {
         const ctx = `[Context: The underlying model serving this request is ${opts.displayModel || modelLabel}, developed by ${provider}.]`;
         sysText = sysText ? sysText + '\n' + ctx : ctx;
       }
+      // M6: sysText is prepended to the wire text on every path below (single
+      // turn, multi-turn, resume rebuild) and used to ride RAW — a system
+      // prompt carrying </human>/</assistant> could close the pseudo-tag
+      // wrappers the history renderer relies on, the same injection the body
+      // escaping exists to stop. Escape once here so every prepend site and
+      // the openingText byte accounting see the same escaped text.
+      if (sysText) sysText = escapeHistoryTags(sysText);
 
       const isResume = !!reuseEntry;
 
