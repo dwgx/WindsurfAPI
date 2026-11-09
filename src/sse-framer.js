@@ -12,8 +12,8 @@
 // shrink a frame that temporarily exceeded the cap. An event value over the cap
 // fails at its completed or partial line even if a later event would replace
 // it. Comment/unknown lines and id/retry values are bounded on their own and
-// never enter either payload budget. A partial line is charged by its value
-// bytes as soon as its field prefix is decidable; the first
+// never enter either payload budget. A partial line's value bytes count
+// against the frame cap as soon as its field prefix is decidable; the first
 // MAX_FIELD_PREFIX_BYTES bytes of an undecided line are free.
 //
 // The partial line is kept as a list of chunks plus an 8-char head, never as a
@@ -21,10 +21,13 @@
 // whole line is joined once when its terminator arrives.
 //
 // Two budgets are enforced independently: `maxFrameBytes` (payload bytes of one
-// frame) and `maxQueuedBytes` (what the framer retains while assembling it,
-// including a per-line overhead charge). The second exists because a flood of
-// one-byte `data:` lines can stay far under the payload cap while retaining
-// hundreds of MB of array slots and strings.
+// frame) and `maxQueuedBytes` (the OBJECT overhead the framer retains while
+// assembling it). The second exists because a flood of one-byte `data:` lines
+// can stay far under the payload cap while retaining hundreds of MB of array
+// slots and strings, so the queue budget charges a fixed per-line/per-segment
+// overhead and NEVER the payload bytes — those are already bounded by the
+// frame cap, and charging them twice would silently cap every frame at the
+// smaller queue number.
 //
 // A `data:` payload carrying several concatenated JSON documents is repaired
 // per line and dispatched as one frame per document; an unrepairable JSON
@@ -34,19 +37,20 @@
 import { StringDecoder } from 'node:string_decoder';
 
 export const DEFAULT_MAX_FRAME_BYTES = 64 * 1024 * 1024;
-// A second, independent budget for the bytes the framer RETAINS while a frame is
-// being assembled. The frame cap alone bounds payload bytes, but one `data:`
-// line costs far more RSS than its value: every retained line is an array slot
-// plus a string object, so tens of millions of one-byte lines stay under the
-// 64 MB payload cap while retaining hundreds of megabytes of JS objects. The
-// queued budget charges a fixed per-line overhead on top of the value bytes, so
-// an oversized line or an event flood trips here first, while a legitimate
-// multi-megabyte image event (the 64 MB cap's reason for existing) still fits.
-// Deliberately below the frame cap: it is the RSS bound, not the frame bound.
+// A second, independent budget for the OBJECT overhead the framer retains while
+// a frame is being assembled. The frame cap alone bounds payload bytes, but one
+// retained line costs far more RSS than its value: it is an array slot plus a
+// string object, so tens of millions of one-byte lines stay under the 64 MB
+// payload cap while retaining hundreds of megabytes of JS objects. The queued
+// budget therefore charges a fixed per-line (and per partial-line segment)
+// overhead and nothing else: the value bytes are already bounded by the frame
+// cap, so charging them here too would silently cap every frame at this
+// smaller number and the documented 64 MB cap could never fire. Deliberately
+// below the frame cap: it is the object-count bound, not the payload bound.
 export const DEFAULT_MAX_QUEUED_BYTES = 8 * 1024 * 1024;
-// Retained-cost estimate for one data/event line: array slot + string header +
-// join separator, rounded up. Charged so a flood of tiny lines cannot hide
-// behind its small payload byte count.
+// Retained-cost estimate for one data/event line or one partial-line segment:
+// array slot + string header, rounded up. Charged so a flood of tiny lines (or
+// of tiny wire chunks) cannot hide behind its small payload byte count.
 const QUEUED_LINE_OVERHEAD_BYTES = 16;
 
 const TERMINATOR_RE = /(\r\n\r\n|\r\n\n|\r\n\r|\n\r\n|\n\n|\n\r|\r\r)/g;
@@ -246,10 +250,11 @@ export class SseFramer {
     this.payloadBytes = 0;
     this.dataBytes = 0;
     this.eventBytes = 0;
-    // Retained-cost accounting for the queued-byte budget: partial line bytes
-    // plus every retained data/event line (value + per-line overhead).
+    // Retained-cost accounting for the queued-byte budget: one fixed charge
+    // per retained partial-line segment and per retained data/event line.
+    // `eventCharge` is what the current event line contributed, so a replacing
+    // event line can release it.
     this.queuedBytes = 0;
-    this.dataCharge = 0;
     this.eventCharge = 0;
     this.failed = false;
     this.ended = false;
@@ -327,7 +332,11 @@ export class SseFramer {
     const bytes = Buffer.byteLength(segment, 'utf8');
     this.parts.push(segment);
     this.partialBytes += bytes;
-    this.queuedBytes += bytes;
+    // The queue budget charges the retained OBJECT (one array slot plus one
+    // string per segment), never the payload bytes — those are the frame
+    // cap's business. A line arriving in many small chunks retains many slots,
+    // so the charge is per segment, not per byte.
+    this.queuedBytes += QUEUED_LINE_OVERHEAD_BYTES;
     if (this.lineHead.length < HEAD_CHARS) {
       this.lineHead += segment.slice(0, HEAD_CHARS - this.lineHead.length);
     }
@@ -348,11 +357,13 @@ export class SseFramer {
   }
 
   // Two independent budgets. The frame cap bounds payload bytes (data + event)
-  // and keeps its exact previous semantics. The queued budget bounds what the
-  // framer RETAINS: partial line bytes plus every retained line charged with a
-  // per-line overhead, so a flood of tiny lines cannot grow the array/strings
-  // unbounded while staying under the payload cap. Returns the tripped budget's
-  // name so the overflow error is typed correctly, or null.
+  // and keeps its exact previous semantics. The queued budget bounds the OBJECT
+  // overhead the framer RETAINS: one fixed charge per partial-line segment and
+  // per retained data/event line, so a flood of tiny lines cannot grow the
+  // array/strings unbounded while staying under the payload cap — and a
+  // legitimate multi-megabyte line keeps its documented frame-cap headroom.
+  // Returns the tripped budget's name so the overflow error is typed correctly,
+  // or null.
   #overCapReason() {
     if (this.dataBytes > this.maxFrameBytes) return 'frame';
     if (this.queuedBytes > this.maxQueuedBytes) return 'queue';
@@ -371,7 +382,9 @@ export class SseFramer {
 
   #completeLine() {
     const line = this.parts.length === 1 ? this.parts[0] : this.parts.join('');
-    this.queuedBytes = Math.max(0, this.queuedBytes - this.partialBytes);
+    // Release exactly the per-segment overhead charged while the line was
+    // accumulating; the completed line's own slot is charged again by #line.
+    this.queuedBytes = Math.max(0, this.queuedBytes - this.parts.length * QUEUED_LINE_OVERHEAD_BYTES);
     this.parts = [];
     this.partialBytes = 0;
     this.lineHead = '';
@@ -395,7 +408,6 @@ export class SseFramer {
     // Release the queued bytes with the buffers: a failed stream must not keep
     // its flood reachable from the framer while the caller tears it down.
     this.queuedBytes = 0;
-    this.dataCharge = 0;
     this.eventCharge = 0;
     const queue = reason === 'queue';
     const error = Object.assign(
@@ -442,7 +454,9 @@ export class SseFramer {
     if (parsed.field === 'event') {
       const bytes = Buffer.byteLength(parsed.value, 'utf8');
       this.queuedBytes = Math.max(0, this.queuedBytes - this.eventCharge);
-      this.eventCharge = bytes + QUEUED_LINE_OVERHEAD_BYTES;
+      // One retained slot for the event string; its value bytes are already on
+      // the frame budget via eventBytes.
+      this.eventCharge = QUEUED_LINE_OVERHEAD_BYTES;
       this.queuedBytes += this.eventCharge;
       this.eventBytes = bytes;
       this.payloadBytes = this.dataBytes + this.eventBytes;
@@ -457,8 +471,9 @@ export class SseFramer {
       this.dataBytes += separator + bytes;
       this.payloadBytes = this.dataBytes + this.eventBytes;
       this.data.push(parsed.value);
-      this.dataCharge += separator + bytes + QUEUED_LINE_OVERHEAD_BYTES;
-      this.queuedBytes += separator + bytes + QUEUED_LINE_OVERHEAD_BYTES;
+      // One retained slot in this.data per line; the value bytes themselves
+      // are already bounded by dataBytes on the frame budget.
+      this.queuedBytes += QUEUED_LINE_OVERHEAD_BYTES;
       if (this.dataBytes > this.maxFrameBytes) { this.#overflow('frame'); return; }
       if (this.queuedBytes > this.maxQueuedBytes) { this.#overflow('queue'); return; }
       return;
@@ -501,7 +516,6 @@ export class SseFramer {
     this.dataBytes = 0;
     this.eventBytes = 0;
     this.queuedBytes = 0;
-    this.dataCharge = 0;
     this.eventCharge = 0;
   }
 
@@ -523,7 +537,6 @@ export class SseFramer {
     this.dataBytes = 0;
     this.eventBytes = 0;
     this.queuedBytes = 0;
-    this.dataCharge = 0;
     this.eventCharge = 0;
   }
 }
