@@ -166,6 +166,23 @@ describe('Responses stream: a finish_reason of "error" is terminal', () => {
     assert.equal(eventData(out, 'response.failed').response.status, 'failed');
   });
 
+  it('seals the turn\'s items as incomplete — matching the non-streaming path', async () => {
+    // finish() sealed every open item 'completed' BEFORE checking whether the
+    // turn had failed, so a response.failed envelope embedded items claiming
+    // they finished. chatToResponse marks the same turn 'incomplete'.
+    const { out } = await runStream(errorThenStop);
+    const done = eventData(out, 'response.output_item.done');
+    assert.equal(done?.item?.status, 'incomplete',
+      'an item closed on a failed turn must not claim status completed');
+    const failed = eventData(out, 'response.failed');
+    assert.equal(failed.response.status, 'failed');
+    assert.ok(failed.response.output.length > 0, 'the failed envelope should embed the partial items');
+    assert.ok(
+      failed.response.output.every((item) => item.status === 'incomplete'),
+      `embedded output must be uniformly incomplete, got ${JSON.stringify(failed.response.output.map((i) => i.status))}`,
+    );
+  });
+
   it('a stop BEFORE the error still ends failed', async () => {
     const stopThenError = async () => ({
       status: 200, stream: true,

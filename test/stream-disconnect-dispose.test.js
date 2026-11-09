@@ -15,6 +15,7 @@ import { EventEmitter } from 'node:events';
 import { SseFramer } from '../src/sse-framer.js';
 import { handleMessages } from '../src/handlers/messages.js';
 import { handleGemini } from '../src/handlers/gemini.js';
+import { handleResponses } from '../src/handlers/responses.js';
 
 // A socket the test owns: 'close' can be emitted mid-stream (a real hang-up)
 // without writableEnded flipping — exactly the state _clientDisconnected() is
@@ -88,6 +89,18 @@ describe('client disconnect disposes the translator SSE framer', () => {
       { contents: [{ role: 'user', parts: [{ text: 'hi' }] }] },
       { handleChatCompletions: parkedChat },
       { stream: true, alt: 'sse' },
+    ));
+    assert.equal(calls, 1, 'the framer must be disposed exactly once on disconnect');
+  });
+
+  it('/v1/responses: _clientDisconnected runs sseFramer.dispose()', async () => {
+    const calls = await disconnectDisposals(() => handleResponses(
+      {
+        model: 'claude-sonnet-4.6',
+        stream: true,
+        input: [{ role: 'user', content: [{ type: 'input_text', text: 'hi' }] }],
+      },
+      { handleChatCompletions: parkedChat, context: { callerKey: 'api:test:disconnect' } },
     ));
     assert.equal(calls, 1, 'the framer must be disposed exactly once on disconnect');
   });

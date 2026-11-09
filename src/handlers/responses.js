@@ -1365,7 +1365,7 @@ class ResponsesStreamTranslator {
         text: this.reasoningText,
       });
     }
-    const complete = reasoningItem(this.reasoningId, this.reasoningText, 'completed', this.reasoningEncryptedContent);
+    const complete = reasoningItem(this.reasoningId, this.reasoningText, this.failedTurn ? 'incomplete' : 'completed', this.reasoningEncryptedContent);
     this.send('response.output_item.done', { output_index: this.reasoningOutputIndex, item: complete });
     this.outputItems[this.reasoningOutputIndex] = complete;
   }
@@ -1645,13 +1645,13 @@ class ResponsesStreamTranslator {
           output_index: tc.outputIndex,
           input,
         });
-        const complete = { ...tc.item, input, status: 'completed' };
+        const complete = { ...tc.item, input, status: this.failedTurn ? 'incomplete' : 'completed' };
         this.send('response.output_item.done', { output_index: tc.outputIndex, item: complete });
         this.outputItems[tc.outputIndex] = complete;
         continue;
       }
       if (tc.item.type === 'function_call' && tc.item.name === 'tool_search') {
-        const complete = { ...tc.item, arguments: args, status: 'completed' };
+        const complete = { ...tc.item, arguments: args, status: this.failedTurn ? 'incomplete' : 'completed' };
         this.send('response.output_item.done', { output_index: tc.outputIndex, item: complete });
         this.outputItems[tc.outputIndex] = complete;
         continue;
@@ -1683,7 +1683,7 @@ class ResponsesStreamTranslator {
         output_index: tc.outputIndex,
         arguments: args,
       });
-      const complete = { ...tc.item, arguments: args, status: 'completed' };
+      const complete = { ...tc.item, arguments: args, status: this.failedTurn ? 'incomplete' : 'completed' };
       this.send('response.output_item.done', { output_index: tc.outputIndex, item: complete });
       this.outputItems[tc.outputIndex] = complete;
     }
@@ -1709,7 +1709,7 @@ class ResponsesStreamTranslator {
       content_index: 0,
       part: donePart,
     });
-    const complete = textMessageItem(this.msgId, this.segmentText);
+    const complete = textMessageItem(this.msgId, this.segmentText, this.failedTurn ? 'incomplete' : 'completed');
     this.send('response.output_item.done', { output_index: this.messageOutputIndex, item: complete });
     this.outputItems[this.messageOutputIndex] = complete;
   }
@@ -1750,6 +1750,11 @@ class ResponsesStreamTranslator {
     this.sseFramer.end();
     if (this.finished) return;
     this.finished = true;
+    // The seal calls below run before the failed-turn check, so the verdict has
+    // to be latched here: on a failed turn every item closed in finish() is
+    // 'incomplete' — the same label the non-streaming path gives the same turn —
+    // never 'completed' inside a response.failed envelope.
+    this.failedTurn = this.streamFinishReason === 'error' || this.sawUnterminated;
     this.start();
     // A name that never settled (no args, no text, no second fragment) is still
     // final at end of stream. Publish it here so its `added` precedes its `done`
@@ -1981,7 +1986,15 @@ function createCaptureRes(translator, realRes) {
       this.writableEnded = true;
       fire('close');
     },
-    _clientDisconnected() { fire('close'); },
+    _clientDisconnected() {
+      // Same teardown the messages/gemini shims run: a hung-up client must free
+      // the bounded writer's pending wait AND drop whatever the framer still
+      // retains (partial line, queued data) — reachable bytes otherwise wait
+      // for GC.
+      translator.writer.dispose();
+      translator.sseFramer?.dispose();
+      fire('close');
+    },
     on(event, cb) {
       if (!listeners.has(event)) listeners.set(event, []);
       listeners.get(event).push(cb);

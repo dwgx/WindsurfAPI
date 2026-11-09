@@ -61,6 +61,16 @@ export const MIN_CLIENT_RATE_ENV = 'WINDSURFAPI_MIN_CLIENT_RATE_BPS';
  */
 export const MAX_TIMER_MS = 2_147_483_647;
 
+/**
+ * Upper bound on the unacknowledged backlog that can buy drain time.
+ * `pendingBytes` only accrues while no 'drain' has fired in the current wait,
+ * so bytes beyond this bound belong to a client that has not taken a single
+ * byte of the epoch — a half-open dead socket, not a slow reader. Without the
+ * cap a fast upstream could queue minutes (or hours) of proportional budget on
+ * a socket that will never drain, burning upstream quota for the whole wait.
+ */
+export const MAX_DRAIN_BUDGETED_BYTES = 4 * 1024 * 1024;
+
 export function resolveMaxDrainWaitMs(raw = process.env.WINDSURFAPI_MAX_DRAIN_MS) {
   const parsed = parseInt(raw || '', 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : MAX_DRAIN_WAIT_DEFAULT_MS;
@@ -72,21 +82,26 @@ export function resolveMinClientRateBps(raw = process.env[MIN_CLIENT_RATE_ENV]) 
 }
 
 /**
- * Deadline for one drain wait: `fixed + bytes / minClientRate`, in ms, capped
- * at the largest delay Node's timer accepts. Pure so the formula can be
- * asserted without waiting for a timer.
+ * Deadline for one drain wait: `fixed + bytes / minClientRate`, in ms, where
+ * `bytes` is clamped to `maxBudgetedBytes` so the proportional term stays
+ * bounded, and the total is capped at the largest delay Node's timer accepts.
+ * Pure so the formula can be asserted without waiting for a timer.
  */
 export function drainDeadlineMs({
   bytes = 0,
   fixedMs = MAX_DRAIN_WAIT_DEFAULT_MS,
   minClientRateBps = MIN_CLIENT_RATE_BPS_DEFAULT,
+  maxBudgetedBytes = MAX_DRAIN_BUDGETED_BYTES,
 } = {}) {
   const fixed = Number.isFinite(fixedMs) && fixedMs > 0 ? fixedMs : 0;
   const rate = Number.isFinite(minClientRateBps) && minClientRateBps > 0
     ? minClientRateBps
     : MIN_CLIENT_RATE_BPS_DEFAULT;
   const written = Number.isFinite(bytes) && bytes > 0 ? bytes : 0;
-  return Math.min(MAX_TIMER_MS, fixed + Math.ceil((written * 1000) / rate));
+  const budgeted = Number.isFinite(maxBudgetedBytes) && maxBudgetedBytes > 0
+    ? Math.min(written, maxBudgetedBytes)
+    : written;
+  return Math.min(MAX_TIMER_MS, fixed + Math.ceil((budgeted * 1000) / rate));
 }
 
 /** The abort shape every awaiting producer in this repo already recognises. */

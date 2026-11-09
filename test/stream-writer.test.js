@@ -22,6 +22,7 @@ import { describe, it, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter, getEventListeners } from 'node:events';
 import {
+  MAX_DRAIN_BUDGETED_BYTES,
   MAX_DRAIN_WAIT_DEFAULT_MS,
   MAX_TIMER_MS,
   MIN_CLIENT_RATE_BPS_DEFAULT,
@@ -385,7 +386,7 @@ describe('drainDeadlineMs', () => {
     const fixed = MAX_DRAIN_WAIT_DEFAULT_MS;
     assert.equal(drainDeadlineMs({ bytes: 0, fixedMs: fixed }), fixed);
     assert.equal(drainDeadlineMs({ bytes: 8 * 1024, fixedMs: fixed }), fixed + 1_000);
-    assert.equal(drainDeadlineMs({ bytes: 5 * 1024 * 1024, fixedMs: fixed }), fixed + 640_000);
+    assert.equal(drainDeadlineMs({ bytes: MAX_DRAIN_BUDGETED_BYTES, fixedMs: fixed }), fixed + 512_000);
   });
 
   it('bounds a stalled 4KB frame well under the old fixed 120s and a 5MB frame above it', () => {
@@ -393,6 +394,20 @@ describe('drainDeadlineMs', () => {
     const large = drainDeadlineMs({ bytes: 5 * 1024 * 1024 });
     assert.ok(small < 120_000, `4KB budget ${small} must be under the old 120s`);
     assert.ok(large > 120_000, `5MB budget ${large} must exceed the old 120s`);
+  });
+
+  it('caps the proportional term: a never-draining backlog cannot bank minutes per queued byte', () => {
+    // pendingBytes only accrues while NO 'drain' has fired in the epoch, so a
+    // backlog beyond MAX_DRAIN_BUDGETED_BYTES is by definition a client that
+    // has not taken a single byte — granting it proportional time just keeps
+    // upstream quota burning on a dead socket.
+    const capped = drainDeadlineMs({ bytes: MAX_DRAIN_BUDGETED_BYTES });
+    assert.equal(drainDeadlineMs({ bytes: 64 * 1024 * 1024 }), capped);
+    assert.equal(drainDeadlineMs({ bytes: 1 << 30 }), capped);
+    assert.ok(
+      capped <= MAX_DRAIN_WAIT_DEFAULT_MS + 600_000,
+      `capped budget ${capped} must stay under ~10 minutes at the default rate`,
+    );
   });
 });
 
@@ -529,6 +544,13 @@ describe('createBoundedWriter: proportional drain budget', () => {
 
   it('caps the timer delay at the largest value Node accepts', () => {
     assert.equal(MAX_TIMER_MS, 2_147_483_647);
-    assert.equal(drainDeadlineMs({ bytes: Number.MAX_SAFE_INTEGER }), MAX_TIMER_MS);
+    // The budgeted-bytes clamp normally keeps delays far below MAX_TIMER_MS;
+    // reach the timer clamp by opting out of the backlog bound explicitly.
+    assert.equal(
+      drainDeadlineMs({ bytes: Number.MAX_SAFE_INTEGER, maxBudgetedBytes: Number.MAX_SAFE_INTEGER }),
+      MAX_TIMER_MS,
+    );
+    // A non-positive cap is treated as "no backlog bound" — still clamped.
+    assert.equal(drainDeadlineMs({ bytes: Number.MAX_SAFE_INTEGER, maxBudgetedBytes: 0 }), MAX_TIMER_MS);
   });
 });
