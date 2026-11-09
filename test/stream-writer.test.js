@@ -468,6 +468,43 @@ describe('createBoundedWriter: proportional drain budget', () => {
     assert.equal(w.pending, null);
   });
 
+  it('re-arming on a later false write extends only the proportional term, not the fixed floor', () => {
+    mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 0 });
+    try {
+      const res = fakeRes({ verdicts: [false, false] });
+      const timeouts = [];
+      const w = createBoundedWriter({
+        res,
+        maxWaitMs: 1_000,
+        minClientRateBps: 1_024,
+        onTimeout: (info) => timeouts.push(info),
+      });
+      // First false write at t=0: the wait's anchored deadline is
+      // start + fixed + bytes/rate = 0 + 1000 + 1024 = 2000ms.
+      assert.equal(w.write('x'.repeat(1_024)), false);
+      assert.equal(w.pendingBytes, 1_024);
+
+      // A second false write at t=1500 joins the SAME backlog: the deadline
+      // extends by the new bytes' proportional term only (2048B total at
+      // 1KiB/s = 2000ms, plus the fixed 1000ms = 3000ms from the wait's START),
+      // so the anchored deadline is t=3000 — NOT t=1500 + 3000 = 4500, which is
+      // what re-arming the whole formula from now would give.
+      mock.timers.tick(1_500);
+      assert.equal(w.write('x'.repeat(1_024)), false);
+      assert.equal(w.pendingBytes, 2_048);
+      assert.equal(w.deadlineMs, 3_000, 'the total-budget formula is unchanged');
+
+      mock.timers.tick(1_499); // t=2999 — one ms before the anchored deadline
+      assert.equal(w.timedOut, false, 'the wait must survive until its anchored deadline');
+      mock.timers.tick(1);     // t=3000
+      assert.equal(w.timedOut, true, 'the anchored deadline must fire on time');
+      assert.equal(timeouts.length, 1, 'onTimeout must run exactly once');
+      assertNoListeners(res);
+    } finally {
+      mock.timers.reset();
+    }
+  });
+
   it('resets the backlog on drain instead of carrying it across waits', () => {
     mock.timers.enable({ apis: ['setTimeout', 'Date'], now: 0 });
     try {

@@ -19,8 +19,11 @@
  *   * that bound is proportional to the UNACKNOWLEDGED bytes (`fixed +
  *     pendingBytes / minClientRate`), not a fixed 120s and not a cumulative
  *     stream total: a frame the socket accepted buys no budget, and `'drain'`
- *     resets the backlog. A slow reader of a multi-megabyte frame keeps its
- *     full budget, while a stalled 4KB frame aborts in roughly the fixed wait.
+ *     resets the backlog. The fixed part anchors at the wait's start — a later
+ *     false write extends only the proportional term — so a stalled reader
+ *     cannot slide the floor forward forever. A slow reader of a multi-megabyte
+ *     frame keeps its full budget, while a stalled 4KB frame aborts in roughly
+ *     the fixed wait.
  *
  * `enabled: false` keeps a legacy synchronous producer byte-identical to its old
  * behaviour: the verdict is still returned, but no drain waiter is armed (the
@@ -143,13 +146,18 @@ export function createBoundedWriter({
     const operation = new Promise((resolve) => { settleDrain = resolve; });
     let settled = false;
     let timer = null;
-    // (Re)arm the single timer from the current unacknowledged-byte count. A
-    // second false write while this wait is outstanding extends it: those bytes
-    // joined the same backlog.
+    // The fixed part of the budget anchors at THIS wait's start, not at each
+    // re-arm: otherwise every false write while the wait is outstanding would
+    // slide the 30s floor forward and a chatty-but-stalled client would never
+    // hit it. New bytes extend only the proportional term — deadline = start +
+    // fixed + unacknowledged/rate, so each re-arm re-derives the delay from
+    // the anchored deadline.
+    const waitStartMs = Date.now();
     const armTimer = () => {
       if (timer) { clearTimeout(timer); timer = null; }
       if (settled || timedOut || gone()) return;
-      timer = setTimeout(onDrainTimeout, deadlineMs());
+      const delay = Math.max(0, waitStartMs + deadlineMs() - Date.now());
+      timer = setTimeout(onDrainTimeout, delay);
       // Never keep the process alive for a wait that belongs to one request.
       timer.unref?.();
     };
