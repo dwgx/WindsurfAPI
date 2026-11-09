@@ -1,11 +1,13 @@
 /**
- * CTX-01: a finite `clear_thinking_20251015` keep cannot be honoured while
- * signed thinking replay is enabled — anthropicToOpenAI re-attaches exactly the
- * signed thinking the edit asks to clear (the `signedReplay` attach), and the
- * upstream verifies each signature, so a partial keep cannot be replayed
- * either. The proxy must answer 400 unsupported_parameter instead of logging
- * the edit as satisfied. keep:"all", absent keep, replay off and histories the
- * translator does not replay stay accepted.
+ * CTX-01: a finite `clear_thinking_20251015` keep can only be honoured while
+ * signed thinking replay is enabled when it retains every replayable signed
+ * turn — anthropicToOpenAI re-attaches exactly that signed thinking (the
+ * `signedReplay` attach), and the upstream verifies each signature. A
+ * {type:"thinking_turns",N} keep with N >= signedTurns keeps them all and is
+ * accepted; N < signedTurns (and keep:"none", which keeps none) clears a turn
+ * the replay would re-attach, so the proxy answers 400 unsupported_parameter
+ * instead of logging the edit as satisfied. keep:"all", absent keep, replay
+ * off and histories the translator does not replay stay accepted.
  */
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -17,28 +19,22 @@ const MODEL = 'claude-opus-5-5-medium';
 const SIG = 'EggKBggLEgKquxgB';
 const ENV_KEY = 'DEVIN_CONNECT_REPLAY_SIGNED_THINKING';
 
-// Two assistant turns, each carrying one signed thinking block — the shape the
-// translator replays.
-function signedHistory() {
-  return [
-    { role: 'user', content: 'go' },
-    {
+// Assistant turns, each carrying one signed thinking block — the shape the
+// translator replays. `turns` selects how many replayable signed turns exist.
+function signedHistory(turns = 2) {
+  const messages = [{ role: 'user', content: 'go' }];
+  for (let i = 0; i < turns; i++) {
+    messages.push({
       role: 'assistant',
       content: [
-        { type: 'thinking', thinking: 'first secret', signature: SIG },
-        { type: 'text', text: 'one' },
+        { type: 'thinking', thinking: `secret ${i + 1}`, signature: SIG },
+        { type: 'text', text: `answer ${i + 1}` },
       ],
-    },
-    { role: 'user', content: 'again' },
-    {
-      role: 'assistant',
-      content: [
-        { type: 'thinking', thinking: 'second secret', signature: SIG },
-        { type: 'text', text: 'two' },
-      ],
-    },
-    { role: 'user', content: 'final' },
-  ];
+    });
+    if (i < turns - 1) messages.push({ role: 'user', content: `again ${i + 1}` });
+  }
+  messages.push({ role: 'user', content: 'final' });
+  return messages;
 }
 
 function clearThinking(keep) {
@@ -81,7 +77,33 @@ function assertUnsupportedKeep(err, index = 0) {
 }
 
 describe('CTX-01 clear_thinking_20251015 finite keep vs signed replay', () => {
-  it('rejects keep:{type:"thinking_turns",value:1} when replay is on and signed history exists', () => {
+  it('accepts keep:{type:"thinking_turns",value:1} when the single signed turn is kept', () => {
+    withReplay(true, () => {
+      assert.equal(validateMessagesRequest(request({
+        messages: signedHistory(1),
+        context_management: clearThinking({ type: 'thinking_turns', value: 1 }),
+      })), null);
+    });
+  });
+
+  it('accepts keep:{type:"thinking_turns",value:5} when it exceeds the signed turn count', () => {
+    withReplay(true, () => {
+      assert.equal(validateMessagesRequest(request({
+        messages: signedHistory(1),
+        context_management: clearThinking({ type: 'thinking_turns', value: 5 }),
+      })), null);
+    });
+  });
+
+  it('accepts keep:{type:"thinking_turns",value:2} when both signed turns are kept', () => {
+    withReplay(true, () => {
+      assert.equal(validateMessagesRequest(request({
+        context_management: clearThinking({ type: 'thinking_turns', value: 2 }),
+      })), null);
+    });
+  });
+
+  it('rejects keep:{type:"thinking_turns",value:1} when two signed turns would be cleared', () => {
     withReplay(true, () => {
       const err = validateMessagesRequest(request({
         context_management: clearThinking({ type: 'thinking_turns', value: 1 }),
@@ -90,9 +112,19 @@ describe('CTX-01 clear_thinking_20251015 finite keep vs signed replay', () => {
     });
   });
 
-  it('rejects keep:"none" when replay is on and signed history exists', () => {
+  it('rejects keep:"none" when replay is on and two signed turns exist', () => {
     withReplay(true, () => {
       const err = validateMessagesRequest(request({ context_management: clearThinking('none') }));
+      assertUnsupportedKeep(err);
+    });
+  });
+
+  it('rejects keep:"none" when replay is on and a single signed turn exists', () => {
+    withReplay(true, () => {
+      const err = validateMessagesRequest(request({
+        messages: signedHistory(1),
+        context_management: clearThinking('none'),
+      }));
       assertUnsupportedKeep(err);
     });
   });
