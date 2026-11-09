@@ -5,8 +5,9 @@
 它记录发布提交、逐项门禁命令、精确计数、skip 名单，以及 tag/push 之后的发布结果。
 
 - 发布版本：**3.141.592659**
-- 发布提交：**本文件所在的提交** —— `chore(release): 3.141.592659`。
-  提交 SHA 由 tag 固定：`git rev-parse 'v3.141.592659^{commit}'`（本文件冻结时 tag 尚不存在，不能自指）。
+- 发布提交：`e0c5c715`（`chore(release): 3.141.592659`；本附录最初冻结于此提交，`c4931c40`
+  只追加 post-release hardening 记录）。提交 SHA 由 tag 固定：`git rev-parse
+  'v3.141.592659^{commit}'`（本文件冻结时 tag 尚不存在，不能自指）。
 - 发布提交的父提交：`bb81fa16`（`test(mutations): refresh baselines after the catalogue-body tests`，
   只改两份 mutation spec 的 `expectBaselinePass`）。再前是 `deeb2539`（`docs(handoff): re-point §0
   to the catalogue-body-fixed HEAD`）与代码 HEAD `8131848c`（`fix(identity): remove catalogue
@@ -21,6 +22,15 @@
 - 本发布提交自身只改版本、notes、本附录、`CHANGELOG.md`、`docs/README.md`、
   `docs/UNVERIFIED.md`、§0 与 `SECURITY.md` 的致谢；`git diff --name-only HEAD^ HEAD -- src`
   为空。发布侧两个提交都不含 `src/` 逻辑改动。
+
+## 0.1 Post-release hardening `c4931c40`（2026-11-09）
+
+发布提交 `e0c5c715` 之后追加 `c4931c40`（`fix(release): close audit and ecosystem gaps`）：
+auth/server、streaming、responses、identity/CTX、connect 与 tests/mutations 的审计残差收口
+（逐项见 release notes 同名小节）。全量 release shard 在 `c4931c40` 上 **616 文件 / 7,603
+测试 / 7,500 通过 / 0 失败 / 103 跳过 / 847.7 s，exit 0**（`wave4-test-release.log`）。该提交
+不是 tag：`v3.141.592659` 仍未创建，未 push、未部署；本附录的发布提交与范围行仍指
+`e0c5c715`。
 
 ## 1. 发布范围（产品变更）
 

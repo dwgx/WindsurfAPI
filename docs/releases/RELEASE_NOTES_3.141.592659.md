@@ -12,6 +12,18 @@ v3.141.592658..deeb2539`：4,996 增 / 501 删）。产品变更集中在 `src/`
 > 计数与 skip 名单见同日验收附录 [`ACCEPTANCE_3.141.592659.md`](ACCEPTANCE_3.141.592659.md)
 > —— 本文件只写内容与边界，附录是本次认证的唯一计数来源。
 
+## Post-release hardening `c4931c40`（2026-11-09）
+
+发布提交 `e0c5c715` 之后，审计分支追加 `c4931c40`（`fix(release): close audit and ecosystem
+gaps`，49 文件 / +5,010 −324），收口审计波剩余缺口：auth/server（Anthropic 401 形状、载体按
+surface 收窄、压缩体 415、selector 维度冷却、Gemini server-side tool 400）、streaming（拼接
+SSE JSON、队列字节预算、按未确认字节计 drain、history 预算改为 messages+tools）、responses
+（`encrypted_content`、`verbosity` 边界、custom-tool input delta/id）、identity/CTX（每条
+`clear_thinking` 校验、catalogue 仅删 ID 正文）、connect（Chat 工具名净化、截断信号、session
+连续性拼写、流式反查）。全量 release shard 在 `c4931c40` 上 **616 文件 / 7,603 测试 / 7,500
+通过 / 0 失败 / 103 跳过 / 847.7 s，exit 0**（`wave4-test-release.log`）。这是 hardening
+提交，**不是新 tag**：`v3.141.592659` 仍未创建，也没有 push/部署。
+
 ## 0. 范围
 
 | 项 | 值 | 命令 |
@@ -289,10 +301,9 @@ POSIX 上补跑 mutation sweep 与 `gate:release`（见 §7）。
 
 > 全部历史缺口见 [尚未验证登记册](../UNVERIFIED.md)；本版新增条目也在其中。
 
-- **[UNVERIFIED] mutation 变异体本身**：本版没有跑 sweep。`spec-baseline-check` 只证明
-  “锚点仍指向正确代码、基线值仍成立”，不执行变异体。A4 与 messages 的改动动了 spec 覆盖的
-  文件，不能沿用旧 sweep 的结论。发布前在 POSIX 上补跑
-  `node scripts/mutation-sweep.mjs --shard 0/1` 与 `--verify`。
+- **[UNVERIFIED] mutation 变异体本身**：POSIX 全量 sweep 在 1800 s 上限前跑了 **56/97** 个
+  spec，剩 **41** 个未跑；`spec-baseline-check` 只证明锚点与基线成立，不执行变异体。发布前在
+  POSIX 上补跑 `node scripts/mutation-sweep.mjs --shard 0/1` 与 `--verify`。
 - **[VERIFIED] mutation 全量基线**：`spec-baseline-check.mjs --all`（97 spec）是 release
   workflow 的模式；发布树实测 **97 spec measured, 0 drift, 0 untrustworthy**，wall 202.5 s
   （`releasecommit-spec-baseline-all.log`，`sha256 da0d49db…`）。
@@ -316,17 +327,24 @@ POSIX 上补跑 mutation sweep 与 `gate:release`（见 §7）。
   会因未转义文本产生角色越权（本版不声称这是越权漏洞）。
 - **[UNVERIFIED] 发布产物**：资产、cosign 签名、SHA256SUMS、release attestation 都要在 tag
   之后由 release workflow 生成；本文件不代表它们已经存在。
-- **[UNVERIFIED] G01（`reasoning.encrypted_content` 从不发出）**：发布提交 `e0c5c715` 上
-  `reasoningItem()` 只返回 `summary`，不携带上游的 `encrypted_content`（locator
-  `src/handlers/responses.js:742-749`）。修复在另一条 lane，未进入本发布提交。
-- **[UNVERIFIED] G02（`text.verbosity` 未解析/未转发）**：发布提交只读 `text.format`，不读也不
-  转发 `text.verbosity`（locator `src/handlers/responses.js:653`）。修复未进入本发布提交。
-- **[UNVERIFIED] G03（custom-tool 输入未流式）**：发布提交的 custom tool 调用以 `input:''`
-  发出，没有 `response.custom_tool_call_input.delta` 渐进事件（locator
-  `src/handlers/responses.js:776-783,1223-1229`，来自 `prior-takeover.md`，本版未再探针）。
-- **[UNVERIFIED] G06（Gemini 静默丢弃 server-side tools）**：发布提交在 Gemini 面只写日志，
-  其他协议面对同类工具返回 400（locator `src/handlers/gemini.js:290-318`；代码读取，未在真实
-  Gemini 上游复跑）。
+- **[FIXED] G01（`reasoning.encrypted_content` 从不发出）**：`c4931c40` 在
+  `include:["reasoning.encrypted_content"]` 且上游提供值时发出该字段，并补了回放分支；
+  证据 `test/responses-include-verbosity-custom.test.js`（12 条）。
+- **[FIXED] G02（`text.verbosity` 未解析/未转发）**：`c4931c40` 解析 `text.verbosity` 并带入
+  adapter 边界（`completionOverrides.verbosity`）；chat-compatible 上游没有该字段，因此这是
+  有意记录的边界 no-op，不再是静默丢弃。证据同上测试文件。
+- **[FIXED] G03（custom-tool 输入未流式）**：`c4931c40` 补了
+  `response.custom_tool_call_input.delta` / `.done` 与最终 `custom_tool_call` item 的 `input`/`id`；
+  证据同上测试文件。
+- **[FIXED] G06（Gemini 静默丢弃 server-side tools）**：`c4931c40` 改为与其他协议面一致的
+  400 `unsupported_server_side_tool`，不再只写日志；证据 `test/gemini.test.js` 的 G06 三条。
+- **[UNVERIFIED] G01–G03/G06 的真实客户端抓包**：上述修复由 hermetic 测试覆盖；没有真实
+  Codex/Devin 客户端抓包确认 `reasoning.encrypted_content`、`text.verbosity`、custom-tool
+  input delta 与 Gemini server-tool 400 在真实上游/客户端上的线上形状。
+- **[UNVERIFIED] Q1 G4（`messagesRemaining:-1` 的语义）**：`CheckUserMessageRateLimit` 恒报
+  `-1`；dashboard 把成功探测的 `-1` 读作 `unlimited: true`（`src/dashboard/devin-cards.js:532`），
+  `test/dashboard-devin-cards.test.js` 有意固定该行为。审计要求常量落 `unknown`；本版把这一半
+  作为 deferred 残差记录（`test/dashboard-capacity-unknown.test.js` 头部），未改 dashboard 契约。
 - **[UNVERIFIED] support-bundle 生产形态**：`test/support-bundle.test.js:227` 断言
   `health.commit` 是 git sha，但 `src/version.js:40-47` 在非 git checkout 下回退为空串——
   HMC 生产形态正是 `commit:""`（`SYNTHESIS.md` §2）。测试只在 git checkout 内通过，打包部署
