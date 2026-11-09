@@ -28,22 +28,23 @@ SSE JSON、队列字节预算、按未确认字节计 drain、history 预算改�
 
 **范围更正。** §0 与文首的计数（36 提交 / 45 文件 / +4,996 −501 / 6 个 `src/` 文件）
 度量的是 `v3.141.592658..deeb2539` 审计分支在发布提交前的冻结范围，**不包含**
-`e0c5c715` 之后的 hardening 与复审修复。发布提交之后本分支另有 **19 个提交 /
-59 个文件 / +6,402 −366 / 16 个 `src/` 文件**（`git rev-list --count
-e0c5c715..5a3ec2a9`；`git diff --shortstat e0c5c715..5a3ec2a9`；
-`git diff --name-only e0c5c715..5a3ec2a9 -- src | wc -l`）：`c4931c40`（审计收口，
+`e0c5c715` 之后的 hardening 与复审修复。发布提交之后本分支另有 **24 个提交 /
+64 个文件 / +6,627 −400 / 16 个 `src/` 文件**（`git rev-list --count
+e0c5c715..4b061af1`；`git diff --shortstat e0c5c715..4b061af1`；
+`git diff --name-only e0c5c715..4b061af1 -- src | wc -l`）：`c4931c40`（审计收口，
 49 文件 / +5,010 −324）、`0aea4ea3`（connect 显式错误终止与 catalogue 边界）、
-`911e6674` / `d0359733`（纯文档）与复审修复波 `04503830`–`5a3ec2a9` 共 15 个提交。
+`911e6674` / `d0359733`（纯文档）、复审修复波 `04503830`–`5fb21e70`（含 spec
+基线重钉与文档订正）共 20 个提交。
 逐提交证据记入验收附录的增补段（acceptance addendum，另行补写）；本文件只登记
 范围与用户可见变化。
 
 **tag 目标。** `v3.141.592659` 必须打在合并后的 master tip 上（流程：把
 `origin/master` 合入本分支 → `master --ff-only` → 在 master tip 打 annotated tag →
 push），**不是** `e0c5c715`——否则 `c4931c40`/`0aea4ea3` 与复审修复会被关在版本外。
-写作时分支 HEAD 为 `5a3ec2a9`（`src/` 与合并后 tip 相同）；最终 tag 目标记作
-`<merge-tip>`，以合并提交的实际 SHA 为准。
+写作时分支 HEAD 为 `4b061af1`（最后一个改 `src/` 的提交是 `5fb21e70`）；最终 tag
+目标记作 `<merge-tip>`，以合并提交的实际 SHA 为准。
 
-**复审修复波的用户可见变化**（`04503830`–`5a3ec2a9`，按面分组；`c4931c40` 已覆盖的
+**复审修复波的用户可见变化**（`04503830`–`5fb21e70`，按面分组；`c4931c40` 已覆盖的
 面见上节）：
 
 - **auth/server**：`/v1/messages` 的 401 改用 Anthropic 错误形状（`type:'error'` +
@@ -55,12 +56,18 @@ push），**不是** `e0c5c715`——否则 `c4931c40`/`0aea4ea3` 与复审修�
   压缩请求体按面返回 415 `unsupported_content_encoding`（不再是含混的 400）。
 - **streaming**：SSE 队列字节预算改为只计行开销（修复 64 MB 帧帽被 8 MB 预算提前
   触发的回归；载荷仍由 64 MB 帧帽约束）；drain 等待的固定下限锚定在等待开始时刻，
-  不再被后续背压帧无限推后；`c4931c40` 新增的 `WINDSURFAPI_MIN_CLIENT_RATE_BPS`
-  （默认 8192 B/s）给按字节背压预算定最短客户端吞吐假设。
+  不再被后续背压帧无限推后，且按未确认字节计的比例预算封顶在
+  `MAX_DRAIN_BUDGETED_BYTES`（4 MiB——默认速率下约 8.5 分钟），半开死连接不再
+  按积压总量换无限等待（`5fb21e70`）；`c4931c40` 新增的
+  `WINDSURFAPI_MIN_CLIENT_RATE_BPS`（默认 8192 B/s）给按字节背压预算定最短
+  客户端吞吐假设。
 - **responses**：`finish_reason:'error'` 一旦记录即终态，后续 chunk 不再把轮次降级为
-  `response.completed`；未正常终止/出错轮次的 tool-call item 标 `incomplete`；
-  blob-only reasoning 不再发空 `summary_text.done`；同一轮里无签名文本与签名
-  reasoning 共存时丢弃回放签名（`41c560f6`）。
+  `response.completed`；未正常终止/出错轮次的 tool-call item 标 `incomplete`，
+  且流式路径在 `finish()` 里封口的全部 item（message/reasoning/function_call）
+  在失败轮次同样标 `incomplete`，与非流式一致（`5fb21e70`）；客户端断连时
+  responses 的 capture shim 同样 dispose 有界 writer 与 SSE framer
+  （`5fb21e70`）；blob-only reasoning 不再发空 `summary_text.done`；同一轮里
+  无签名文本与签名 reasoning 共存时丢弃回放签名（`41c560f6`）。
 - **messages**：缺省 `keep` 按模型族解析——keep-all 家族（Opus 4.5+/5、Sonnet 4.6+/5、
   Fable）照旧接受，其余模型（含无法分类的名字）按保守 keep-1 校验，宁可多拒不漏放；
   `redacted_thinking` 计入 keep 窗口；`{keep:{type:'all'}}` 与 `keep:'all'` 等价接受；
