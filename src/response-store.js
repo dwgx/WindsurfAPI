@@ -132,17 +132,22 @@ const MAX_BYTES = parseByteSize(process.env.RESPONSE_STORE_MAX_BYTES)
 // `seen` makes the plain-object walk cycle-safe. Without it a self-referencing
 // message would recurse until the stack overflowed; with it the stored graph
 // mirrors the caller's shape and `retainedBytes` can meter the cycle too.
-function copyStoredValue(value, seen = new WeakMap()) {
+// A stored body nested deeper than the stack can clone used to escape as a
+// per-request RangeError; bound the recursion like retainedBytes (S4-D14).
+const MAX_STORED_CLONE_DEPTH = 64;
+
+function copyStoredValue(value, seen = new WeakMap(), depth = 0) {
   // structuredClone refuses to clone functions and symbols; keep that loud
   // rejection instead of quietly storing a live reference.
   if (typeof value === 'function' || typeof value === 'symbol') return structuredClone(value);
   if (value === null || typeof value !== 'object') return value;
+  if (depth > MAX_STORED_CLONE_DEPTH) throw new Error('copyStoredValue: value exceeds maximum nesting depth');
   if (seen.has(value)) return seen.get(value);
   if (Array.isArray(value)) {
     const out = new Array(value.length);
     seen.set(value, out);
     for (let i = 0; i < value.length; i++) {
-      if (i in value) out[i] = copyStoredValue(value[i], seen);
+      if (i in value) out[i] = copyStoredValue(value[i], seen, depth + 1);
     }
     return out;
   }
@@ -162,7 +167,7 @@ function copyStoredValue(value, seen = new WeakMap()) {
       // defineProperty, not assignment: an own `__proto__` key must survive as a
       // field instead of rewriting the copy's prototype.
       Object.defineProperty(out, key, {
-        value: copyStoredValue(value[key], seen),
+        value: copyStoredValue(value[key], seen, depth + 1),
         enumerable: true,
         configurable: true,
         writable: true,

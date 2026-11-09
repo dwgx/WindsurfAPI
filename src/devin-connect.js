@@ -1295,6 +1295,10 @@ function postConnectUnary(host, path, framed, sessionToken, signal, timeoutMs) {
           const flags = body[0];
           const len = body.readUInt32BE(1);
           if (flags & 0x02) return done(null);
+          // subarray CLAMPS an over-long declared length; refuse explicitly
+          // like the streaming path does instead of feeding a truncated
+          // payload to the decoder (S4-D8).
+          if (5 + len > body.length) return done(null);
           const payload = body.subarray(5, 5 + len);
           done((flags & 0x01) ? tryGunzip(payload) : payload);
         });

@@ -49,3 +49,24 @@ test('a payload that cannot be cloned still fails loudly', () => {
     'storing a live function reference silently would be worse than refusing it',
   );
 });
+
+// S4-D14: JSON.parse accepts nesting deeper than an unguarded recursive clone
+// can survive. The store's own metering already refuses such bodies before the
+// copy runs (retainedBytes caps at depth 64 → the entry blows the byte budget
+// → rejected); the clone itself is now depth-capped too so no future caller
+// can route a deep value around the metering into a stack overflow.
+test('a pathologically deep conversation is refused, never cloned into an overflow', () => {
+  let deep = { leaf: true };
+  for (let i = 0; i < 200; i++) deep = { nested: deep };
+  assert.equal(store.putResponse('copy-deep', [{ role: 'user', content: deep }], CALLER), false,
+    'the byte-budget metering must refuse an entry it cannot safely meter');
+  assert.equal(store.getResponse('copy-deep', CALLER).ok, false, 'and nothing may be stored');
+
+  // Control: a 40-deep conversation is real nesting, not pathology — it stores.
+  let okDeep = { leaf: true };
+  for (let i = 0; i < 40; i++) okDeep = { nested: okDeep };
+  assert.equal(store.putResponse('copy-deep-ok', [{ role: 'user', content: okDeep }], CALLER), true);
+  let cursor = store.getResponse('copy-deep-ok', CALLER).messages[0].content;
+  for (let i = 0; i < 40; i++) cursor = cursor.nested;
+  assert.equal(cursor.leaf, true, 'the leaf must survive the full 40-level round trip');
+});

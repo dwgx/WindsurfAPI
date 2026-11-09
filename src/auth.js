@@ -4928,7 +4928,10 @@ export function isAuthenticated() {
 export function maskApiKey(key = '') {
   const s = String(key || '');
   if (!s) return '';
-  if (s.length <= 12) return `${s.slice(0, 4)}...`;
+  // Never show more than ~25% of the secret: the 8-char minimum key used to
+  // leak its first half (4 chars) through the "masked" field (S6-F1).
+  if (s.length <= 8) return `${s.slice(0, 2)}...`;
+  if (s.length <= 12) return `${s.slice(0, 3)}...`;
   return `${s.slice(0, 8)}...${s.slice(-4)}`;
 }
 
@@ -5019,7 +5022,9 @@ function publicAccount(a, now, { view = 'full' } = {}) {
     // Last time the upstream session key changed (re-login / Firebase refresh).
     // 0 = never rotated since the account was added.
     keyRotatedAt: a.keyRotatedAt || 0,
-    keyPrefix: a.apiKey.slice(0, 8) + '...',
+    // Same rule as maskApiKey: a short key must not be fully recoverable from
+    // its "prefix" (an 8-char key rendered all 8 chars here).
+    keyPrefix: a.apiKey.slice(0, a.apiKey.length <= 8 ? 2 : 8) + '...',
     apiKey_masked: maskApiKey(a.apiKey),
     tier: a.tier || 'unknown',
     lastProbed: a.lastProbed || 0,

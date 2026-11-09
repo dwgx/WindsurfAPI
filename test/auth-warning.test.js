@@ -7,6 +7,7 @@ import {
   getAccountInternal,
   getAccountList,
   getAccountListStats,
+  maskApiKey,
   removeAccount,
   reportError,
   reportSuccess,
@@ -145,5 +146,23 @@ describe('reportError — time-windowed auth-failure streak', () => {
     reportSuccess(key);
     assert.equal(internal.errorCount, 0);
     assert.equal(internal.status, 'active');
+  });
+});
+
+describe('S6-F1: maskApiKey never exposes more than ~25% of a short key', () => {
+  it('scales the visible prefix with key length', () => {
+    assert.equal(maskApiKey('12345678'), '12...', 'the 8-char floor key used to leak half its entropy');
+    assert.equal(maskApiKey('123456789'), '123...');
+    assert.equal(maskApiKey('123456789012'), '123...');
+    assert.equal(maskApiKey('1234567890123'), '12345678...0123');
+    assert.equal(maskApiKey('sk-ant-very-long-key-abcdef'), 'sk-ant-v...cdef');
+    assert.equal(maskApiKey(''), '');
+  });
+
+  it('keyPrefix on a listed account is bounded the same way', () => {
+    const account = addAccountByKey('abcdefgh', 'short-prefix');
+    createdAccountIds.push(account.id);
+    const listed = getAccountList().find((a) => a.id === account.id);
+    assert.equal(listed.keyPrefix, 'ab...', '8-char key must not render all 8 chars as its "prefix"');
   });
 });

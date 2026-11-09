@@ -53,6 +53,10 @@ export function decodeVarint(buf, offset = 0) {
   while (pos < buf.length) {
     const byte = buf[pos++];
     big |= BigInt(byte & 0x7F) << bigShift;
+    // A canonical protobuf varint is a uint64: the terminating byte may not
+    // push the value past 2**64-1 (S4-D1). Without this, `80×9 7F` decodes to
+    // ~2**70 and silently feeds field numbers/lengths that never existed.
+    if (big > 0xFFFFFFFFFFFFFFFFn) throw new Error('Varint exceeds uint64');
     if (!(byte & 0x80)) {
       // Return Number if safely representable, else BigInt.
       const asNum = Number(big);

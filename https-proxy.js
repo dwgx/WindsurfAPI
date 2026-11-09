@@ -1,6 +1,7 @@
 import http2 from 'http2';
 import http from 'http';
 import { readFileSync } from 'fs';
+import { redactUrlForLog } from './src/log-safety.js';
 
 const HTTPS_PORT = parseInt(process.env.HTTPS_PORT || '3443', 10);
 const TARGET_PORT = parseInt(process.env.TARGET_PORT || '3003', 10);
@@ -9,7 +10,8 @@ function proxy(req, res) {
   const ts = new Date().toISOString().slice(11, 19);
   const method = req.method || req.headers[':method'] || 'GET';
   const url = req.url || req.headers[':path'] || '/';
-  console.log(`[${ts}] ${method} ${url} (${req.httpVersion})`);
+  // ?key= is a documented Gemini credential carrier; never log it raw (S2-F2).
+  console.log(`[${ts}] ${method} ${redactUrlForLog(url)} (${req.httpVersion})`);
 
   // Build headers for the HTTP/1.1 backend
   const fwdHeaders = {};
@@ -63,7 +65,7 @@ function proxy(req, res) {
   });
 
   proxyReq.on('error', (e) => {
-    console.error(`[${ts}] Proxy error: ${e.message} (${req.method} ${req.url})`);
+    console.error(`[${ts}] Proxy error: ${e.message} (${req.method} ${redactUrlForLog(req.url)})`);
     if (!res.headersSent) {
       res.writeHead(502, { 'content-type': 'application/json' });
       res.end(JSON.stringify({ error: { message: 'Bad Gateway', type: 'proxy_error' } }));

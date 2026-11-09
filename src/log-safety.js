@@ -55,3 +55,15 @@ export function safeLogValue(value, max = 120) {
   const cleaned = String(value ?? '').replace(LOG_CONTROL_CHARS, '\u00b7');
   return cleaned.length > max ? `${cleaned.slice(0, max)}\u2026` : cleaned;
 }
+
+// The Gemini surface accepts the API key as `?key=` — a verbatim request-URL
+// log line (https-proxy.js prints `${method} ${url}`) writes a live credential
+// into the journal. Replace the value; keep the param name so the line still
+// explains which carrier the client used. Applied on the raw string so a
+// malformed URL cannot sneak the key past a parser.
+export function redactUrlForLog(url) {
+  const raw = String(url ?? '');
+  return raw
+    .replace(/([?&]key=)[^&\s]*/gi, '$1[redacted]')
+    .replace(LOG_CONTROL_CHARS, '·');
+}

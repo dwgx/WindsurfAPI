@@ -115,11 +115,18 @@ function normalizeBinary(messages) {
 // logit_bias map — hashed to different cache keys and split the slot, silently
 // halving the hit rate (never wrong data, just a miss). Arrays keep their order
 // (order is semantic there); only object keys are sorted. (audit #10)
-function stableClone(value) {
-  if (Array.isArray(value)) return value.map(stableClone);
+// JSON.parse accepts deeper nesting than an unguarded recursive clone can
+// survive: a body nested ~10k deep parsed fine, then the clone overflowed the
+// stack into a per-request RangeError. Same depth idiom as retainedBytes /
+// SUB_DUMP_MAX_DEPTH (S4-D14).
+const MAX_CLONE_DEPTH = 64;
+
+function stableClone(value, depth = 0) {
+  if (depth > MAX_CLONE_DEPTH) throw new Error('stableClone: value exceeds maximum nesting depth');
+  if (Array.isArray(value)) return value.map((v) => stableClone(v, depth + 1));
   if (value && typeof value === 'object') {
     const out = {};
-    for (const k of Object.keys(value).sort()) out[k] = stableClone(value[k]);
+    for (const k of Object.keys(value).sort()) out[k] = stableClone(value[k], depth + 1);
     return out;
   }
   return value;

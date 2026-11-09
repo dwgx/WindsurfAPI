@@ -289,3 +289,20 @@ describe('F4-PROXY: backend CORS policy and client identity', () => {
     assert.notEqual(captured.listen, listenBefore, 'control: the same body does listen once the key is readable');
   });
 });
+
+describe('S2-F2: request URLs carrying ?key= are redacted in the access log', () => {
+  it('logs the path with the key value replaced, not the raw credential', () => {
+    const lines = [];
+    const prev = console.log;
+    console.log = (s) => lines.push(String(s));
+    try {
+      proxyOnce({ url: '/v1beta/models/gemini-2.5-pro:generateContent?key=sk-live-secret-9x7' });
+    } finally {
+      console.log = prev;
+    }
+    const access = lines.find((l) => l.includes('generateContent'));
+    assert.ok(access, 'an access-log line for the request must exist');
+    assert.match(access, /\?key=\[redacted\]/, 'the credential value must be replaced');
+    assert.doesNotMatch(access, /sk-live-secret-9x7/, 'the raw key must never reach the log');
+  });
+});

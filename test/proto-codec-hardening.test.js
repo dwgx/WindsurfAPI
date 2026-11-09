@@ -54,7 +54,7 @@ describe('decodeVarint: hostile input', () => {
   it('throws on a varint wider than 64 bits instead of wrapping', () => {
     // 10 continuation bytes exceeds the uint64 ceiling. Wrapping here would
     // silently produce a plausible-but-wrong number.
-    assert.throws(() => decodeVarint(Buffer.from(Array(10).fill(0xFF))), /Varint overflow/);
+    assert.throws(() => decodeVarint(Buffer.from(Array(10).fill(0xFF))), /Varint (overflow|exceeds uint64)/);
   });
 
   it('decodes a genuine 64-bit value without truncating to 32 bits', () => {
@@ -277,5 +277,17 @@ describe('encodeVarint: no silent corruption on large or negative values', () =>
   it('accepts BigInt input', () => {
     const v = 12345678901234567n;
     assert.equal(BigInt(decodeVarint(encodeVarint(v)).value), v);
+  });
+});
+
+describe('S4-D1: non-canonical varints above uint64 are rejected', () => {
+  it('a terminating 10th byte that overflows uint64 throws instead of decoding ~2**70', () => {
+    // 9 continuation bytes (0x80) then 0x7F: bits 63..69 set, no continuation —
+    // the old code returned the oversized BigInt silently.
+    assert.throws(() => decodeVarint(Buffer.from([0x80,0x80,0x80,0x80,0x80,0x80,0x80,0x80,0x80,0x7F])),
+      /uint64|overflow/i);
+    // Boundary controls: max legal uint64 (10th byte = 0x01) still decodes.
+    const max = decodeVarint(Buffer.from([0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0xFF,0x01]));
+    assert.equal(max.value, BigInt('0xFFFFFFFFFFFFFFFF'));
   });
 });

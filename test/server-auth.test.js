@@ -101,6 +101,13 @@ describe('credential carrier scoping', () => {
     assert.equal(credentialSurfaceFor('/v1/completions'), 'openai');
     assert.equal(credentialSurfaceFor('/auth/login'), 'operator');
     assert.equal(credentialSurfaceFor('/health'), 'operator');
+    // A generate call is Gemini-native ONLY at its documented prefixes — an
+    // embedded `/models/x:generateContent` tail inside another surface must not
+    // flip the carrier set or the route target (S2-F1).
+    assert.equal(credentialSurfaceFor('/v1/messages/models/x:generateContent'), 'messages');
+    assert.equal(credentialSurfaceFor('/auth/models/x:generateContent'), 'operator');
+    assert.equal(credentialSurfaceFor('/v1betaXYZ/models/x:generateContent'), 'openai');
+    assert.equal(credentialSurfaceFor('/anything/models/x:generateContent'), 'openai');
   });
 
   it('a chat surface accepts only Authorization: Bearer', () => {
@@ -337,6 +344,34 @@ describe('server auth routing', () => {
     ]) {
       const rejected = await request(port(), 'POST', path, { 'x-api-key': TEST_KEY }, geminiBody);
       assert.equal(rejected.status, 401, `x-api-key must not authenticate a Gemini generate call (${name})`);
+    }
+  });
+
+  it('T03: x-api-key is trimmed like the other carriers', async () => {
+    const res = await request(port(), 'POST', '/v1/messages', { 'x-api-key': `  ${TEST_KEY}  ` }, messagesBody);
+    assert.equal(res.status, 529, 'padded x-api-key must parse like the padded Bearer/x-goog carriers do');
+  });
+
+  it('T03: OPTIONS preflight advertises the documented Gemini carriers', async () => {
+    const res = await request(port(), 'OPTIONS', '/v1beta/models/x:generateContent', {});
+    const allow = String(res.headers['access-control-allow-headers'] || '');
+    assert.match(allow, /x-goog-api-key/, 'the Gemini SDK carrier must survive preflight');
+    assert.match(allow, /Authorization/);
+    assert.match(allow, /x-api-key/);
+  });
+
+  it('T03: a generateContent tail embedded in another route does not reach handleGemini', async () => {
+    // S2-F1: the route regex used to match `/models/x:generateContent` anywhere
+    // in the path — so POST /v1/messages/models/x:generateContent authenticated
+    // on the messages carrier set (x-api-key) yet dispatched to handleGemini.
+    // Anchored, the path now falls through to the normal 404.
+    for (const [name, path, headers] of [
+      ['messages prefix', '/v1/messages/models/x:generateContent', { 'x-api-key': TEST_KEY }],
+      ['operator prefix', '/auth/models/x:generateContent', { 'x-api-key': TEST_KEY }],
+      ['openai prefix', '/v1/chat/models/x:generateContent', { authorization: `Bearer ${TEST_KEY}` }],
+    ]) {
+      const res = await request(port(), 'POST', path, headers, geminiBody);
+      assert.equal(res.status, 404, `${name}: embedded generateContent must 404, not reach handleGemini`);
     }
   });
 

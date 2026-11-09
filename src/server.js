@@ -192,7 +192,7 @@ function contentEncodingErrorStyle(path) {
   if (isAnthropicPath(path)) return 'anthropic';
   if (typeof path === 'string'
       && (path === '/v1beta' || path.startsWith('/v1beta/')
-        || /\/models\/[^:/]+:(generateContent|streamGenerateContent)$/.test(path))) return 'gemini';
+        || GEMINI_GENERATE_PATH_RE.test(path))) return 'gemini';
   if (typeof path === 'string' && path.startsWith('/auth/')) return 'legacy';
   return 'openai';
 }
@@ -240,6 +240,13 @@ const CREDENTIAL_CARRIERS = {
   any: ['bearer', 'x-api-key', 'x-goog-api-key', 'query'],
 };
 
+// A Gemini generate call is Gemini-native ONLY at its documented prefixes:
+// /v1beta/models/{m}:generateContent and the /v1/models/{m}:generateContent
+// alias. Left-anchored so an embedded `/models/x:generateContent` tail inside
+// another route (e.g. /v1/messages/models/…) cannot pull the request onto the
+// Gemini carrier set or into handleGemini (S2-F1).
+const GEMINI_GENERATE_PATH_RE = /^\/v1(?:beta)?\/models\/[^:/]+:(generateContent|streamGenerateContent)$/;
+
 /**
  * Which carrier set applies to a request path. Operator surfaces (/auth/*) and
  * /health keep their historical carriers: the audit's scoping rule is about the
@@ -254,7 +261,7 @@ export function credentialSurfaceFor(path) {
   // the looser `models` set, or x-api-key (an Anthropic carrier) would reach
   // handleGemini through the alias while /v1beta rejects it. Checked BEFORE the
   // `/v1/models/` prefix for exactly that reason.
-  if (/\/models\/[^:/]+:(generateContent|streamGenerateContent)$/.test(p)) return 'gemini';
+  if (GEMINI_GENERATE_PATH_RE.test(p)) return 'gemini';
   if (p === '/v1/models' || p.startsWith('/v1/models/')) return 'models';
   if (p === '/v1beta' || p.startsWith('/v1beta/')) return 'gemini';
   if (p === '/health' || p === '/auth' || p.startsWith('/auth/')) return 'operator';
@@ -274,13 +281,15 @@ export function extractToken(req, surface = 'any') {
   // duplicate/injected `Bearer a, Bearer b` can't smuggle a second credential,
   // a stray comma no longer nukes auth, and — because we fall through when the
   // Bearer segment is empty — x-api-key still works.
-  const m = authHeader.match(/^Bearer\s+(.+)$/i);
+  const m = allows('bearer') && authHeader.match(/^Bearer\s+(.+)$/i);
   if (m) {
     const first = m[1].split(',')[0].trim();
     if (first) return first;
   }
   if (allows('x-api-key')) {
-    const xApiKey = req.headers['x-api-key'] || '';
+    // HTTP/2 keeps header padding the HTTP/1.1 parser strips; trim so the two
+    // front ends compare the same credential (S2-F5).
+    const xApiKey = String(req.headers['x-api-key'] || '').trim();
     if (xApiKey) return xApiKey;
   }
   // Gemini-native auth: the Google GenAI SDK sends the key as `x-goog-api-key`
@@ -494,7 +503,7 @@ async function route(req, res) {
     res.writeHead(204, {
       'Access-Control-Allow-Origin': '*',
       'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
-      'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-api-key, anthropic-version',
+      'Access-Control-Allow-Headers': 'Content-Type, Authorization, x-api-key, x-goog-api-key, anthropic-version',
     });
     return res.end();
   }
@@ -1310,7 +1319,7 @@ async function route(req, res) {
   //   ?alt=sse switches to an SSE stream (preferred by newer SDKs).
   // The {model} segment can carry dots/dashes; the method is the suffix
   // after the final ':'. A v1 alias path is accepted too.
-  if (method === 'POST' && /\/models\/[^:/]+:(generateContent|streamGenerateContent)$/.test(path)) {
+  if (method === 'POST' && GEMINI_GENERATE_PATH_RE.test(path)) {
     if (!hasUsableAccount()) {
       return json(res, 503, { error: { code: 503, message: 'No active accounts. POST /auth/login to add accounts.', status: 'UNAVAILABLE' } });
     }

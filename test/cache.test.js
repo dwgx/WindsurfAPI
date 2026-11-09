@@ -247,3 +247,13 @@ describe('cacheGet / cacheSet', () => {
     assert.equal(stats.evictions, 1);
   });
 });
+
+describe('S4-D14: cacheKey refuses pathologically deep bodies', () => {
+  it('throws a bounded error instead of overflowing the stack', () => {
+    let deep = { leaf: true };
+    for (let i = 0; i < 200; i++) deep = { nested: deep };
+    const body = { model: 'm', messages: [], tools: [deep] };
+    assert.throws(() => cacheKey(body), /nesting depth|RangeError/,
+      'an uncapped recursive clone used to die as a per-request RangeError');
+  });
+});
