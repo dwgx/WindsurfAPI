@@ -32,6 +32,42 @@ auth/server、streaming、responses、identity/CTX、connect 与 tests/mutations
 不是 tag：`v3.141.592659` 仍未创建，未 push、未部署；本附录的发布提交与范围行仍指
 `e0c5c715`。
 
+## 0.2 Post-release 增补：复审、生命周期、差分审计与安全狩猎波（2026-11-10）
+
+`e0c5c715` 之后，审计分支共追加 **52 个提交**（`git rev-list --count e0c5c715..1ff3e4d4`），
+范围 **98 文件 / +8,358 −563 / 27 个 `src/` 文件**（在 `a7af4702` 实测；后续为文档/测试
+提交）。本段是各波的门禁实测记录，不改 §0 的发布提交行。
+
+**波次与 SHA**（按落地序）：
+
+| 波 | 提交范围 | 内容 |
+|---|---|---|
+| 复审修复 W1-W3 | `04503830`–`5a3ec2a9` | 15 项（1 P1 二次复杂度复发、1 P2 SSE 帧帽回归、3 MED、LOW 组），六 lane 对抗复审产出 |
+| 生命周期 | `5fb21e70` | drain 比例项 4 MiB 帽、responses dispose、失败轮 `incomplete` |
+| 文档订正 | `1500a2da`+ | lane F 清单：范围更正、未入档的用户可见变更、过时计数 |
+| 差分审计 | `7c995f40`/`221eb4d2` | 952 语料 OLD-vs-NEW；F1 指纹跨空行泄漏、F2 全 JS 行终止符、F5 FREEFORM 段域；79→70 全刻意保留 |
+| 安全狩猎 S1-S6 | `f43b5b7a`–`68efa521` | 七只读 lane：输入 DoS、载体矩阵、头回显/SSE、解码边界、日志注入/XSS、SSRF/凭据基线 |
+| 狩猎波收尾 | `a7067cdc`/`18f54aaf` | label 边界推广到 add/login 写路径；SSE pending 门改增量扫描（453→9.6 ms/500 写） |
+
+**门禁实测**（每条注明实测 SHA；最终树为 `:src` = `6b3eb302…`，最后 src 提交 `18f54aaf`）：
+
+- wire 字节一致性：`a7af4702` 树，**270/270 byte-identical、0 expected diff** vs
+  `v3.141.592658`（`WIRE_BASE_TREE=D:/Project/WindsurfAPI-wirebase`）。
+- smoke:matrix：`a7af4702` 树，**137/137 flows、24/24 families、0 failed**。
+- spec 静态/基线：`spec-baseline-check --all` 在 `68efa521` 后实测 **99 spec / 0 drift**；
+  `s4-r6` functionText harness 回归由 `68efa521` 修复后复测通过。
+- secret-scan：`68efa521` 树 exit 0。
+- docs-consistency-guard：`d65a16e1` 树 **47/47**。
+- 聚焦回归：server-auth 35、https-proxy 13、sse-commit 34、auth/account 族 76、
+  proto/cache/response-store 107、messages/responses/stream 294、chat 族 161 —— 全绿。
+- 最终 `gate:release`（`GATE_INERT_SKIP_PATHS` 挂 6 件 POSIX/live inert）：**见下表更新**
+  —— 跑于 `<final-tip>`，结果 `<files/tests/pass/fail/skip>`。
+- HMC Linux + mutation 复跑：subagent 派出，结果见本节末尾增补。
+
+**仍 [UNVERIFIED]**：托管 CI、真实上游/live 客户端、HMC 部署/回滚演练、官方 `pr-gate`
+（relogin 凭据缺口）、mutation 全量 POSIX sweep 的最终树复跑（上轮 97/97 于 `c4931c40`）。
+周fish 预告的 3 份报告尚未提供，不作已确认缺陷处理。
+
 ## 1. 发布范围（产品变更）
 
 | 变更 | 实现 | 证明测试 |
