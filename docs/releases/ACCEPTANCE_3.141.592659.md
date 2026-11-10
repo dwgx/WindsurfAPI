@@ -153,7 +153,11 @@ fishfish（周fish）预告的 3 份报告尚未提供，不作已确认缺陷�
 - HMC node22 @3c7422cc：625 files / 7,781 tests / **7,776 pass / 0 fail / 5 skip —
   RELEASE_EXIT=0**（POSIX 双版本闭环：node24 环境件补齐后等价全绿）。
 
-**本节仍 [UNVERIFIED]**：mutation sweep 复跑 @3c7422cc（在飞，结果出来回填）。
+- HMC mutation sweep @3c7422cc：**99/99 spec verdicts — SWEEP_EXIT=0**
+  （cascade-image-history 等重钉 spec 全部 MEASURED_NO_SKIPS 通过）。
+
+§0.4 无未决项：本波全部修复（红→绿）+ 双版本 POSIX + 本地门禁 + wire/smoke/
+docs-guard + 变异扫描 全绿。
 
 ## 1. 发布范围（产品变更）
 
