@@ -28,20 +28,21 @@ SSE JSON、队列字节预算、按未确认字节计 drain、history 预算改�
 
 **范围更正。** §0 与文首的计数（36 提交 / 45 文件 / +4,996 −501 / 6 个 `src/` 文件）
 度量的是 `v3.141.592658..deeb2539` 审计分支在发布提交前的冻结范围，**不包含**
-`e0c5c715` 之后的 hardening 与复审修复。发布提交之后本分支另有 **28 个提交 /
-65 个文件 / +6,860 −454 / 16 个 `src/` 文件**（`git rev-list --count
-e0c5c715..7c995f40`；`git diff --shortstat e0c5c715..7c995f40`；
-`git diff --name-only e0c5c715..7c995f40 -- src | wc -l`）：`c4931c40`（审计收口，
+`e0c5c715` 之后的 hardening 与复审修复。发布提交之后本分支另有 **34 个提交 /
+81 个文件 / +7,321 −474 / 23 个 `src/` 文件**（`git rev-list --count
+e0c5c715..5490cd3f`；`git diff --shortstat e0c5c715..5490cd3f`；
+`git diff --name-only e0c5c715..5490cd3f -- src | wc -l`）：`c4931c40`（审计收口，
 49 文件 / +5,010 −324）、`0aea4ea3`（connect 显式错误终止与 catalogue 边界）、
 `911e6674` / `d0359733`（纯文档）、复审修复波 `04503830`–`7c995f40`（含 spec
-基线重钉、文档订正与差分审计修复）共 24 个提交。
+基线重钉、文档订正与差分审计修复）、安全狩猎波 `f43b5b7a`–`5490cd3f`（七条
+只读 lane 报告的落地修复）共 30 个提交。
 逐提交证据记入验收附录的增补段（acceptance addendum，另行补写）；本文件只登记
 范围与用户可见变化。
 
 **tag 目标。** `v3.141.592659` 必须打在合并后的 master tip 上（流程：把
 `origin/master` 合入本分支 → `master --ff-only` → 在 master tip 打 annotated tag →
 push），**不是** `e0c5c715`——否则 `c4931c40`/`0aea4ea3` 与复审修复会被关在版本外。
-写作时分支 HEAD 为 `7c995f40`（最后一个改 `src/` 的提交，差分审计修复）；
+写作时分支 HEAD 为 `5490cd3f`（最后一个改 `src/` 的提交，安全狩猎波）；
 最终 tag 目标记作 `<merge-tip>`，以合并提交的实际 SHA 为准。
 
 **复审修复波的用户可见变化**（`04503830`–`5fb21e70`，按面分组；`c4931c40` 已覆盖的
@@ -94,6 +95,33 @@ push），**不是** `e0c5c715`——否则 `c4931c40`/`0aea4ea3` 与复审修�
 - **client/image**：prepend 进 Cascade 的 system prompt 在 fresh 单轮、多轮与 resume
   重建三处统一转义 `</human>`/`</assistant>` 闭合标签；`extractImages` 在最后一个块
   之后也拒绝已取消的轮次；translator SSE framer 在客户端断连时 dispose。
+
+**安全狩猎波的用户可见变化**（`f43b5b7a`–`5490cd3f`；七条只读 lane——输入 DoS、
+认证载体矩阵、协议解码/租户隔离、存储注入、SSRF/随机性——的报告落地，注入/走私
+lane 仍在飞）：
+
+- **auth/server**：Gemini generate 路由从"路径任意位置含 `/models/x:generateContent`"
+  收紧为左端锚定——`POST /v1/messages/models/x:generateContent` 这类把
+  generate 尾巴嵌进另一协议的请求不再按 messages 载体（`x-api-key`）开门后送进
+  `handleGemini`，而是正常 404；CORS preflight 的 `Access-Control-Allow-Headers`
+  补上 `x-goog-api-key`（浏览器端 Google SDK 不再被挡）；`x-api-key` 头值与其他
+  载体一样 trim（HTTP/2 会保留 HTTP/1.1 解析器剥掉的头值空白）。
+- **日志/凭据遮蔽**：`https-proxy.js` 访问日志与错误日志里的 `?key=` 值改为
+  `[redacted]`——Gemini 查询串载体此前会以活凭据进 journal；`maskApiKey` 与
+  账号 `keyPrefix` 对短 key 不再暴露超过约 25%（8 字符下限 key 此前会泄出一半
+  乃至全部）；`DEVIN_CONNECT_CRED_KEY` 低于 16 字符时凭据库按禁用处理并报错
+  （此前任意非空 key 都会启用一个可暴力枚举的 KEK）；`DEVIN_CONNECT_WIRE_DUMP`/
+  `WINDSURFAPI_TRACE` 首次落盘时 warn：dump 的 protobuf 携带活 session token，
+  `.wire-dump`/`.trace` 按凭据材料对待。
+- **DoS/解析边界**：`stop` 单条上限 1024 字符（超限整条丢弃而非截断——截断前缀
+  会在不该停的位置误命中）；`response_format.json_schema` 的 `pattern` 三重闸——
+  长度 >1024 跳过、`(a+)+$` 类嵌套量词形静态拒绝、被测字符串 >256 KiB 跳过
+  （均为 fail-open：该字段 pattern 不执行，其余 schema 检查不受影响；注释声明
+  重叠交替/相邻量词/backref 形仍有残留）；`cacheKey`/`response-store` 的克隆加
+  64 层深度帽（此前 JSON.parse 放得下的 ~10k 层 body 会把克隆打进
+  RangeError——response-store 本有 retainedBytes 计量先拒，克隆自帽是纵深）；
+  protobuf varint 终止字节溢过 uint64 显式拒绝（`80×9 7F` 此前静默解出 ~2^70）；
+  `postConnectUnary` 声明长度超过实际体长显式拒绝（此前 `subarray` 静默截断）。
 
 ## 0. 范围
 
