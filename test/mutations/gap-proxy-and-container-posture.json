@@ -3,7 +3,7 @@
     "test/https-proxy-policy.test.js",
     "test/docker-script-packaging.test.js"
   ],
-  "expectBaselinePass": 16,
+  "expectBaselinePass": 17,
   "mutations": [
     {
       "name": "G-7: a missing TLS key no longer stops the helper from starting",

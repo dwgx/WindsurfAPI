@@ -3,7 +3,7 @@
     "test/devin-connect-credentials.test.js",
     "test/review-credential-tag.test.js"
   ],
-  "expectBaselinePass": 21,
+  "expectBaselinePass": 22,
   "mutations": [
     {
       "name": "The explicit encoded-tag shape refusal is removed (other layers still reject short tags)",
