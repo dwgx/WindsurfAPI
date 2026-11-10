@@ -138,7 +138,11 @@ fishfish（周fish）预告的 3 份报告尚未提供，不作已确认缺陷�
   编辑通道把 `\n` 写成 `\r\n`；LF 归一后 7/7 复绿，与产品逻辑无关。
 - 最终树 `e30baf6d`（+docs `3c7422cc`）：smoke:matrix **137/137 flows，
   24/24 families**；docs-guard **47/47**；本批涉及面的回归电池 **177/177**。
-  全量 `gate:release` 在最终树执行中，计数出来后回填本节。
+- 全量 `gate:release`（最终树）：**RELEASE GATE: PASS exit=0**——
+  test:release 625 files / 7,780 tests / **7,677 pass / 0 fail / 103 skip**
+  （6 inert 文件全声明：GATE_INERT_SKIP_PATHS 分号+仓内路径格式；
+  首轮 FAIL 是我方逗号格式误用，shard 本体始终 0-fail）；
+  spec-static / spec-baseline --all / secret-scan / diff --check 全 PASS。
 
 - wire-byte-identity 对 v3.141.592658（最终树 HMC）：**270/270 byte-identical，0 diff**。
 - HMC node24 @3c7422cc：625 files / 7,781 tests / **7,773 pass / 3 fail / 5 skip**——
