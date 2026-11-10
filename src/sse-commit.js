@@ -10,6 +10,7 @@
 // the error-body shape. The first integration is the OpenAI chat route.
 
 import { Buffer } from 'node:buffer';
+import { StringDecoder } from 'node:string_decoder';
 import { findFrameEnd, parseSseLine, parseSseDataJson } from './sse-framer.js';
 import { connectErrorToHttp, normalizeOpenAIErrorType, clientRetryAfterSeconds } from './handlers/chat.js';
 
@@ -204,7 +205,15 @@ export function createDeferredSseResponse(realRes, {
   let pending = [];
   let pendingBytes = 0;
   let pendingFrames = 0;
-  let inspectedChars = 0;
+  // Incremental scan window (S3-F6): Buffer.concat over ALL pending buffers on
+  // every write was O(writes × pending bytes) — a keepalive stream never
+  // commits and turns the gate quadratic. `pendingText` holds only decoded
+  // text not yet consumed; StringDecoder carries a multibyte char split across
+  // writes; the window compacts once the consumed prefix exceeds 64 KiB.
+  const pendingDecoder = new StringDecoder('utf8');
+  let pendingText = '';
+  let inspectOffset = 0;
+  let bomChecked = false;
   let timer = null;
   let disposed = false;
   // O10: the first failure this stream surfaced, kept after it is delivered so
@@ -235,7 +244,8 @@ export function createDeferredSseResponse(realRes, {
     pending = [];
     pendingBytes = 0;
     pendingFrames = 0;
-    inspectedChars = 0;
+    pendingText = '';
+    inspectOffset = 0;
   };
 
   const finishError = (error) => {
@@ -309,14 +319,18 @@ export function createDeferredSseResponse(realRes, {
   };
 
   const inspectPending = () => {
-    let text = Buffer.concat(pending).toString('utf8');
+    let text = pendingText;
     // The wire may start with a UTF-8 BOM. It stays in `pending`, so the client
     // still receives it, but it must not hide the first frame from the gate.
     // Before the gate commits, `pending` always starts at the stream start, so
-    // the BOM is always at index 0; stripping it every pass keeps
-    // `inspectedChars` in one coordinate space across writes.
-    if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
-    let offset = inspectedChars;
+    // the BOM is always at index 0 of the first write; checking once keeps
+    // `inspectOffset` in one coordinate space across writes.
+    if (!bomChecked && text.length > 0) {
+      bomChecked = true;
+      if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+      pendingText = text;
+    }
+    let offset = inspectOffset;
     let framesSeen = 0;
     for (;;) {
       const found = findFrameEnd(text, offset);
@@ -336,9 +350,15 @@ export function createDeferredSseResponse(realRes, {
         return;
       }
       offset = found.next;
-      inspectedChars = offset;
+      inspectOffset = offset;
     }
     pendingFrames += framesSeen;
+    // Compact the consumed prefix so a long bootstrap run does not drag a
+    // growing string through every write; 64 KiB amortizes the slice.
+    if (inspectOffset > 65536) {
+      pendingText = pendingText.slice(inspectOffset);
+      inspectOffset = 0;
+    }
     // Keep holding; a later content/error frame decides. The timer is the
     // escape hatch so a silent upstream still commits a live SSE response.
     if (pendingFrames > maxFrames || pendingBytes > maxBytes) commit();
@@ -413,6 +433,7 @@ export function createDeferredSseResponse(realRes, {
       armBootstrap();
       pending.push(buf);
       pendingBytes += buf.length;
+      pendingText += pendingDecoder.write(buf);
       inspectPending();
       if (typeof cb === 'function') process.nextTick(cb);
       return true;

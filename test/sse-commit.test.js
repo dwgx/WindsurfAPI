@@ -420,4 +420,42 @@ describe('createDeferredSseResponse framing edges', () => {
     assert.equal(real.statusCode, 429);
     assert.equal(JSON.parse(real.body).error.code, 'RATE_LIMITED');
   });
+
+  it('per-write inspection stays near-linear across many pending bootstrap frames (S3)', () => {
+    // inspectPending used to Buffer.concat ALL pending buffers on every write:
+    // N writes × O(pending bytes) → quadratic until the gate commits. A stream
+    // of comment/keepalive frames (which never commit) makes the cost real.
+    const real = fakeRes();
+    const res = createDeferredSseResponse(real, {
+      status: 200,
+      maxFrames: 1e6,
+      maxBytes: 8 * 1024 * 1024,
+      bootstrapTimeoutMs: 0,
+    });
+    const comment = ':' + 'x'.repeat(4096) + '\n\n';
+    const t0 = performance.now();
+    for (let i = 0; i < 500; i++) res.write(comment);
+    const ms = performance.now() - t0;
+    res.end();
+    assert.ok(ms < 300,
+      `500 pending writes took ${ms.toFixed(0)}ms — per-write full concat rescan (S3-F6)`);
+  });
+
+  it('a multibyte char split across writes does not corrupt frame scanning', () => {
+    // Incremental decode must carry partial UTF-8 across writes (StringDecoder);
+    // a naive per-buffer decode would emit U+FFFD and could misclassify the frame.
+    const real = fakeRes();
+    const wire = [];
+    real.write = (c) => { wire.push(Buffer.isBuffer(c) ? c : Buffer.from(String(c), 'utf8')); return true; };
+    const res = createDeferredSseResponse(real, { status: 200 });
+    const payload = 'data: ' + JSON.stringify({ choices: [{ delta: { content: '中'.repeat(40) } }] }) + '\n\n';
+    const buf = Buffer.from(payload, 'utf8');
+    const cut = buf.indexOf(0xE4); // first byte of 中 (E4 B8 AD)
+    res.write(buf.subarray(0, cut + 1));
+    assert.equal(real.statusCode, null, 'incomplete frame must not commit');
+    res.write(buf.subarray(cut + 1));
+    res.end();
+    assert.equal(real.statusCode, 200);
+    assert.deepEqual(Buffer.concat(wire), buf, 'committed flush must carry the exact pending bytes');
+  });
 });
