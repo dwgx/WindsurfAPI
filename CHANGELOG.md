@@ -48,10 +48,13 @@ flowchart LR
 50 ms 共享预算 + `valid|invalid|unable` 三态判定，加此前审计波对 `src/` 8 个文件的改动。
 本版只把版本号与发布指针改到 3.141.592660——`v3.141.592659` **从未发布**，它的本地 tag
 冻结在未修复的 `d5519da3` 上，不 push、不删除、不复用。默认路径 wire 对 `v3.141.592658`
-**270/270 逐字节一致**；身份中和器 WA-001/002/003、A4、CTX-01、S03、IMG-01、TRN-01 与
-`pattern` 预算的机制见发布说明 §1.1–§1.8。本树门禁：docs-guard 47/47、unverified-register
-7/7、JSON Schema 38/38、secret-scan exit 0、`git diff --check` 0。**99 spec / 878 mutation
-的全量 sweep 在这棵树上仍未跑（`[UNVERIFIED]`）**，合并与推送之前必须在 POSIX 上补跑。
+**270/270 逐字节一致**是在 `deeb2539` 上测的（距本树 87 个提交 / 34 个 `src/` 文件），
+**本树未复测**（本机 wire 门 inert，`skipped:1`）——这条对本版是 `[UNVERIFIED]`。
+身份中和器 WA-001/002/003、A4、CTX-01、S03、IMG-01、TRN-01 与 `pattern` 预算的机制见
+发布说明 §1.1–§1.8。本树门禁：docs-guard 47/47、unverified-register 7/7、JSON Schema
+38/38、spec-static `99 spec / 878 mutation` exit 0、secret-scan exit 0、`git diff --check` 0。
+**99 spec / 878 mutation 的全量 sweep 在这棵树上仍未跑（`[UNVERIFIED]`）**，合并与推送之前
+必须在 POSIX 上补跑。
 
 ### [v3.141.592659](docs/releases/RELEASE_NOTES_3.141.592659.md) · 2026-11-09（**未发布**，升版为 v3.141.592660）
 

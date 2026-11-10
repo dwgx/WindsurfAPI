@@ -11,8 +11,10 @@ Owner 的处置是升版（Path B）：同一棵代码树以 **3.141.592660** �
 （`git rev-list --count v3.141.592658..deeb2539`；`git diff --shortstat
 v3.141.592658..deeb2539`：4,996 增 / 501 删）。产品变更集中在 `src/` 下 **6 个文件**：
 `client.js`、`dashboard/api.js`、`handlers/identity-neutralize.js`、`handlers/messages.js`、
-`image.js`、`server.js`。本版是 **patch**：默认路径的请求字节相对 `v3.141.592658` 仍是
-**270/270 逐字节一致、0 差异**，没有协议兼容性破坏。
+`image.js`、`server.js`。本版按 **patch** 处理：默认路径的请求字节相对 `v3.141.592658` 在
+`deeb2539` 上实测 **270/270 逐字节一致、0 差异**，但**本发布树上的 wire 复测没有做**——
+本机没有可比较的基线树，`wire-byte-identity` 在这里是 inert（`skipped:1`，见 §3）。所以
+「本树默认路径字节不变」是 `[UNVERIFIED]`，不是本文件的证据。
 
 > **版本号**：`3.141.592658` 之后的 patch，语义化版本写作 **3.141.592660**（tag
 > `v3.141.592660`，本文件 `RELEASE_NOTES_3.141.592660.md`）。发布提交、认证树、逐项门禁
@@ -413,8 +415,9 @@ tripwire），改为运行时预算；1024 字符 / 256 KiB 尺寸上限保留�
 
 ## 2. 风险与影响面
 
-- **默认路径字节不变**：wire 对 `v3.141.592658` **270/270 逐字节一致、0 声明差异、0 未声明
-  差异**（§3）。这是 patch 的依据。
+- **默认路径字节不变 —— 本树 `[UNVERIFIED]`**：`270/270 逐字节一致、0 声明差异、0 未声明
+  差异` 是在 `deeb2539` 上测的（距本树 **87 个提交 / 34 个 `src/` 文件**），本机没有基线树，
+  wire 门在这里 inert（`skipped:1`）。这是 patch 的**前提**，不是本树的实测（§3）。
 - **身份中和器的输出会变**，且这是有意的：9+2 条规则的匹配形状被重新实现，a4-fastmode 的
   空行保留、a4-cli-line 的长行行为、b-security-line 的全局改写都是可观察差异。wire 矩阵只
   覆盖 protobuf 编码，不覆盖 system prompt 文本；文本面由 147 个身份测试 + 2 万例差分守。
@@ -445,14 +448,15 @@ shard 仍未跑（§7）。Node `v24.19.0`。逐项计数、skip 名单与日志
 | docs guard | `node --import ./test/setup-env.mjs --test test/docs-consistency-guard.test.js` | **47 pass / 0 fail** |
 | JSON Schema 预算（HEAD `babafeef`） | `node --import ./test/setup-env.mjs --test test/json-schema-budget.test.js test/json-schema-pattern-safety.test.js` | **38 pass / 0 fail**（25 + 13，2026-11-11 真树实跑） |
 | docs guard（§0 修复后，HEAD `babafeef`） | `node --import ./test/setup-env.mjs --test test/docs-consistency-guard.test.js` | **47 pass / 0 fail**（2026-11-11 真树实测；修复前 46/1，见 §6 第 4 条） |
-| spec 静态 | `node scripts/spec-static-check.mjs` | **exit 0 — 97 spec / 863 mutation，锚点唯一** |
-| spec 基线（增量） | `node scripts/spec-baseline-check.mjs identity-neutralize-paragraph-bound.json neutralize-rewrite-visibility.json` | **2 spec measured, 0 drift, 0 untrustworthy** |
-| spec 基线（全量） | `node scripts/spec-baseline-check.mjs --all` | **97 spec measured, 0 drift, 0 untrustworthy**（202.5 s） |
-| wire 身份 | `WIRE_BASE_TREE=…/release-next-pr282 WIRE_BASE_TAG=v3.141.592658 WIRE_BASE_SHA=08a750d1… WIRE_BASE_REQUIRED=1 node --import ./test/setup-env.mjs --test test/wire-byte-identity.test.js` | **PASS exit 0 — 270/270 byte-identical, 0 expected, 0 unexpected** |
+| spec 静态（本树） | `node scripts/spec-static-check.mjs` | **exit 0 — `specs: 99   mutations: 878`，锚点唯一**（2026-11-11 实测） |
+| spec 基线（本树） | `node scripts/spec-baseline-check.mjs --all` | **99 spec measured, 0 drift, 0 untrustworthy**（2026-11-11 在 `3cd8ab82` 的 clone 上实测，wall 243.7 s；证明基线不 drift，**不是** 878 个变异体都跑过） |
+| spec 基线（增量，3.141.592659 草稿树） | `node scripts/spec-baseline-check.mjs identity-neutralize-paragraph-bound.json neutralize-rewrite-visibility.json` | **2 spec measured, 0 drift, 0 untrustworthy**（历史测量，97 spec 语料时点） |
+| wire 身份（本机 inert） | `node --import ./test/setup-env.mjs --test test/wire-byte-identity.test.js`（未给 `WIRE_BASE_TREE`） | **`skipped:1`** —— `WIRE_PROVENANCE {"skipped":true,"reason":"no pre-change tree to compare against — set WIRE_BASE_TREE to a checkout of the last release",…,"comparisons":270}` |
+| wire 身份（历史，`deeb2539`） | `WIRE_BASE_TREE=…/release-next-pr282 WIRE_BASE_TAG=v3.141.592658 WIRE_BASE_SHA=08a750d1… WIRE_BASE_REQUIRED=1 node --import ./test/setup-env.mjs --test test/wire-byte-identity.test.js` | **PASS exit 0 — 270/270 byte-identical, 0 expected, 0 unexpected**（测的是 `deeb2539`，**不是**本树） |
 | secret scan（工作树） | `node scripts/secret-scan.mjs` | **exit 0** |
 | history secret scan | `node scripts/history-secret-scan.mjs` | **exit 0 — 0 unbaselined** |
 
-wire 的原始行（逐字）：
+wire 的原始行（逐字；`tested_head` 是 `deeb2539`，**不是**本发布树）：
 
 ```text
 WIRE_PROVENANCE {"tested_head":"deeb25394b8c77915dc42928cc940b9557187e77","tested_root":"D:\\Project\\WindsurfAPI","tested_dirty":true,"base_root":"D:\\Project\\WindsurfAPI\\.claude\\worktrees\\release-next-pr282","base_head":"08a750d1a6d26f5d3b2f010c878170a9508730a8","base_dirty":false,"expected_tag":"v3.141.592658","expected_sha":"08a750d1a6d26f5d3b2f010c878170a9508730a8","expected_from":"selection+env","expected_releases":135,"selection_error":null,"tag_ref_verified":true,"env":{"WIRE_BASE_SHA":"08a750d1a6d26f5d3b2f010c878170a9508730a8","WIRE_BASE_TAG":"v3.141.592658","WIRE_BASE_REQUIRED":true},"comparisons":270}
@@ -464,9 +468,19 @@ WIRE_EXPECTED_DIFFS {"byte_identical":270,"expected":0,"entries":0,"compared":27
 （`git status --porcelain` 只有 `??` 行），基线 `base_dirty:false`。CI 的干净 checkout 上该
 字段为 false。
 
+**本树的 wire 复跑条件（QF C11 陷阱）。** 本机 `node scripts/wire-base.mjs --field tag` 选中的
+是 **`v3.141.592659`**（→ `d5519da3`，未修复的本地 tag），不是已发布的 `v3.141.592658`：
+只给 `WIRE_BASE_TREE` 而不给 `WIRE_BASE_TAG`/`WIRE_BASE_SHA`，就会拿未修复的树当基线，结论
+没有意义。正确的复跑只在**远端不存在 `.592659` 的干净 checkout**（CI）里做，或显式钉住
+`WIRE_BASE_TAG=v3.141.592658 WIRE_BASE_SHA=08a750d1… WIRE_BASE_REQUIRED=1`。
+**不得为了让门禁变绿而移动或删除本地 tag。**
+
 **没有在本版实测的**（不得写成已通过）：托管 CI、HMC 部署与真实上游。原因与替代命令
 见 §6–§7；Node 22 全量后来已补测，证据见 §7。mutation 变异体在发布提交后已由 HMC
-在 `c4931c40` 上完成 97/97 sweep（§7），最终树的基线重钉与复跑仍 `[UNVERIFIED]`。
+在 `c4931c40` 上完成 97/97 sweep（§7），**本树的 99 spec / 878 变异体全量 sweep 仍未跑**
+（`[UNVERIFIED]`，§7 的 `POSIX mutation sweep` 条目）；本树的 spec 证据是
+`spec-static-check` 的 **99 spec / 878 mutation、锚点唯一** 与 `--all` 的 **99 spec measured,
+0 drift**——两者都**不是** 878 个变异体的执行结果。**本树的 wire 对比也没有做**（见上）。
 
 ## 4. 变更文件与测试
 
@@ -537,7 +551,8 @@ linear spec 扩到 12 条突变、`04503830` 再把两条锚点改指重写后�
 1. **mutation 锚点漂移（已修，`ad45bfb3`）**：`identity-neutralize-paragraph-bound.json`
    第 7 条的 anchor 曾指向 A4 修复删掉的 `rule('a4-cli-line', …)` 行 → `hits=0`。现在
    anchor 指到 `applySpans('a4-cli-line', cli.short, CLI_LINE_REPLACEMENT, true)`；
-   `node scripts/spec-static-check.mjs` exit 0（97 spec / 863 mutation，锚点唯一）。
+   `node scripts/spec-static-check.mjs` exit 0（`ad45bfb3` 时点 97 spec / 863 mutation；本树
+   已扩到 **99 spec / 878 mutation**，锚点唯一）。
 2. **docs guard §0（已修，`d5d44f6f` / `deeb2539`）**：§0 的 `master` 从 `36387a32` 指到
    `ad45bfb3`，再被 `326880f5` 的 src 变更拉开，最后由 `d5d44f6f` 重指到 `326880f5`；
    `deeb2539` 再重指到 catalogue-body 修复后的代码 HEAD `8131848c`。发布提交把 §0 的
