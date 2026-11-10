@@ -18,6 +18,7 @@ import { mkdirSync, createWriteStream } from 'fs';
 import { join } from 'path';
 import { randomUUID } from 'crypto';
 import { config, log } from '../config.js';
+import { safeLogValue } from '../log-safety.js';
 import { createLogFileWriter, readLogPolicy } from './log-files.js';
 
 const MAX_BUFFER = 1000;
@@ -86,6 +87,59 @@ function isCtx(x) {
     && Object.getPrototypeOf(x) === Object.prototype;
 }
 
+// ── Injection boundary ──────────────────────────────────────────────────────
+// Callers interpolate request data (model names, tool names, upstream error
+// text) into log.*() arguments. Before this scrub, a `\n` inside such a value
+// forged a second record and an ANSI ESC sequence reached the operator's
+// terminal (pm2 console print) or a downloaded log attachment (format=txt).
+//
+// The scrub lives HERE — the single funnel every log.*() call passes through —
+// rather than at the ~30 call sites that interpolate caller data, because the
+// per-callsite version cannot stay complete: each new or missed interpolation
+// reopens the hole silently, while the funnel covers present and future
+// callers for free. Cleaning the ENTRY (not just the console echo) is what
+// makes the ring buffer, SSE subscribers, both JSONL legs and the txt export
+// safe without touching their own code: they all read the same scrubbed
+// object. JSONL needed the least of this — JSON.stringify already escaped the
+// characters inside the string — but the entry now carries '·' so a line that
+// LOOKED multiline stays visibly single-line wherever it is rendered.
+//
+// Trade-off, deliberate: an Error's multi-line stack collapses to '·'-joined
+// text in the entry and console echo. Readability is preserved, integrity wins.
+const MAX_LOG_MSG = 4000;      // stacks stay intact; a flood cannot bloat one entry
+const MAX_CTX_STRING = 240;    // ctx fields are short labels/ids/error text
+const MAX_CTX_KEY = 64;
+const MAX_CTX_DEPTH = 3;       // past this a container is replaced, not traversed
+const CTX_TRUNCATED = '[truncated:ctx-depth]';
+
+function scrubCtxValue(value, depth) {
+  if (typeof value === 'string') return safeLogValue(value, MAX_CTX_STRING);
+  if (value && typeof value === 'object'
+    && (Array.isArray(value) || Object.getPrototypeOf(value) === Object.prototype)) {
+    // A container this deep is never traversed, so its strings cannot be
+    // scrubbed — swap the whole thing for a marker (same contract as
+    // trace.js's DEPTH_TRUNCATION).
+    if (depth >= MAX_CTX_DEPTH) return CTX_TRUNCATED;
+    if (Array.isArray(value)) return value.map((v) => scrubCtxValue(v, depth + 1));
+    const out = {};
+    for (const [k, v] of Object.entries(value)) {
+      out[safeLogValue(k, MAX_CTX_KEY)] = scrubCtxValue(v, depth + 1);
+    }
+    return out;
+  }
+  // Numbers, booleans, null and non-plain objects (Error, Date) cannot carry
+  // control characters into a string context; leave them untouched.
+  return value;
+}
+
+function scrubCtx(ctx) {
+  const out = {};
+  for (const [k, v] of Object.entries(ctx)) {
+    out[safeLogValue(k, MAX_CTX_KEY)] = scrubCtxValue(v, 0);
+  }
+  return out;
+}
+
 // Save originals before patching
 const _orig = {
   debug: log.debug,
@@ -102,7 +156,11 @@ for (const level of ['debug', 'info', 'warn', 'error']) {
       ctx = args[args.length - 1];
       args = args.slice(0, -1);
     }
-    const msg = args.map(formatArg).join(' ');
+    // Scrub at the write point: msg + ctx feed the buffer, the JSONL line and
+    // the console echo below from this one cleaned pair (see the boundary note
+    // at scrubCtxValue for why this is the funnel and not a call-site fix).
+    const msg = safeLogValue(args.map(formatArg).join(' '), MAX_LOG_MSG);
+    if (ctx) ctx = scrubCtx(ctx);
 
     const entry = { ts: Date.now(), level, msg };
     if (ctx) entry.ctx = ctx;
@@ -125,14 +183,16 @@ for (const level of ['debug', 'info', 'warn', 'error']) {
       }
     } catch {}
 
-    // Also print to console so pm2 logs still work
+    // Also print to console so pm2 logs still work. The echo reuses the
+    // SCRUBBED msg/ctx — echoing raw `args` would bypass the boundary for the
+    // one sink that renders directly into an operator's terminal.
     if (ctx) {
       const ctxStr = Object.entries(ctx)
         .map(([k, v]) => `${k}=${typeof v === 'string' ? v : JSON.stringify(v)}`)
         .join(' ');
-      _orig[level](...args, ctxStr ? `{${ctxStr}}` : '');
+      _orig[level](ctxStr ? `${msg} {${ctxStr}}` : msg);
     } else {
-      _orig[level](...args);
+      _orig[level](msg);
     }
   };
 }

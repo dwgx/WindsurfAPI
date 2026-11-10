@@ -7927,7 +7927,9 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
       const r = await this.api('GET', '/langserver/binary');
       if (!r.ok) {
         const msg = I18n.t('toast.lsBinaryUnreadable', { error: r.error || 'unknown' });
-        el.innerHTML = `<span style="color: var(--error-text)">${msg}</span> · <code style="font-family:monospace">${r.path || ''}</code>`;
+        // msg carries the server-side error string and r.path is a server
+        // path — both are innerHTML sinks and must be text-escaped.
+        el.innerHTML = `<span style="color: var(--error-text)">${this.esc(msg)}</span> · <code style="font-family:monospace">${this.esc(r.path || '')}</code>`;
         return;
       }
       const sizeMb = (r.sizeBytes / (1024 * 1024)).toFixed(1);
@@ -8222,7 +8224,9 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
   getWindsurfLoginFailActions(r) {
     if (!r.isAuthFail) return '';
     const inlineId = 'inline-token-' + Math.random().toString(36).slice(2, 8);
-    const emailAttr = this.esc(r.email || '');
+    // Interpolated into an inline onclick JS string below — escJsAttr, not
+    // esc(): &#39; decodes back to a live quote inside the JS string.
+    const emailAttr = this.escJsAttr(r.email || '');
     // A rejected password on an account whose method was never confirmed is
     // exactly the case that used to dead-end at "wrong password". Offer the
     // code path next to OAuth and the token.
@@ -10761,7 +10765,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
         const availIn = models.length - blockedIn;
         return `<div class="model-group">
           <div class="model-group-head">
-            <span class="model-group-name"><span class="provider-swatch" data-provider="${this.escAttr(p)}"></span>${providerLabels[p] || p}</span>
+            <span class="model-group-name"><span class="provider-swatch" data-provider="${this.esc(p)}"></span>${providerLabels[p] || this.esc(p)}</span>
             <span class="model-group-count">${availIn}/${models.length}</span>
           </div>
           <div class="model-chips">

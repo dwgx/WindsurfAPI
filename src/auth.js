@@ -2565,10 +2565,27 @@ export function resetAccountErrors(id) {
  * keyed by the address it was stored under, and re-login / removal must keep
  * finding it after a rename.
  */
+// The label is stored into `email` and rendered into dashboard rows, batch
+// results, the search corpus and log lines. The write took the string
+// verbatim, so a PATCHed label could carry C0/C1 controls (ANSI into the
+// operator's terminal when a log line prints it), characters that break the
+// markup contexts escapers don't reach, or a length that wedges the table.
+// Printable Unicode is legitimate (non-ASCII names exist); control chars and
+// a >128-char blob are not. Rejects via a coded error so the API layer can
+// return a 400 with a stable code instead of a silent no-op.
+const MAX_ACCOUNT_LABEL = 128;
+const LABEL_UNSAFE = /[\u0000-\u001F\u007F-\u009F]/;
+
 export function updateAccountLabel(id, label) {
   const account = accounts.find(a => a.id === id);
   if (!account) return false;
-  account.email = label;
+  const next = typeof label === 'string' ? label.trim() : '';
+  if (!next || next.length > MAX_ACCOUNT_LABEL || LABEL_UNSAFE.test(next)) {
+    throw Object.assign(new Error('ERR_ACCOUNT_LABEL_INVALID'), {
+      code: 'ERR_ACCOUNT_LABEL_INVALID', statusCode: 400,
+    });
+  }
+  account.email = next;
   saveAccounts();
   return true;
 }

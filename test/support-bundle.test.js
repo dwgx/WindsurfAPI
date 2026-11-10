@@ -530,3 +530,73 @@ describe('support-bundle: credential shapes the shared scanner misses', () => {
     }
   });
 });
+
+describe('support-bundle: sensitive field names the word-boundary list missed (S5-P3)', () => {
+  it('redacts *_token / *_key / *_secret / jwt / bearer / credential spellings, nested, with hex/UUID values', () => {
+    // The values deliberately carry no shape the shared scanner recognises:
+    // hex and UUID forms are what opaque session material looks like, and the
+    // pre-fix list shipped them whenever the KEY spelled a name the \b could
+    // not cross (`_` is a word char — \btoken\b never fired inside csrf_token)
+    // or simply was not enumerated (jwt, credential, bearer, *_key).
+    const HEX = 'deadbeefcafebabe0123456789abcdef0123456789abcdef01234567';
+    const UUIDV = '11111111-2222-4333-8444-555555555555';
+    const CAMEL = 'camelFixtureSortKey99';
+    const leg = `${JSON.stringify({
+      traceId: '0009-names',
+      nested: {
+        deep: {
+          csrf_token: HEX,        // \btoken\b cannot cross the underscore
+          session_token: UUIDV,   // was enumerated; stays pinned
+          accessToken: HEX,       // camel spelling OAuth payloads use
+          client_secret: UUIDV,   // \bsecret\b — same underscore gap
+          private_key: HEX,
+          jwt: UUIDV,
+          credential: HEX,
+          bearer: UUIDV,
+          sort_key: CAMEL,        // *_key family was absent entirely
+          '__RequestVerificationToken': HEX,
+        },
+      },
+      headers: { 'x-custom-token': HEX, 'set-cookie': UUIDV },
+      benign: { requestId: 'r_123', modelName: 'swe-fixture', sort_keys: 'plural-stays' },
+    }, null, 2)}\n`;
+
+    const caseRun = bundleTrace('0009-names', { '02-routing.json': leg });
+    try {
+      assert.equal(caseRun.result.status, 0,
+        `the named-field gate must redact, not refuse:\nstdout: ${caseRun.result.stdout}\nstderr: ${caseRun.result.stderr}`);
+      const bytes = allZipBytes(caseRun.zip);
+      for (const value of [HEX, UUIDV, CAMEL]) {
+        assert.ok(!bytes.includes(Buffer.from(value)),
+          `value ${value.slice(0, 16)}… reached the archive under a missed field name`);
+      }
+      const text = caseRun.zip.get('traces/0009-names/02-routing.json').data.toString('utf8');
+      assert.doesNotThrow(() => JSON.parse(text), 'the redacted leg must stay valid JSON');
+      // Non-secret fields survive; a plural name is NOT a credential field —
+      // the tail must terminate the name.
+      assert.match(text, /"requestId": "r_123"/);
+      assert.match(text, /"sort_keys": "plural-stays"/);
+    } finally {
+      rmSync(caseRun.root, { recursive: true, force: true });
+    }
+  });
+
+  it('the residual check sees the same names (a missed name must refuse, not ship)', () => {
+    // If SECRET_FIELD ever stops recognising a name RESIDUAL_FIELD knows, the
+    // residual pass is the refuse-path. Prove the shared list keeps them in
+    // sync: a leg whose only secret sits under a name added in this wave must
+    // bundle cleanly BECAUSE both patterns see it — assert via the manifest.
+    const value = 'residualFixtureProbe42';
+    const leg = `${JSON.stringify({ traceId: '0008-res', meta: { csrfToken: value } }, null, 2)}\n`;
+    const caseRun = bundleTrace('0008-res', { '02-routing.json': leg });
+    try {
+      assert.equal(caseRun.result.status, 0,
+        `status 0 means the name was redacted, not missed:\nstderr: ${caseRun.result.stderr}`);
+      const text = caseRun.zip.get('traces/0008-res/02-routing.json').data.toString('utf8');
+      assert.match(text, /"csrfToken": "\[redacted\]"/);
+      assert.ok(!allZipBytes(caseRun.zip).includes(Buffer.from(value)));
+    } finally {
+      rmSync(caseRun.root, { recursive: true, force: true });
+    }
+  });
+});

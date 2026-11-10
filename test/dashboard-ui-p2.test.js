@@ -94,7 +94,7 @@ describe('provider swatches (P2-12 / AC-COLOR-1)', () => {
   it('renders swatches from tokens, not an inline hex map', () => {
     assert.ok(!/providerColors/.test(HTML), 'the hardcoded colour map is gone');
     assert.ok(!/provider-swatch" style="background:/.test(HTML), 'no inline background on the swatch');
-    assert.match(HTML, /<span class="provider-swatch" data-provider="\$\{this\.escAttr\(p\)\}"><\/span>/);
+    assert.match(HTML, /<span class="provider-swatch" data-provider="\$\{this\.esc\(p\)\}"><\/span>/);
     for (const provider of PROVIDERS) {
       assert.match(HTML, new RegExp(`\\.provider-swatch\\[data-provider="${provider}"\\] \\{ background: var\\(--prov-${provider}\\); \\}`));
     }

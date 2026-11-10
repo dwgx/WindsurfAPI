@@ -183,18 +183,53 @@ function collectFiles(rootAbs, maxFileBytes) {
 // that is not `[redacted]` is treated as an unredacted leak.
 const REDACTED = '[redacted]';
 
+// Sensitive field names, shared by SECRET_FIELD / RESIDUAL_FIELD and the query
+// pair below so the four patterns cannot drift apart.
+//
+// Two coverage gaps used to leak: (a) a bare `token`/`secret`/`key` tail after
+// a `_` was invisible to `\b` (`_` is a word char, so `\btoken\b` never fired
+// inside `csrf_token` — only the explicitly enumerated *_token spellings were
+// covered); (b) jwt / bearer / credential / the *_key and *_secret families
+// were missing outright. The three catch-all alternatives below claim any
+// <name>[-_]<tail>, <sep-prefixed><tail> or <alnum><tail> spelling —
+// access_token, session_token, csrf_token, client_secret, private-key,
+// sort_key, __RequestVerificationToken, and the camel forms OAuth payloads use
+// (accessToken, refreshToken) — without an allowlist to keep in sync. Bare
+// `key`/`jwt`/`bearer` tails stay absent from the standalone list so
+// `sort_keys`, `tokenizer` and `keystore` still don't match; the trailing \b
+// in the consuming regexes keeps `xtokenizer` out as well. Deliberate
+// over-redaction: a `monkey:`-shaped field loses its value — a wrong
+// [redacted] beats a live credential in a public attachment.
+const SECRET_NAME_SRC =
+  'authorization|proxy-authorization|x-api-key|api[-_]?key|caller[-_]?key'
+  + '|access[-_]?token|refresh[-_]?token|id[-_]?token|session[-_]?token|auth[-_]?token|csrf[-_]?token|xsrf[-_]?token'
+  + '|token|jwt|bearer|secret|client[-_]?secret|password|passwd|cookie|set-cookie|credentials?'
+  + '|private[-_]?key|secret[-_]?key|session[-_]?key|signing[-_]?key'
+  + '|(?:[a-z0-9]+[-_])+(?:token|jwt|key|secret|password|passwd|cookie|credentials?|bearer)'
+  + '|[-_]+[a-z0-9]*(?:token|jwt|key|secret|password|passwd|cookie|credentials?|bearer)'
+  + '|[a-z0-9]+(?:token|jwt|key|secret|password|passwd|cookie|credentials?|bearer)';
+
 // A field NAME followed by `:` or `=` and a scalar value. The value class excludes quotes,
 // braces, brackets, commas and newlines, so JSON structure survives; spaces are allowed
 // after the first character because an Authorization value is `Bearer <token>`. The first
 // character must be non-whitespace: otherwise the optional whitespace before the value can
 // backtrack and turn `"token": ""` into a match on the space alone, corrupting the JSON.
-const SECRET_FIELD = /(\b(?:authorization|proxy-authorization|x-api-key|api[-_]?key|caller[-_]?key|access[-_]?token|refresh[-_]?token|id[-_]?token|session[-_]?token|token|secret|password|passwd|cookie)\b["']?\s*[:=]\s*["']?)([^"'{}[\],\r\n\s][^"'{}[\],\r\n]*)/gi;
+// The leading boundary is (?<![A-Za-z0-9]), not \b: \b treats _ as a word char and would
+// keep the catch-alls from ever starting inside `foo_token`.
+const SECRET_FIELD = new RegExp(
+  `((?<![A-Za-z0-9])(?:${SECRET_NAME_SRC})\\b["']?\\s*[:=]\\s*["']?)([^"'{}[\\],\\r\\n\\s][^"'{}[\\],\\r\\n]*)`,
+  'gi',
+);
 
 // A URL query credential. Presigned object URLs (S3 and compatible stores) put the whole
 // grant in the query string; `X-Amz-*` covers SigV4's Credential/Signature/Security-Token
-// and any later parameter, and the named fallbacks cover the other spellings in the wild.
+// and any later parameter, and the shared name list covers the other spellings in the
+// wild (including `_`-joined forms like `?csrf_token=` that the same \b gap hid here).
 // The value class stops at URL/JSON delimiters and at `[`/`]` so `[redacted]` is idempotent.
-const QUERY_CREDENTIAL = /([?&](?:x-amz-[a-z0-9-]+|signature|token|key|api[-_]?key|access[-_]?token|refresh[-_]?token|session[-_]?token|password|secret)=)([^&#"'\s\\[\]]+)/gi;
+const QUERY_CREDENTIAL = new RegExp(
+  `([?&](?:x-amz-[a-z0-9-]+|signature|key|${SECRET_NAME_SRC})=)([^&#"'\\s\\\\[\\]]+)`,
+  'gi',
+);
 
 // Account identity rather than a credential, but the routing leg stores `ccAcct.email` and
 // an issue attachment is public. Any address shape is removed, wherever it appears.
@@ -202,19 +237,29 @@ const EMAIL_ADDRESS = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A
 
 // Independent residual patterns: they look for a sensitive NAME and then assert the value
 // that follows is exactly `[redacted]`. Deliberately not the redaction regexes — a future
-// edit that changes a replacement must fail here instead of shipping the value.
-const RESIDUAL_FIELD = /\b(?:authorization|proxy-authorization|x-api-key|api[-_]?key|caller[-_]?key|access[-_]?token|refresh[-_]?token|id[-_]?token|session[-_]?token|token|secret|password|passwd|cookie)\b["']?\s*[:=]\s*["']?/gi;
-const RESIDUAL_QUERY = /[?&](?:x-amz-[a-z0-9-]+|signature|token|key|api[-_]?key|access[-_]?token|refresh[-_]?token|session[-_]?token|password|secret)=/gi;
+// edit that changes a replacement must fail here instead of shipping the value. The NAME
+// list itself is shared (SECRET_NAME_SRC): a name the redactor knows but the residual
+// check cannot find is precisely the gap this pattern exists to catch.
+const RESIDUAL_FIELD = new RegExp(`(?<![A-Za-z0-9])(?:${SECRET_NAME_SRC})\\b["']?\\s*[:=]\\s*["']?`, 'gi');
+const RESIDUAL_QUERY = new RegExp(`[?&](?:x-amz-[a-z0-9-]+|signature|key|${SECRET_NAME_SRC})=`, 'gi');
 const RESIDUAL_EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g;
 
 function redactText(text) {
   let count = 0;
   const redacted = text
-    .replace(SECRET_FIELD, (_match, prefix) => {
+    // The query pattern runs FIRST: its value class stops at `&`, so each
+    // `?name=` parameter is redacted individually. SECRET_FIELD's value class
+    // tolerates `&`, which used to be harmless — the shared name list now
+    // includes `credential`, and `X-Amz-Credential=AKIA…&X-Amz-Signature=…`
+    // would let the field regex swallow the signature (and every later
+    // parameter) into one redaction. After QUERY_CREDENTIAL has run, the
+    // remaining `name=[redacted]` text is idempotent for SECRET_FIELD: `[`
+    // cannot start its value class.
+    .replace(QUERY_CREDENTIAL, (_match, prefix) => {
       count += 1;
       return `${prefix}${REDACTED}`;
     })
-    .replace(QUERY_CREDENTIAL, (_match, prefix) => {
+    .replace(SECRET_FIELD, (_match, prefix) => {
       count += 1;
       return `${prefix}${REDACTED}`;
     })

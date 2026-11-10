@@ -206,6 +206,14 @@ test('the real logger applies environment limits while preserving memory, SSE an
   const dir = join(f.dir, 'logs');
   await mkdir(dir);
   await writeFile(join(dir, 'app-2000-01-01.jsonl'), 'expired\n');
+  // S5-P1 changed what can trigger the writer's error arm: the entry boundary
+  // caps every message at MAX_LOG_MSG, so the old 1MB-line trigger can never
+  // exceed the 1MB file limit again. The writer's other documented failure —
+  // 'log path is not a regular file' — is exercised instead by an owned name
+  // that is a directory: every warn/error append throws on it while app
+  // appends keep working.
+  const today = new Date().toISOString().slice(0, 10);
+  await mkdir(join(dir, `error-${today}.jsonl`));
   const loggerUrl = new URL('../src/dashboard/logger.js', import.meta.url).href;
   const configUrl = new URL('../src/config.js', import.meta.url).href;
   const child = spawnSync(process.execPath, ['--input-type=module', '-e', `
@@ -227,7 +235,13 @@ test('the real logger applies environment limits while preserving memory, SSE an
   assert.doesNotMatch(child.stdout, /disk-debug-sentinel/);
   const names = (await readdir(dir)).sort();
   assert.equal(names.length, 2);
-  const contents = await Promise.all(names.map(name => readFile(join(dir, name), 'utf8')));
+  // error-<today>.jsonl is the directory that blocks the error leg — only
+  // regular files are readable log output.
+  const contents = [];
+  for (const name of names) {
+    if ((await stat(join(dir, name))).isFile()) contents.push(await readFile(join(dir, name), 'utf8'));
+  }
+  assert.equal(contents.length, 1, 'only the app leg was written');
   assert.ok(contents.some(text => text.includes('disk-debug-sentinel')));
   assert.ok(contents.every(text => text.includes('disk-warning-sentinel')));
   assert.ok(contents.every(text => Buffer.byteLength(text) < 1024 * 1024));

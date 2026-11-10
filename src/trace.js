@@ -48,7 +48,19 @@ export function newTraceId() {
 // values included — verbatim on disk. Diagnostic loss is the deliberate price:
 // every object/array below depth 6 in a persisted leg reads as DEPTH_TRUNCATION
 // instead of its contents.
-const SECRET_KEYS = /^(authorization|x-api-key|api[-_]?key|token|apikey|password|secret|refresh[-_]?token|id[-_]?token|cookie)$/i;
+// Anchored name match. The `_`-joined families used to leak here the same way
+// they did in support-bundle.mjs: `access_token`/`session_token`/`csrf_token`
+// needed explicit enumeration because the anchor + alternation never saw the
+// tail inside a longer name, and jwt/bearer/credential/`*_key`/`*_secret` were
+// absent entirely. Two catch-all alternatives normalise case / hyphen /
+// underscore / camel spellings: <anything>[-_]<tail> covers access_token and
+// __RequestVerificationToken; <alnum><tail> covers the camel/squashed forms
+// OAuth payloads actually use (refreshToken, idToken, accessKey). Deliberate
+// over-redaction: `monkey`/`passkey`-shaped names are claimed too — a wrong
+// [redacted] in a diagnostic leg beats a live credential on disk. Plain
+// `sort_keys`, `tokenizer`, `keystore` still do not match: the tail must
+// terminate the name.
+const SECRET_KEYS = /^(?:authorization|proxy-authorization|x-api-key|api[-_]?key|apikey|caller[-_]?key|token|jwt|bearer|secret|client[-_]?secret|password|passwd|cookie|set-cookie|credentials?|access[-_]?token|refresh[-_]?token|id[-_]?token|session[-_]?token|auth[-_]?token|csrf[-_]?token|xsrf[-_]?token|private[-_]?key|secret[-_]?key|session[-_]?key|signing[-_]?key|.*[-_][a-z0-9]*(?:token|jwt|key|secret|password|passwd|cookie|credentials?|bearer)|[a-z0-9]+(?:token|jwt|key|secret|password|passwd|cookie|credentials?|bearer))$/i;
 const MAX_TRACE_DEPTH = 6;
 const DEPTH_TRUNCATION = '[truncated:max-depth]';
 function redact(value, depth = 0) {

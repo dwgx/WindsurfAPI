@@ -2252,7 +2252,26 @@ const App = {
   systemPromptDomId(key) {
     return `sp-${encodeURIComponent(String(key == null ? '' : key)).replace(/%/g, '_')}`;
   },
-  escAttr(s) { return this.esc(s).replace(/\\/g, '\\\\').replace(/'/g, "\\'"); },
+  // For values interpolated into an inline onclick JS string
+  // (onclick="App.f('...')"): the HTML attribute parser decodes &#39; back to
+  // ' BEFORE the JS engine sees it, so HTML-escaping alone — the previous
+  // escAttr helper composed esc() first, which consumed every ' into &#39;
+  // and left its .replace(/'/g,"\\'") no target — handed the JS string a
+  // live quote. Escape for the JS string instead: the output below contains
+  // no raw ' " < > & at all, which makes it simultaneously safe inside the
+  // double-quoted attribute. Same helper contract as index.html's escJsAttr.
+  escJsAttr(s) {
+    // U+2028 / U+2029 are expressed as escape sequences below — a raw one is
+    // a JS line terminator and inside this regex literal would break the
+    // whole source file.
+    const map = {
+      "\\": "\\\\", "'": "\\'", "\"": "\\\"",
+      "<": "\\x3c", ">": "\\x3e", "&": "\\x26",
+      "\r": "\\r", "\n": "\\n",
+      "\u2028": "\\u2028", "\u2029": "\\u2029",
+    };
+    return String(s == null ? "" : s).replace(/[\\'"<>&\r\n\u2028\u2029]/g, c => map[c]);
+  },
 
   /* ── toast ── */
   toast(msg, type = 'success') {
@@ -2480,7 +2499,7 @@ const App = {
       const r = await this.api('POST', '/oauth-login', { idToken: cred.idToken, refreshToken: cred.refreshToken, email: cred.email, provider: cred.provider, autoAdd: true });
       if (r.error) throw new Error(r.error);
       status.style.color = 'var(--good)';
-      status.innerHTML = `<svg class="ic" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px"><polyline points="20 6 9 17 4 12"/></svg> logged in as ${r.email || label}`;
+      status.innerHTML = `<svg class="ic" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px"><polyline points="20 6 9 17 4 12"/></svg> logged in as ${this.esc(r.email || label)}`;
       this.toast(`${label} login OK`, 'success');
       this.loadAccounts();
       this.pushLoginHistory({ time: new Date().toISOString(), email: r.email || label, proxy: 'direct', status: 'success', method: label });
@@ -2527,7 +2546,9 @@ const App = {
   getWindsurfLoginFailActions(r, email) {
     if (!r.isAuthFail) return '';
     const inlineId = 'inline-token-' + Math.random().toString(36).slice(2, 8);
-    const emailAttr = this.esc(email || r.email || '');
+    // The address lands inside an inline onclick JS string below — esc() is
+    // the wrong context (its &#39; decodes back to a live quote).
+    const emailAttr = this.escJsAttr(email || r.email || '');
     const en = I18n.locale === 'en';
     const t = {
       tryOther: en ? 'Try another way' : '换种方式登录',
@@ -2777,7 +2798,7 @@ const App = {
       const blockedCount = (a.blockedModels || []).length;
       const availCount = tierModels.length - blockedCount;
       const capsHtml = tierModels.length
-        ? `<button class="btn btn-ghost btn-xs" onclick="App.openBlockedModal('${this.escAttr(a.id)}')" title="edit">
+        ? `<button class="btn btn-ghost btn-xs" onclick="App.openBlockedModal('${this.escJsAttr(a.id)}')" title="edit">
              <span style="color:var(--good);font-weight:600">${availCount}</span><span class="text-mute">/${tierModels.length}</span>
              ${blockedCount > 0 ? `<span class="badge warn" style="margin-left:4px">−${blockedCount}</span>` : ''}
            </button>`
@@ -2813,24 +2834,24 @@ const App = {
       }
       const isExpanded = this._expandedAccounts.has(a.id);
       return `<tr${isExpanded ? ' class="expanded"' : ''}>
-        <td><button class="expand-chev ${isExpanded ? 'open' : ''}" onclick="App.toggleAccountDetail('${this.escAttr(a.id)}')"><svg class="ic" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px"><polyline points="9 18 15 12 9 6"/></svg></button><code>${this.esc((a.id||'').slice(0,12))}</code></td>
+        <td><button class="expand-chev ${isExpanded ? 'open' : ''}" onclick="App.toggleAccountDetail('${this.escJsAttr(a.id)}')"><svg class="ic" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px"><polyline points="9 18 15 12 9 6"/></svg></button><code>${this.esc((a.id||'').slice(0,12))}</code></td>
         <td>${this.esc(a.email)}</td>
-        <td><span class="tier ${this.esc(tier)}" onclick="App.overrideTier('${this.escAttr(a.id)}','${this.escAttr(tier)}')">${tierLabel[tier] || this.esc(tier)}${a.tierManual ? ' ' + `<svg class="ic" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>` : ''}</span></td>
+        <td><span class="tier ${this.esc(tier)}" onclick="App.overrideTier('${this.escJsAttr(a.id)}','${this.escJsAttr(tier)}')">${tierLabel[tier] || this.esc(tier)}${a.tierManual ? ' ' + `<svg class="ic" width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>` : ''}</span></td>
         <td>${rpmCell}</td>
         <td>${creditCell}</td>
         <td>${capsHtml}</td>
         <td><span class="badge ${a.status}">${a.status}</span>${rateLimitBadge}</td>
         <td style="color:${a.errorCount > 0 ? 'var(--error)' : 'inherit'};font-family:'JetBrains Mono',monospace">${a.errorCount}</td>
         <td class="text-sm nowrap">${a.lastUsed ? new Date(a.lastUsed).toLocaleString() : '—'}</td>
-        <td class="nowrap"><code title="reveal & copy" style="cursor:pointer" onclick="App.revealAndCopyKey('${this.escAttr(a.id)}')">${this.esc(a.apiKey_masked || a.id || '')}</code></td>
+        <td class="nowrap"><code title="reveal & copy" style="cursor:pointer" onclick="App.revealAndCopyKey('${this.escJsAttr(a.id)}')">${this.esc(a.apiKey_masked || a.id || '')}</code></td>
         <td class="nowrap"><div class="btn-group">
-          <button class="btn btn-ghost btn-xs" onclick="App.probeAccount('${this.escAttr(a.id)}')">probe</button>
-          <button class="btn btn-ghost btn-xs" onclick="App.refreshCredits('${this.escAttr(a.id)}')"><svg class="ic" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg></button>
+          <button class="btn btn-ghost btn-xs" onclick="App.probeAccount('${this.escJsAttr(a.id)}')">probe</button>
+          <button class="btn btn-ghost btn-xs" onclick="App.refreshCredits('${this.escJsAttr(a.id)}')"><svg class="ic" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px"><polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg></button>
           ${a.status === 'active'
-            ? `<button class="btn btn-ghost btn-xs" onclick="App.toggleAccount('${this.escAttr(a.id)}','disabled')">disable</button>`
-            : `<button class="btn btn-good btn-xs" onclick="App.toggleAccount('${this.escAttr(a.id)}','active')">enable</button>`}
-          <button class="btn btn-ghost btn-xs" onclick="App.resetErrors('${this.escAttr(a.id)}')">reset</button>
-          <button class="btn btn-ghost btn-xs" style="color:var(--error)" onclick="App.deleteAccount('${this.escAttr(a.id)}')">×</button>
+            ? `<button class="btn btn-ghost btn-xs" onclick="App.toggleAccount('${this.escJsAttr(a.id)}','disabled')">disable</button>`
+            : `<button class="btn btn-good btn-xs" onclick="App.toggleAccount('${this.escJsAttr(a.id)}','active')">enable</button>`}
+          <button class="btn btn-ghost btn-xs" onclick="App.resetErrors('${this.escJsAttr(a.id)}')">reset</button>
+          <button class="btn btn-ghost btn-xs" style="color:var(--error)" onclick="App.deleteAccount('${this.escJsAttr(a.id)}')">×</button>
         </div></td>
       </tr>${isExpanded ? `<tr class="detail-row"><td colspan="11">${this.renderAccountDetail(a)}</td></tr>` : ''}`;
     }).join('') || `<tr class="empty-row"><td colspan="11">no accounts yet · paste a key above ↑ or grab one from /windsurf-login</td></tr>`;
@@ -2910,7 +2931,7 @@ const App = {
         </div>
 
         <div class="detail-card" style="grid-column:1/-1">
-          <div class="detail-card-head"><span class="num-circle">M</span>models <span class="text-mute text-xs" style="font-style:normal;font-family:'JetBrains Mono',monospace">${availCount} / ${tierModels.length} available${blocked.size > 0 ? ` · ${blocked.size} blocked` : ''}</span><div style="margin-left:auto"><button class="btn btn-ghost btn-xs" onclick="App.openBlockedModal('${this.escAttr(a.id)}')">edit</button></div></div>
+          <div class="detail-card-head"><span class="num-circle">M</span>models <span class="text-mute text-xs" style="font-style:normal;font-family:'JetBrains Mono',monospace">${availCount} / ${tierModels.length} available${blocked.size > 0 ? ` · ${blocked.size} blocked` : ''}</span><div style="margin-left:auto"><button class="btn btn-ghost btn-xs" onclick="App.openBlockedModal('${this.escJsAttr(a.id)}')">edit</button></div></div>
           ${tierModels.length === 0 ? `<div class="text-mute italic" style="padding:6px 0">no allowed models — run probe</div>` : Object.entries(groups).map(([p, ms]) => {
             ms.sort((x,y) => (x.credit||0)-(y.credit||0));
             const blockedIn = ms.filter(m => blocked.has(m.id)).length;
@@ -3099,7 +3120,7 @@ const App = {
     const current = this.modelAccessConfig.list;
     const cont = document.getElementById('model-list-current');
     cont.innerHTML = current.length
-      ? `<div class="model-chips">${current.map(m => `<span class="model-chip selected">${this.esc(m)}<span class="remove" onclick="App.removeModelFromList('${this.escAttr(m)}')">×</span></span>`).join('')}</div>`
+      ? `<div class="model-chips">${current.map(m => `<span class="model-chip selected">${this.esc(m)}<span class="remove" onclick="App.removeModelFromList('${this.escJsAttr(m)}')">×</span></span>`).join('')}</div>`
       : `<div class="text-xs text-dim italic">empty</div>`;
     this.filterModels();
   },
@@ -3116,7 +3137,7 @@ const App = {
     document.getElementById('model-chips-container').innerHTML = Object.entries(grouped).map(([p, ms]) => `
       <div class="provider-group">
         <div class="provider-label">${this.esc(p)}</div>
-        <div class="model-chips">${ms.map(m => `<span class="model-chip ${list.includes(m.id) ? 'selected' : ''}" onclick="App.toggleModelInList('${this.escAttr(m.id)}')">${this.esc(m.name)}</span>`).join('')}</div>
+        <div class="model-chips">${ms.map(m => `<span class="model-chip ${list.includes(m.id) ? 'selected' : ''}" onclick="App.toggleModelInList('${this.escJsAttr(m.id)}')">${this.esc(m.name)}</span>`).join('')}</div>
       </div>`).join('') || '<div class="text-mute italic">no matches</div>';
   },
   async setModelMode(mode) { await this.api('PUT', '/model-access', { mode }); this.modelAccessConfig.mode = mode; this.updateModelListUI(); this.toast('mode updated'); },
@@ -3154,7 +3175,7 @@ const App = {
       return `<tr>
         <td>${this.esc(a.email)} <code class="text-xs">${this.esc(a.id)}</code></td>
         <td>${p ? `<code>${this.esc(p.type)}://${p.username ? this.esc(p.username) + '@' : ''}${this.esc(p.host)}:${this.esc(String(p.port))}</code>` : `<span class="text-sm text-dim italic">none</span>`}</td>
-        <td class="nowrap"><div class="btn-group"><button class="btn btn-ghost btn-xs" onclick="App.editAccountProxy('${this.escAttr(a.id)}','${this.escAttr(a.email)}')">configure</button>${p ? `<button class="btn btn-ghost btn-xs" style="color:var(--error)" onclick="App.clearAccountProxy('${this.escAttr(a.id)}')">clear</button>` : ''}</div></td>
+        <td class="nowrap"><div class="btn-group"><button class="btn btn-ghost btn-xs" onclick="App.editAccountProxy('${this.escJsAttr(a.id)}','${this.escJsAttr(a.email)}')">configure</button>${p ? `<button class="btn btn-ghost btn-xs" style="color:var(--error)" onclick="App.clearAccountProxy('${this.escJsAttr(a.id)}')">clear</button>` : ''}</div></td>
       </tr>`;
     }).join('') || `<tr class="empty-row"><td colspan="3">no accounts yet</td></tr>`;
   },
@@ -3381,8 +3402,8 @@ const App = {
         <td style="color:${(a.errorCount||0) > 0 ? 'var(--error)' : 'inherit'};font-family:'JetBrains Mono',monospace">${a.errorCount || 0}</td>
         <td class="text-sm">${a.lastUsed ? new Date(a.lastUsed).toLocaleString() : '—'}</td>
         <td><div class="btn-group">
-          ${(a.errorCount||0) > 0 ? `<button class="btn btn-ghost btn-xs" onclick="App.resetErrors('${this.escAttr(a.id)}')">reset</button>` : ''}
-          ${a.status === 'error' ? `<button class="btn btn-good btn-xs" onclick="App.toggleAccount('${this.escAttr(a.id)}','active')">enable</button>` : ''}
+          ${(a.errorCount||0) > 0 ? `<button class="btn btn-ghost btn-xs" onclick="App.resetErrors('${this.escJsAttr(a.id)}')">reset</button>` : ''}
+          ${a.status === 'error' ? `<button class="btn btn-good btn-xs" onclick="App.toggleAccount('${this.escJsAttr(a.id)}','active')">enable</button>` : ''}
         </div></td>
       </tr>`;
     }).join('') || `<tr class="empty-row"><td colspan="5">all healthy</td></tr>`;
@@ -3498,7 +3519,7 @@ const App = {
       return;
     }
     holder.innerHTML = keys.map(k => {
-      const keyArg = this.escAttr(k);
+      const keyArg = this.escJsAttr(k);
       const promptId = this.systemPromptDomId(k);
       return `
       <div style="border:1px dashed var(--rule-soft);padding:12px">
