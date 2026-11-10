@@ -73,12 +73,30 @@ auth/server、streaming、responses、identity/CTX、connect 与 tests/mutations
   预期）；日志 `hmc:/tmp/wa-sweep-456aadf1.log`。
 - HMC Linux 全量（node24.21.0，`456aadf1`）：7717 pass / **5 fail** / 5 skip——5 败
   全部为两个过期源码 grep 与 UNVERIFIED 登记册过期，与 Windows 门禁同根因，已由
-  `ef7fe524`/`3ced582a` 修复并在冻结树复测全绿；`3ced582a` 的 POSIX 复跑确认见
-  本节末尾增补。node20.19.2 低于 engines 下限（≥22.13.0），其 30 败不计；
-  HMC 无 node22，node22 全量维持 `[UNVERIFIED]`。
+  `ef7fe524`/`3ced582a` 修复并在冻结树复测全绿。node20.19.2 低于 engines 下限
+  （≥22.13.0），其 30 败不计。
+
+**§0.3 POSIX 修复后树确认（HMC，`3ced582a87da` 即冻结 src `18f54aaf` + 文档/测试钉）**
+
+- **node24.21.0**（mise）：`npm run test:release` **623 文件 / 7,727 测试 / 7,722 通过
+  / 0 失败 / 5 跳过**（`hmc:/tmp/node24-release2.log`）。此前一次在 checkout 落定
+  中途的跑（13:54）见 3 个环境性失败（docs-guard 45/47、smoke-matrix 端口），复跑
+  清零，判定瞬态。
+- **node22.23.4**（mise，PATH 外——早前「HMC 无 node22」记录有误，实际已装）：
+  独立两次跑均 **623 文件 / 7,727 / 7,722 pass / 0 fail / 5 skip**
+  （`hmc:/tmp/node22-release.log`；主脑复验 `hmc:/tmp/wa-release-node22-3ced582a-verify.log`）。
+  node22 覆盖缺口消除（engines ≥22.13.0；实测 22.23.4，22.13.x 精确下限矩阵仍 `[UNVERIFIED]`）。
+- POSIX 跳过数 5 = `fs-atomic-windows-acl`(4，Windows-only) + `wire-byte-identity`(1，
+  需 `WIRE_BASE_TREE`——该路径已由 Windows 270/270 覆盖)。
+- **Windows inert 声明的 POSIX 路径在 HMC 实跑全绿**：docker-oneclick-update 24/0、
+  update-script-release-target 47/0、release-signing 18/0、self-update-attestation 11/0、
+  self-update-docker 4/0、self-update-gate 66/0、self-update-ui-state 4/0、
+  self-update-untracked-safety 2/0、mutate-verify-harness 27/0、
+  detach-ls-pool-pressure 1/0（合计 204 测试）。`detach-soak`（DETACH_SOAK=1 选入）
+  与 `devin-connect-relogin-live`（需真实凭据）按设计不计。
 
 **仍 [UNVERIFIED]**：托管 CI、真实上游/live 客户端、HMC 部署/回滚演练、官方 `pr-gate`
-（relogin 凭据缺口）、mutation 全量 POSIX sweep 的最终树复跑（上轮 97/97 于 `c4931c40`）。
+（relogin 凭据缺口）、Node 22.13.x 精确下限矩阵（实测 22.23.4）。
 fishfish（周fish）预告的 3 份报告尚未提供，不作已确认缺陷处理。
 
 ## 1. 发布范围（产品变更）
