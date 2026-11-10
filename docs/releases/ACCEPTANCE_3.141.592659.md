@@ -146,8 +146,10 @@ fishfish（周fish）预告的 3 份报告尚未提供，不作已确认缺陷�
   smoke 内嵌检查 ×1）；补 228 tags 后 docs-guard 复跑 **47/47 绿**、smoke:matrix
   POSIX **EXIT=0**（137/137）。
 - HMC smoke:matrix @3c7422cc：**EXIT=0**。
+- HMC node22 @3c7422cc：625 files / 7,781 tests / **7,776 pass / 0 fail / 5 skip —
+  RELEASE_EXIT=0**（POSIX 双版本闭环：node24 环境件补齐后等价全绿）。
 
-**本节仍 [UNVERIFIED]**：HMC node22 @3c7422cc 与 mutation sweep 复跑（在飞，结果出来回填）。
+**本节仍 [UNVERIFIED]**：mutation sweep 复跑 @3c7422cc（在飞，结果出来回填）。
 
 ## 1. 发布范围（产品变更）
 
