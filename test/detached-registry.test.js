@@ -8,13 +8,17 @@
 //   - TTL/caps evict only non-claimed entries (a claimed entry belongs to a
 //     live request);
 //   - counters are one funnel (value/waste metrics cannot diverge).
-import { describe, it } from 'node:test';
+import './setup-env.mjs';
+import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   DetachedRegistry,
   detachedKey,
   cascadeDetachEnabled,
+  detachedRegistry,
 } from '../src/detached-registry.js';
+import * as auth from '../src/auth.js';
+import { getConnectMetrics, resetConnectMetrics } from '../src/devin-connect-metrics.js';
 
 const BODY = {
   model: 'gemini-2.5-flash',
@@ -482,5 +486,113 @@ describe('DetachedRegistry ownership', () => {
       registry.admit({ key: 'a', callerKey: 'session:a', snapshot: snapshot(), pin: { ...pin(clock.now()), deadline: null } }).refused,
       'no_deadline',
     );
+  });
+});
+
+// G14 — the account-gone cleanups auth.js fires (conversation-pool
+// invalidateFor, detached-registry evictForAccount, user-JWT epoch bump) are
+// fire-and-forget promises. A rejection used to die in `.catch(()=>{})`:
+// a failed invalidateFor left stale pool entries resuming onto a dead
+// account and a failed evictForAccount left a resumable detached pin, with
+// zero signal anywhere. A failed cleanup must now be observable — counted
+// (account_cleanup_failed) and logged — while the caller still never waits.
+describe('G14 — auth cleanup rejections are observable (metric/log)', () => {
+  const createdIds = [];
+  function mkAccount() {
+    const a = auth.addAccountByKey(`sk-g14-${Date.now()}-${Math.random().toString(36).slice(2)}`, 'g14');
+    createdIds.push(a.id);
+    return a;
+  }
+  function captureWarns() {
+    const warnings = [];
+    const orig = console.warn;
+    console.warn = (...args) => { warnings.push(args.map(String).join(' ')); };
+    return { warnings, restore: () => { console.warn = orig; } };
+  }
+  const settle = () => new Promise((r) => setImmediate(r));
+
+  afterEach(() => {
+    auth.__setAccountCleanupDeps?.(null);
+    while (createdIds.length) auth.removeAccount(createdIds.pop());
+    resetConnectMetrics();
+  });
+
+  it('a rejected evictForAccount inside removeAccount is logged and counted', async () => {
+    // Inject through the real path: the module-level evictForAccount
+    // delegates to this instance method, so the dynamic import, the .then
+    // call and the rejection all run for real.
+    const original = detachedRegistry.evictForAccount;
+    detachedRegistry.evictForAccount = () => { throw new Error('detached evict broke'); };
+    const cap = captureWarns();
+    try {
+      const a = mkAccount();
+      resetConnectMetrics();
+      assert.equal(auth.removeAccount(a.id), true, 'removal still succeeds — the caller never waits');
+      createdIds.pop();
+      await settle();
+      assert.match(cap.warnings.join('\n'), /evictForAccount.*detached evict broke/,
+        'the rejected cleanup must be logged, not swallowed');
+      assert.equal(getConnectMetrics().account_cleanup_failed, 1,
+        'the rejected cleanup must be counted, not silent');
+    } finally {
+      detachedRegistry.evictForAccount = original;
+      cap.restore();
+    }
+  });
+
+  it('rejected invalidateFor / user-JWT epoch inside removeAccount are logged and counted', async () => {
+    const cap = captureWarns();
+    try {
+      auth.__setAccountCleanupDeps?.({
+        invalidateFor: () => Promise.reject(new Error('pool invalidate broke')),
+        bumpUserJwtCacheEpoch: () => Promise.reject(new Error('jwt epoch broke')),
+      });
+      const a = mkAccount();
+      resetConnectMetrics();
+      auth.removeAccount(a.id);
+      createdIds.pop();
+      await settle();
+      const logged = cap.warnings.join('\n');
+      assert.match(logged, /invalidateFor.*pool invalidate broke/);
+      assert.match(logged, /bumpUserJwtCacheEpoch.*jwt epoch broke/);
+      assert.equal(getConnectMetrics().account_cleanup_failed, 2);
+    } finally {
+      cap.restore();
+    }
+  });
+
+  it('a rejected invalidateFor inside reportBanSignal is logged and counted; the ban still lands', async () => {
+    const cap = captureWarns();
+    try {
+      const a = mkAccount();
+      auth.__setAccountCleanupDeps?.({
+        invalidateFor: () => Promise.reject(new Error('pool invalidate broke')),
+      });
+      resetConnectMetrics();
+      auth.reportBanSignal(a.apiKey, 'Account suspended');
+      auth.reportBanSignal(a.apiKey, 'Invalid API key');
+      await settle();
+      assert.equal(auth.getAccountInternal(a.id).status, 'banned',
+        'a cleanup failure must not roll back the ban decision');
+      assert.match(cap.warnings.join('\n'), /invalidateFor.*pool invalidate broke/);
+      assert.equal(getConnectMetrics().account_cleanup_failed, 1);
+    } finally {
+      cap.restore();
+    }
+  });
+
+  it('a successful cleanup emits no failure signal', async () => {
+    const cap = captureWarns();
+    try {
+      const a = mkAccount();
+      resetConnectMetrics();
+      auth.removeAccount(a.id);
+      createdIds.pop();
+      await settle();
+      assert.doesNotMatch(cap.warnings.join('\n'), /account cleanup .* failed/);
+      assert.equal(getConnectMetrics().account_cleanup_failed, 0);
+    } finally {
+      cap.restore();
+    }
   });
 });

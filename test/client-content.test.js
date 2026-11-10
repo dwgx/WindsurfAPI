@@ -1,5 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
+import { performance } from 'node:perf_hooks';
 import { compactSystemPromptForCascade, contentToString } from '../src/client.js';
 
 describe('Cascade text conversion safety', () => {
@@ -38,5 +39,25 @@ describe('Cascade text conversion safety', () => {
     assert.ok(!/x-anthropic-billing-header/i.test(compact));
     assert.ok(!/Claude Code/i.test(compact));
     assert.ok(compact.includes('Working directory: /Users/blithe/Downloads/Code/Test'));
+  });
+
+  // L3b-F2: the `(?:^|\n)\s*…` anchors let `\s` consume newlines, so each
+  // `\n` in a whitespace run re-anchored a scan of the whole remaining run —
+  // O(n²) on caller system text (64 KiB measured ~3.5 s; body cap is 10 MiB).
+  // The fix narrows the gap classes to horizontal whitespace: any gap that
+  // contained `\n` re-anchors at that `\n` instead, so the rewrites are
+  // leftmost-match equivalent and linear.
+  it('neutralizer stays linear on caller text padded with newline runs', () => {
+    const bomb = 'header line.\n' + '\n'.repeat(128 * 1024) + '  tail';
+    const t0 = performance.now();
+    const out = compactSystemPromptForCascade(bomb);
+    const ms = performance.now() - t0;
+    assert.equal(typeof out, 'string');
+    assert.ok(ms < 500, `neutralize+extract on 128 KiB newline run took ${ms.toFixed(1)} ms`);
+  });
+
+  it('still rewrites sentence-initial identity after blank lines', () => {
+    const out = compactSystemPromptForCascade('Intro done.\n\n  You are Devin, an agent.');
+    assert.doesNotMatch(out, /You are Devin/, 'identity after newline gap must still be rewritten');
   });
 });

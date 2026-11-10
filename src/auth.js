@@ -1825,8 +1825,14 @@ async function registerWithCodeium(idToken) {
 // no-op; upstream-derived names are sanitized instead — a hostile registry
 // name must not turn a successful login into a 400 (S5).
 const MAX_ACCOUNT_LABEL = 128;
-const LABEL_UNSAFE = /[\x00-\x1f\x7f-\x9f]/;
-const LABEL_UNSAFE_GLOBAL = /[\x00-\x1f\x7f-\x9f]/g;
+// Boundary for text that lands in `account.email`/labels: C0/C1 controls
+// (ANSI, forged log lines) AND the invisible/bidi format characters that let
+// one label impersonate another on the dashboard (RLO U+202E can visually
+// reverse "treppa-metsyS"-style text; ZWSP/BOM/SHY/invisible operators hide
+// in plain sight). ZWJ/ZWNJ/LRM/RLM stay allowed — real RTL names and emoji
+// sequences use them.
+const LABEL_UNSAFE = /[\x00-\x1f\x7f-\x9f\xad\u034f\u180e\u200b\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/;
+const LABEL_UNSAFE_GLOBAL = /[\x00-\x1f\x7f-\x9f\xad\u034f\u180e\u200b\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/g;
 
 function assertAccountLabel(label) {
   if (!label || label.length > MAX_ACCOUNT_LABEL || LABEL_UNSAFE.test(label)) {
@@ -1836,7 +1842,7 @@ function assertAccountLabel(label) {
   }
 }
 
-function sanitizeLabelText(value) {
+export function sanitizeLabelText(value) {
   return String(value || '').replace(LABEL_UNSAFE_GLOBAL, '').trim().slice(0, MAX_ACCOUNT_LABEL);
 }
 
@@ -1977,7 +1983,7 @@ export async function addAccountByEmail(email, password) {
   if (!result?.apiKey) {
     throw new Error('Login succeeded but no apiKey returned');
   }
-  const label = sanitizeLabelText(result.name) || email;
+  const label = sanitizeLabelText(result.name) || sanitizeLabelText(email) || email;
   const existingByEmail = accounts.find(a => String(a.email || '').trim().toLowerCase() === emailKey);
   const account = existingByEmail || addAccountByKey(result.apiKey, label);
   if (existingByEmail) {
@@ -2651,6 +2657,39 @@ export function setAccountTier(id, tier) {
   return true;
 }
 
+// ─── Account-gone cleanup (G14) ─────────────────────────────
+// removeAccount / reportBanSignal / key rotation fire these cleanups as
+// un-awaited dynamic imports: the callers are synchronous, and a static
+// import would cycle (conversation-pool / windsurf-api reach back through
+// config). A rejection must still be OBSERVABLE — a failed invalidateFor
+// leaves pool entries resuming onto a dead account, a failed evictForAccount
+// leaves a resumable detached pin, and a failed user-JWT epoch bump keeps a
+// mint cached for a rotated key — all previously swallowed by
+// `.catch(()=>{})`. Every failure is counted (account_cleanup_failed) and
+// logged; the caller still never waits on the cleanup.
+//
+// Test seam (__setReloginDeps shape): a deps map keyed by cleanup name can
+// substitute the cleanup promise so a rejection is exercised without a
+// module loader. Production leaves it null.
+let _accountCleanupDeps = null;
+export function __setAccountCleanupDeps(deps) { _accountCleanupDeps = deps || null; }
+
+function reportAccountCleanupFailure(op) {
+  return (e) => {
+    bumpConnect('account_cleanup_failed');
+    log.warn(`account cleanup "${op}" failed — stale pool/detached/JWT state may persist: ${e?.message || e}`);
+  };
+}
+
+function accountCleanup(op, start) {
+  try {
+    const dep = _accountCleanupDeps && _accountCleanupDeps[op];
+    Promise.resolve(dep ? dep() : start()).catch(reportAccountCleanupFailure(op));
+  } catch (e) {
+    reportAccountCleanupFailure(op)(e);
+  }
+}
+
 // Invalidate any cached short-lived user JWT minted for the pool. The mint
 // cache lives in windsurf-api.js; the epoch is bumped on every key rotation /
 // account removal so a mint racing a logout cannot repopulate a stale JWT.
@@ -2659,7 +2698,7 @@ export function setAccountTier(id, tier) {
 // would cycle), and this already follows the module's existing lazy-import
 // pattern for windsurf-api.js in the model-catalog sync path.
 function bumpUserJwtEpoch() {
-  import('./windsurf-api.js').then(m => m.__bumpUserJwtCacheEpoch()).catch(() => {});
+  accountCleanup('bumpUserJwtCacheEpoch', () => import('./windsurf-api.js').then(m => m.__bumpUserJwtCacheEpoch()));
 }
 
 export function setAccountTokens(id, { apiKey, refreshToken, idToken } = {}) {
@@ -3047,11 +3086,11 @@ export function removeAccount(id) {
   }
   // Drop any Cascade conversations owned by this key so future requests
   // don't try to resume on an account that no longer exists.
-  import('./conversation-pool.js').then(m => m.invalidateFor({ apiKey: account.apiKey })).catch(() => {});
+  accountCleanup('invalidateFor', () => import('./conversation-pool.js').then(m => m.invalidateFor({ apiKey: account.apiKey })));
   // Detach P1: a frozen turn pinned to this account must not be resumable
   // either. The entry holds no LS lease, so eviction is just the map delete;
   // the next retry goes upstream.
-  import('./detached-registry.js').then(m => m.evictForAccount(account.id)).catch(() => {});
+  accountCleanup('evictForAccount', () => import('./detached-registry.js').then(m => m.evictForAccount(account.id)));
   log.info(`Account removed: ${safeAccountRef(account)}`);
   return true;
 }
@@ -4767,7 +4806,7 @@ export function reportBanSignal(apiKey, message, { windowMs = 30 * 60 * 1000 } =
     trySyncModelCatalog();
     log.error(`Account ${safeAccountRef(account)} marked BANNED after ${account._banSignalCount} ban-shaped errors`);
     // Drop any cascade-pool entries owned by this key.
-    import('./conversation-pool.js').then(m => m.invalidateFor({ apiKey })).catch(() => {});
+    accountCleanup('invalidateFor', () => import('./conversation-pool.js').then(m => m.invalidateFor({ apiKey })));
     return true;
   }
   return false;
@@ -5841,8 +5880,8 @@ export async function fetchUserStatus(id, { allowLsStart = true } = {}) {
     teamsTier: status.teamsTier,
     pro: status.pro,
     planName: status.planName,
-    email: status.email,
-    displayName: status.displayName,
+    email: status.email == null ? status.email : sanitizeLabelText(status.email),
+    displayName: status.displayName == null ? status.displayName : sanitizeLabelText(status.displayName),
     teamId: status.teamId,
     isTeams: status.isTeams,
     isEnterprise: status.isEnterprise,
@@ -5856,7 +5895,8 @@ export async function fetchUserStatus(id, { allowLsStart = true } = {}) {
     allowedModels: status.allowedModels,
   };
   account.userStatusLastFetched = Date.now();
-  if (status.email && !account.email.includes('@')) account.email = status.email;
+  const statusEmail = status.email ? sanitizeLabelText(status.email) : '';
+  if (statusEmail && !account.email.includes('@')) account.email = statusEmail;
 
   // Mark every cascade-allowed enum as capable; every catalog enum NOT in the
   // allowlist as not-entitled. Pure-UID models (no enum) are left to the

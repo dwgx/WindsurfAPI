@@ -4,7 +4,7 @@
  */
 
 import { config, log } from '../config.js';
-import { accountRef } from '../log-safety.js';
+import { accountRef, buildSubprocessEnv } from '../log-safety.js';
 import {
   existsSync,
   mkdirSync,
@@ -30,6 +30,7 @@ import {
   getDroughtSummary, getPoolHealthWindow, getRateLimitHistory,
   getAccountRequests,
   getConnectSelectorPricing, isConnectSelectorBlockedByDrought,
+  sanitizeLabelText,
 } from '../auth.js';
 import { restartLsForProxy } from '../langserver.js';
 import { getLsStatus, stopLanguageServerAndWait, startLanguageServer, isLanguageServerRunning, getLsAdmissionStatus } from '../langserver.js';
@@ -965,7 +966,10 @@ async function finalizeWindsurfLogin(result, { password, loginProxy, autoAdd, st
     account = existing;
     reauthenticated = true;
   } else if (autoAdd !== false) {
-    account = addAccountByKey(result.apiKey, result.name || email);
+    // `result.name` is upstream-supplied: sanitize (never assert) so a hostile
+    // login response cannot fail the whole login via the caller-facing label
+    // boundary inside addAccountByKey.
+    account = addAccountByKey(result.apiKey, sanitizeLabelText(result.name) || email);
   }
 
   if (account) {
@@ -3177,7 +3181,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
       try { unlinkSync(installTarget); } catch { /* already gone */ }
     };
     const env = {
-      ...process.env,
+      ...buildSubprocessEnv(),
       LS_INSTALL_PATH: config.lsBinaryPath,
     };
     if (staged) env.LS_INSTALL_STAGE_PATH = installTarget;
@@ -3858,7 +3862,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
 
       let account = null;
       if (autoAdd !== false) {
-        account = addAccountByKey(apiKey, name || email || provider || 'OAuth');
+        account = addAccountByKey(apiKey, sanitizeLabelText(name) || email || provider || 'OAuth');
         if (refreshToken) {
           setAccountTokens(account.id, { refreshToken, idToken });
         }
@@ -3974,7 +3978,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
 
       let account = null;
       if (autoAdd !== false) {
-        account = addAccountByKey(apiKey, name || email || 'OTP');
+        account = addAccountByKey(apiKey, sanitizeLabelText(name) || email || 'OTP');
         scheduleAccountWarmup(account.id);
       }
 

@@ -63,22 +63,46 @@ function hasQuantifierAtom(s) {
   return false;
 }
 
+// Top-level `|` inside a group body — alternation directly under a repeat
+// (`(a|b)+`) is the ambiguous-split bomb: overlapping or equal-length
+// branches (`(a|a)+`, `(a|ab)+`, `(a|a*)+`) give the engine an exponential
+// number of parses on a short near-miss (measured 5.4 s on a 26-char
+// non-match, ~4× per +2 chars). Nested alternation (`(x(a|b)y)+`) is not
+// the shape — the surrounding literals pin each iteration's span — so only
+// the group's OWN top level is refused. Refusing is safe: the pattern is
+// skipped like an unparseable one, never a conformance failure.
+function hasTopLevelAlternation(s) {
+  let inClass = false;
+  let depth = 0;
+  for (let k = 0; k < s.length; k++) {
+    const ch = s[k];
+    if (isEscapedAt(s, k)) continue;
+    if (inClass) { if (ch === ']') inClass = false; continue; }
+    if (ch === '[') { inClass = true; continue; }
+    if (ch === '(') depth++;
+    else if (ch === ')') depth--;
+    else if (ch === '|' && depth === 0) return true;
+  }
+  return false;
+}
+
 // Static tripwire for the catastrophic-backtracking shape: a quantifier
 // applied to a group whose OWN body carries a quantifier —
 // `(a+)+`, `(\w*)*`, `([a-z]+)+`, `(\d{2,}){2,}`, `((x|y)+)+`, `(?:a+)*`,
-// `(?<n>a+)+`. The same closer check runs on `}` (`(x{2}){3}`-style stacking);
-// `]` closers are skipped outright because a character-class body is literal
-// text that cannot hold a quantifier — `([a-z]+)+` is still caught at its `)`.
-// A `?` after a closer is NOT an outer quantifier here: it runs the group at
-// most once and covers ubiquitous legitimate shapes like `(\.\d+)?`.
+// `(?<n>a+)+` — or whose body carries top-level alternation —
+// `(a|a)+`, `(a|ab)+`, `(a|b)+`. The same closer check runs on `}`
+// (`(x{2}){3}`-style stacking); `]` closers are skipped outright because a
+// character-class body is literal text that cannot hold either shape —
+// `([a-z]+)+` is still caught at its `)`. A `?` after a closer is NOT an
+// outer quantifier here: it runs the group at most once and covers
+// ubiquitous legitimate shapes like `(\.\d+)?`.
 //
-// KNOWN GAPS, accepted: overlapping alternations (`^(a|aa)+$`), adjacent
-// quantified atoms (`a*a*a*…$`), backreference forms, and bounded-but-large
-// inner repeats can still backtrack exponentially even on SHORT input — the
-// target-length cap does not save them. They are detected only by a real
-// regex-structure analysis, which is out of scope for a dependency-free
-// validator; this is a tripwire for the canonical bomb, not a proof of
-// linearity.
+// KNOWN GAPS, accepted: adjacent quantified atoms (`a*a*a*…$`),
+// backreference forms, and bounded-but-large inner repeats can still
+// backtrack exponentially even on SHORT input — the target-length cap does
+// not save them. They are detected only by a real regex-structure analysis,
+// which is out of scope for a dependency-free validator; this is a tripwire
+// for the canonical bomb, not a proof of linearity.
 function hasNestedQuantifier(pattern) {
   for (let i = 0; i + 1 < pattern.length; i++) {
     const c = pattern[i];
@@ -95,7 +119,8 @@ function hasNestedQuantifier(pattern) {
       if (pattern[j] === c) depth++;
       else if (pattern[j] === open) {
         if (depth === 0) {
-          if (hasQuantifierAtom(pattern.slice(j + 1, i))) return true;
+          const body = pattern.slice(j + 1, i);
+          if (hasQuantifierAtom(body) || hasTopLevelAlternation(body)) return true;
           break;
         }
         depth--;

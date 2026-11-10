@@ -152,6 +152,14 @@ const _counters = {
   // per-record regex salvage) instead of a clean parse — a single corrupt byte
   // would otherwise wipe the whole fleet's stored relogin credentials (C6)
   cred_store_repaired: 0,
+  // an account-gone cleanup (conversation-pool invalidateFor / detached
+  // evictForAccount / user-JWT epoch bump) rejected or threw (G14). The
+  // cleanup is fire-and-forget by design, but a failure leaves stale
+  // pool/detached/JWT state behind — this counter plus the
+  // `account cleanup "<op>" failed` warn makes that observable instead of
+  // silent. A non-zero value means an operator should check whether a
+  // removed/banned account is still resumable.
+  account_cleanup_failed: 0,
 };
 let _startedAt = Date.now();
 

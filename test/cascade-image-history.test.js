@@ -294,3 +294,86 @@ describe('Cascade replayed-history images (field 6)', () => {
     assert.equal(metrics.cascade_image_history_dropped, 1);
   });
 });
+
+// G08 — the field-6 image budget is ONE budget over the whole image list, not
+// a history-only allowance. Before the fix the current turn's images were
+// appended unbounded (MAX_BODY_SIZE only caps the HTTP body, not the model
+// context): a caller could push unlimited image bytes through the current
+// turn and STILL get the full history allowance on top.
+describe('Cascade shared image budget — current turn included (G08)', () => {
+  it('bounds the current turn by the shared count cap', async () => {
+    const a = encodePngRGBA(Buffer.alloc(2 * 2 * 4, 0x44), 2, 2).toString('base64');
+    const b = encodePngRGBA(Buffer.alloc(2 * 2 * 4, 0x55), 2, 2).toString('base64');
+    const c = encodePngRGBA(Buffer.alloc(2 * 2 * 4, 0x66), 2, 2).toString('base64');
+    const d = encodePngRGBA(Buffer.alloc(2 * 2 * 4, 0x77), 2, 2).toString('base64');
+    const { last, warnings, metrics } = await runCascade({
+      env: { CASCADE_MAX_HISTORY_IMAGES: '2' },
+      messages: [
+        imageTurn('TURN_0_IMAGE', a),
+        { role: 'assistant', content: 'TURN_1_TEXT' },
+        imageTurn('TURN_2_CURRENT', b, c, d),
+      ],
+    });
+
+    assert.equal(last.images.length, 2,
+      'the shared cap is over the WHOLE field-6 list: 3 current + 1 history must not ride');
+    assert.deepEqual(last.images.map((i) => i.base64_data), [b, c],
+      'the current turn spends the budget first, in block order');
+    assert.equal(metrics.cascade_image_current_dropped, 1,
+      'the current-turn overflow is counted, not silent');
+    assert.equal(metrics.cascade_image_history_dropped, 1,
+      'the history image that lost its slot to the current turn is counted too');
+    assert.match(warnings.join('\n'), /cascade_image_current_dropped count=1/);
+  });
+
+  it('the current turn spends the budget first; replayed history gets the remainder', async () => {
+    const a = encodePngRGBA(Buffer.alloc(2 * 2 * 4, 0x11), 2, 2).toString('base64');
+    const h = encodePngRGBA(Buffer.alloc(2 * 2 * 4, 0x22), 2, 2).toString('base64');
+    const c = encodePngRGBA(Buffer.alloc(2 * 2 * 4, 0x33), 2, 2).toString('base64');
+    const { last, metrics } = await runCascade({
+      env: { CASCADE_MAX_HISTORY_IMAGES: '2' },
+      messages: [
+        imageTurn('TURN_0_IMAGE', a),
+        { role: 'assistant', content: 'TURN_1_TEXT' },
+        imageTurn('TURN_2_IMAGE', h),
+        { role: 'assistant', content: 'TURN_3_TEXT' },
+        imageTurn('TURN_4_CURRENT', c),
+      ],
+    });
+
+    assert.equal(last.images.length, 2,
+      'budget 2 = current(1) + the single newest history image, not current + full history allowance');
+    assert.deepEqual(last.images.map((i) => i.base64_data), [c, h],
+      'current-turn image first, then the newest historical one');
+    assert.ok(last.text.includes(`${IMAGE_MARKER}2 attached to this request`),
+      'the surviving history image is numbered after the current one');
+    assert.equal(metrics.cascade_image_history_dropped, 1,
+      'the older history image that did not fit is counted');
+  });
+
+  it('bounds the single-turn path by the same shared cap', async () => {
+    const a = encodePngRGBA(Buffer.alloc(2 * 2 * 4, 0x11), 2, 2).toString('base64');
+    const b = encodePngRGBA(Buffer.alloc(2 * 2 * 4, 0x22), 2, 2).toString('base64');
+    const c = encodePngRGBA(Buffer.alloc(2 * 2 * 4, 0x33), 2, 2).toString('base64');
+    const { last, warnings, metrics } = await runCascade({
+      env: { CASCADE_MAX_HISTORY_IMAGES: '2' },
+      messages: [imageTurn('ONLY_TURN', a, b, c)],
+    });
+
+    assert.equal(last.images.length, 2,
+      'a one-message request is all current turn — "no history" must not mean "no cap"');
+    assert.deepEqual(last.images.map((i) => i.base64_data), [a, b]);
+    assert.equal(metrics.cascade_image_current_dropped, 1);
+    assert.match(warnings.join('\n'), /cascade_image_current_dropped count=1/);
+  });
+
+  it('bounds the current turn by the shared byte cap as well', async () => {
+    const { last, metrics } = await runCascade({
+      env: { CASCADE_MAX_HISTORY_IMAGE_BYTES: '1' },
+      messages: [imageTurn('ONLY_TURN', PNG_B64)],
+    });
+
+    assert.equal(last.images.length, 0, 'a one-byte budget cannot hold the current-turn image either');
+    assert.equal(metrics.cascade_image_current_dropped, 1);
+  });
+});

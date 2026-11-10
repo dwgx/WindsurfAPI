@@ -25,6 +25,17 @@ const REFUSED_NESTED = [
   { pattern: '^(\\d{2,}){2,}$',  failing: '123' },
   { pattern: '^((x|y)+)+$',      failing: 'xxz' },
   { pattern: '^(a|b+)+$',        failing: 'abz' },
+  // Top-level alternation inside a quantified group is the ambiguous-split
+  // bomb family: `^(a|a)+$` measured 5.4 s on a 26-char near-miss and doubles
+  // ~4× per +2 chars — the target-length cap cannot save it. The tripwire
+  // refuses the whole shape, including safe members like `(a|b)+`: a refused
+  // pattern is skipped (annotation we cannot afford to judge), never a
+  // conformance failure, so over-refusal is the safe direction.
+  { pattern: '^(a|a)+$',         failing: 'ab' },
+  { pattern: '^(a|ab)+$',        failing: 'aabc' },
+  { pattern: '^(?:a|a)+$',       failing: 'ab' },
+  { pattern: '^(a|a){2,}$',      failing: 'aab' },
+  { pattern: '^(a|b)+$',         failing: 'c' },
 ];
 
 // Shapes the tripwire must NOT touch — each still enforces.
@@ -38,6 +49,18 @@ const ENFORCED = [
   { pattern: '^[{]+$',             ok: '{{{',   bad: '{a' },
   { pattern: '^x{2,4}$',           ok: 'xxx',   bad: 'xxxxx' },
   { pattern: '^(yes|no)$',         ok: 'yes',   bad: 'maybe' },
+  // Alternation NOT inside a quantified group stays enforced — each branch is
+  // tried once per position, which is linear.
+  { pattern: '^(a|b)$',            ok: 'a',     bad: 'c' },
+  // Nested alternation inside a quantified group is pinned by surrounding
+  // literals — not the ambiguous-split shape — and stays enforced.
+  { pattern: '^(x(a|b)y)+$',       ok: 'xayxby', bad: 'xcy' },
+  // `|` inside a character class is a literal, not alternation.
+  { pattern: '^[a|b]+$',           ok: 'a|b',   bad: 'c' },
+  // An escaped `\|` inside a quantified group is a literal pipe.
+  { pattern: '^(a\\|b)+$',         ok: 'a|ba|b', bad: 'ab' },
+  // `?` runs the group at most once — not an outer quantifier here.
+  { pattern: '^(a|b)?$',           ok: 'a',     bad: 'c' },
 ];
 
 describe('pattern: nested-quantifier tripwire', () => {

@@ -20,7 +20,7 @@ import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import { addAccountByKey, removeAccount, updateAccountLabel } from '../src/auth.js';
+import { addAccountByKey, removeAccount, updateAccountLabel, sanitizeLabelText } from '../src/auth.js';
 
 const SKETCH = readFileSync(new URL('../src/dashboard/index-sketch.html', import.meta.url), 'utf8');
 const DASHBOARD = readFileSync(new URL('../src/dashboard/index.html', import.meta.url), 'utf8');
@@ -158,5 +158,41 @@ describe('updateAccountLabel: the label cannot carry hostile text into account.e
     const none = addAccountByKey(`devin-session-token$non-${randomUUID().slice(0, 8)}`);
     created.add(none.id);
     assert.match(none.email, /^key-/);
+  });
+
+  it('rejects invisible/bidi format characters (label spoofing, L5 probe)', () => {
+    const a = account('ok@example.test');
+    // L5 measured these ALLOWED pre-fix: RLO can visually reverse a label on
+    // the dashboard; ZWSP/BOM/SHY/isolates hide in plain sight.
+    const spoof = [
+      'x‮y',    // RLO — bidi override
+      'x​y',    // ZWSP
+      'x﻿y',    // BOM / ZWNBSP
+      'x­y',    // soft hyphen
+      'x⁦y',    // LRI isolate
+      'x⁧y',    // RLI isolate
+      'x⁠y',    // word joiner
+      'x᠎y',    // Mongolian vowel separator (Cf)
+      'x͏y',    // combining grapheme joiner
+    ];
+    for (const label of spoof) {
+      assert.throws(() => updateAccountLabel(a.id, label),
+        (e) => e.code === 'ERR_ACCOUNT_LABEL_INVALID',
+        `label with ${[...label].map(c => 'U+' + c.codePointAt(0).toString(16)).join(' ')} must be refused`);
+    }
+    // Legitimate invisible-adjacent characters stay allowed: ZWJ (emoji
+    // sequences) and ZWNJ/LRM/RLM (real RTL names).
+    assert.equal(updateAccountLabel(a.id, 'family👨‍👩‍👧 dev'), true);
+    assert.equal(updateAccountLabel(a.id, 'نام\u200cکاربر'), true);
+  });
+
+  it('sanitizeLabelText strips the same characters for upstream-sourced writes', () => {
+    // Upstream (login result / GetUserStatus) text is sanitized, not asserted:
+    // a hostile response degrades to a clean label instead of throwing.
+    assert.equal(sanitizeLabelText('a\u202Eb\u200bc'), 'abc');
+    assert.equal(sanitizeLabelText('  spaced@example.test  '), 'spaced@example.test');
+    assert.equal(sanitizeLabelText('a\nb\rc'), 'abc');
+    assert.equal(sanitizeLabelText(null), '');
+    assert.equal(sanitizeLabelText(42), '42');
   });
 });

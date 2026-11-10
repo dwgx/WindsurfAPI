@@ -19,6 +19,9 @@ const _counters = {
   cascade_image_history_attached: 0,
   // historical images (and image-like blocks) that did not ride the wire
   cascade_image_history_dropped: 0,
+  // current-turn images that did not fit the shared field-6 budget (G08:
+  // the caps bound the WHOLE image list, not just replayed history)
+  cascade_image_current_dropped: 0,
 };
 
 export function bumpCascadeImage(name, n = 1) {

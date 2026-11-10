@@ -304,3 +304,40 @@ describe('connect layer: a stream with no end-of-stream frame is an error', () =
     assert.equal(events.find(e => e.type === 'finish').reason, 'stop');
   });
 });
+
+describe('Responses stream: items sealed AFTER an error terminal', () => {
+  // L5 probe finding: `failedTurn` used to latch only inside finish(), so a
+  // mid-stream seal triggered by chunks arriving AFTER finish_reason:'error'
+  // closed the item 'completed' inside what became response.failed. Post-error
+  // bytes are not verifiable content — the seal must read the already-recorded
+  // failure signal and close 'incomplete'.
+  const errorThenMore = async () => ({
+    status: 200, stream: true,
+    handler: async (res) => {
+      res.write(`data: ${JSON.stringify({ choices: [{ delta: {}, finish_reason: 'error' }] })}\n\n`);
+      res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: 'still streaming' } }] })}\n\n`);
+      res.write(`data: ${JSON.stringify({ choices: [{ delta: { tool_calls: [{ id: 'call_1', index: 0, type: 'function', function: { name: 'undeclared_tool', arguments: '{}' } }] } }] })}\n\n`);
+      res.write(`data: ${JSON.stringify({ choices: [{ delta: { content: ' after tool' } }] })}\n\n`);
+      res.write('data: [DONE]\n\n');
+      res.end();
+    },
+  });
+
+  it('no output item claims completed inside response.failed', async () => {
+    const { out } = await runStream(errorThenMore);
+    const failed = eventData(out, 'response.failed');
+    assert.ok(failed, 'terminal must be response.failed');
+    const statuses = failed.response.output.map(i => `${i.type}:${i.status}`);
+    assert.ok(statuses.every(s => s.endsWith(':incomplete')),
+      `post-error items must seal 'incomplete', got ${JSON.stringify(statuses)}`);
+  });
+
+  it('output_item.done frames carry the same incomplete verdict', async () => {
+    const { out } = await runStream(errorThenMore);
+    const dones = [...out.matchAll(/^event: response\.output_item\.done\ndata: (.*)$/gm)]
+      .map(m => JSON.parse(m[1]));
+    assert.ok(dones.length >= 2, 'expected the message and tool-call seals');
+    assert.ok(dones.every(d => d.item.status === 'incomplete'),
+      `wire seals must be 'incomplete', got ${dones.map(d => d.item.status).join(',')}`);
+  });
+});

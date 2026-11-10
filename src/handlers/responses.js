@@ -1271,7 +1271,13 @@ class ResponsesStreamTranslator {
     // G3: the Connect decoder's additive `unterminated` marker (it also sets
     // finish_reason:'error'). Accepted on either the chunk or its choice so the
     // signal is not lost to envelope shape.
-    if (chunk.unterminated === true || choice?.unterminated === true) this.sawUnterminated = true;
+    if (chunk.unterminated === true || choice?.unterminated === true) {
+      this.sawUnterminated = true;
+      // Latch the failure NOW, not just in finish(): chunks can keep arriving
+      // after the terminal signal, and mid-stream seals must not mark
+      // post-error items 'completed' inside what becomes a response.failed.
+      this.failedTurn = true;
+    }
     if (choice) {
       // Remember the terminal reason: the Responses API signals truncation through
       // status:'incomplete' + incomplete_details, and without capturing it here the
@@ -1293,6 +1299,10 @@ class ResponsesStreamTranslator {
         if (this.streamFinishReason !== 'error') {
           this.streamFinishReason = choice.finish_reason;
         }
+        // Same eager latch as `sawUnterminated` above: once 'error' is on
+        // record every subsequent seal closes 'incomplete', even before
+        // finish() runs the terminal verdict.
+        if (this.streamFinishReason === 'error') this.failedTurn = true;
         // A06: an upstream-truncated length terminal is fabricated too; the
         // namespaced marker covers builds/routes that do not carry the private
         // __synthetic_finish flag.

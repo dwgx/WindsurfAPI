@@ -219,25 +219,25 @@ function neutralizeIdentityForCascade(sysText) {
   // Codex session tokens containing "devin" trigger Windsurf's filter
   text = text.replace(/devin[_-]?(?:session|sess|id|token|key|auth)/gi, 'cloud-session');
   // Devin-related internal metadata (brand names in tool output headers)
-  text = text.replace(/(?:^|\n)\s*(?:#\s*)?Devin\s+(?:AI|Assistant|Agent|IDE|CLI|Code)/gi, '\nCloud IDE');
+  text = text.replace(/(?:^|\n)[ \t]*(?:#[ \t]*)?Devin[ \t]+(?:AI|Assistant|Agent|IDE|CLI|Code)/gi, '\nCloud IDE');
   // Generic: strip "You are Devin/OpenClaw/etc" identity overrides
-  text = text.replace(/(^|[\n.!?]\s*)You are (?:Devin|Codex|OpenClaw|Aider|Cline)(?:[,.]|\s|$)/gi, '$1The assistant is a coding tool');
+  text = text.replace(/(^|[\n.!?][ \t]*)You are (?:Devin|Codex|OpenClaw|Aider|Cline)(?:[,.]|\s|$)/gi, '$1The assistant is a coding tool');
   // v2.0.91 — Windsurf safety filter also flags prompt-injection shaped
   // content (system prompt dumps from other agents). Normalize common
   // patterns that trigger false positives.
   text = text.replace(/\b(?:prompt[_-]?injection|jailbreak|ignore (?:all |previous |above )?instructions)\b/gi, 'malformed-input');
   text = text.replace(/\b(?:bypass|override) (?:the |your )?(?:safety|content|policy|filter)\b/gi, 'request-parameter');
-  return text.replace(/(^|[\n.!?]\s*)You are /g, '$1The assistant is ');
+  return text.replace(/(^|[\n.!?][ \t]*)You are /g, '$1The assistant is ');
 }
 
 function extractCompactSystemFacts(sysText) {
   const facts = [];
   const patterns = [
-    [/current working directory(?:\s+is)?\s*[:=]?\s*`?([/~][^\s`'"<>\n.,;)]+)/i, 'Working directory'],
-    [/(?:^|\n)\s*(?:[-*]\s+)?Working directory\s*[:=]\s*`?([/~][^\s`'"<>\n.,;)]+)/i, 'Working directory'],
-    [/(?:^|\n)\s*(?:[-*]\s+)?Is directory a git repo\s*[:=]\s*([^\n<]+)/i, 'Is directory a git repo'],
-    [/(?:^|\n)\s*(?:[-*]\s+)?Platform\s*[:=]\s*([^\n<]+)/i, 'Platform'],
-    [/(?:^|\n)\s*(?:[-*]\s+)?OS Version\s*[:=]\s*([^\n<]+)/i, 'OS version'],
+    [/current working directory(?:[ \t]+is)?[ \t]*[:=]?[ \t]*`?([/~][^\s`'"<>\n.,;)]+)/i, 'Working directory'],
+    [/(?:^|\n)[ \t]*(?:[-*][ \t]+)?Working directory[ \t]*[:=][ \t]*`?([/~][^\s`'"<>\n.,;)]+)/i, 'Working directory'],
+    [/(?:^|\n)[ \t]*(?:[-*][ \t]+)?Is directory a git repo[ \t]*[:=][ \t]*([^\n<]+)/i, 'Is directory a git repo'],
+    [/(?:^|\n)[ \t]*(?:[-*][ \t]+)?Platform[ \t]*[:=][ \t]*([^\n<]+)/i, 'Platform'],
+    [/(?:^|\n)[ \t]*(?:[-*][ \t]+)?OS Version[ \t]*[:=][ \t]*([^\n<]+)/i, 'OS version'],
   ];
   const seen = new Set();
   for (const [re, label] of patterns) {
@@ -257,7 +257,7 @@ export function compactSystemPromptForCascade(sysText) {
   if (process.env.CASCADE_COMPACT_CLAUDE_SYSTEM === '0') return neutralizeIdentityForCascade(stripped);
   // Title-generation side requests depend on their short system instruction;
   // keep them intact after removing billing headers.
-  if (/Generate a concise,\s*sentence-case title/i.test(stripped) && stripped.length < 2000) {
+  if (/Generate a concise,[ \t]*sentence-case title/i.test(stripped) && stripped.length < 2000) {
     return neutralizeIdentityForCascade(stripped);
   }
   // Shared source of truth with src/handlers/cc-compat.js so the "is this Claude
@@ -338,6 +338,49 @@ function cascadeHistoryImageCaps() {
   };
 }
 
+/**
+ * Spend the shared field-6 image budget on one turn's extracted images, in
+ * block order. G08: the caps are ONE count/byte budget over the WHOLE field-6
+ * list, not a history-only allowance — MAX_BODY_SIZE bounds the HTTP body,
+ * not the model context, so an uncapped current turn could push unbounded
+ * image bytes into the context window. The single-turn/resume path calls
+ * this for its only turn; the multi-turn builder seeds its history counters
+ * with the result for the current turn, so every route into
+ * SendUserCascadeMessage enforces the same bound.
+ * Returns { kept, dropped } — the caller reports `dropped`, never silently.
+ */
+function capCascadeImageBudget(sourceImages, caps = cascadeHistoryImageCaps()) {
+  const kept = [];
+  let bytes = 0;
+  let dropped = 0;
+  for (const image of sourceImages) {
+    const imageBytes = image.base64_data.length;
+    if (kept.length >= caps.maxImages || bytes + imageBytes > caps.maxBytes) {
+      dropped += 1;
+      continue;
+    }
+    kept.push(image);
+    bytes += imageBytes;
+  }
+  return { kept, dropped };
+}
+
+/**
+ * Emit the structured drop record for CURRENT-turn images that did not fit
+ * the shared field-6 budget. Distinct key from
+ * `cascade_image_history_dropped` so an operator can tell "the latest turn
+ * was oversized" apart from "replayed history did not fit".
+ */
+function reportCascadeImageCurrentDrops(dropped) {
+  if (!dropped) return;
+  bumpCascadeImage('cascade_image_current_dropped', dropped);
+  log.warn(
+    `cascade_image_current_dropped count=${dropped}`
+    + ' — the current turn shares the single field-6 image budget with replayed history;'
+    + ' the images that did not fit were dropped, not sent',
+  );
+}
+
 function countImageLikeBlocks(content) {
   if (!Array.isArray(content)) return 0;
   let n = 0;
@@ -389,13 +432,17 @@ function renderCascadeHistoryLines(entries, bodyForEntry = null) {
 }
 
 /**
- * Emit the structured drop record. One line, stable key first, so an operator
- * can grep `cascade_image_history_dropped` and see exactly how many attachments
- * vanished, why, and that the wire (not the caller) is the limit.
+ * Emit the structured drop records. One line per drop class, stable key
+ * first — `cascade_image_current_dropped` for the current turn (see
+ * reportCascadeImageCurrentDrops), then `cascade_image_history_dropped` for
+ * replayed history — so an operator can grep each key and see exactly how
+ * many attachments vanished, why, and that the wire (not the caller) is the
+ * limit.
  */
 function reportCascadeImageHistoryDrops(stats, meta) {
   const dropped = stats.droppedCap + stats.droppedBytes + stats.droppedTruncated + stats.droppedNoVision;
   if (stats.attached) bumpCascadeImage('cascade_image_history_attached', stats.attached);
+  reportCascadeImageCurrentDrops(stats.droppedCurrent || 0);
   if (!dropped) return;
   bumpCascadeImage('cascade_image_history_dropped', dropped);
   log.warn(
@@ -427,12 +474,17 @@ async function buildCascadeMultiTurnPrompt(convo, { budgetBytes, openingText = '
   const caps = cascadeHistoryImageCaps();
   const latest = convo[convo.length - 1];
   const latestExtracted = await extractImages(latest?.content ?? '', { signal, beforeFetch });
-  const images = [...latestExtracted.images];
 
-  const stats = { attached: 0, droppedCap: 0, droppedBytes: 0, droppedTruncated: 0, droppedNoVision: 0 };
+  const stats = { attached: 0, droppedCap: 0, droppedBytes: 0, droppedTruncated: 0, droppedNoVision: 0, droppedCurrent: 0 };
   const extractedByTurn = new Map(); // turn index -> { text, kept, omitted }
-  let keptCount = 0;
-  let keptBytes = 0;
+  // G08: the current turn is the most recent turn, so it spends the shared
+  // field-6 budget FIRST; `keptCount`/`keptBytes` are seeded with what it
+  // kept, and replayed history below gets whatever remains.
+  const currentSpent = capCascadeImageBudget(latestExtracted.images, caps);
+  stats.droppedCurrent = currentSpent.dropped;
+  const images = currentSpent.kept;
+  let keptCount = images.length;
+  let keptBytes = images.reduce((n, image) => n + image.base64_data.length, 0);
 
   // Pass 1 — newest first: decide which replayed turns contribute images.
   // Extraction stops as soon as the caps are exhausted, so an old remote
@@ -1280,7 +1332,12 @@ export class WindsurfClient {
           beforeFetch: () => assertBudget('Cascade image extraction'),
         });
         text = extracted.text;
-        images = extracted.images;
+        // G08: this path is all current turn — the same shared field-6 budget
+        // applies, so "no history" does not mean "no cap". Drops are counted
+        // and logged, never silent.
+        const currentSpent = capCascadeImageBudget(extracted.images);
+        images = currentSpent.kept;
+        reportCascadeImageCurrentDrops(currentSpent.dropped);
         if (!isResume && sysText) text = sysText + '\n\n' + text;
       } else {
         const maxHistoryBytes = cascadeHistoryBudget(modelUid);
