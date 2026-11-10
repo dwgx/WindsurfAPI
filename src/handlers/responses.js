@@ -1971,7 +1971,9 @@ function createCaptureRes(translator, realRes) {
     writeHead() { this.headersSent = true; },
     write(chunk) {
       const str = typeof chunk === 'string' ? chunk : chunk.toString('utf8');
-      if (str.startsWith(':') && realRes && !realRes.writableEnded) {
+      // S3-F3: forward only a SINGLE complete comment frame — anything carrying
+      // a second line could smuggle `event:`/`data:` onto the client wire.
+      if (realRes && !realRes.writableEnded && /^:[^\r\n]*\r?\n\r?\n?$/.test(str)) {
         try { realRes.write(str); } catch {}
       }
       translator.feed(chunk);

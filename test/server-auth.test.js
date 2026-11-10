@@ -6,7 +6,9 @@ import {
   bodyTooLargePayload,
   credentialSurfaceFor,
   extractToken,
+  headerSafeValue,
   readBody,
+  resolveAnthropicVersion,
   startServer,
   unsupportedContentEncoding,
   unsupportedContentEncodingPayload,
@@ -424,5 +426,24 @@ describe('server auth routing', () => {
     const res = await request(port(), 'POST', '/v1/chat/completions', { 'content-encoding': 'gzip' }, gzipSync(Buffer.from('{}')));
     assert.equal(res.status, 401);
     assert.equal(res.body.error.type, 'auth_error');
+  });
+});
+
+describe('S3 response-header hardening', () => {
+  it('headerSafeValue strips control bytes and coerces non-strings', () => {
+    assert.equal(headerSafeValue('claude-4-proxy'), 'claude-4-proxy');
+    assert.equal(headerSafeValue('x\x0B\x80garbage'), 'xgarbage', 'control + obs-text removed');
+    assert.equal(headerSafeValue({ evil: 1 }), '[object Object]', 'non-string coerces like String()');
+    assert.equal(headerSafeValue(undefined), '');
+    assert.equal(headerSafeValue('y'.repeat(300)).length, 256, 'bounded length');
+  });
+
+  it('resolveAnthropicVersion clamps malformed versions to the default', () => {
+    const def = resolveAnthropicVersion({ headers: {} });
+    assert.equal(resolveAnthropicVersion({ headers: { 'anthropic-version': 'x\x80bad' } }), def,
+      'obs-text garbage used to be echoed verbatim into the response header and warn log');
+    assert.equal(resolveAnthropicVersion({ headers: { 'anthropic-version': '2023-06-01' } }), '2023-06-01');
+    assert.equal(resolveAnthropicVersion({ headers: { 'anthropic-version': '2099-01-01' } }), '2099-01-01',
+      'unknown-but-wellformed future versions still pass through');
   });
 });

@@ -274,6 +274,11 @@ export function createDeferredSseResponse(realRes, {
       realRes.end(JSON.stringify(body));
     } catch {
       ended = true;
+      // S3-F2: a throw here (e.g. an invalid header byte) used to leave the
+      // socket half-open — `ended` flagged but nothing ever written — and the
+      // caller held the upstream slot forever. Destroy so the connection
+      // actually closes.
+      try { realRes.destroy(); } catch { /* already gone */ }
     }
   };
 

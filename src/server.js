@@ -79,11 +79,28 @@ export function resolveAnthropicVersion(req) {
     log.warn('anthropic-version header missing; defaulting to ' + ANTHROPIC_DEFAULT_VERSION);
     return ANTHROPIC_DEFAULT_VERSION;
   }
+  // S3-F4: the value is echoed back as a response header — a charset-clamped
+  // version keeps unknown/future versions flowing while control bytes and
+  // arbitrary obs-text garbage fall back to the default instead of being
+  // mirrored into the wire (and into warn logs).
+  if (!/^[0-9a-zA-Z._-]{1,64}$/.test(raw)) {
+    log.warn('anthropic-version malformed: ' + headerSafeValue(raw).slice(0, 40) + ' (using default)');
+    return ANTHROPIC_DEFAULT_VERSION;
+  }
   if (!ANTHROPIC_KNOWN_VERSIONS.has(raw)) {
     // 向前兼容:未知/未来版本不拒绝,原样透传。
     log.warn('anthropic-version unrecognized: ' + raw.slice(0, 40) + ' (accepting as-is)');
   }
   return raw;
+}
+
+// Request-controlled strings echoed into response headers (openai-model /
+// anthropic-model / version echoes) must be printable ASCII: Node's header
+// validation throws on control bytes, and on the SSE error path that throw
+// lands inside commit()/finishError where it used to pin the socket open
+// (S3-F1). Non-string values coerce the same way String() would.
+export function headerSafeValue(value, max = 256) {
+  return String(value ?? '').replace(/[^\x20-\x7E]/g, '').slice(0, max);
 }
 
 export function readBody(req) {
@@ -918,7 +935,7 @@ async function route(req, res) {
     });
     const modelHeaders = {
       'x-request-id': requestId,
-      'openai-model': body.model || '',
+      'openai-model': headerSafeValue(body.model),
       // Actual upstream processing time — hvoy.ai and similar verifiers
       // treat a flat "0" as a fingerprint of a faking proxy.
       'openai-processing-ms': String(processingMs),
@@ -998,7 +1015,7 @@ async function route(req, res) {
     });
     const modelHeaders = {
       'x-request-id': requestId,
-      'openai-model': body.model || '',
+      'openai-model': headerSafeValue(body.model),
       'openai-processing-ms': String(processingMs),
       'openai-version': '2020-10-01',
       'openai-organization': 'org-windsurf-proxy',
@@ -1063,7 +1080,7 @@ async function route(req, res) {
     });
     const modelHeaders = {
       'x-request-id': requestId,
-      'openai-model': body.model || '',
+      'openai-model': headerSafeValue(body.model),
       'openai-processing-ms': String(processingMs),
       'openai-version': '2020-10-01',
       'openai-organization': 'org-windsurf-proxy',
@@ -1271,7 +1288,7 @@ async function route(req, res) {
     });
     const anthropicHeaders = {
       'request-id': requestId,
-      'anthropic-model': body.model || '',
+      'anthropic-model': headerSafeValue(body.model),
       // G1: echo the effective version back so clients can confirm it.
       'anthropic-version': anthropicVersion,
     };

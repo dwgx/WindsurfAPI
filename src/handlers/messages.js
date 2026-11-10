@@ -2318,7 +2318,9 @@ function createCaptureRes(translator, realRes) {
       // CDN/proxy/client decides the connection is dead and bails. Pass
       // heartbeat comments straight through so Claude Code stays happy.
       const str = typeof chunk === 'string' ? chunk : chunk.toString('utf8');
-      if (str.startsWith(':') && realRes && !realRes.writableEnded) {
+      // S3-F3: forward only a SINGLE complete comment frame — anything carrying
+      // a second line could smuggle `event:`/`data:` onto the client wire.
+      if (realRes && !realRes.writableEnded && /^:[^\r\n]*\r?\n\r?\n?$/.test(str)) {
         // Keep forwarding the raw comment heartbeat for maximum client compat,
         // AND (F6) emit a typed `event: ping` so strict clients/proxies that only
         // recognize the canonical Anthropic ping event also see liveness.
