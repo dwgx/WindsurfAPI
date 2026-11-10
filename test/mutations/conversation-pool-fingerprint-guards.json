@@ -19,9 +19,9 @@
       "replacement": "  return messages.slice(0, newestStable + 1);"
     },
     {
-      "name": "stripMetaTags stops applying META_TAG_RE — the client-injected tags that change every turn (cwd snapshot, todo state, hook output) go back into the hash, which is exactly issue #24: the fingerprint drifts on every request and Cascade reuse silently falls back to fresh for the whole session",
+      "name": "stripMetaTags stops applying stripMetaTagSpans — the client-injected tags that change every turn (cwd snapshot, todo state, hook output) go back into the hash, which is exactly issue #24: the fingerprint drifts on every request and Cascade reuse silently falls back to fresh for the whole session",
       "file": "src/conversation-pool.js",
-      "anchor": "  const stripped = s.replace(META_TAG_RE, '').replace(/[ \\t]+\\n/g, '\\n').replace(/\\n{3,}/g, '\\n\\n').trim();",
+      "anchor": "  const stripped = stripMetaTagSpans(s).replace(/[ \\t]+\\n/g, '\\n').replace(/\\n{3,}/g, '\\n\\n').trim();",
       "replacement": "  const stripped = s.replace(/[ \\t]+\\n/g, '\\n').replace(/\\n{3,}/g, '\\n\\n').trim();"
     },
     {

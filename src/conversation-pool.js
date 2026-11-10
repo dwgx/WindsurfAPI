@@ -75,35 +75,89 @@ const META_TAG_NAMES = new Set([
   'example',
 ]);
 
-function buildMetaTagRe() {
-  const escaped = [...META_TAG_NAMES].map(t => t.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-  return new RegExp(
-    `<(${escaped.join('|')})[^>]*>[\\s\\S]*?</\\1>`,
-    'g'
-  );
+const META_TAG_CLOSERS = new Map([...META_TAG_NAMES].map(t => [t, `</${t}>`]));
+
+// Single-pass replacement for /<names>[^>]*>[\s\S]*?</\1>/g, which was
+// quadratic on caller text with many unclosed meta-tag opens (CWE-1333):
+// every <name> open rescanned the rest of the string for its closer via
+// backreference + lazy body (measured ~7s on a 256KB bomb). indexOf() gives
+// identical semantics without backtracking:
+//   * open = '<' + name-prefix + '[^>]*' + first '>' — embedded '<'s and
+//     quotes are allowed inside attrs, exactly like [^>]* (so `<a x="1>`
+//     IS an open and `2">` is body; `<examplefoo>` IS an open of `example`)
+//   * body is lazy — the FIRST '</name>' after the open closes it
+//   * on a failed open the regex engine retries at i+1, so the scan
+//     continues at the next '<'; once '</name>' is absent past a point it
+//     is absent forever → the name is dead and later opens skip the search
+//   * with no '>' left at all, no later open (or closer) can form → done
+function stripMetaTagSpans(s) {
+  const dead = new Set();
+  const parts = [];
+  let last = 0;
+  let i = s.indexOf('<');
+  while (i !== -1) {
+    // '</…' can never begin a regex match — skip without a name lookup.
+    if (s.charCodeAt(i + 1) === 47) { i = s.indexOf('<', i + 1); continue; }
+    let name = null;
+    for (const t of META_TAG_NAMES) {          // regex alternation = first
+      if (s.startsWith(t, i + 1)) { name = t; break; }   // Set-order prefix match
+    }
+    if (!name || dead.has(name)) { i = s.indexOf('<', i + 1); continue; }
+    const gt = s.indexOf('>', i + 1 + name.length);
+    if (gt === -1) break;
+    const ci = s.indexOf(META_TAG_CLOSERS.get(name), gt + 1);
+    if (ci === -1) { dead.add(name); i = s.indexOf('<', i + 1); continue; }
+    parts.push(s.slice(last, i));
+    last = ci + name.length + 3;               // '</' + name + '>'
+    i = last;                                  // consumed span is never rescanned
+  }
+  if (!parts.length) return s;
+  parts.push(s.slice(last));
+  return parts.join('');
 }
-let META_TAG_RE = buildMetaTagRe();
 
 function stripMetaTags(s) {
   if (typeof s !== 'string' || !s) return s;
-  // ReDoS/CPU bound (audit #3): META_TAG_RE uses a backreference + lazy body
-  // which is quadratic on inputs with many unclosed meta-tag openings. This
-  // output only feeds the reuse fingerprint, so bounding the scanned length
-  // on pathological inputs is safe (worst case is a fingerprint cache miss).
+  // This output only feeds the reuse fingerprint, so bounding the scanned
+  // length on pathological inputs is safe (worst case is a fingerprint
+  // cache miss). Linear scan below; the cap bounds the constant.
   if (s.length > 262144) s = s.slice(0, 262144);
-  const stripped = s.replace(META_TAG_RE, '').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
+  const stripped = stripMetaTagSpans(s).replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim();
   // Unknown tags are caller content. Never learn them into the global
   // stripping set or fingerprints stop being a pure function of the request.
-  const remaining = stripped.match(/<([a-z][-a-z_]*)[^>]*>[\s\S]*?<\/\1>/g);
-  if (remaining?.length) {
-    const tagNames = remaining.map(m => m.match(/^<([a-z][-a-z_]*)/)?.[1]).filter(Boolean);
-    const unknown = tagNames.filter(t => !META_TAG_NAMES.has(t));
-    if (unknown.length) {
-      console.error(`[META_TAG_AUDIT] Unknown XML tags in user message: ${[...new Set(unknown)].join(', ')}`);
+  // Audit is open-tag only (no pairing): unclosed opens now log too — more
+  // coverage than the old `<name>…</name>` match, never less. The scan is
+  // manual because any `[^>]*>` regex is still quadratic when no '>'
+  // remains on the residual caller text (`<x` ×131k took 42s pre-fix).
+  const unknown = new Set();
+  let ai = stripped.indexOf('<');
+  while (ai !== -1) {
+    const c1 = stripped.charCodeAt(ai + 1);
+    if (c1 >= 97 && c1 <= 122) {               // '<' + [a-z] → open candidate
+      const gt = stripped.indexOf('>', ai + 1);
+      if (gt === -1) break;                    // no '>' left → no more opens
+      let ne = ai + 1;
+      while (ne < gt) {                        // name = maximal [a-z][-a-z_]*
+        const cc = stripped.charCodeAt(ne);    // run (stops before '>' anyway)
+        if (!((cc >= 97 && cc <= 122) || cc === 45 || cc === 95)) break;
+        ne++;
+      }
+      const tagName = stripped.slice(ai + 1, ne);
+      if (!META_TAG_NAMES.has(tagName)) unknown.add(tagName);
+      ai = stripped.indexOf('<', gt + 1);      // regex /g resumes past the '>'
+    } else {
+      ai = stripped.indexOf('<', ai + 1);
     }
+  }
+  if (unknown.size) {
+    console.error(`[META_TAG_AUDIT] Unknown XML tags in user message: ${[...unknown].join(', ')}`);
   }
   return stripped;
 }
+
+// Test-only handle (same `__` convention as src/auth.js) so the strip
+// semantics can be asserted directly instead of through hash equality.
+export function __stripMetaTags(s) { return stripMetaTags(s); }
 
 // v2.0.61 (#111) — normalize dynamic chunks of the system prompt that
 // drift across turns (today's date, ISO timestamps, working directory,
