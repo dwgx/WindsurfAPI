@@ -19,16 +19,24 @@
  * writing, and `test/docs-consistency-guard.test.js` asserts the same derivation, so a
  * hand edit fails before it can ship.
  *
+ * The tag row counts the PUBLISHED namespace, not this checkout's refs: `git tag` minus
+ * the tags named in `docs/releases/UNPUBLISHED-TAGS.txt` that this checkout happens to
+ * carry. Without that subtraction the row is 230 on the authoring host and 229 in every
+ * `fetch-depth: 0` CI checkout (measured 2026-11-11), and it can only be right in one of
+ * them — which is how the row reached master at 230 while CI measured 229.
+ *
  * Run:  node scripts/sync-changelog-counts.mjs [--check]
  */
 import { execFileSync } from 'node:child_process';
-import { readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 export const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 export const CHANGELOG_FILE = 'CHANGELOG.md';
 export const RELEASES_DIR = 'docs/releases';
+/** Tags that exist in the authoring checkout but were never pushed, one version per line. */
+export const UNPUBLISHED_TAGS_FILE = 'docs/releases/UNPUBLISHED-TAGS.txt';
 /** The v-prefix is a historical filename variant (v3.9.22), not a new convention. */
 export const NOTE_FILE_RE = /^RELEASE_NOTES_v?(\d+\.\d+\.\d+)\.md$/;
 
@@ -59,31 +67,75 @@ export function releaseNoteVersions(root = ROOT) {
     .sort(compareSemver);
 }
 
-/**
- * `git tag` counts annotated and lightweight tags alike, which is what the row claims.
- * Returns null — "cannot stand behind a count" — in the two cases where the number would
- * be a lie rather than a fact: no git history at all (a tarball checkout), and an empty
- * tag list (a shallow clone lists only the tags its fetched history carries, so
- * `fetch-depth: 1` reports zero for a repository that has hundreds). The caller keeps the
- * existing row instead of rewriting it to a zero. Every project workflow checks out with
- * `fetch-depth: 0`, so the count is real where it is asserted.
- */
-export function countGitTags(root = ROOT) {
+/** Every tag in this checkout, or null when git cannot answer at all. */
+export function listGitTags(root = ROOT) {
   try {
     const out = execFileSync('git', ['tag', '--list'], {
       cwd: root, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
     });
-    const tags = out.split('\n').filter((line) => line.trim());
-    return tags.length ? tags.length : null;
+    return out.split('\n').filter((line) => line.trim());
   } catch {
     return null;
   }
 }
 
+/**
+ * Versions whose tag exists in some checkouts and not others: a tag created locally and
+ * never pushed. The list has to live in the tree because the tag namespace does not —
+ * `git tag` answers "what did this clone fetch", not "what did this repository publish".
+ * Measured 2026-11-11: the authoring host carried 230 tags, every `fetch-depth: 0` CI
+ * checkout 229, and the delta was `v3.141.592659`, frozen on the unfixed `d5519da3` and
+ * never pushed. A count of refs is therefore 230 on one host and 229 everywhere else, and
+ * the row can only be right in one of them.
+ *
+ * One version per line; `#` starts a comment. An entry whose tag this checkout does not
+ * have is not an error — that is exactly the CI checkout — it simply is not subtracted.
+ */
+export function unpublishedTagVersions(root = ROOT) {
+  const path = join(root, UNPUBLISHED_TAGS_FILE);
+  if (!existsSync(path)) return [];
+  const versions = [];
+  for (const [index, raw] of readFileSync(path, 'utf8').split('\n').entries()) {
+    // `#` starts a comment; no `$` anchor, because a Windows checkout under
+    // core.autocrlf=true delivers CRLF and `$` does not match before `\r`.
+    const line = raw.replace(/#.*/, '').trim();
+    if (!line) continue;
+    const match = /^v?(\d+\.\d+\.\d+)$/.exec(line);
+    // A typo here would silently stop subtracting and the count would drift by one; refuse
+    // the line instead, the same way releaseNoteVersions() refuses an unversioned filename.
+    if (!match) throw new Error(`${UNPUBLISHED_TAGS_FILE}:${index + 1}: not a version: ${line}`);
+    versions.push(match[1]);
+  }
+  return versions;
+}
+
+/**
+ * The number the row claims: tags a PUBLISHED checkout has. Pure, so the invariance can be
+ * asserted without creating or deleting a tag: a registered local-only tag is subtracted
+ * where this checkout has it and ignored where it does not, which is what makes the
+ * authoring host and a `fetch-depth: 0` CI checkout derive the same number.
+ *
+ * Null — "cannot stand behind a count" — when git gave us no tags at all: a tarball
+ * checkout has no history, and a shallow clone lists only the tags its fetched history
+ * carries, so `fetch-depth: 1` reports zero for a repository that has hundreds. The caller
+ * keeps the existing row instead of rewriting it to a zero.
+ */
+export function countPublishedTags(tags, unpublished = []) {
+  if (!tags.length) return null;
+  const localOnly = new Set(unpublished);
+  return tags.filter((tag) => !localOnly.has(tag.replace(/^v/, ''))).length;
+}
+
 export function changelogCounts(root = ROOT) {
   const versions = releaseNoteVersions(root);
   if (!versions.length) throw new Error(`no RELEASE_NOTES_*.md files under ${RELEASES_DIR}`);
-  return { notes: versions.length, first: versions[0], last: versions.at(-1), tags: countGitTags(root) };
+  const tags = listGitTags(root);
+  return {
+    notes: versions.length,
+    first: versions[0],
+    last: versions.at(-1),
+    tags: tags === null ? null : countPublishedTags(tags, unpublishedTagVersions(root)),
+  };
 }
 
 const notesRow = (counts) => `| 发布说明 | **${counts.notes}** 份,`
@@ -91,7 +143,8 @@ const notesRow = (counts) => `| 发布说明 | **${counts.notes}** 份,`
   + `（生成：\`node scripts/sync-changelog-counts.mjs\`；口径 \`ls docs/releases/RELEASE_NOTES_*.md \\| wc -l\`） |`;
 
 const tagRow = (counts) => `| git tag | ${counts.tags} 个`
-  + `（生成：\`node scripts/sync-changelog-counts.mjs\`；口径 \`git tag \\| wc -l\`） |`;
+  + `（生成：\`node scripts/sync-changelog-counts.mjs\`；口径 \`git tag \\| wc -l\` 减去`
+  + ` \`${UNPUBLISHED_TAGS_FILE}\` 里本 checkout 存在的未发布 tag） |`;
 
 function replaceExactlyOnce(text, pattern, replacement, what) {
   const hits = [...text.matchAll(new RegExp(pattern.source, 'gm'))];

@@ -820,9 +820,10 @@ MIT License. See [LICENSE](LICENSE).
 
 ## 发布与密钥边界
 
-发布流程会自动推 Docker 镜像和 GitHub Release。本版发布 **v3.141.592660**；仓库共 229 个
-git tag / 220 份发布说明（2026-11-11 复核；`v3.141.592660` 的 tag 在发布提交之后创建，
-`v3.141.592659` 从未发布——它的本地 tag 冻结在未修复的 `d5519da3` 上）。
+发布流程会自动推 Docker 镜像和 GitHub Release。本版发布 **v3.141.592661**；仓库共 229 个
+已发布 git tag / 221 份发布说明（2026-11-11 复核；`v3.141.592660` 是公开 tag，但它的
+Release/CI 因 tag 计数 230-vs-229 失败、未产出任何资产；`v3.141.592661` 的 tag 在发布提交
+之后创建。`v3.141.592659` 从未发布——它的本地 tag 冻结在未修复的 `d5519da3` 上）。
 从 v3.10.0 起，每个 Release 为四个发布资产
 （Windows exe/zip、macOS arm64 二进制/zip）生成 `SHA256SUMS`，并用 **cosign keyless**
 （GitHub OIDC，仓库内没有任何私钥或签名 secret）为四个资产和清单各发布一个

@@ -83,6 +83,8 @@ git push origin v<version>
 
 The tag must land **on master** or `git describe` and provenance both get awkward.
 
+The `git tag` count in `CHANGELOG.md` is checkout-invariant: `node scripts/sync-changelog-counts.mjs` subtracts the tags listed in `docs/releases/UNPUBLISHED-TAGS.txt` that this checkout carries, so a tag created locally and never pushed cannot make the row disagree with a `fetch-depth: 0` CI checkout.
+
 **8. Verify the terminal state of every job — do not read intent from comments.**
 The macOS x64 job showed as `queued` for four consecutive releases while its real
 terminal state was `cancelled`; the workflow comment saying "x64 may queue for hours"

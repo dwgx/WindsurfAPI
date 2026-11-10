@@ -88,10 +88,10 @@ CWE-1333 event-loop blocking: the quadratic scans in the client-identity neutral
 (reported 2026-11-08) and the unbounded JSON Schema `pattern` evaluation in
 `src/json-schema.js` (reported 2026-11-10). Tracked as GHSA-fx5f-49jr-fw6r (identity
 neutralizer) and GHSA-r7v2-3h32-f5g6 (JSON Schema `pattern`); both are fixed in
-3.141.592660 (`patched_versions: >= 3.141.592660`).
+3.141.592661 (`patched_versions: >= 3.141.592661`).
 
 感谢 fishfish（https://github.com/fishfish57）负责任地披露两个 CWE-1333（event-loop 阻塞）
 问题：客户端身份中和器的二次正则扫描（2026-11-08 报告）与 `src/json-schema.js` 中
 JSON Schema `pattern` 的无界求值（2026-11-10 报告）。分别跟踪为 GHSA-fx5f-49jr-fw6r 与
-GHSA-r7v2-3h32-f5g6。修复版本 **3.141.592660**（`patched_versions: >= 3.141.592660`），
-细节见 [v3.141.592660 发布说明](docs/releases/RELEASE_NOTES_3.141.592660.md)。
+GHSA-r7v2-3h32-f5g6。修复版本 **3.141.592661**（`patched_versions: >= 3.141.592661`），
+细节见 [v3.141.592661 发布说明](docs/releases/RELEASE_NOTES_3.141.592661.md)。
