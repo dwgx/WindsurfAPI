@@ -552,6 +552,7 @@ linear spec 扩到 12 条突变、`04503830` 再把两条锚点改指重写后�
 
 Thanks to fishfish (https://github.com/fishfish57) for the responsible disclosure of the CWE-1333
 event-loop blocking issue in the client-identity neutralizer (reported 2026-11-08).
+Tracked as GHSA-xp93-vpw9-39wx (published with this release).
 
 感谢 fishfish（周fish，https://github.com/fishfish57）负责任地披露客户端身份中和器中的
 CWE-1333（event-loop 阻塞）问题（2026-11-08 报告）。修复见 §1.1；署名方式经报告者本人确认。

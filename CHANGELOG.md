@@ -20,7 +20,7 @@
 | | |
 |---|---|
 | 发布说明 | **219** 份,v2.0.6 → v3.141.592659（生成：`node scripts/sync-changelog-counts.mjs`；口径 `ls docs/releases/RELEASE_NOTES_*.md \| wc -l`） |
-| git tag | 228 个（生成：`node scripts/sync-changelog-counts.mjs`；口径 `git tag \| wc -l`） |
+| git tag | 229 个（生成：`node scripts/sync-changelog-counts.mjs`；口径 `git tag \| wc -l`） |
 | 当前 | **v3.141.592659**(2026-11-09) |
 | 运行时依赖 | **0** —— 从第一个版本保持到现在 |
 
