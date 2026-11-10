@@ -59,31 +59,31 @@
 
 1 个小节 · 21 条：已复核 3 · 仍缺 14 · 已修 4（无 marker 1）
 
-小节 `## 7. 已知 / 尚未验证`（`:445`）
+小节 `## 7. 已知 / 尚未验证`（`:479`）
 
 | # | 位置 | bullet | marker | 状态 |
 |---:|---|---|---|---|
-| 1 | `RELEASE_NOTES_3.141.592659.md:449` | mutation 全量 sweep（HMC，`c4931c40`）**：POSIX `mutation-sweep.mjs` 在 HMC clone `c4931c40` 上跑完 **97/97 spec 按预期行为，0 unexpected survivors， 0 mismatch**（`.agent/HANDOFF.md` 记录，local evidence；日志 `/tmp/wsa-mutate2.log`， 99 个 `SPEC_EXIT` 中 2 个零突变 spec）。旧的「1800 s 上限前 56/97、剩 41」是中途 截断的中间态，已被该次完整 sweep 取代；`spec-baseline-check` 只证明锚点与基线 成立，不执行变异体。 | `[VERIFIED]` | 已复核 |
-| 2 | `RELEASE_NOTES_3.141.592659.md:455` | mutation 最终树复跑**：语料已扩到 **99 spec / 878 mutation**； `spec-baseline-check --all` 本地实测（`7c995f40` 树）**99 spec / 0 drift / 0 untrustworthy**——`d142d06e` 重钉 gemini 两份、`7c995f40` 重钉 `think-text-reroute` 并重锚 identity 两份。HMC 侧对合并树 `5a3ec2a9` 的 99/99 覆盖已测（其后 `5fb21e70`/`7c995f40` 又改 `src/`）。在 POSIX 上复跑 `node scripts/mutation-sweep.mjs --shard 0/1` 与 `--verify` 前，最终树的 变异体结论不作为证据。 | `[UNVERIFIED]` | 仍缺 |
-| 3 | `RELEASE_NOTES_3.141.592659.md:462` | mutation 全量基线（发布树）**：`spec-baseline-check.mjs --all`（97 spec）是 release workflow 的模式；发布树实测 **97 spec measured, 0 drift, 0 untrustworthy**，wall 202.5 s （`releasecommit-spec-baseline-all.log`，`sha256 da0d49db…`）。当前树的对应实测见 §4。 | `[VERIFIED]` | 已复核 |
-| 4 | `RELEASE_NOTES_3.141.592659.md:465` | Node 22 全量**：`test:release` 的分片（`scripts/run-test-shard.mjs 0 1`）由 Node 22.23.4 二进制直接运行，实测 **605 文件 / 7,455 测试 / 7,352 通过 / 0 失败 / 103 跳过 / 801.6 s**（`node22-release-2.log`； `TEST_SHARD_SUMMARY {"files":605,"tests":7455,"pass":7352,"fail":0,"skipped":103}`）。 `engines >=22.13.0` 的精确 floor（22.13.x）仍未单独跑矩阵，但 22.x 全量已不再是「未实测」。 | `[VERIFIED]` | 已复核 |
-| 5 | `RELEASE_NOTES_3.141.592659.md:470` | 托管 CI**：分支 `fix/audit-wave-20261109` 没有 upstream，本版所有 CI 结论 都是本机测量。 | `[UNVERIFIED]` | 仍缺 |
-| 6 | `RELEASE_NOTES_3.141.592659.md:472` | HMC 部署与回滚演练（592659）**：本版没有部署；回滚命令见 §5 与 `ReleasePrep.md` §7，未执行。 | `[UNVERIFIED]` | 仍缺 |
-| 7 | `RELEASE_NOTES_3.141.592659.md:474` | live 上游**：WA-001/002/003/A4 的验证全部是隔离函数与 hermetic 测试； 没有把病态 payload 发给真实服务，也没有真实客户端复跑。HMC 的旧模块计时用的是 `/tmp` 副本，生产 `:18999` 未被写入。 | `[UNVERIFIED]` | 仍缺 |
-| 8 | `RELEASE_NOTES_3.141.592659.md:477` | CTX-01 live**：没有在真实上游跑 replay + 有限 keep 的组合。 | `[UNVERIFIED]` | 仍缺 |
-| 9 | `RELEASE_NOTES_3.141.592659.md:478` | `clear_thinking` 缺省 keep 的模型族边界**：`29197941` 按上游文档把 缺省 `keep` 分为 keep-all 家族（Opus 4.5+/5、Sonnet 4.6+/5、Fable）与保守 keep-1， 边界来自上游文档而非本后端实测（`src/handlers/messages.js` 注释同样标 `[UNVERIFIED]`）；无法分类的模型名一律按 keep-1 校验，方向是多拒不少放。 | `[UNVERIFIED]` | 仍缺 |
-| 10 | `RELEASE_NOTES_3.141.592659.md:482` | S03 真实 dashboard 客户端**：只有隔离的排序测试（声明 10 MiB、不发 body）。 | `[UNVERIFIED]` | 仍缺 |
-| 11 | `RELEASE_NOTES_3.141.592659.md:483` | IMG-01 真实 Cascade abort**：取消语义由注入 signal 的测试覆盖；没有在 真实长轮次里按 Ctrl-C/断连。 | `[UNVERIFIED]` | 仍缺 |
-| 12 | `RELEASE_NOTES_3.141.592659.md:485` | TRN-01 上游角色语义**：只证明序列化可逆、闭合标签计数正确；不证明上游 会因未转义文本产生角色越权（本版不声称这是越权漏洞）。 | `[UNVERIFIED]` | 仍缺 |
-| 13 | `RELEASE_NOTES_3.141.592659.md:487` | 发布产物**：资产、cosign 签名、SHA256SUMS、release attestation 都要在 tag 之后由 release workflow 生成；本文件不代表它们已经存在。 | `[UNVERIFIED]` | 仍缺 |
-| 14 | `RELEASE_NOTES_3.141.592659.md:489` | G01（`reasoning.encrypted_content` 从不发出）**：`c4931c40` 在 `include:["reasoning.encrypted_content"]` 且上游提供值时发出该字段，并补了回放分支； 证据 `test/responses-include-verbosity-custom.test.js` 的 G01 专项用例（现 17 条， 全文件 30 条）。 | `[FIXED]` | 已修 |
-| 15 | `RELEASE_NOTES_3.141.592659.md:493` | G02（`text.verbosity` 未解析/未转发）**：`c4931c40` 解析 `text.verbosity` 并带入 adapter 边界（`completionOverrides.verbosity`）；chat-compatible 上游没有该字段，因此这是 有意记录的边界 no-op，不再是静默丢弃。证据同上测试文件。 | `[FIXED]` | 已修 |
-| 16 | `RELEASE_NOTES_3.141.592659.md:496` | G03（custom-tool 输入未流式）**：`c4931c40` 补了 `response.custom_tool_call_input.delta` / `.done` 与最终 `custom_tool_call` item 的 `input`/`id`； 证据同上测试文件。 | `[FIXED]` | 已修 |
-| 17 | `RELEASE_NOTES_3.141.592659.md:499` | G06（Gemini 静默丢弃 server-side tools）**：`c4931c40` 改为与其他协议面一致的 400 `unsupported_server_side_tool`，不再只写日志；`b65e0446` 补 falsy 键按存在性拒绝 与未列入工具的 warn。证据 `test/gemini.test.js`：2 个 `(G06)` 具名 `it`（translator 级 拒绝 + `handleGemini` 路由级 400）加 falsy-presence 断言面。 | `[FIXED]` | 已修 |
-| 18 | `RELEASE_NOTES_3.141.592659.md:503` | G01–G03/G06 的真实客户端抓包**：上述修复由 hermetic 测试覆盖；没有真实 Codex/Devin 客户端抓包确认 `reasoning.encrypted_content`、`text.verbosity`、custom-tool input delta 与 Gemini server-tool 400 在真实上游/客户端上的线上形状。 | `[UNVERIFIED]` | 仍缺 |
-| 19 | `RELEASE_NOTES_3.141.592659.md:506` | Q1 G4（`messagesRemaining:-1` 的语义）**：`CheckUserMessageRateLimit` 恒报 `-1`；dashboard 把成功探测的 `-1` 读作 `unlimited: true`（`src/dashboard/devin-cards.js:532`）， `test/dashboard-devin-cards.test.js` 有意固定该行为。审计要求常量落 `unknown`；本版把这一半 作为 deferred 残差记录（`test/dashboard-capacity-unknown.test.js` 头部），未改 dashboard 契约。 | `[UNVERIFIED]` | 仍缺 |
-| 20 | `RELEASE_NOTES_3.141.592659.md:510` | support-bundle 生产形态**：`test/support-bundle.test.js:227` 断言 `health.commit` 是 git sha，但 `src/version.js:40-47` 在非 git checkout 下回退为空串—— HMC 生产形态正是 `commit:""`（`SYNTHESIS.md` §2）。测试只在 git checkout 内通过，打包部署 形态未覆盖；本版只诊断，未改测试。 | `[UNVERIFIED]` | 仍缺 |
-| 21 | `RELEASE_NOTES_3.141.592659.md:514` | **沿用 592658 的边界**：M4 rescue 未在真实上游触发、多段 `#10`/`#21` 未线上观测、 官方 `pr-gate` 仍 `INCOMPLETE`（relogin 真实密码缺口）。这些不因本版改变。 | — | 仍缺 |
+| 1 | `RELEASE_NOTES_3.141.592659.md:483` | mutation 全量 sweep（HMC，`c4931c40`）**：POSIX `mutation-sweep.mjs` 在 HMC clone `c4931c40` 上跑完 **97/97 spec 按预期行为，0 unexpected survivors， 0 mismatch**（`.agent/HANDOFF.md` 记录，local evidence；日志 `/tmp/wsa-mutate2.log`， 99 个 `SPEC_EXIT` 中 2 个零突变 spec）。旧的「1800 s 上限前 56/97、剩 41」是中途 截断的中间态，已被该次完整 sweep 取代；`spec-baseline-check` 只证明锚点与基线 成立，不执行变异体。 | `[VERIFIED]` | 已复核 |
+| 2 | `RELEASE_NOTES_3.141.592659.md:489` | mutation 最终树复跑**：语料已扩到 **99 spec / 878 mutation**； `spec-baseline-check --all` 本地实测（`7c995f40` 树）**99 spec / 0 drift / 0 untrustworthy**——`d142d06e` 重钉 gemini 两份、`7c995f40` 重钉 `think-text-reroute` 并重锚 identity 两份。HMC 侧对合并树 `5a3ec2a9` 的 99/99 覆盖已测（其后 `5fb21e70`/`7c995f40` 又改 `src/`）。在 POSIX 上复跑 `node scripts/mutation-sweep.mjs --shard 0/1` 与 `--verify` 前，最终树的 变异体结论不作为证据。 | `[UNVERIFIED]` | 仍缺 |
+| 3 | `RELEASE_NOTES_3.141.592659.md:496` | mutation 全量基线（发布树）**：`spec-baseline-check.mjs --all`（97 spec）是 release workflow 的模式；发布树实测 **97 spec measured, 0 drift, 0 untrustworthy**，wall 202.5 s （`releasecommit-spec-baseline-all.log`，`sha256 da0d49db…`）。当前树的对应实测见 §4。 | `[VERIFIED]` | 已复核 |
+| 4 | `RELEASE_NOTES_3.141.592659.md:499` | Node 22 全量**：`test:release` 的分片（`scripts/run-test-shard.mjs 0 1`）由 Node 22.23.4 二进制直接运行，实测 **605 文件 / 7,455 测试 / 7,352 通过 / 0 失败 / 103 跳过 / 801.6 s**（`node22-release-2.log`； `TEST_SHARD_SUMMARY {"files":605,"tests":7455,"pass":7352,"fail":0,"skipped":103}`）。 `engines >=22.13.0` 的精确 floor（22.13.x）仍未单独跑矩阵，但 22.x 全量已不再是「未实测」。 | `[VERIFIED]` | 已复核 |
+| 5 | `RELEASE_NOTES_3.141.592659.md:504` | 托管 CI**：分支 `fix/audit-wave-20261109` 没有 upstream，本版所有 CI 结论 都是本机测量。 | `[UNVERIFIED]` | 仍缺 |
+| 6 | `RELEASE_NOTES_3.141.592659.md:506` | HMC 部署与回滚演练（592659）**：本版没有部署；回滚命令见 §5 与 `ReleasePrep.md` §7，未执行。 | `[UNVERIFIED]` | 仍缺 |
+| 7 | `RELEASE_NOTES_3.141.592659.md:508` | live 上游**：WA-001/002/003/A4 的验证全部是隔离函数与 hermetic 测试； 没有把病态 payload 发给真实服务，也没有真实客户端复跑。HMC 的旧模块计时用的是 `/tmp` 副本，生产 `:18999` 未被写入。 | `[UNVERIFIED]` | 仍缺 |
+| 8 | `RELEASE_NOTES_3.141.592659.md:511` | CTX-01 live**：没有在真实上游跑 replay + 有限 keep 的组合。 | `[UNVERIFIED]` | 仍缺 |
+| 9 | `RELEASE_NOTES_3.141.592659.md:512` | `clear_thinking` 缺省 keep 的模型族边界**：`29197941` 按上游文档把 缺省 `keep` 分为 keep-all 家族（Opus 4.5+/5、Sonnet 4.6+/5、Fable）与保守 keep-1， 边界来自上游文档而非本后端实测（`src/handlers/messages.js` 注释同样标 `[UNVERIFIED]`）；无法分类的模型名一律按 keep-1 校验，方向是多拒不少放。 | `[UNVERIFIED]` | 仍缺 |
+| 10 | `RELEASE_NOTES_3.141.592659.md:516` | S03 真实 dashboard 客户端**：只有隔离的排序测试（声明 10 MiB、不发 body）。 | `[UNVERIFIED]` | 仍缺 |
+| 11 | `RELEASE_NOTES_3.141.592659.md:517` | IMG-01 真实 Cascade abort**：取消语义由注入 signal 的测试覆盖；没有在 真实长轮次里按 Ctrl-C/断连。 | `[UNVERIFIED]` | 仍缺 |
+| 12 | `RELEASE_NOTES_3.141.592659.md:519` | TRN-01 上游角色语义**：只证明序列化可逆、闭合标签计数正确；不证明上游 会因未转义文本产生角色越权（本版不声称这是越权漏洞）。 | `[UNVERIFIED]` | 仍缺 |
+| 13 | `RELEASE_NOTES_3.141.592659.md:521` | 发布产物**：资产、cosign 签名、SHA256SUMS、release attestation 都要在 tag 之后由 release workflow 生成；本文件不代表它们已经存在。 | `[UNVERIFIED]` | 仍缺 |
+| 14 | `RELEASE_NOTES_3.141.592659.md:523` | G01（`reasoning.encrypted_content` 从不发出）**：`c4931c40` 在 `include:["reasoning.encrypted_content"]` 且上游提供值时发出该字段，并补了回放分支； 证据 `test/responses-include-verbosity-custom.test.js` 的 G01 专项用例（现 17 条， 全文件 30 条）。 | `[FIXED]` | 已修 |
+| 15 | `RELEASE_NOTES_3.141.592659.md:527` | G02（`text.verbosity` 未解析/未转发）**：`c4931c40` 解析 `text.verbosity` 并带入 adapter 边界（`completionOverrides.verbosity`）；chat-compatible 上游没有该字段，因此这是 有意记录的边界 no-op，不再是静默丢弃。证据同上测试文件。 | `[FIXED]` | 已修 |
+| 16 | `RELEASE_NOTES_3.141.592659.md:530` | G03（custom-tool 输入未流式）**：`c4931c40` 补了 `response.custom_tool_call_input.delta` / `.done` 与最终 `custom_tool_call` item 的 `input`/`id`； 证据同上测试文件。 | `[FIXED]` | 已修 |
+| 17 | `RELEASE_NOTES_3.141.592659.md:533` | G06（Gemini 静默丢弃 server-side tools）**：`c4931c40` 改为与其他协议面一致的 400 `unsupported_server_side_tool`，不再只写日志；`b65e0446` 补 falsy 键按存在性拒绝 与未列入工具的 warn。证据 `test/gemini.test.js`：2 个 `(G06)` 具名 `it`（translator 级 拒绝 + `handleGemini` 路由级 400）加 falsy-presence 断言面。 | `[FIXED]` | 已修 |
+| 18 | `RELEASE_NOTES_3.141.592659.md:537` | G01–G03/G06 的真实客户端抓包**：上述修复由 hermetic 测试覆盖；没有真实 Codex/Devin 客户端抓包确认 `reasoning.encrypted_content`、`text.verbosity`、custom-tool input delta 与 Gemini server-tool 400 在真实上游/客户端上的线上形状。 | `[UNVERIFIED]` | 仍缺 |
+| 19 | `RELEASE_NOTES_3.141.592659.md:540` | Q1 G4（`messagesRemaining:-1` 的语义）**：`CheckUserMessageRateLimit` 恒报 `-1`；dashboard 把成功探测的 `-1` 读作 `unlimited: true`（`src/dashboard/devin-cards.js:532`）， `test/dashboard-devin-cards.test.js` 有意固定该行为。审计要求常量落 `unknown`；本版把这一半 作为 deferred 残差记录（`test/dashboard-capacity-unknown.test.js` 头部），未改 dashboard 契约。 | `[UNVERIFIED]` | 仍缺 |
+| 20 | `RELEASE_NOTES_3.141.592659.md:544` | support-bundle 生产形态**：`test/support-bundle.test.js:227` 断言 `health.commit` 是 git sha，但 `src/version.js:40-47` 在非 git checkout 下回退为空串—— HMC 生产形态正是 `commit:""`（`SYNTHESIS.md` §2）。测试只在 git checkout 内通过，打包部署 形态未覆盖；本版只诊断，未改测试。 | `[UNVERIFIED]` | 仍缺 |
+| 21 | `RELEASE_NOTES_3.141.592659.md:548` | **沿用 592658 的边界**：M4 rescue 未在真实上游触发、多段 `#10`/`#21` 未线上观测、 官方 `pr-gate` 仍 `INCOMPLETE`（relogin 真实密码缺口）。这些不因本版改变。 | — | 仍缺 |
 
 ## 3.141.592658 — `docs/releases/RELEASE_NOTES_3.141.592658.md`
 
