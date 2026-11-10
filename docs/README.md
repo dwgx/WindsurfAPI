@@ -59,7 +59,7 @@ flowchart TD
 | Localise the dashboard | [dashboard-i18n.md](dashboard-i18n.md) |
 | Verify a release download / understand the OTA trust boundary | [RELEASE-SIGNING.md](RELEASE-SIGNING.md) — cosign keyless signatures (GitHub OIDC, no key material in the repo), the exact `verify-blob` commands, what the signature does and does not prove, and the D9 controls for Docker digest signing and source-OTA attestation |
 | Audit the D9 supply-chain controls | [D9-GATE.md](../evidence/final/D9-GATE.md) (single-Owner trust assessment) with [BannerLock.md](../evidence/final/BannerLock.md), [DockerSign.md](../evidence/final/DockerSign.md) and [SourceAttest.md](../evidence/final/SourceAttest.md) — what is implemented, what stays `[UNVERIFIED]`, and the residual Owner-channel risk |
-| See what changed in a version | [releases/](releases/) — one file per version, v2.0.6 → present (219 release notes, 2026-11-10) |
+| See what changed in a version | [releases/](releases/) — one file per version, v2.0.6 → present (220 release notes, 2026-11-11) |
 
 ## 🔬 Understand the internals
 
@@ -184,11 +184,15 @@ silently stopped guarding. These are the tools that close that gap:
 
 ## Release history
 
-- [releases/](releases/): one file per version, v2.0.6 → present — 219 release notes as of
-  2026-11-09. Append-only published history; each file is a GitHub Release body.
-- [ACCEPTANCE_3.141.592659.md](releases/ACCEPTANCE_3.141.592659.md) — the current release's
-  acceptance appendix: identity-neutralizer bounded rewrite, A4/catalogue over-delete,
-  CTX-01, S03, IMG-01/TRN-01, gate commands, skip lists and log hashes.
+- [releases/](releases/): one file per version, v2.0.6 → present — 220 release notes as of
+  2026-11-11. Append-only published history; each file is a GitHub Release body.
+- [ACCEPTANCE_3.141.592660.md](releases/ACCEPTANCE_3.141.592660.md) — this release's
+  acceptance appendix: the version-only candidate over the JSON Schema `pattern` budget fix,
+  the gates re-measured on this tree, and the mutation sweep still outstanding.
+  [ACCEPTANCE_3.141.592659.md](releases/ACCEPTANCE_3.141.592659.md) keeps the frozen
+  per-wave record for the 3.141.592659 draft that was never published — identity-neutralizer
+  bounded rewrite, A4/catalogue over-delete, CTX-01, S03, IMG-01/TRN-01 and the §0.5
+  budget addendum.
 - **[releases/README.md](releases/README.md) is the release runbook** — the ordered
   procedure, the gate, and the house style for writing notes all live there, next to the
   task, rather than being summarised here. Read it before shipping anything: the version

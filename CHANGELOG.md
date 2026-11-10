@@ -2,7 +2,7 @@
 
 <p align="center">
   <a href="#最近的版本">最近的版本</a> ·
-  <a href="docs/releases/">全部 219 份发布说明</a> ·
+  <a href="docs/releases/">全部 220 份发布说明</a> ·
   <a href="README.md">← 主 README</a>
 </p>
 
@@ -19,9 +19,9 @@
 
 | | |
 |---|---|
-| 发布说明 | **219** 份,v2.0.6 → v3.141.592659（生成：`node scripts/sync-changelog-counts.mjs`；口径 `ls docs/releases/RELEASE_NOTES_*.md \| wc -l`） |
+| 发布说明 | **220** 份,v2.0.6 → v3.141.592660（生成：`node scripts/sync-changelog-counts.mjs`；口径 `ls docs/releases/RELEASE_NOTES_*.md \| wc -l`） |
 | git tag | 229 个（生成：`node scripts/sync-changelog-counts.mjs`；口径 `git tag \| wc -l`） |
-| 当前 | **v3.141.592659**(2026-11-09) |
+| 当前 | **v3.141.592660**(2026-11-11) |
 | 运行时依赖 | **0** —— 从第一个版本保持到现在 |
 
 ```mermaid
@@ -42,7 +42,18 @@ flowchart LR
 
 下面是 3.9.x 全系。更早的版本请直接翻 [`docs/releases/`](docs/releases/)。
 
-### [v3.141.592659](docs/releases/RELEASE_NOTES_3.141.592659.md) · 2026-11-09
+### [v3.141.592660](docs/releases/RELEASE_NOTES_3.141.592660.md) · 2026-11-11
+
+公开发布版（Path B）。内容与 3.141.592659 草稿同树：`babafeef` 的 JSON Schema `pattern`
+50 ms 共享预算 + `valid|invalid|unable` 三态判定，加此前审计波对 `src/` 8 个文件的改动。
+本版只把版本号与发布指针改到 3.141.592660——`v3.141.592659` **从未发布**，它的本地 tag
+冻结在未修复的 `d5519da3` 上，不 push、不删除、不复用。默认路径 wire 对 `v3.141.592658`
+**270/270 逐字节一致**；身份中和器 WA-001/002/003、A4、CTX-01、S03、IMG-01、TRN-01 与
+`pattern` 预算的机制见发布说明 §1.1–§1.8。本树门禁：docs-guard 47/47、unverified-register
+7/7、JSON Schema 38/38、secret-scan exit 0、`git diff --check` 0。**99 spec / 878 mutation
+的全量 sweep 在这棵树上仍未跑（`[UNVERIFIED]`）**，合并与推送之前必须在 POSIX 上补跑。
+
+### [v3.141.592659](docs/releases/RELEASE_NOTES_3.141.592659.md) · 2026-11-09（**未发布**，升版为 v3.141.592660）
 
 审计收口补丁版，**默认路径 wire 对 v3.141.592658 270/270 逐字节一致**。身份中和器（`identity-neutralize.js`）从“连续空行上立方增长、能阻塞整个 event-loop”改为有界线性扫描（WA-001，CWE-1333；2,049 B 连续空行 1,140 ms → 2.57 ms，512 KiB 连续空行 >300 s → 26.88 ms），段落边界改用与 `\s` 等价的 24 个空白码元（WA-002，Unicode 分隔符下丢失调用方 `RULE` 的例数 85 → 17，且 17 例全部是设计上全局的 `b-security-line` 形状），`FREEFORM` 只在 apply_patch 描述行内改写（WA-003）；`a4-cli-line` / `a4-catalogue-line` 不再吃掉整行（A4：524,152 B 单行输入 42 B → 524,160 B；catalogue 锚点行无模型 ID 标记时只改短语、有 `claude-`/`model ids`/`fable`/`opus`/`sonnet` 正文时删到行尾）；CTX-01 把有限 `clear_thinking` 与签名回放的冲突改为按顺序判断（只拒绝真正会丢掉签名轮的 keep）；dashboard 写请求在 `readBody` 之前过门（S03）；Cascade 图片提取可取消（IMG-01）且 `</human>`/`</assistant>` 闭合标签在计量/渲染/插入三处统一转义（TRN-01）。release shard **605 文件 / 7,455 测试 / 7,352 pass / 0 fail / 103 skip**，身份 147、CTX 28、Cascade 39、transport 22、docs guard 47、spec 97/863 全绿；Node 22 全量后补实测 **605 文件 / 7,455 测试 / 7,352 pass / 0 fail / 103 skip**（`node22-release-2.log`），mutation sweep 已由 HMC 在 `c4931c40` 完成 **97/97 spec、0 mismatch**（最终树 99 spec 基线重钉与 POSIX 复跑仍 `[UNVERIFIED]`，见发布附录 §7）；托管 CI 与 HMC 部署仍 `[UNVERIFIED]`，逐项见发布附录。
 

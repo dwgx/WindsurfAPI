@@ -1,0 +1,702 @@
+# v3.141.592660
+
+**这是公开发布版。** `3.141.592659` 从未发布：它的本地 annotated tag 指向 `d5519da3`，
+而该 commit 早于 JSON Schema `pattern` 边界修复 `babafeef`，按此发布等于把修复关在版本外。
+Owner 的处置是升版（Path B）：同一棵代码树以 **3.141.592660** 公开发布，`.592659` 的 tag
+永久冻结、不 push、不删除、不复用。本文件的技术内容与
+[`RELEASE_NOTES_3.141.592659.md`](RELEASE_NOTES_3.141.592659.md) 的草稿逐节相同（同一棵树），
+发布指针改为本版；那份草稿保留为历史。
+
+自 `v3.141.592658`（`08a750d1`）以来，审计分支累计 **36 个提交 / 45 个文件**
+（`git rev-list --count v3.141.592658..deeb2539`；`git diff --shortstat
+v3.141.592658..deeb2539`：4,996 增 / 501 删）。产品变更集中在 `src/` 下 **6 个文件**：
+`client.js`、`dashboard/api.js`、`handlers/identity-neutralize.js`、`handlers/messages.js`、
+`image.js`、`server.js`。本版是 **patch**：默认路径的请求字节相对 `v3.141.592658` 仍是
+**270/270 逐字节一致、0 差异**，没有协议兼容性破坏。
+
+> **版本号**：`3.141.592658` 之后的 patch，语义化版本写作 **3.141.592660**（tag
+> `v3.141.592660`，本文件 `RELEASE_NOTES_3.141.592660.md`）。发布提交、认证树、逐项门禁
+> 计数与 skip 名单见同日验收附录 [`ACCEPTANCE_3.141.592660.md`](ACCEPTANCE_3.141.592660.md)
+> —— 本文件只写内容与边界，附录是本次认证的唯一计数来源。
+
+## Post-release hardening `c4931c40`（2026-11-09）
+
+原计划的 `3.141.592659` 发布提交 `e0c5c715`（**从未发布**）之后，审计分支追加
+`c4931c40`（`fix(release): close audit and ecosystem gaps`，49 文件 / +5,010 −324），收口
+审计波剩余缺口：auth/server（Anthropic 401 形状、载体按
+surface 收窄、压缩体 415、selector 维度冷却、Gemini server-side tool 400）、streaming（拼接
+SSE JSON、队列字节预算、按未确认字节计 drain、history 预算改为 messages+tools）、responses
+（`encrypted_content`、`verbosity` 边界、custom-tool input delta/id）、identity/CTX（每条
+`clear_thinking` 校验、catalogue 仅删 ID 正文）、connect（Chat 工具名净化、截断信号、session
+连续性拼写、流式反查）。全量 release shard 在 `c4931c40` 上 **616 文件 / 7,603 测试 / 7,500
+通过 / 0 失败 / 103 跳过 / 847.7 s，exit 0**（`wave4-test-release.log`）。这是 hardening
+提交，**不是新 tag**：当时 `v3.141.592659` 尚未创建，也没有 push/部署。**2026-11-10
+19:54 +09:00 本地已创建 annotated tag 对象 `1d63a030` → commit `d5519da3`；该 commit 不含
+JSON Schema 边界修复，禁止按此发布（见 §1.8）。**
+
+## Post-release 增补：复审修复波与范围更正（2026-11-10）
+
+**范围更正。** §0 与文首的计数（36 提交 / 45 文件 / +4,996 −501 / 6 个 `src/` 文件）
+度量的是 `v3.141.592658..deeb2539` 审计分支在发布提交前的冻结范围，**不包含**
+`e0c5c715` 之后的 hardening 与复审修复。发布提交之后本分支另有 **84 个提交 /
+126 个文件 / +10,786 −700 / 34 个 `src/` 文件**（2026-11-11 在 HEAD `babafeef` 重算：
+`git rev-list --count e0c5c715..HEAD`；`git diff --shortstat e0c5c715..HEAD`；
+`git diff --name-only e0c5c715..HEAD -- src | wc -l`。此前写作时的 68 个提交 /
+124 个文件 / +9,965 −649 是更早树上的测量值）：`c4931c40`（审计收口，
+49 文件 / +5,010 −324）、`0aea4ea3`（connect 显式错误终止与 catalogue 边界）、
+`911e6674` / `d0359733`（纯文档）、复审修复波 `04503830`–`7c995f40`（含 spec
+基线重钉、文档订正与差分审计修复）、安全狩猎波 `f43b5b7a`–`18f54aaf`（七条
+只读 lane 报告的落地修复，含 S1 输入 DoS、S2 载体矩阵、S3 头回显/SSE、
+S4 解码器边界、S5 日志注入/XSS、S6 凭据基线与代理配置）、最后一里批
+`b45b41e1`–`6dce60ad`（G08/G14 预算收口、L3b 残留 ReDoS、元标签线性扫描、
+子进程环境净化、post-error 封条、label 边界）与 L1 元审批 `e30baf6d`。
+逐提交证据记入验收附录的增补段（acceptance addendum，另行补写）；本文件只登记
+范围与用户可见变化。
+
+**tag 目标。** `v3.141.592660` 打在合并后的 master tip 上（流程：把 `origin/master`
+（`111e2c4e`）合入本分支 → `master --ff-only` → 在 master tip 打 annotated tag → push）。
+最后一个改 `src/` 的提交是 `babafeef`（JSON Schema `pattern` 预算 + 三态判定，见 §1.8）；
+本发布提交只改版本与文档，`git diff babafeef..HEAD -- src` 为空。**本地 tag 对象
+`1d63a030` → `d5519da3`（`v3.141.592659`）不在发布路径上**：它冻结在未修复的 commit 上，
+不 push、不删除、不复用——升版已由 Owner 决定（见文首）。
+
+**复审修复波的用户可见变化**（`04503830`–`5fb21e70`，按面分组；`c4931c40` 已覆盖的
+面见上节）：
+
+- **auth/server**：`/v1/messages` 的 401 改用 Anthropic 错误形状（`type:'error'` +
+  `authentication_error` + `request-id`）；Gemini 面（`/v1beta/*` 与
+  `/v1/models/*:generateContent` 别名）的 401 改用 Gemini `UNAUTHENTICATED` 信封；
+  凭据载体按 surface 收窄——`x-api-key` 不再能打开 `/v1/chat/completions`、
+  `/v1/completions`、`/v1/responses`（这些面只认 Bearer），`x-goog-api-key` 与
+  `?key=` 只在 `/v1/models` 与 Gemini 面有效，Bearer 处处有效，错配载体一律 401；
+  压缩请求体按面返回 415 `unsupported_content_encoding`（不再是含混的 400）。
+- **streaming**：SSE 队列字节预算改为只计行开销（修复 64 MB 帧帽被 8 MB 预算提前
+  触发的回归；载荷仍由 64 MB 帧帽约束）；drain 等待的固定下限锚定在等待开始时刻，
+  不再被后续背压帧无限推后，且按未确认字节计的比例预算封顶在
+  `MAX_DRAIN_BUDGETED_BYTES`（4 MiB——默认速率下约 8.5 分钟），半开死连接不再
+  按积压总量换无限等待（`5fb21e70`）；`c4931c40` 新增的
+  `WINDSURFAPI_MIN_CLIENT_RATE_BPS`（默认 8192 B/s）给按字节背压预算定最短
+  客户端吞吐假设。
+- **responses**：`finish_reason:'error'` 一旦记录即终态，后续 chunk 不再把轮次降级为
+  `response.completed`；未正常终止/出错轮次的 tool-call item 标 `incomplete`，
+  且流式路径在 `finish()` 里封口的全部 item（message/reasoning/function_call）
+  在失败轮次同样标 `incomplete`，与非流式一致（`5fb21e70`）；客户端断连时
+  responses 的 capture shim 同样 dispose 有界 writer 与 SSE framer
+  （`5fb21e70`）；blob-only reasoning 不再发空 `summary_text.done`；同一轮里
+  无签名文本与签名 reasoning 共存时丢弃回放签名（`41c560f6`）。
+- **messages**：缺省 `keep` 按模型族解析——keep-all 家族（Opus 4.5+/5、Sonnet 4.6+/5、
+  Fable）照旧接受，其余模型（含无法分类的名字）按保守 keep-1 校验，宁可多拒不漏放；
+  `redacted_thinking` 计入 keep 窗口；`{keep:{type:'all'}}` 与 `keep:'all'` 等价接受；
+  非字符串 `model` 返回 400，translator 抛出的 400 补齐 `type:'error'`。
+- **gemini**：`googleSearch`/`googleSearchRetrieval`/`codeExecution`/`urlContext`
+  按键存在性拒绝（`{googleSearch:false}` 等 falsy 声明同样拒绝），返回 400
+  `unsupported_server_side_tool`；未列入拒绝集的 server-side 工具
+  （`googleMaps`/`fileSearch`/`computerUse`/`mcpServers`）丢弃时按请求 warn 留痕。
+- **connect**：`0aea4ea3` 让显式错误 stop reason 优先于可解码 tool call 保留为
+  `finish_reason=error`，chat/completions、messages、responses、gemini 四个协议面一致；
+  catalogue 正文要求真实模型 ID 边界（`claude-3d.example.com`、
+  `claude-1password.example.com`、`claude-opus.example.com` 等散文/主机形状不再误吞
+  调用方文本）。
+- **identity**：catalogue 行内 ID 扫描改为每行 memo（512 KiB 单行 3,439 ms → ~21 ms，
+  消掉 `04503830` 复审发现的 anchors×line 二次复杂度）；`claude-` ID 语法收紧为
+  封闭词表 + 干净边界；`isHorizontalSpaceCode` 恢复 `\s` 全类（除 LF）。
+  差分审计（952 例语料，OLD 逐条对照 `.agent/diff-audit/`）补三个欠脱敏缺口
+  （`7c995f40`）：`IMPORTANT:` 独占行 + 纯空白跨段 + 指纹句的形状恢复删除
+  （gap 只要求纯空白，锚点后随真实文字仍不跨段——WA-002 保持）；行模型扩到
+  全部 JS 行终止符（`\r`/U+2028/U+2029 后的 billing/fastmode/cli 锚点不再漏）；
+  FREEFORM 生效域从同行扩到同段（换行 preamble 的 token 不漏，调用方裸 token
+  仍保留）。复跑后 79→70 条候选，剩余全部是刻意保留：catalogue 散文形状
+  （上游模型 ID 是完整选择子，不是散文）与裸 FREEFORM token（WA-003 契约）。
+- **client/image**：prepend 进 Cascade 的 system prompt 在 fresh 单轮、多轮与 resume
+  重建三处统一转义 `</human>`/`</assistant>` 闭合标签；`extractImages` 在最后一个块
+  之后也拒绝已取消的轮次；translator SSE framer 在客户端断连时 dispose。
+
+**安全狩猎波的用户可见变化**（`f43b5b7a`–`18f54aaf`；七条只读 lane——输入 DoS、
+认证载体矩阵、SSE 头回显/注释缝、协议解码/租户隔离、存储注入/XSS、SSRF/随机性、
+代理配置——的报告全部落地）：
+
+- **auth/server**：Gemini generate 路由从"路径任意位置含 `/models/x:generateContent`"
+  收紧为左端锚定——`POST /v1/messages/models/x:generateContent` 这类把
+  generate 尾巴嵌进另一协议的请求不再按 messages 载体（`x-api-key`）开门后送进
+  `handleGemini`，而是正常 404；CORS preflight 的 `Access-Control-Allow-Headers`
+  补上 `x-goog-api-key`（浏览器端 Google SDK 不再被挡）；`x-api-key` 头值与其他
+  载体一样 trim（HTTP/2 会保留 HTTP/1.1 解析器剥掉的头值空白）。
+- **日志/凭据遮蔽**：`https-proxy.js` 访问日志与错误日志里的 `?key=` 值改为
+  `[redacted]`——Gemini 查询串载体此前会以活凭据进 journal；`maskApiKey` 与
+  账号 `keyPrefix` 对短 key 不再暴露超过约 25%（8 字符下限 key 此前会泄出一半
+  乃至全部）；`DEVIN_CONNECT_CRED_KEY` 低于 16 字符时凭据库按禁用处理并报错
+  （此前任意非空 key 都会启用一个可暴力枚举的 KEK）；`DEVIN_CONNECT_WIRE_DUMP`/
+  `WINDSURFAPI_TRACE` 首次落盘时 warn：dump 的 protobuf 携带活 session token，
+  `.wire-dump`/`.trace` 按凭据材料对待。
+- **DoS/解析边界**：`stop` 单条上限 1024 字符（超限整条丢弃而非截断——截断前缀
+  会在不该停的位置误命中）；`response_format.json_schema` 的 `pattern` 先在安全狩猎波
+  加了 1024 字符 / 256 KiB 上限与嵌套量词静态拒绝，但静态**形状**闸被 `^((a|a))+$`（26 字符
+  即 5.09 s 指数回退）绕过；`babafeef` 已删除静态形状闸（尺寸上限保留、语义改为 `unable`），
+  改为 §1.8 的 `node:vm` 50 ms 共享
+  预算 + 三态判定（预算/容量/非法 pattern 报 `unable`，不再 fail-open 跳过）；
+  `cacheKey`/`response-store` 的克隆加
+  64 层深度帽（此前 JSON.parse 放得下的 ~10k 层 body 会把克隆打进
+  RangeError——response-store 本有 retainedBytes 计量先拒，克隆自帽是纵深）；
+  protobuf varint 终止字节溢过 uint64 显式拒绝（`80×9 7F` 此前静默解出 ~2^70）；
+  账户标签的边界校验从 PATCH 路径推广到 add/login 全部写入点——调用方标签
+  按同一规则 400，上游注册名走"剥离控制字符+截断"的消毒而不是拒绝
+  （不让恶意的 registry 名把一次成功登录变成 400）；SSE pending 门的
+  `inspectPending` 改为增量窗口+StringDecoder（此前每次写都对全部 pending
+  缓冲做 concat——keepalive 流不 commit，代价 O(写次数×积压字节) 变二次方；
+  500 条 4 KiB 注释帧实测 453 ms→9.6 ms）；`postConnectUnary` 声明长度超过
+  实际体长显式拒绝（此前 `subarray` 静默截断）；
+  chat 组装层四处调用方可控文本的二次方扫描改为有界/线性——未闭合
+  `<system-reminder` 重复串、bash 前缀修复的 200 KiB 输入帽、读路径提取的
+  200 KiB 窗口+段长/段深限制、JSON 载荷提取的 512 起点+4 MiB 扫描预算
+  （恶意语料实测 9.8 s→78 ms / 44.6 s→118 ms / 6.2 s→17 ms）。
+- **SSE/响应头**：`openai-model`/`anthropic-model` 响应头值过 obs-text 清洗——非法
+  `model` 字段不再作为原样回显触发 header 写入异常；SSE `finishError` 兜底在
+  `writeHead`/`end` 抛错时销毁真实 socket，半开连接不再悬留；心跳注释帧的转发
+  收窄为"整条恰是一个注释帧"，带多行内容的前缀不再穿透。
+- **dashboard 日志/XSS**：caller 可控串（model、tool name、账户标签）进 ring/SSE/
+  JSONL/console/文本导出前统一过中央消毒（换行压平、ANSI 剥离、长度截断）——伪造
+  日志行与终端注入不再成立；sketch 与主看板的内联 JS 字符串改走专用 JS 转义
+  （修复 HTML-escape 复用导致的存储 XSS）；账户标签校验类型/非空/控制字符/长度；
+  support-bundle 与 trace 的 secret-field 匹配扩到下划线/驼峰/复合凭据名。
+
+**最后一里与元审批的用户可见变化**（`b45b41e1`–`e30baf6d`；L3a/L3b/W-F3/W-F4
+修复批 + L1 元审 34 个 src 文件复审后的 8 findings 全修）：
+
+- **子进程环境净化（S6-F3）**：所有 spawn 点统一走 `buildSubprocessEnv`/
+  `buildMinimalSubprocessEnv`——版本探针用最小 allowlist，ACP/`devin -p`/LS 安装器
+  按形状剥离秘密形环境变量（`*_KEY`/`*_TOKEN`/`*_SECRET` 等）而保留 PATH/HOME/
+  代理/CA 与显式注入的凭据通道。此前 15/15 个秘密形 sentinel 全部漏进子进程
+  环境；修后 0 漏。ACP 认证继续走 `_meta.api_key` 通道而非环境变量。
+- **复杂度/注入边界**：`response_format.json_schema` 的 pattern 静态闸（含
+  `^(a|a)+$` / `^((a|a))+$` 形）已被 `babafeef` 删除——静态形状扫描覆盖不了指数回退
+  的拼写空间（`^((a|a))+$` 只多一个无害分组即绕过，实测 5.09 s 且**不是**跳过而是
+  真的执行）；改为 §1.8 的运行时预算；Cascade 身份中和的三处 `\s*` 收窄为
+  `[ \t]*`（128 KiB 换行负载 28.9 s → 2.0 ms）；会话池元标签剥离换成
+  单趟 `indexOf` 线性扫描（256 KiB 炸弹 ~7 s → ~4 ms），未知标签只审计
+  不学习，且移除 span 后在下一个字面 `<` 续扫（修复了扫描器初版把
+  `</a>Xname b>c</a>` 字面文本当 span 误删、腐蚀复用指纹的缺陷）。
+- **Responses 终态一致**：非流式 `chatToResponse` 在 `status:'failed'` 的
+  回合里把 reasoning/message/function_call item 一律封 `incomplete`——
+  此前 reasoning/message 仍写 `completed`；流式路径的 `failedTurn` 改为
+  见 error/unterminated 信号立即锁存，终态后继续到达的 chunk 不再封出
+  `completed` item；`customToolInputPrefix` 用深度+在字符串内状态机只匹配
+  顶层 `"input"` 值（嵌套对象或字符串值里的 `"input":` 不再错命中）。
+- **边界字符与标签**：账户 label 校验与日志消毒边界补 U+2028/U+2029
+  （行/段分隔符渲染为换行 → 可伪造日志行）；`keyPrefix` 显示上限收紧到
+  key 长的 1/3（9–12 位 key 曾泄 8/9 字符）；`sse-commit` dispose/destroy
+  清空 `pendingText` 保留窗口；`securitySpan` 用 deadUntil 标记死段而非
+  `cursor = limit` 跳段——段内 anchor 的空白 gap 跨段后仍可配对（此前
+  会被跳过的配对导致指纹句按原样送上游）。
+- **预算收口（G08/G14）**：Cascade 当前轮图片与历史回放共享同一计数/字节帽
+  ——历史里塞满预算后当前轮图片不再被静默丢弃而不计数；current-turn 丢弃
+  与历史丢弃分别有独立可观测日志。
+
+## 0. 范围
+
+| 项 | 值 | 命令 |
+|---|---|---|
+| 提交 | **36**（截至审计分支 HEAD `deeb2539`；发布侧另有只动测试/版本/文档的提交：`bb81fa16`、原 `3.141.592659` 发布提交 `e0c5c715` 与本发布提交） | `git rev-list --count v3.141.592658..deeb2539` |
+| 文件 | **45**（+4,996 / −501） | `git diff --shortstat v3.141.592658..deeb2539` |
+| 净产品变更 | **6 个 `src/` 文件**（截至 `deeb2539`；加上 `babafeef` 的 `src/json-schema.js` 与 `src/handlers/chat.js`，本发布树共 **8 个**） | `git diff --name-only v3.141.592658..deeb2539 -- src` |
+| 测试 | 26 个文件 | `git diff --name-only v3.141.592658..deeb2539 -- test \| wc -l` |
+| 文档 | 9 个文件 | `git diff --name-only v3.141.592658..deeb2539 -- docs \| wc -l` |
+
+范围里的提交包含 master 合并 PR #282 的提交（`3816a47a` 及其第二父链）。这些内容在
+`v3.141.592658` 的树里已经存在：`git diff --quiet v3.141.592658..HEAD -- src/devin-connect.js
+src/claude-signature.js src/history-budget.js src/handlers/chat.js` → **exit 0**。所以本版对
+已发布树的产品差异只有上面 6 个文件，不是把 #282 再发一次。
+
+## 1. 修了什么
+
+### 1.1 身份中和器：从“能让整个服务停摆”改为有界线性扫描（WA-001）
+
+身份中和器（`src/handlers/identity-neutralize.js`）在每条请求的 system prompt 上运行，把
+Windsurf/Devin 的客户端指纹改写成中性文本。旧实现用 9 条正则，其中多条带重叠的 `\s*` 量词；
+在连续空行输入上呈**立方**增长，而函数是同步的、跑在服务唯一的 event-loop 线程上 —— 一次
+请求就能让所有客户端一起等待（CWE-1333）。
+
+在 HMC 上用**已部署的 3.141.592658 模块**（与生产 `sha256` 逐字节相同，隔离 `/tmp` 副本，
+从未把 payload 发给 `:18999`）测得：
+
+| 输入 | 旧模块耗时 |
+|---|---|
+| 513 B（`'\n'×512 + 'X'`） | 33.0 ms |
+| 1,025 B | 253.2 ms |
+| 2,049 B | 2,028.5 ms |
+| 4,097 B | 16,097.1 ms |
+| 65,537 B | 240 s 上限被杀，未完成 |
+
+本版把 11 条高风险规则改为一次性线性扫描（`applySpans`），复杂度 O(规则数 × 文本长度)；
+其余 11 条正则规则保留并做了静态边界说明（见 §4 的诚实边界）。本机实测（Windows，
+Node 24.19.0）：
+
+| 形状 | 旧实现 | 本版 | 测试上界 |
+|---|---|---|---|
+| 2,049 B 连续空行 | 1,140 ms | **2.57 ms** | 100 ms |
+| 512 KiB brand（单锚点） | 8,619 ms | **11.88 ms** | 500 ms |
+| 512 KiB 未闭合 care 段 | 703 ms | **15.60 ms** | 500 ms |
+| 512 KiB 连续空行 | >300 s（超时） | **26.88 ms** | 500 ms |
+
+影响面：所有经过身份中和的 system prompt；没有开关，默认生效。
+`test/identity-neutralize-complexity.test.js` 把这四个形状连同 512 KiB Unicode 前缀一起钉住
+（9 个用例）。
+
+### 1.2 段落边界：不再跨段删除调用方内容（WA-002）
+
+旧规则用 `\n(?!\s*\n)` 定义段落边界；`\s` 包含 NBSP、U+3000、U+2003、FF、VT 等。线性改写
+的第一版 `paragraphEndAt` 只把空格/Tab/CR 当空行，于是**由 Unicode 空白组成的空行不再算
+段落边界**，span 会跨过它、在下一段找到终止符，把中间的调用方 `RULE:` 行一起删掉 —— 正是
+WA-002 要防的形状。
+
+修复：`paragraphEndAt` 用与 `\s` 等价的 `isSpaceCode`（除 LF 外的 **24 个**空白码元）判定
+空行；span 不越过段落边界。2 万例差分（旧模块 vs 本版，12 种分隔符）：
+
+- Unicode 分隔符语料：旧保留 `RULE` 而新版丢失的例数 **85 → 17**；17 例全部是设计上全局的
+  `b-security-line` 形状（`RULE` 文本与第二个 `IMPORTANT:` 锚点在同一行），**0 例无法解释**。
+- ASCII 语料：**26 → 26**，没有新增删除。
+- 已知、刻意保留的取舍：`b-security-line` 会改写同一行上所有指纹；`IMPORTANT:` 与其短语被
+  空行隔开时，现在**保留短语**而不是跨段删除（防守换保守，测试钉住）。
+
+### 1.3 FREEFORM 只在 apply_patch 描述里改写（WA-003 / H2）
+
+旧 `a7-freeform` 无条件改写所有 `FREEFORM` 词元：SQL 枚举 `kind IN ('FREEFORM', …)`、JS
+标识符 `mode === FREEFORM` 都会被静默改成 `free-form`。
+
+本版改为来源边界：只有同一行出现 apply_patch 描述里的子句
+`do not wrap the patch in JSON`（大小写不敏感）时，才改写该行的大写 `FREEFORM` 词元
+（**大小写敏感**：小写 `freeform` 是调用方内容 —— SQL 类型名、列名、标识符 —— 原样保留）；
+`freeformSpans` 是一次线性扫描。规则顺序固定为 a7-freeform 先于 a7-json-wrap，否则子句先被
+改写、锚点消失。
+
+诚实边界：这是**行级、字面**匹配。上游若换一种措辞或把子句折行，`FREEFORM` 不再被中和；
+子句出现在同一行也会授权改写该行所有 `FREEFORM` 词元（包括调用方文本）。两个方向都写在
+`H2Freeform.md` 的残留段里。
+
+### 1.4 a4-cli-line 与 a4-catalogue-line 不再吃掉整行（A4，审计相邻发现）
+
+旧 `a4-cli-line` 用 `[^\n]*` 删到行尾。对 Environment 里那条短句是原意；对调用方的一整行
+长 prompt 就是删除载荷。实测：524,152 B 的单行输入 → **42 B**。
+
+本版按 UTF-8 字节数分流：行 ≤ 4,096 B 时**从锚点到行尾**替换，锚点之前的调用方前缀保留
+（无前缀时等价于整行替换）；行 > 4,096 B 时**只替换锚点短语**，其余字节原样保留；没有锚点
+的长行完全不动。实测：524,152 B 的单行输入 → **524,160 B**（载荷完整、锚点消失）；
+512 KiB 单行 10,280 个锚点 → 606,520 B，16–20 ms。前缀保留是后续补丁（`ad45bfb3`）修的：
+第一版短行分支从行首开始，会把 `Always answer in French. Claude Code is available as a CLI`
+前面的调用方规则一起删掉。
+
+同一形状的第二个规则是 `a4-catalogue-line`。旧正则
+`The most recent Claude models are[^\n]*\n?` 删除整行，调用方碰巧在同一行写下
+`… are listed below; RULE: keep me` 时，`RULE:` 连同其后内容一起消失（实测 66 B → 4 B，
+无 WARN）。`326880f5` 把它改成只替换锚点短语 `The available models are`，行内其余字节与
+换行保留；完整的 `a4-catalogue` span（带 `… most capable Claude models.` 终止符）仍然整块
+删除目录。
+
+`8131848c` 补上拆分段落时的另一半：锚点所在行的剩余部分若带 ID 形态的
+`claude-<组件>` 模型 ID 词元（整段 hyphen 词元须符合选择器语法并以干净边界收尾，
+而非裸 `claude-` 前缀、`model ids` 短语或 `fable`/`opus`/`sonnet` 单词），说明这是
+客户端目录头而不是恰好以该短语开头的调用方句子，span 从锚点删到行尾（锚点之前的
+前缀仍保留）。实测：终止符落在另一
+段落、`a4-catalogue` 正确地不跨段时，旧行为 253 → 244 B 且 `claude-fable-5` 仍在 wire 上；
+本版把正文一并删除。没有标记的行仍然只改短语，`RULE:` 保留。
+
+### 1.5 clear_thinking 与签名回放的条件冲突（CTX-01）
+
+`DEVIN_CONNECT_REPLAY_SIGNED_THINKING=1` 时，翻译层会把历史里带签名的 Claude thinking 重新
+编码进上游请求（`#11` + `#12`）。而有限的 `clear_thinking` keep 要求丢掉旧的 thinking 轮次 ——
+两者相遇时，旧实现**拒绝所有有限 keep**（即使 keep 完全能满足），随后改成“比较可回放签名轮
+次数”，又会在混合历史里接受一个实际会丢掉签名轮的 keep。
+
+本版按**顺序**判断：`{thinking_turns,N}` 清掉的是 thinking 轮次前缀，因此
+
+- N 覆盖**所有** thinking 轮次 → 接受；
+- 否则只有被清掉的轮次里**没有**可回放的签名轮 → 接受；
+- 被清掉的轮次里有签名轮 → 400 `unsupported_parameter`（`keep:"none"` 同理）。
+
+影响面：只在 replay 开启 + 有限 keep + 带签名历史时触发；两个开关都默认关。400 的
+param/message/code 形状不变。`test/context-management-signed-replay.test.js` 23 个用例
+（发布时点 16，`c4931c40`/`29197941` 扩充），
+`test/cc-claude-2-1-306.test.js` 12 个兼容用例。
+
+残留（发布时点）：只独立校验第一个有限 keep 编辑。后续已修：`c4931c40` 改为逐条校验
+每个 `clear_thinking` 编辑，`29197941` 让缺省 `keep` 按模型族解析（见文末增补）；
+本版没有在真实上游复跑。
+
+### 1.6 dashboard 写请求先过门、再读 body（S03）
+
+`/dashboard/api/*` 的 POST/PUT/PATCH 旧顺序是：先 `readBody` 缓冲并 JSON.parse（上限
+10 MiB），再执行 Host/mutation/lockout/auth 门。未认证调用方可以让服务为每个请求做这份工作。
+
+本版把门提取为 `preflightDashboardRequest`，在 `server.js` 读 body 之前调用；通过后用一个
+挂在 request 上的 **Symbol** 标记，handler 见到标记就跳过自己那份门。标记不可能来自 HTTP
+头或 body；直接调用 handler 的单元测试/进程内调用方仍然走完整门，行为不变。
+
+回归测试 `test/dashboard-preauth-body.test.js`（4 个用例）用“声明 10 MiB body 但一个字节
+都不发”证明 401 在 body 仍未发送时就到达；同时钉住响应只发一次、认证只计数一次、有效空
+POST 等既有契约。
+
+### 1.7 Cascade：图片提取可取消、角色闭合标签全转义（IMG-01 / TRN-01）
+
+**IMG-01（取消）。** `extractImages` 新增 `{signal, beforeFetch}`：每次远端 fetch 前、每次
+push 前各检查一次（远端图片在 fetch 前后各一次），所以已经花掉的 turn 不会再把图片挂上去。
+终止类错误（abort、deadline、budget）重新抛出；普通的单图失败（MIME、404、SSRF、大小、
+解码）仍然是 log-and-continue。`fetchImageUrl` 把 signal 带过重定向，abort 时只 settle 一次
+并销毁自己持有的 handle。5 MiB / 8 s / 3 次重定向 / MIME / SSRF / 像素防护全部保留；
+`resumeTurn` 仍然跳过图片提取（它只续接已有轮询，不重复提取）。
+
+红先证据：整文件回退 → 4 fail + 2 timeout；只清空 checkpoint → 2 fail；只移除根 abort
+监听 → 1 cancelled（fetch 永不 settle）。
+
+行为差异：budget 在图片提取开始时已经耗尽，现在直接以路由的 504 失败，而不是继续
+fetch/attach —— 这是要求的终止语义。
+
+**TRN-01（序列化）。** `escapeHistoryTags` 同时转义 `</human>` 与 `</assistant>`，用在三处：
+历史字节计量、历史渲染、最新 `<human>…</human>` 插入；fresh 与 resume 后的 rebuild 走同一个
+builder，不会分叉。只替换精确闭合标签：`<div>`、`</div>`、`<human-readable>` 原样通过。
+计量与渲染共用同一个转义，600k/900k 字节预算语义不变（每个被转义闭合标签 +1 字节）。
+
+红先证据：回退 `src/client.js` → 4 个用例 3 fail（最新轮、跨角色历史、rebuild），无关 XML
+对照仍通过。定位是**结构/来源标记**问题，不声称已验证上游角色权限。
+
+### 1.8 JSON Schema `pattern`：从 fail-open 静态闸到 50 ms 预算与三态判定（WF-01/WF-02，CWE-1333）
+
+`src/json-schema.js` 的 `pattern` 旧实现用三道静态闸决定“跳不跳”：长度 >1024 跳过、
+`(a+)+$` 类嵌套量词形拒绝、被测字符串 >256 KiB 跳过，**三者都 fail-open**——跳过等于
+“通过”。`^((a|a))+$` 只多一个无害分组就绕过嵌套量词检查：26 个 `a` 的 near-miss 在
+`d5519da3` 上本机实测 **5,088.9 ms** 同步阻塞，而且它**没有**被跳过——静态闸漏掉了它，
+真的执行了；`not`/`oneOf`/`anyOf` 还会把“跳过”反转成语义错误（安全的 `^(cat|dog)+$`
+被当成拒绝）。
+
+`babafeef` 删除了静态**形状**闸（`hasNestedQuantifier`/`hasTopLevelAlternation` 类
+tripwire），改为运行时预算；1024 字符 / 256 KiB 尺寸上限保留，语义改为 `unable`：
+
+- 常量 `new Script('new RegExp(pattern).test(value)')` 在模块加载时编译一次；调用方
+  `pattern` 与模型输出只作为沙箱绑定传入，沙箱 `codeGeneration: {strings:false,
+  wasm:false}`，输入永远不会变成源码。
+- 整棵 schema 共享**一个** 50 ms 绝对截止时间（`BUDGET_MS`），不是每个 pattern 各
+  50 ms；另加 20 000 步遍历上限（`MAX_SCHEMA_STEPS`，按 schema 节点 / enum 候选 /
+  `uniqueItems` 元素计费）。
+- 判定只有三态：`valid` / `invalid`（真实不符合）/ `unable`
+  （`SCHEMA_UNVALIDATED`，`reason` = `budget` / `capacity` / `invalid-pattern`）。
+  `unable` 不是通过，也不是不符合；`not`/`oneOf`/`anyOf`/`allOf` 传播它而不是折成布尔。
+- 四个结构化输出 sink 都分开措辞 `STRUCTURED_OUTPUT_UNVALIDATED`（“本代理无法在预算内
+  判定”）与 `STRUCTURED_OUTPUT_NOT_CONFORMING`（“模型的答案不符合 schema”），但
+  **传输形状不同**：2 个非流式 sink（Connect 非流 `chat.js:5266-5269`、Gemini 非流
+  `:6910-6914`）返回 **502** typed failure（`structuredOutputError`，`:1396-1405`）；
+  2 个流式 sink（Cascade 流 `:4999-5004`、Responses/messages 流 `:8831-8836`）在
+  **HTTP 200** 的 SSE 流里发**一帧** `chatStreamError` 并置 `terminalOk = false`，
+  **不发成功终态**（`chat.js` 里没有 `statusCode`/`writeHead`；流式响应头在 `:4640`
+  一带已以 `status: 200` 发出）。
+- 1024 字符 / 256 KiB 上限保留，但语义从“跳过（通过）”改成 `unable`。
+
+本机实测（Node v24.19.0，同一输入 `'a'×26 + 'b'`）：旧模块 `d5519da3` **5,088.9 ms**
+后返回 `invalid`；新模块 `babafeef` 5 次运行 **57.3 / 58.5 / 60.8 / 62.9 / 61.6 ms**，
+全部 `unable`、`reason:"budget"`、`code:"SCHEMA_UNVALIDATED"`。安全的 `^(cat|dog)+$`
+每次 0.2–0.5 ms，`^(a|b)+$` 对 256 KiB 目标 ~5 ms。测试：
+`test/json-schema-budget.test.js`（25）与 `test/json-schema-pattern-safety.test.js`
+（13），共 **38 pass / 0 fail**。
+
+**残余风险（如实记录 / 本版已接受并延后）**：`babafeef` 的 `node:vm` 预算是**每请求**
+50 ms 绝对截止时间（子 schema 共享同一窗口，`src/json-schema.js:271` 的 `createBudget()`），
+**没有进程级的请求并发/连续滥用准入控制**。VM 仍同步占用主 event-loop：连续 50 个病态
+请求约 3.1 s（每次约 62 ms，`VM-BUDGET-BOUNDARY.md:5-8`），可用性代价与请求数线性相关，
+只是从「单请求无限阻塞」变成「有界且线性」。本版按 **P2 残余、已接受、延后至下一版**处理：
+单请求 CWE-1333 阻断项已在代码级闭合，本残余不重开 `babafeef` 的正确性结论；闭合它需要
+**新的 src 改动 + 新测试 + 新候选 SHA**，属 Owner 明示决策，不在本版静默追加。本版不声明
+「线程隔离」，也不声明「线性时间」是安全保证——线性是代价上界，不是缓解。单请求 wall-clock
+只在模块级实测，未在真实 `http.Server` 上复测并发表现（§7 `[UNVERIFIED] HTTP socket 端到端`）。
+外部任务书 `TASK.md` §C 方案2（`C:/Users/dwgx1/OneDrive/Desktop/Setukou-Dispatch-20261111/02-WindsurfAPI/TASK.md:103`，不在本仓库内）要求的「请求并发/连续滥用准入策略和正常请求延迟界限」本版仅做到
+**声明边界**，未实现准入策略；实现列入下一版 post-tag deferred 队列，须 Owner 签字确认接受。
+
+> Owner 签字行（(a) 本版接受并延后 / (b) 本版即闭合，二选一）见
+> [`ACCEPTANCE_3.141.592660.md`](ACCEPTANCE_3.141.592660.md) §0.5「D5 准入残余」；未签字前
+> 不得对外宣称「无已知缺口 / ALL GREEN / ready to push」。
+
+## 2. 风险与影响面
+
+- **默认路径字节不变**：wire 对 `v3.141.592658` **270/270 逐字节一致、0 声明差异、0 未声明
+  差异**（§3）。这是 patch 的依据。
+- **身份中和器的输出会变**，且这是有意的：9+2 条规则的匹配形状被重新实现，a4-fastmode 的
+  空行保留、a4-cli-line 的长行行为、b-security-line 的全局改写都是可观察差异。wire 矩阵只
+  覆盖 protobuf 编码，不覆盖 system prompt 文本；文本面由 147 个身份测试 + 2 万例差分守。
+- **CTX-01 / S03 / IMG-01 / TRN-01 都是条件路径**：replay 默认关、dashboard 只影响写端点、
+  Cascade 只影响带图/带历史轮次。
+- **没有新增默认开启的开关，没有数据库/数据格式变更**。`runtime-config.json` 在全部测试
+  前后 `sha256 = c9739375…` 未变。
+- 行为收紧两处：① 图片轮在预算已耗尽时从“继续尝试”变成 504（IMG-01，见 §1.7）；
+  ② schema 约束的轮次在预算/容量耗尽或 pattern 非法时不再“静默放过”：非流式 sink 返回
+  502 `STRUCTURED_OUTPUT_UNVALIDATED`，流式 sink 在 HTTP 200 的 SSE 里发一帧
+  `chatStreamError` 且不发成功终态（见 §1.8）。这是有意的：无法判定不等于通过。
+
+## 3. 验证证据（本审计实测）
+
+W01 在 `deeb2539`（原 3.141.592659 发布树的 `src/`）上执行，**不覆盖** `babafeef` 对
+`src/json-schema.js` / `src/handlers/chat.js` 的改动；本发布树的逐项重测记在
+[`ACCEPTANCE_3.141.592660.md`](ACCEPTANCE_3.141.592660.md) §2，`babafeef` 树上的全量
+shard 仍未跑（§7）。Node `v24.19.0`。逐项计数、skip 名单与日志哈希见两份验收附录
+（本版的重测 + 3.141.592659 草稿的冻结记录）。
+
+| 项 | 命令 | 结果 |
+|---|---|---|
+| 全量 release shard | `npm run test:release`（605 文件，单 shard） | **605 files / 7,455 tests / 7,352 pass / 0 fail / 103 skip**，exit 0，wall 1,310.6 s |
+| 身份中和器 | 7 个身份测试文件（§1.1–1.4） | **147 pass / 0 fail** |
+| CTX | `context-management-signed-replay` + `cc-claude-2-1-306` | **28 pass / 0 fail** |
+| Cascade | `cascade-image-cancel` + `cascade-history-serialization` + `cascade-image-history` + `cascade-abort-side-effects` + `cascade-completion-controls` | **39 pass / 0 fail** |
+| transport matrix | `node --import ./test/setup-env.mjs --test test/transport-matrix.test.js` | **22 pass / 0 fail** |
+| docs guard | `node --import ./test/setup-env.mjs --test test/docs-consistency-guard.test.js` | **47 pass / 0 fail** |
+| JSON Schema 预算（HEAD `babafeef`） | `node --import ./test/setup-env.mjs --test test/json-schema-budget.test.js test/json-schema-pattern-safety.test.js` | **38 pass / 0 fail**（25 + 13，2026-11-11 真树实跑） |
+| docs guard（§0 修复后，HEAD `babafeef`） | `node --import ./test/setup-env.mjs --test test/docs-consistency-guard.test.js` | **47 pass / 0 fail**（2026-11-11 真树实测；修复前 46/1，见 §6 第 4 条） |
+| spec 静态 | `node scripts/spec-static-check.mjs` | **exit 0 — 97 spec / 863 mutation，锚点唯一** |
+| spec 基线（增量） | `node scripts/spec-baseline-check.mjs identity-neutralize-paragraph-bound.json neutralize-rewrite-visibility.json` | **2 spec measured, 0 drift, 0 untrustworthy** |
+| spec 基线（全量） | `node scripts/spec-baseline-check.mjs --all` | **97 spec measured, 0 drift, 0 untrustworthy**（202.5 s） |
+| wire 身份 | `WIRE_BASE_TREE=…/release-next-pr282 WIRE_BASE_TAG=v3.141.592658 WIRE_BASE_SHA=08a750d1… WIRE_BASE_REQUIRED=1 node --import ./test/setup-env.mjs --test test/wire-byte-identity.test.js` | **PASS exit 0 — 270/270 byte-identical, 0 expected, 0 unexpected** |
+| secret scan（工作树） | `node scripts/secret-scan.mjs` | **exit 0** |
+| history secret scan | `node scripts/history-secret-scan.mjs` | **exit 0 — 0 unbaselined** |
+
+wire 的原始行（逐字）：
+
+```text
+WIRE_PROVENANCE {"tested_head":"deeb25394b8c77915dc42928cc940b9557187e77","tested_root":"D:\\Project\\WindsurfAPI","tested_dirty":true,"base_root":"D:\\Project\\WindsurfAPI\\.claude\\worktrees\\release-next-pr282","base_head":"08a750d1a6d26f5d3b2f010c878170a9508730a8","base_dirty":false,"expected_tag":"v3.141.592658","expected_sha":"08a750d1a6d26f5d3b2f010c878170a9508730a8","expected_from":"selection+env","expected_releases":135,"selection_error":null,"tag_ref_verified":true,"env":{"WIRE_BASE_SHA":"08a750d1a6d26f5d3b2f010c878170a9508730a8","WIRE_BASE_TAG":"v3.141.592658","WIRE_BASE_REQUIRED":true},"comparisons":270}
+WIRE_PROVENANCE_COMPARED {"compared":270,"expected":270,"base_head":"08a750d1a6d26f5d3b2f010c878170a9508730a8"}
+WIRE_EXPECTED_DIFFS {"byte_identical":270,"expected":0,"entries":0,"compared":270}
+```
+
+`tested_dirty:true` 是本地 checkout 的 600+ 个**未跟踪**证据文件造成的；跟踪树是干净的
+（`git status --porcelain` 只有 `??` 行），基线 `base_dirty:false`。CI 的干净 checkout 上该
+字段为 false。
+
+**没有在本版实测的**（不得写成已通过）：托管 CI、HMC 部署与真实上游。原因与替代命令
+见 §6–§7；Node 22 全量后来已补测，证据见 §7。mutation 变异体在发布提交后已由 HMC
+在 `c4931c40` 上完成 97/97 sweep（§7），最终树的基线重钉与复跑仍 `[UNVERIFIED]`。
+
+## 4. 变更文件与测试
+
+产品：`src/client.js`、`src/dashboard/api.js`、`src/handlers/identity-neutralize.js`、
+`src/handlers/messages.js`、`src/image.js`、`src/server.js`；JSON Schema 边界修复
+（`babafeef`）另改 `src/json-schema.js` 与 `src/handlers/chat.js`。
+
+新增/扩展的守卫：
+
+| 文件 | 用例 |
+|---|---|
+| `test/identity-neutralize-complexity.test.js` | 10（复杂度上界：2,049 B / 512 KiB × 4 形状 / Unicode 前缀；`04503830` 增补） |
+| `test/identity-neutralize-integrity.test.js` | 51（含 WA-002 的 24 码元循环、H2 边界与大小写、A4 前缀保留、catalogue 短语/正文保留与删除；`04503830` 增补） |
+| `test/identity-neutralize-paragraph-bound.test.js` | 36（ASCII + Unicode 段落边界；`c4931c40`/`0aea4ea3` 增补） |
+| `test/neutralize-rewrite-visibility.test.js` | 11（WARN 语义；`c4931c40` 增补） |
+| `test/context-management-signed-replay.test.js` | 23（接受/拒绝表 + 顺序前缀 + 缺省 keep 模型族；`c4931c40`/`29197941` 增补） |
+| `test/dashboard-preauth-body.test.js` | 4（body 前 401、单次响应、单次计数） |
+| `test/cascade-image-cancel.test.js` | 7（checkpoint、abort、settle once、404 对照、末块后取消；`a96c2ab4` 增补） |
+| `test/cascade-history-serialization.test.js` | 7（两个闭合标签、无关 XML、rebuild；`15fc5df1` 增补） |
+| `test/transport-matrix.test.js` | 22（四个协议族的流式/非流式矩阵，无产品变更） |
+| `test/json-schema-budget.test.js` | 25（单截止时间、步数上限、组合子传播、四 sink（2 非流 502 / 2 流单帧 200）、三态；`babafeef` 新增） |
+| `test/json-schema-pattern-safety.test.js` | 13（旧静态闸删除、炸弹有界、容量 `unable`、非法 pattern；`babafeef` 增补） |
+
+上表用例数按 `5a3ec2a9` 树逐文件实跑（`node --import ./test/setup-env.mjs --test`；
+这 9 个文件在 `1490fe10` 未变）；
+§3 的 pass 计数是发布时点的实测值，复审修复波又给其中 7 个文件各增补了用例。
+
+mutation 语料同步：`identity-neutralize-paragraph-bound.json` 重钉锚点（`ad45bfb3` 把它指到
+`applySpans('a4-cli-line', cli.short, CLI_LINE_REPLACEMENT, true)`），`8131848c` 加测试后
+`bb81fa16` 把基线从 80 重钉到 **83**；`neutralize-rewrite-visibility.json` 的基线从 89
+重钉到 **92**；`request-tail-contract.json` 等三份 spec 在 #282 时已重钉。
+`spec-static-check` 现在 exit 0，锚点唯一；两份 spec 的基线实测 0 drift。
+
+发布后语料又变为 **99 spec / 878 mutation**（`node scripts/spec-static-check.mjs` 实测）：
+`c4931c40` 新增 `context-management-signed-replay.json` 与 `identity-neutralize-linear.json`
+两份 spec；`29197941` 把 signed-replay 基线重钉到 **23**（3 条突变），`0aea4ea3` 把
+linear spec 扩到 12 条突变、`04503830` 再把两条锚点改指重写后的分类器并把基线推到
+**46**；`identity-neutralize-paragraph-bound.json` 基线 83→**89**、
+`neutralize-rewrite-visibility.json` 基线 92→**100**（`c4931c40`/`0aea4ea3` 随被测文件
+增补用例重钉）。`d142d06e` 把 `gemini-egress-parity`（→88）与
+`gemini-schema-type-normalize`（→107）的 `expectBaselinePass` 重钉到实测值，
+`1490fe10` 把 `responses-post-tool-text-item` 的锚点改指 sealed status 参数；
+`7c995f40` 随 `identity-neutralize.js` 行模型与安全 gap 改写把
+`identity-neutralize-linear`/`identity-neutralize-paragraph-bound` 的两条锚点改指
+新代码（变异意图不变），并把 `think-text-reroute` 的 `expectBaselinePass` 重钉到
+实测 98。截至 `7c995f40`，`spec-baseline-check --all` 实测 **99 spec / 0 drift /
+0 untrustworthy**。
+
+## 5. 回滚
+
+本版没有数据格式、配置键或环境变量变更，回滚是纯代码回退：
+
+- **HMC**：部署切换前把当时的树完整备份为 `/opt/windsurf-api.prev27-<TS>`（3.141.592658）。
+  回滚 = 停服务 → 把当前树移走 → 恢复 `prev27-<TS>` → 用 `rsync --delete` 把运行期间的
+  `data/`（账号、日志）覆盖回去 → 启动 → `/health` 200 且 `version=3.141.592658`。
+- **更深的兜底**：`/opt/windsurf-api.prev26-20261029T220502Z` = **3.141.592657**。这是两版
+  回退，会同时丢掉 592658 的 Gemini `type[]` 与签名回放；只在首选回滚也失败时使用。
+- **代码**：本分支未合并时，回滚就是继续部署 `v3.141.592658`；已合并时，按 tag 重新部署或
+  revert 该合并提交。不要 `git reset` 已推送的 master。
+- **数据**：`data/` 不属于发布树的可替换部分；回滚命令显式保留运行期间的 `data/`，避免把
+  账号刷新与日志退回到备份时点。
+- 逐条命令（未执行）见 `ReleasePrep.md` §7。
+
+## 6. 发布门状态与阻断项
+
+本轮跟踪中修掉的三项（保留记录，避免下一轮重新发现）：
+
+1. **mutation 锚点漂移（已修，`ad45bfb3`）**：`identity-neutralize-paragraph-bound.json`
+   第 7 条的 anchor 曾指向 A4 修复删掉的 `rule('a4-cli-line', …)` 行 → `hits=0`。现在
+   anchor 指到 `applySpans('a4-cli-line', cli.short, CLI_LINE_REPLACEMENT, true)`；
+   `node scripts/spec-static-check.mjs` exit 0（97 spec / 863 mutation，锚点唯一）。
+2. **docs guard §0（已修，`d5d44f6f` / `deeb2539`）**：§0 的 `master` 从 `36387a32` 指到
+   `ad45bfb3`，再被 `326880f5` 的 src 变更拉开，最后由 `d5d44f6f` 重指到 `326880f5`；
+   `deeb2539` 再重指到 catalogue-body 修复后的代码 HEAD `8131848c`。发布提交把 §0 的
+   `产品 tag` 与 `package.json` 指到 3.141.592659，`master` 仍指代码 HEAD `8131848c`
+   （发布侧只改测试/版本/文档，`src/` 滞后 0）。
+3. **history secret scan（已修，`05dc9a71`）**：`3a9ae420` 的 transport fixture key
+   在工作树被 `f1aaab56` 加上 `fixture` 标记，但旧 blob 永久在历史里。`05dc9a71` 在
+   `scripts/history-secret-scan.baseline` 收录了 reviewed 条目
+   （`openai-api-key test/transport-matrix.helpers.mjs 93d6533f4255 SYNTHETIC: …`），
+   扫描恢复 **exit 0（0 unbaselined）**。
+4. **docs guard §0 再次 RED（`babafeef`，2026-11-11）**：JSON Schema 修复改了两个
+   `src/` 文件，§0 的 `master` 仍指 `e30baf6d`，守卫报
+   “§0 master SHA e30baf6dfbc239d5f53e9c8caf2778e103a15ec5 predates 2 src/ change(s);
+   update §0 to HEAD”。修法见 `docs/HANDOFF-2026-10-15.md` §0（`master` → `babafeef`，
+   `产品 tag` 如实写本地 tag → `d5519da3`）；修后 `47 pass / 0 fail`。
+
+**当前阻断项（`babafeef` + 本发布提交的树）：** 99 spec / 878 mutation 的全量 sweep 在这
+棵树上仍未跑（§7 最后一条），`gate:release` 也只在本机跑过受影响集合；两项都在合并/推送
+之前补，未跑完不得 push。本机可跑的其余门禁绿（计数见验收附录 §2）。
+
+## 7. 已知 / 尚未验证
+
+> 全部历史缺口见 [尚未验证登记册](../UNVERIFIED.md)；本版新增条目也在其中。
+
+- **[VERIFIED] mutation 全量 sweep（HMC，`c4931c40`）**：POSIX `mutation-sweep.mjs`
+  在 HMC clone `c4931c40` 上跑完 **97/97 spec 按预期行为，0 unexpected survivors，
+  0 mismatch**（`.agent/HANDOFF.md` 记录，local evidence；日志 `/tmp/wsa-mutate2.log`，
+  99 个 `SPEC_EXIT` 中 2 个零突变 spec）。旧的「1800 s 上限前 56/97、剩 41」是中途
+  截断的中间态，已被该次完整 sweep 取代；`spec-baseline-check` 只证明锚点与基线
+  成立，不执行变异体。
+- **[UNVERIFIED] mutation 最终树复跑**：语料已扩到 **99 spec / 878 mutation**；
+  `spec-baseline-check --all` 本地实测（`7c995f40` 树）**99 spec / 0 drift /
+  0 untrustworthy**——`d142d06e` 重钉 gemini 两份、`7c995f40` 重钉
+  `think-text-reroute` 并重锚 identity 两份。HMC 侧对合并树 `5a3ec2a9` 的
+  99/99 覆盖已测（其后 `5fb21e70`/`7c995f40` 又改 `src/`）。在 POSIX 上复跑
+  `node scripts/mutation-sweep.mjs --shard 0/1` 与 `--verify` 前，最终树的
+  变异体结论不作为证据。
+- **[VERIFIED] mutation 全量基线（发布树）**：`spec-baseline-check.mjs --all`（97 spec）是 release
+  workflow 的模式；发布树实测 **97 spec measured, 0 drift, 0 untrustworthy**，wall 202.5 s
+  （`releasecommit-spec-baseline-all.log`，`sha256 da0d49db…`）。当前树的对应实测见 §4。
+- **[VERIFIED] Node 22 全量**：`test:release` 的分片（`scripts/run-test-shard.mjs 0 1`）由
+  Node 22.23.4 二进制直接运行，实测 **605 文件 / 7,455 测试 / 7,352 通过 / 0 失败 / 103 跳过 /
+  801.6 s**（`node22-release-2.log`；
+  `TEST_SHARD_SUMMARY {"files":605,"tests":7455,"pass":7352,"fail":0,"skipped":103}`）。
+  `engines >=22.13.0` 的精确 floor（22.13.x）仍未单独跑矩阵，但 22.x 全量已不再是「未实测」。
+- **[UNVERIFIED] 托管 CI**：分支 `fix/audit-wave-20261109` 没有 upstream，本版所有 CI 结论
+  都是本机测量。
+- **[UNVERIFIED] HMC 部署与回滚演练（592660）**：本版没有部署；回滚命令见 §5 与
+  `ReleasePrep.md` §7，未执行。
+- **[UNVERIFIED] live 上游**：WA-001/002/003/A4 的验证全部是隔离函数与 hermetic 测试；
+  没有把病态 payload 发给真实服务，也没有真实客户端复跑。HMC 的旧模块计时用的是 `/tmp`
+  副本，生产 `:18999` 未被写入。
+- **[UNVERIFIED] CTX-01 live**：没有在真实上游跑 replay + 有限 keep 的组合。
+- **[UNVERIFIED] `clear_thinking` 缺省 keep 的模型族边界**：`29197941` 按上游文档把
+  缺省 `keep` 分为 keep-all 家族（Opus 4.5+/5、Sonnet 4.6+/5、Fable）与保守 keep-1，
+  边界来自上游文档而非本后端实测（`src/handlers/messages.js` 注释同样标
+  `[UNVERIFIED]`）；无法分类的模型名一律按 keep-1 校验，方向是多拒不少放。
+- **[UNVERIFIED] S03 真实 dashboard 客户端**：只有隔离的排序测试（声明 10 MiB、不发 body）。
+- **[UNVERIFIED] IMG-01 真实 Cascade abort**：取消语义由注入 signal 的测试覆盖；没有在
+  真实长轮次里按 Ctrl-C/断连。
+- **[UNVERIFIED] TRN-01 上游角色语义**：只证明序列化可逆、闭合标签计数正确；不证明上游
+  会因未转义文本产生角色越权（本版不声称这是越权漏洞）。
+- **[UNVERIFIED] 发布产物**：资产、cosign 签名、SHA256SUMS、release attestation 都要在 tag
+  之后由 release workflow 生成；本文件不代表它们已经存在。
+- **[FIXED] G01（`reasoning.encrypted_content` 从不发出）**：`c4931c40` 在
+  `include:["reasoning.encrypted_content"]` 且上游提供值时发出该字段，并补了回放分支；
+  证据 `test/responses-include-verbosity-custom.test.js` 的 G01 专项用例（现 17 条，
+  全文件 30 条）。
+- **[FIXED] G02（`text.verbosity` 未解析/未转发）**：`c4931c40` 解析 `text.verbosity` 并带入
+  adapter 边界（`completionOverrides.verbosity`）；chat-compatible 上游没有该字段，因此这是
+  有意记录的边界 no-op，不再是静默丢弃。证据同上测试文件。
+- **[FIXED] G03（custom-tool 输入未流式）**：`c4931c40` 补了
+  `response.custom_tool_call_input.delta` / `.done` 与最终 `custom_tool_call` item 的 `input`/`id`；
+  证据同上测试文件。
+- **[FIXED] G06（Gemini 静默丢弃 server-side tools）**：`c4931c40` 改为与其他协议面一致的
+  400 `unsupported_server_side_tool`，不再只写日志；`b65e0446` 补 falsy 键按存在性拒绝
+  与未列入工具的 warn。证据 `test/gemini.test.js`：2 个 `(G06)` 具名 `it`（translator 级
+  拒绝 + `handleGemini` 路由级 400）加 falsy-presence 断言面。
+- **[UNVERIFIED] G01–G03/G06 的真实客户端抓包**：上述修复由 hermetic 测试覆盖；没有真实
+  Codex/Devin 客户端抓包确认 `reasoning.encrypted_content`、`text.verbosity`、custom-tool
+  input delta 与 Gemini server-tool 400 在真实上游/客户端上的线上形状。
+- **[UNVERIFIED] Q1 G4（`messagesRemaining:-1` 的语义）**：`CheckUserMessageRateLimit` 恒报
+  `-1`；dashboard 把成功探测的 `-1` 读作 `unlimited: true`（`src/dashboard/devin-cards.js:532`），
+  `test/dashboard-devin-cards.test.js` 有意固定该行为。审计要求常量落 `unknown`；本版把这一半
+  作为 deferred 残差记录（`test/dashboard-capacity-unknown.test.js` 头部），未改 dashboard 契约。
+- **[UNVERIFIED] support-bundle 生产形态**：`test/support-bundle.test.js:227` 断言
+  `health.commit` 是 git sha，但 `src/version.js:40-47` 在非 git checkout 下回退为空串——
+  HMC 生产形态正是 `commit:""`（`SYNTHESIS.md` §2）。测试只在 git checkout 内通过，打包部署
+  形态未覆盖；本版只诊断，未改测试。
+- **[UNVERIFIED] pkg 单文件二进制**：本版未构建/启动 `@yao-pkg/pkg` 的 Windows/macOS 产物；
+  `release.yml` 的 `exe-boot-smoke` 只在 tag 之后运行。
+- **[UNVERIFIED] Node 22 运行时（`babafeef` 树）**：本机 Node v24.19.0、HMC Node v24.21.0；
+  上文 Node 22.23.4 的 605 文件全量跑在更早的树上，`babafeef` 树上的 Node 22 全量未跑。
+- **[UNVERIFIED] 全量 release shard（`babafeef` 树）**：当前 checkout 由
+  `listTopLevelTestFiles()` 发现 626 个 `*.test.js`；最后一次全量是 `d5519da3` 的 605 文件 /
+  7,455 测试。`babafeef` 树上只跑了受影响集合（JSON Schema 38 + docs guard 47），全量未跑。
+- **[UNVERIFIED] HTTP socket 端到端**：JSON Schema 预算的 50 ms 是模块级实测；没有在真实
+  `http.Server` 请求上复测 wall-clock 与并发下的表现。
+- **[UNVERIFIED] 进程级请求并发/连续滥用准入控制（VM 预算，外部任务书 TASK.md §C 方案2）**：
+  `src/json-schema.js:271` 每次顶层 `validateJsonSchema` 调用新建一个 50 ms 截止时间，
+  子 schema 共享同一请求窗口；`src/` 与四个 sink（`chat.js:4999,5266,6910,8831`）
+  没有进程级 in-flight/并发计数、队列字节上限或过载拒绝。父级实测
+  （`VM-BUDGET-BOUNDARY.md:5-8`，Node v24.19.0，blob `b8cdd3fb…` / HEAD `babafeef`）：
+  连续 50 个病态请求 ≈ 3.1 s 主 event-loop（~62 ms/次），全部 `unable`、无 kill。
+  这是**有界、线性**的可用性残余，不是单请求绕过、不是回归；本版按 P2 接受并延后。
+  未测：真实 `http.Server` 并发下健康请求的延迟界限（见上一条 HTTP socket 端到端）、
+  多租户并发滥用形状。闭合 = 新 src 改动 + 新测试 + 新候选 SHA，须 Owner 明示决策，
+  不得静默追加；正常请求延迟界限与准入阈值尚未由 Owner 批准为生产 SLO
+  （同一外部任务书 `C:/Users/dwgx1/OneDrive/Desktop/Setukou-Dispatch-20261111/02-WindsurfAPI/TASK.md:109`
+  「50ms 是研究起点，不是已经由 Owner 批准的生产 SLO」）。
+- **[UNVERIFIED] 真实上游 provider**：模型输出触发 `pattern` 的实际形状未在真实上游观察；
+  病态 payload 未发给真实服务。
+- **[UNVERIFIED] GHSA 公告本身**：canonical 对象 D1 身份中和器 → `GHSA-fx5f-49jr-fw6r`、
+  D2 JSON Schema `pattern` → `GHSA-r7v2-3h32-f5g6`；两者的 `patched_versions` 都是
+  **`>= 3.141.592660`**。公告在 push + CI 绿之后才发布（顺序见 §6），写本文件时尚未发布——
+  在此之前不得对外声称公告已存在。`GHSA-xp93-vpw9-39wx` 与 `GHSA-h858-8xv9-257g` 是重复
+  草稿，应关闭，不发布。
+- **[UNVERIFIED] POSIX mutation sweep（`babafeef` 树）**：`src/json-schema.js` 与
+  `src/handlers/chat.js` 改动后，最终树的 99 spec / 878 mutation 复跑仍未做。
+- **[VERIFIED] Q4 G08（当前轮图片预算）——在 HEAD 已修，不是残留**：
+  `capCascadeImageBudget`（`src/client.js:352`）是整条 field-6 列表共享的计数/字节预算，
+  当前轮先花（`:483`），单轮路径同样过它（`:1338`），超出部分记
+  `cascade_image_current_dropped`（`:371-380`）。Q4 的「当前轮绕过帽」来自修前快照。
+- **[VERIFIED] Q4 G14（被吞掉的清理失败）——在 HEAD 已修**：`accountCleanup` 改走
+  `reportAccountCleanupFailure`（`src/auth.js:2661-2690`），失败计
+  `account_cleanup_failed` 并 warn，不再是 `.catch(()=>{})`。
+- **[VERIFIED] Q4 P3 catalogue ID 边界——2026-11-11 在 `babafeef` 上复核为已修**：Q4 曾记录
+  `claude-3-example.com` 仍被当作 ID 形状、`a4-catalogue-line` 会剥掉调用方 RULE 正文。
+  2026-11-11 重测（隔离精确字符串夹具 + 三文件套件）：`node d03-fixture.mjs`
+  （`perf-20261111/research/DeferredTriage/d03-fixture.mjs`，只 import
+  `src/handlers/identity-neutralize.js`）→ **4/4 caller RULE survived**，含
+  `…documented at claude-3-example.com; RULE: keep me` 原样保留（无 EOL 剥离）；
+  `node --import ./test/setup-env.mjs --test test/identity-neutralize-integrity.test.js
+  test/identity-neutralize-paragraph-bound.test.js test/identity-neutralize-complexity.test.js`
+  → **110 pass / 0 fail**。根因由更早提交修复，无需新改动：`catalogueIdBoundary`
+  （`src/handlers/identity-neutralize.js:399-416`）把「`.` 后接字母/数字」判为散文，故
+  `example.com` 不是 ID；`catalogueIdFollows`（`:443-488`）要求 ≥2 个 ID 形状组件；
+  `a4-catalogue-line`（`:556-576`）只在没有 ID 正文跟随时改写锚点短语，调用方 RULE 正文
+  因此保留。Q4 的「未复现」结论作废（历史记录保留，不静默删除）。
+- **[UNVERIFIED] Q4 G12 残留 fire-and-forget catches**：本波只逐行复核了 G08/G14 两处，
+  G12 的其余残留未重审。
+- **[UNVERIFIED] Q4 `messages.js` 的「remote fetch is not implemented」日志**：HEAD 位于
+  `src/handlers/messages.js:799`（Q4 记作 `:750`）；Q4 认为该句已过时，本波未复现其依据，
+  未改代码。
+- **沿用 592658 的边界**：M4 rescue 未在真实上游触发、多段 `#10`/`#21` 未线上观测、
+  官方 `pr-gate` 仍 `INCOMPLETE`（relogin 真实密码缺口）。这些不因本版改变。
+
+## Security acknowledgments / 致谢
+
+Thanks to fishfish (https://github.com/fishfish57) for two responsible disclosures, both
+CWE-1333 event-loop blocking: the quadratic regex scans in the client-identity neutralizer
+(reported 2026-11-08) and the unbounded JSON Schema `pattern` evaluation in
+`src/json-schema.js` (reported 2026-11-10). Tracked as GHSA-fx5f-49jr-fw6r (identity
+neutralizer) and GHSA-r7v2-3h32-f5g6 (JSON Schema `pattern`); both advisories are published
+against this release with `patched_versions: >= 3.141.592660`, after the tag is pushed and CI
+is green — not before.
+
+感谢 fishfish（https://github.com/fishfish57）负责任地披露两个 CWE-1333（event-loop 阻塞）
+问题：客户端身份中和器的二次正则扫描（2026-11-08 报告）与 `src/json-schema.js` 中
+JSON Schema `pattern` 的无界求值（2026-11-10 报告）。分别跟踪为 GHSA-fx5f-49jr-fw6r 与
+GHSA-r7v2-3h32-f5g6；修复见 §1.1 与 §1.8；署名方式经报告者本人确认。此前草稿里的
+`GHSA-xp93-vpw9-39wx` / `GHSA-h858-8xv9-257g` 是重复对象，已退役，不再引用。

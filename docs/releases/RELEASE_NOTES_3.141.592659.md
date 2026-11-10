@@ -22,16 +22,19 @@ SSE JSON、队列字节预算、按未确认字节计 drain、history 预算改�
 `clear_thinking` 校验、catalogue 仅删 ID 正文）、connect（Chat 工具名净化、截断信号、session
 连续性拼写、流式反查）。全量 release shard 在 `c4931c40` 上 **616 文件 / 7,603 测试 / 7,500
 通过 / 0 失败 / 103 跳过 / 847.7 s，exit 0**（`wave4-test-release.log`）。这是 hardening
-提交，**不是新 tag**：`v3.141.592659` 仍未创建，也没有 push/部署。
+提交，**不是新 tag**：当时 `v3.141.592659` 尚未创建，也没有 push/部署。**2026-11-10
+19:54 +09:00 本地已创建 annotated tag 对象 `1d63a030` → commit `d5519da3`；该 commit 不含
+JSON Schema 边界修复，禁止按此发布（见 §1.8）。**
 
 ## Post-release 增补：复审修复波与范围更正（2026-11-10）
 
 **范围更正。** §0 与文首的计数（36 提交 / 45 文件 / +4,996 −501 / 6 个 `src/` 文件）
 度量的是 `v3.141.592658..deeb2539` 审计分支在发布提交前的冻结范围，**不包含**
-`e0c5c715` 之后的 hardening 与复审修复。发布提交之后本分支另有 **68 个提交 /
-124 个文件 / +9,965 −649 / 34 个 `src/` 文件**（`git rev-list --count
-e0c5c715..HEAD`；`git diff --shortstat e0c5c715..HEAD`；
-`git diff --name-only e0c5c715..HEAD -- src | wc -l`）：`c4931c40`（审计收口，
+`e0c5c715` 之后的 hardening 与复审修复。发布提交之后本分支另有 **84 个提交 /
+126 个文件 / +10,786 −700 / 34 个 `src/` 文件**（2026-11-11 在 HEAD `babafeef` 重算：
+`git rev-list --count e0c5c715..HEAD`；`git diff --shortstat e0c5c715..HEAD`；
+`git diff --name-only e0c5c715..HEAD -- src | wc -l`。此前写作时的 68 个提交 /
+124 个文件 / +9,965 −649 是更早树上的测量值）：`c4931c40`（审计收口，
 49 文件 / +5,010 −324）、`0aea4ea3`（connect 显式错误终止与 catalogue 边界）、
 `911e6674` / `d0359733`（纯文档）、复审修复波 `04503830`–`7c995f40`（含 spec
 基线重钉、文档订正与差分审计修复）、安全狩猎波 `f43b5b7a`–`18f54aaf`（七条
@@ -43,11 +46,14 @@ S4 解码器边界、S5 日志注入/XSS、S6 凭据基线与代理配置）、�
 范围与用户可见变化。
 
 **tag 目标。** `v3.141.592659` 必须打在合并后的 master tip 上（流程：把
-`origin/master` 合入本分支 → `master --ff-only` → 在 master tip 打 annotated tag →
-push），**不是** `e0c5c715`——否则 `c4931c40`/`0aea4ea3` 与复审修复会被关在版本外。
-写作时最后一个改 `src/` 的提交为 `e30baf6d`（L1 元审批收尾，扫描器重锚 +
-终态 item 封条 + U+2028/2029 边界）；最终 tag 目标记作 `<merge-tip>`，以合并
-提交的实际 SHA 为准。
+`origin/master`（`111e2c4e`）合入本分支 → `master --ff-only` → 在 master tip 打
+annotated tag → push），**不是** `e0c5c715`，也**不是**现有本地 tag 指向的
+`d5519da3`——否则 `c4931c40`/`0aea4ea3`、复审修复与 JSON Schema 边界修复
+（`babafeef`）会被关在版本外。写作时最后一个改 `src/` 的提交为 `babafeef`
+（JSON Schema `pattern` 预算 + 三态判定，见 §1.8）；最终 tag 目标记作
+`<merge-tip>`，以合并提交的实际 SHA 为准。**本地现有 tag 对象 `1d63a030` →
+`d5519da3` 必须由 Owner 决定：删除后在 merge-tip 重建（re-tag），或改用新版本号；
+在决定之前不得 push 该 tag。**
 
 **复审修复波的用户可见变化**（`04503830`–`5fb21e70`，按面分组；`c4931c40` 已覆盖的
 面见上节）：
@@ -118,10 +124,12 @@ push），**不是** `e0c5c715`——否则 `c4931c40`/`0aea4ea3` 与复审修�
   `WINDSURFAPI_TRACE` 首次落盘时 warn：dump 的 protobuf 携带活 session token，
   `.wire-dump`/`.trace` 按凭据材料对待。
 - **DoS/解析边界**：`stop` 单条上限 1024 字符（超限整条丢弃而非截断——截断前缀
-  会在不该停的位置误命中）；`response_format.json_schema` 的 `pattern` 三重闸——
-  长度 >1024 跳过、`(a+)+$` 类嵌套量词形静态拒绝、被测字符串 >256 KiB 跳过
-  （均为 fail-open：该字段 pattern 不执行，其余 schema 检查不受影响；注释声明
-  重叠交替/相邻量词/backref 形仍有残留）；`cacheKey`/`response-store` 的克隆加
+  会在不该停的位置误命中）；`response_format.json_schema` 的 `pattern` 先在安全狩猎波
+  加了 1024 字符 / 256 KiB 上限与嵌套量词静态拒绝，但静态**形状**闸被 `^((a|a))+$`（26 字符
+  即 5.09 s 指数回退）绕过；`babafeef` 已删除静态形状闸（尺寸上限保留、语义改为 `unable`），
+  改为 §1.8 的 `node:vm` 50 ms 共享
+  预算 + 三态判定（预算/容量/非法 pattern 报 `unable`，不再 fail-open 跳过）；
+  `cacheKey`/`response-store` 的克隆加
   64 层深度帽（此前 JSON.parse 放得下的 ~10k 层 body 会把克隆打进
   RangeError——response-store 本有 retainedBytes 计量先拒，克隆自帽是纵深）；
   protobuf varint 终止字节溢过 uint64 显式拒绝（`80×9 7F` 此前静默解出 ~2^70）；
@@ -154,9 +162,10 @@ push），**不是** `e0c5c715`——否则 `c4931c40`/`0aea4ea3` 与复审修�
   按形状剥离秘密形环境变量（`*_KEY`/`*_TOKEN`/`*_SECRET` 等）而保留 PATH/HOME/
   代理/CA 与显式注入的凭据通道。此前 15/15 个秘密形 sentinel 全部漏进子进程
   环境；修后 0 漏。ACP 认证继续走 `_meta.api_key` 通道而非环境变量。
-- **复杂度/注入边界**：`response_format.json_schema` 的 pattern 闸补
-  「量词组内顶层交替」形（`^(a|a)+$` 26 字符即 5.4 s 指数回退 → 按既有
-  fail-open 契约跳过该 pattern）；Cascade 身份中和的三处 `\s*` 收窄为
+- **复杂度/注入边界**：`response_format.json_schema` 的 pattern 静态闸（含
+  `^(a|a)+$` / `^((a|a))+$` 形）已被 `babafeef` 删除——静态形状扫描覆盖不了指数回退
+  的拼写空间（`^((a|a))+$` 只多一个无害分组即绕过，实测 5.09 s 且**不是**跳过而是
+  真的执行）；改为 §1.8 的运行时预算；Cascade 身份中和的三处 `\s*` 收窄为
   `[ \t]*`（128 KiB 换行负载 28.9 s → 2.0 ms）；会话池元标签剥离换成
   单趟 `indexOf` 线性扫描（256 KiB 炸弹 ~7 s → ~4 ms），未知标签只审计
   不学习，且移除 span 后在下一个字面 `<` 续扫（修复了扫描器初版把
@@ -343,6 +352,60 @@ builder，不会分叉。只替换精确闭合标签：`<div>`、`</div>`、`<hu
 红先证据：回退 `src/client.js` → 4 个用例 3 fail（最新轮、跨角色历史、rebuild），无关 XML
 对照仍通过。定位是**结构/来源标记**问题，不声称已验证上游角色权限。
 
+### 1.8 JSON Schema `pattern`：从 fail-open 静态闸到 50 ms 预算与三态判定（WF-01/WF-02，CWE-1333）
+
+`src/json-schema.js` 的 `pattern` 旧实现用三道静态闸决定“跳不跳”：长度 >1024 跳过、
+`(a+)+$` 类嵌套量词形拒绝、被测字符串 >256 KiB 跳过，**三者都 fail-open**——跳过等于
+“通过”。`^((a|a))+$` 只多一个无害分组就绕过嵌套量词检查：26 个 `a` 的 near-miss 在
+`d5519da3` 上本机实测 **5,088.9 ms** 同步阻塞，而且它**没有**被跳过——静态闸漏掉了它，
+真的执行了；`not`/`oneOf`/`anyOf` 还会把“跳过”反转成语义错误（安全的 `^(cat|dog)+$`
+被当成拒绝）。
+
+`babafeef` 删除了静态**形状**闸（`hasNestedQuantifier`/`hasTopLevelAlternation` 类
+tripwire），改为运行时预算；1024 字符 / 256 KiB 尺寸上限保留，语义改为 `unable`：
+
+- 常量 `new Script('new RegExp(pattern).test(value)')` 在模块加载时编译一次；调用方
+  `pattern` 与模型输出只作为沙箱绑定传入，沙箱 `codeGeneration: {strings:false,
+  wasm:false}`，输入永远不会变成源码。
+- 整棵 schema 共享**一个** 50 ms 绝对截止时间（`BUDGET_MS`），不是每个 pattern 各
+  50 ms；另加 20 000 步遍历上限（`MAX_SCHEMA_STEPS`，按 schema 节点 / enum 候选 /
+  `uniqueItems` 元素计费）。
+- 判定只有三态：`valid` / `invalid`（真实不符合）/ `unable`
+  （`SCHEMA_UNVALIDATED`，`reason` = `budget` / `capacity` / `invalid-pattern`）。
+  `unable` 不是通过，也不是不符合；`not`/`oneOf`/`anyOf`/`allOf` 传播它而不是折成布尔。
+- 四个结构化输出 sink 都分开措辞 `STRUCTURED_OUTPUT_UNVALIDATED`（“本代理无法在预算内
+  判定”）与 `STRUCTURED_OUTPUT_NOT_CONFORMING`（“模型的答案不符合 schema”），但
+  **传输形状不同**：2 个非流式 sink（Connect 非流 `chat.js:5266-5269`、Gemini 非流
+  `:6910-6914`）返回 **502** typed failure（`structuredOutputError`，`:1396-1405`）；
+  2 个流式 sink（Cascade 流 `:4999-5004`、Responses/messages 流 `:8831-8836`）在
+  **HTTP 200** 的 SSE 流里发**一帧** `chatStreamError` 并置 `terminalOk = false`，
+  **不发成功终态**（`chat.js` 里没有 `statusCode`/`writeHead`；流式响应头在 `:4640`
+  一带已以 `status: 200` 发出）。
+- 1024 字符 / 256 KiB 上限保留，但语义从“跳过（通过）”改成 `unable`。
+
+本机实测（Node v24.19.0，同一输入 `'a'×26 + 'b'`）：旧模块 `d5519da3` **5,088.9 ms**
+后返回 `invalid`；新模块 `babafeef` 5 次运行 **57.3 / 58.5 / 60.8 / 62.9 / 61.6 ms**，
+全部 `unable`、`reason:"budget"`、`code:"SCHEMA_UNVALIDATED"`。安全的 `^(cat|dog)+$`
+每次 0.2–0.5 ms，`^(a|b)+$` 对 256 KiB 目标 ~5 ms。测试：
+`test/json-schema-budget.test.js`（25）与 `test/json-schema-pattern-safety.test.js`
+（13），共 **38 pass / 0 fail**。
+
+**残余风险（如实记录 / 本版已接受并延后）**：`babafeef` 的 `node:vm` 预算是**每请求**
+50 ms 绝对截止时间（子 schema 共享同一窗口，`src/json-schema.js:271` 的 `createBudget()`），
+**没有进程级的请求并发/连续滥用准入控制**。VM 仍同步占用主 event-loop：连续 50 个病态
+请求约 3.1 s（每次约 62 ms，`VM-BUDGET-BOUNDARY.md:5-8`），可用性代价与请求数线性相关，
+只是从「单请求无限阻塞」变成「有界且线性」。本版按 **P2 残余、已接受、延后至下一版**处理：
+单请求 CWE-1333 阻断项已在代码级闭合，本残余不重开 `babafeef` 的正确性结论；闭合它需要
+**新的 src 改动 + 新测试 + 新候选 SHA**，属 Owner 明示决策，不在本版静默追加。本版不声明
+「线程隔离」，也不声明「线性时间」是安全保证——线性是代价上界，不是缓解。单请求 wall-clock
+只在模块级实测，未在真实 `http.Server` 上复测并发表现（§7 `[UNVERIFIED] HTTP socket 端到端`）。
+外部任务书 `TASK.md` §C 方案2（`C:/Users/dwgx1/OneDrive/Desktop/Setukou-Dispatch-20261111/02-WindsurfAPI/TASK.md:103`，不在本仓库内）要求的「请求并发/连续滥用准入策略和正常请求延迟界限」本版仅做到
+**声明边界**，未实现准入策略；实现列入下一版 post-tag deferred 队列，须 Owner 签字确认接受。
+
+> Owner 签字行（(a) 本版接受并延后 / (b) 本版即闭合，二选一）见
+> [`ACCEPTANCE_3.141.592659.md`](ACCEPTANCE_3.141.592659.md) §0.5「D5 准入残余」；未签字前
+> 不得对外宣称「无已知缺口 / ALL GREEN / ready to push」。
+
 ## 2. 风险与影响面
 
 - **默认路径字节不变**：wire 对 `v3.141.592658` **270/270 逐字节一致、0 声明差异、0 未声明
@@ -354,7 +417,10 @@ builder，不会分叉。只替换精确闭合标签：`<div>`、`</div>`、`<hu
   Cascade 只影响带图/带历史轮次。
 - **没有新增默认开启的开关，没有数据库/数据格式变更**。`runtime-config.json` 在全部测试
   前后 `sha256 = c9739375…` 未变。
-- 唯一的行为收紧：图片轮在预算已耗尽时从“继续尝试”变成 504（IMG-01，见 §1.7）。
+- 行为收紧两处：① 图片轮在预算已耗尽时从“继续尝试”变成 504（IMG-01，见 §1.7）；
+  ② schema 约束的轮次在预算/容量耗尽或 pattern 非法时不再“静默放过”：非流式 sink 返回
+  502 `STRUCTURED_OUTPUT_UNVALIDATED`，流式 sink 在 HTTP 200 的 SSE 里发一帧
+  `chatStreamError` 且不发成功终态（见 §1.8）。这是有意的：无法判定不等于通过。
 
 ## 3. 验证证据（本审计实测）
 
@@ -371,6 +437,8 @@ W01 在 `deeb2539`（发布提交的祖父，`src/` 与发布树逐字节相同�
 | Cascade | `cascade-image-cancel` + `cascade-history-serialization` + `cascade-image-history` + `cascade-abort-side-effects` + `cascade-completion-controls` | **39 pass / 0 fail** |
 | transport matrix | `node --import ./test/setup-env.mjs --test test/transport-matrix.test.js` | **22 pass / 0 fail** |
 | docs guard | `node --import ./test/setup-env.mjs --test test/docs-consistency-guard.test.js` | **47 pass / 0 fail** |
+| JSON Schema 预算（HEAD `babafeef`） | `node --import ./test/setup-env.mjs --test test/json-schema-budget.test.js test/json-schema-pattern-safety.test.js` | **38 pass / 0 fail**（25 + 13，2026-11-11 真树实跑） |
+| docs guard（§0 修复后，HEAD `babafeef`） | `node --import ./test/setup-env.mjs --test test/docs-consistency-guard.test.js` | **47 pass / 0 fail**（2026-11-11 真树实测；修复前 46/1，见 §6 第 4 条） |
 | spec 静态 | `node scripts/spec-static-check.mjs` | **exit 0 — 97 spec / 863 mutation，锚点唯一** |
 | spec 基线（增量） | `node scripts/spec-baseline-check.mjs identity-neutralize-paragraph-bound.json neutralize-rewrite-visibility.json` | **2 spec measured, 0 drift, 0 untrustworthy** |
 | spec 基线（全量） | `node scripts/spec-baseline-check.mjs --all` | **97 spec measured, 0 drift, 0 untrustworthy**（202.5 s） |
@@ -397,7 +465,8 @@ WIRE_EXPECTED_DIFFS {"byte_identical":270,"expected":0,"entries":0,"compared":27
 ## 4. 变更文件与测试
 
 产品：`src/client.js`、`src/dashboard/api.js`、`src/handlers/identity-neutralize.js`、
-`src/handlers/messages.js`、`src/image.js`、`src/server.js`。
+`src/handlers/messages.js`、`src/image.js`、`src/server.js`；JSON Schema 边界修复
+（`babafeef`）另改 `src/json-schema.js` 与 `src/handlers/chat.js`。
 
 新增/扩展的守卫：
 
@@ -412,6 +481,8 @@ WIRE_EXPECTED_DIFFS {"byte_identical":270,"expected":0,"entries":0,"compared":27
 | `test/cascade-image-cancel.test.js` | 7（checkpoint、abort、settle once、404 对照、末块后取消；`a96c2ab4` 增补） |
 | `test/cascade-history-serialization.test.js` | 7（两个闭合标签、无关 XML、rebuild；`15fc5df1` 增补） |
 | `test/transport-matrix.test.js` | 22（四个协议族的流式/非流式矩阵，无产品变更） |
+| `test/json-schema-budget.test.js` | 25（单截止时间、步数上限、组合子传播、四 sink（2 非流 502 / 2 流单帧 200）、三态；`babafeef` 新增） |
+| `test/json-schema-pattern-safety.test.js` | 13（旧静态闸删除、炸弹有界、容量 `unable`、非法 pattern；`babafeef` 增补） |
 
 上表用例数按 `5a3ec2a9` 树逐文件实跑（`node --import ./test/setup-env.mjs --test`；
 这 9 个文件在 `1490fe10` 未变）；
@@ -471,6 +542,11 @@ linear spec 扩到 12 条突变、`04503830` 再把两条锚点改指重写后�
    `scripts/history-secret-scan.baseline` 收录了 reviewed 条目
    （`openai-api-key test/transport-matrix.helpers.mjs 93d6533f4255 SYNTHETIC: …`），
    扫描恢复 **exit 0（0 unbaselined）**。
+4. **docs guard §0 再次 RED（`babafeef`，2026-11-11）**：JSON Schema 修复改了两个
+   `src/` 文件，§0 的 `master` 仍指 `e30baf6d`，守卫报
+   “§0 master SHA e30baf6dfbc239d5f53e9c8caf2778e103a15ec5 predates 2 src/ change(s);
+   update §0 to HEAD”。修法见 `docs/HANDOFF-2026-10-15.md` §0（`master` → `babafeef`，
+   `产品 tag` 如实写本地 tag → `d5519da3`）；修后 `47 pass / 0 fail`。
 
 **当前阻断项（`7c995f40` 时点）：** mutation 基线已全部重钉（§4），需在 POSIX 上
 对最终树复跑 mutation sweep；`gate:release` 需在合并树上跑完（见 §7）。本机
@@ -545,14 +621,76 @@ linear spec 扩到 12 条突变、`04503830` 再把两条锚点改指重写后�
   `health.commit` 是 git sha，但 `src/version.js:40-47` 在非 git checkout 下回退为空串——
   HMC 生产形态正是 `commit:""`（`SYNTHESIS.md` §2）。测试只在 git checkout 内通过，打包部署
   形态未覆盖；本版只诊断，未改测试。
+- **[UNVERIFIED] pkg 单文件二进制**：本版未构建/启动 `@yao-pkg/pkg` 的 Windows/macOS 产物；
+  `release.yml` 的 `exe-boot-smoke` 只在 tag 之后运行。
+- **[UNVERIFIED] Node 22 运行时（`babafeef` 树）**：本机 Node v24.19.0、HMC Node v24.21.0；
+  上文 Node 22.23.4 的 605 文件全量跑在更早的树上，`babafeef` 树上的 Node 22 全量未跑。
+- **[UNVERIFIED] 全量 release shard（`babafeef` 树）**：当前 checkout 由
+  `listTopLevelTestFiles()` 发现 626 个 `*.test.js`；最后一次全量是 `d5519da3` 的 605 文件 /
+  7,455 测试。`babafeef` 树上只跑了受影响集合（JSON Schema 38 + docs guard 47），全量未跑。
+- **[UNVERIFIED] HTTP socket 端到端**：JSON Schema 预算的 50 ms 是模块级实测；没有在真实
+  `http.Server` 请求上复测 wall-clock 与并发下的表现。
+- **[UNVERIFIED] 进程级请求并发/连续滥用准入控制（VM 预算，外部任务书 TASK.md §C 方案2）**：
+  `src/json-schema.js:271` 每次顶层 `validateJsonSchema` 调用新建一个 50 ms 截止时间，
+  子 schema 共享同一请求窗口；`src/` 与四个 sink（`chat.js:4999,5266,6910,8831`）
+  没有进程级 in-flight/并发计数、队列字节上限或过载拒绝。父级实测
+  （`VM-BUDGET-BOUNDARY.md:5-8`，Node v24.19.0，blob `b8cdd3fb…` / HEAD `babafeef`）：
+  连续 50 个病态请求 ≈ 3.1 s 主 event-loop（~62 ms/次），全部 `unable`、无 kill。
+  这是**有界、线性**的可用性残余，不是单请求绕过、不是回归；本版按 P2 接受并延后。
+  未测：真实 `http.Server` 并发下健康请求的延迟界限（见上一条 HTTP socket 端到端）、
+  多租户并发滥用形状。闭合 = 新 src 改动 + 新测试 + 新候选 SHA，须 Owner 明示决策，
+  不得静默追加；正常请求延迟界限与准入阈值尚未由 Owner 批准为生产 SLO
+  （同一外部任务书 `C:/Users/dwgx1/OneDrive/Desktop/Setukou-Dispatch-20261111/02-WindsurfAPI/TASK.md:109`
+  「50ms 是研究起点，不是已经由 Owner 批准的生产 SLO」）。
+- **[UNVERIFIED] 真实上游 provider**：模型输出触发 `pattern` 的实际形状未在真实上游观察；
+  病态 payload 未发给真实服务。
+- **[UNVERIFIED] GHSA-r7v2-3h32-f5g6 的 `patched_versions`**：修复版本尚未发布；发布前不得写
+  `patched_versions`。canonical 对象：D1 身份中和器 → `GHSA-fx5f-49jr-fw6r`，D2 JSON Schema
+  `pattern` → `GHSA-r7v2-3h32-f5g6`；`GHSA-xp93-vpw9-39wx` 与 `GHSA-h858-8xv9-257g` 是重复草稿，
+  应关闭，不发布。
+- **[UNVERIFIED] POSIX mutation sweep（`babafeef` 树）**：`src/json-schema.js` 与
+  `src/handlers/chat.js` 改动后，最终树的 99 spec / 878 mutation 复跑仍未做。
+- **[VERIFIED] Q4 G08（当前轮图片预算）——在 HEAD 已修，不是残留**：
+  `capCascadeImageBudget`（`src/client.js:352`）是整条 field-6 列表共享的计数/字节预算，
+  当前轮先花（`:483`），单轮路径同样过它（`:1338`），超出部分记
+  `cascade_image_current_dropped`（`:371-380`）。Q4 的「当前轮绕过帽」来自修前快照。
+- **[VERIFIED] Q4 G14（被吞掉的清理失败）——在 HEAD 已修**：`accountCleanup` 改走
+  `reportAccountCleanupFailure`（`src/auth.js:2661-2690`），失败计
+  `account_cleanup_failed` 并 warn，不再是 `.catch(()=>{})`。
+- **[VERIFIED] Q4 P3 catalogue ID 边界——2026-11-11 在 `babafeef` 上复核为已修**：Q4 曾记录
+  `claude-3-example.com` 仍被当作 ID 形状、`a4-catalogue-line` 会剥掉调用方 RULE 正文。
+  2026-11-11 重测（隔离精确字符串夹具 + 三文件套件）：`node d03-fixture.mjs`
+  （`perf-20261111/research/DeferredTriage/d03-fixture.mjs`，只 import
+  `src/handlers/identity-neutralize.js`）→ **4/4 caller RULE survived**，含
+  `…documented at claude-3-example.com; RULE: keep me` 原样保留（无 EOL 剥离）；
+  `node --import ./test/setup-env.mjs --test test/identity-neutralize-integrity.test.js
+  test/identity-neutralize-paragraph-bound.test.js test/identity-neutralize-complexity.test.js`
+  → **110 pass / 0 fail**。根因由更早提交修复，无需新改动：`catalogueIdBoundary`
+  （`src/handlers/identity-neutralize.js:399-416`）把「`.` 后接字母/数字」判为散文，故
+  `example.com` 不是 ID；`catalogueIdFollows`（`:443-488`）要求 ≥2 个 ID 形状组件；
+  `a4-catalogue-line`（`:556-576`）只在没有 ID 正文跟随时改写锚点短语，调用方 RULE 正文
+  因此保留。Q4 的「未复现」结论作废（历史记录保留，不静默删除）。
+- **[UNVERIFIED] Q4 G12 残留 fire-and-forget catches**：本波只逐行复核了 G08/G14 两处，
+  G12 的其余残留未重审。
+- **[UNVERIFIED] Q4 `messages.js` 的「remote fetch is not implemented」日志**：HEAD 位于
+  `src/handlers/messages.js:799`（Q4 记作 `:750`）；Q4 认为该句已过时，本波未复现其依据，
+  未改代码。
 - **沿用 592658 的边界**：M4 rescue 未在真实上游触发、多段 `#10`/`#21` 未线上观测、
   官方 `pr-gate` 仍 `INCOMPLETE`（relogin 真实密码缺口）。这些不因本版改变。
 
 ## Security acknowledgments / 致谢
 
-Thanks to fishfish (https://github.com/fishfish57) for the responsible disclosure of the CWE-1333
-event-loop blocking issue in the client-identity neutralizer (reported 2026-11-08).
-Tracked as GHSA-xp93-vpw9-39wx (published with this release).
+Thanks to fishfish (https://github.com/fishfish57) for two responsible disclosures, both
+CWE-1333 event-loop blocking: the quadratic regex scans in the client-identity neutralizer
+(reported 2026-11-08) and the unbounded JSON Schema `pattern` evaluation in
+`src/json-schema.js` (reported 2026-11-10). Tracked as GHSA-fx5f-49jr-fw6r (identity
+neutralizer) and GHSA-r7v2-3h32-f5g6 (JSON Schema `pattern`). Neither advisory ships with this
+draft: `3.141.592659` was never published (its local tag freezes on the unfixed `d5519da3`),
+so both are published against **v3.141.592660** with `patched_versions: >= 3.141.592660`
+once that tag is pushed and CI is green.
 
-感谢 fishfish（周fish，https://github.com/fishfish57）负责任地披露客户端身份中和器中的
-CWE-1333（event-loop 阻塞）问题（2026-11-08 报告）。修复见 §1.1；署名方式经报告者本人确认。
+感谢 fishfish（https://github.com/fishfish57）负责任地披露两个 CWE-1333（event-loop 阻塞）
+问题：客户端身份中和器的二次正则扫描（2026-11-08 报告）与 `src/json-schema.js` 中
+JSON Schema `pattern` 的无界求值（2026-11-10 报告）。分别跟踪为 GHSA-fx5f-49jr-fw6r 与
+GHSA-r7v2-3h32-f5g6；修复见 §1.1 与 §1.8；署名方式经报告者本人确认。此前草稿里的
+`GHSA-xp93-vpw9-39wx` / `GHSA-h858-8xv9-257g` 是重复对象，已退役，不再引用。

@@ -97,7 +97,9 @@ auth/server、streaming、responses、identity/CTX、connect 与 tests/mutations
 
 **仍 [UNVERIFIED]**：托管 CI、真实上游/live 客户端、HMC 部署/回滚演练、官方 `pr-gate`
 （relogin 凭据缺口）、Node 22.13.x 精确下限矩阵（实测 22.23.4）。
-fishfish（周fish）预告的 3 份报告尚未提供，不作已确认缺陷处理。
+fishfish（https://github.com/fishfish57）共提交两份报告：D1 客户端身份中和器（2026-11-08）
+与 D2 JSON Schema `pattern` 无界求值（2026-11-10）。D2 的修复与验收见 §0.5；不存在「第三份
+报告」（2026-11-11 更正：原文写「预告的 3 份报告尚未提供」，与报告者 2026-11-10 的确认不符）。
 
 **§0.4 最后一里：L3a/L3b/W-F3/W-F4 修复批 + L1 元审批（`b45b41e1`…`e30baf6d`）**
 
@@ -158,6 +160,56 @@ fishfish（周fish）预告的 3 份报告尚未提供，不作已确认缺陷�
 
 §0.4 无未决项：本波全部修复（红→绿）+ 双版本 POSIX + 本地门禁 + wire/smoke/
 docs-guard + 变异扫描 全绿。
+
+## 0.5 `babafeef` 增补：JSON Schema `pattern` 边界修复（2026-11-11）
+
+**本节取代 §0.4 的「无未决项」结论，只对 `babafeef` 这个新候选生效；§0.1–§0.4 的冻结
+测量不改写。** 2026-11-10/11 的对抗复核在身份中和器之外发现**第二个 CWE-1333 缺陷**
+（D2：`response_format.json_schema` 的 `pattern` 无界求值），§0.4 时点的“全绿”不覆盖它。
+
+- 候选提交：`babafeef28f5e264b96386919b9303d90a7fac3b`（`fix(json-schema): bound pattern
+  evaluation; never fold "unable" into a pass`），父提交 = 本地 tag 指向的 `d5519da3`。
+  `src/` 树：`8ad39c24e3bd090d48a9e2d41c30298969d6e27c`；范围 **4 文件 / +850 −176**
+  （`git show --stat babafeef`：`src/json-schema.js`、`src/handlers/chat.js`、
+  `test/json-schema-budget.test.js`、`test/json-schema-pattern-safety.test.js`）。
+- 机制（细节见发布说明 §1.8）：常量 `node:vm` `Script` + 整棵 schema 共享的**一个** 50 ms
+  绝对截止时间 + 20 000 步遍历上限 + 三态 `valid|invalid|unable`
+  （`SCHEMA_UNVALIDATED`，reason = `budget`/`capacity`/`invalid-pattern`），组合子传播
+  `unable`；四个 sink 的**传输形状不同**：2 个非流式 sink（`chat.js:5266-5269`、
+  `:6910-6914`）返回 **502** `STRUCTURED_OUTPUT_UNVALIDATED`（`structuredOutputError`，
+  `:1396-1405`），2 个流式 sink（`:4999-5004`、`:8831-8836`）在 **HTTP 200** 的 SSE 流里
+  发**一帧** `chatStreamError` 并置 `terminalOk = false`，不发成功终态（`chat.js` 内没有
+  `statusCode`/`writeHead`；流式响应头在 `:4640` 一带已以 `status: 200` 发出）。
+  静态**形状**闸（`hasNestedQuantifier` / `hasTopLevelAlternation` 类 tripwire）已删除；
+  1024 字符 / 256 KiB 尺寸上限**保留**（`src/json-schema.js:102-103`），但语义从“跳过即
+  通过”改成 `unableCapacity`（`:190-195`）——**从不静默放过**。`^((a|a))+$` 26 字符绕过的
+  是形状 tripwire，实测 5,088.9 ms。
+- 门禁实测（2026-11-11，本机 Node v24.19.0，真树）：
+  `node --import ./test/setup-env.mjs --test test/json-schema-budget.test.js
+  test/json-schema-pattern-safety.test.js` → **38 pass / 0 fail**（25 + 13）；
+  `node --import ./test/setup-env.mjs --test test/docs-consistency-guard.test.js` →
+  **47 pass / 0 fail**（§0 修复前为 46/1：`§0 master SHA e30baf6d… predates 2 src/ change(s)`）。
+- 基线更正：`origin/master` = **`111e2c4e`**（`git ls-remote origin refs/heads/master` 与本地
+  `origin/master` ref 同 SHA，2026-11-11 实测）；§0 冻结行写的 `1dc8ef3a` 是 2026-11-09 时点。
+- tag 状态更正：本地 annotated tag `v3.141.592659` 已创建（对象
+  `1d63a0307f5f81f0072dbed4f6e20c2fa4e4535e` → commit `d5519da3…`，tagger
+  `2026-11-10T19:54:02+09:00`），**未 push**；该 commit **不含** D2 修复，禁止按此发布。
+  发布前必须由 Owner 决定：re-tag 到含 `babafeef` 的 merge-tip，或改用新版本号。
+- **[UNVERIFIED]**：`babafeef` 树上的全量 `test:release` shard（本 checkout 发现 626 个
+  `*.test.js`；最后一次全量是 `d5519da3` 的 605 文件 / 7,455 测试）、POSIX mutation sweep、
+  Node 22 全量、pkg 单文件二进制、HTTP socket 端到端、真实上游 provider。这些不因本节变绿。
+
+**D5 准入残余 — (a)/(b) Owner 决策（第 5 项 Owner 决策）**
+
+> **D5 准入残余 — Owner 签字（2026-11-11，待填）**：本人已读 `RELEASE_NOTES_3.141.592659.md`
+> §1.8 残余段与 §7 `[UNVERIFIED]` 条目、`VM-BUDGET-BOUNDARY.md`、外部任务书 `TASK.md` §C
+> 方案2:103（`C:/Users/dwgx1/OneDrive/Desktop/Setukou-Dispatch-20261111/02-WindsurfAPI/TASK.md`，
+> 不在本仓库内）。
+> 知悉 `babafeef` 仅有每请求 50 ms 预算、无进程级并发/连续滥用准入，连续 50 个病态请求
+> ≈ 3.1 s 主 event-loop（~62 ms/次，全部 `unable`）。选择：**(a) 作为 P2 残余在本版接受并
+> 延后至下一版**（不新增 src 改动、不新增候选 SHA），或 **(b) 本版即闭合**（= 新 src 改动
+> + 新测试 + 新候选 SHA + 重跑 D1 门禁）。默认按 (a) 推进；未签字前不得对外宣称
+> 「无已知缺口 / ALL GREEN / ready to push」。签字：__________ 日期：__________
 
 ## 1. 发布范围（产品变更）
 
@@ -259,7 +311,7 @@ WIRE_EXPECTED_DIFFS {"byte_identical":270,"expected":0,"entries":0,"compared":27
 |---|---|---|
 | 分支 | `fix/audit-wave-20261109`，无 upstream | 未 push |
 | 合并 | 本任务**不合并**；runbook 要求分支 → review → `git merge --ff-only` | 未执行 |
-| tag | `git tag -a v3.141.592659 -m "3.141.592659"` + `git push origin v3.141.592659` | **未执行**（本任务禁止 tag/push） |
+| tag | `git tag -a v3.141.592659 -m "3.141.592659"` + `git push origin v3.141.592659` | **未执行**（本任务禁止 tag/push）；**2026-11-11 更正**：本地 annotated tag 已创建（对象 `1d63a030` → `d5519da3`，2026-11-10T19:54:02+09:00），**未 push**；该 commit 不含 D2 修复，发布前必须由 Owner 决定 re-tag 或升版（§0.5） |
 | 部署 | HMC 切换与回滚见发布说明 §5 / `ReleasePrep.md` §7 | **未执行** |
 
 > tag 与 push 在本文件冻结之后执行，因此结果不能写进本文件（写入就会改变 tag 指向的提交）。
