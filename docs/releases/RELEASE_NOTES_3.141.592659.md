@@ -34,7 +34,7 @@ e0c5c715..a7af4702`；`git diff --shortstat e0c5c715..a7af4702`；
 `git diff --name-only e0c5c715..a7af4702 -- src | wc -l`）：`c4931c40`（审计收口，
 49 文件 / +5,010 −324）、`0aea4ea3`（connect 显式错误终止与 catalogue 边界）、
 `911e6674` / `d0359733`（纯文档）、复审修复波 `04503830`–`7c995f40`（含 spec
-基线重钉、文档订正与差分审计修复）、安全狩猎波 `f43b5b7a`–`68efa521`（七条
+基线重钉、文档订正与差分审计修复）、安全狩猎波 `f43b5b7a`–`18f54aaf`（七条
 只读 lane 报告的落地修复，含 S1 输入 DoS、S2 载体矩阵、S3 头回显/SSE、
 S4 解码器边界、S5 日志注入/XSS、S6 凭据基线与代理配置）共 42 个提交。
 逐提交证据记入验收附录的增补段（acceptance addendum，另行补写）；本文件只登记
@@ -43,8 +43,8 @@ S4 解码器边界、S5 日志注入/XSS、S6 凭据基线与代理配置）共 
 **tag 目标。** `v3.141.592659` 必须打在合并后的 master tip 上（流程：把
 `origin/master` 合入本分支 → `master --ff-only` → 在 master tip 打 annotated tag →
 push），**不是** `e0c5c715`——否则 `c4931c40`/`0aea4ea3` 与复审修复会被关在版本外。
-写作时最后一个改 `src/` 的提交为 `68efa521`（安全狩猎波收尾，克隆深度帽的
-harness 兼容修正）；最终 tag 目标记作 `<merge-tip>`，以合并提交的实际 SHA 为准。
+写作时最后一个改 `src/` 的提交为 `18f54aaf`（安全狩猎波收尾，SSE pending
+门增量扫描）；最终 tag 目标记作 `<merge-tip>`，以合并提交的实际 SHA 为准。
 
 **复审修复波的用户可见变化**（`04503830`–`5fb21e70`，按面分组；`c4931c40` 已覆盖的
 面见上节）：
@@ -97,7 +97,7 @@ harness 兼容修正）；最终 tag 目标记作 `<merge-tip>`，以合并提�
   重建三处统一转义 `</human>`/`</assistant>` 闭合标签；`extractImages` 在最后一个块
   之后也拒绝已取消的轮次；translator SSE framer 在客户端断连时 dispose。
 
-**安全狩猎波的用户可见变化**（`f43b5b7a`–`68efa521`；七条只读 lane——输入 DoS、
+**安全狩猎波的用户可见变化**（`f43b5b7a`–`18f54aaf`；七条只读 lane——输入 DoS、
 认证载体矩阵、SSE 头回显/注释缝、协议解码/租户隔离、存储注入/XSS、SSRF/随机性、
 代理配置——的报告全部落地）：
 
@@ -122,7 +122,13 @@ harness 兼容修正）；最终 tag 目标记作 `<merge-tip>`，以合并提�
   64 层深度帽（此前 JSON.parse 放得下的 ~10k 层 body 会把克隆打进
   RangeError——response-store 本有 retainedBytes 计量先拒，克隆自帽是纵深）；
   protobuf varint 终止字节溢过 uint64 显式拒绝（`80×9 7F` 此前静默解出 ~2^70）；
-  `postConnectUnary` 声明长度超过实际体长显式拒绝（此前 `subarray` 静默截断）；
+  账户标签的边界校验从 PATCH 路径推广到 add/login 全部写入点——调用方标签
+  按同一规则 400，上游注册名走"剥离控制字符+截断"的消毒而不是拒绝
+  （不让恶意的 registry 名把一次成功登录变成 400）；SSE pending 门的
+  `inspectPending` 改为增量窗口+StringDecoder（此前每次写都对全部 pending
+  缓冲做 concat——keepalive 流不 commit，代价 O(写次数×积压字节) 变二次方；
+  500 条 4 KiB 注释帧实测 453 ms→9.6 ms）；`postConnectUnary` 声明长度超过
+  实际体长显式拒绝（此前 `subarray` 静默截断）；
   chat 组装层四处调用方可控文本的二次方扫描改为有界/线性——未闭合
   `<system-reminder` 重复串、bash 前缀修复的 200 KiB 输入帽、读路径提取的
   200 KiB 窗口+段长/段深限制、JSON 载荷提取的 512 起点+4 MiB 扫描预算
