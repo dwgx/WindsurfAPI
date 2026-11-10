@@ -19,6 +19,7 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { safeAccountRef } from '../src/log-safety.js';
+import { sanitizeLabelText } from '../src/auth.js';
 
 const AUTH_JS = readFileSync(new URL('../src/auth.js', import.meta.url), 'utf8');
 const HEAD = 'export async function fetchUserStatus(id, { allowLsStart = true } = {}) {';
@@ -57,6 +58,9 @@ function load(status, { account = {}, models = {} } = {}) {
       error: (...a) => lines.error.push(a.join(' ')),
     },
     safeAccountRef,
+    // fetchUserStatus sanitizes upstream-supplied fields through the real
+    // label boundary — inject the helper, do not reimplement it.
+    sanitizeLabelText,
   };
   const fn = new Function(...Object.keys(deps), `${block}\nreturn fetchUserStatus;`)(...Object.values(deps));
   return { fn, account: acct, lines };

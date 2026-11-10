@@ -3,6 +3,7 @@ import { test } from 'node:test';
 import { readFileSync } from 'node:fs';
 import { trustedClientIp } from '../src/net-safety.js';
 import { isLoopbackAddress } from '../src/dashboard/local-windsurf.js';
+import { sanitizeLabelText } from '../src/auth.js';
 
 const source = readFileSync(new URL('../src/dashboard/api.js', import.meta.url), 'utf8');
 function functionText(name) {
@@ -25,6 +26,9 @@ function boundary(env = {}, localBind = true) {
     setAccountTokens() {}, setAccountProxy() {}, scheduleAccountWarmup() {},
     setAccountCredentialEmail() {},
     maskApiKey: () => '[masked]',
+    // The production function sanitizes upstream-supplied names through the
+    // real boundary — feed the same helper, not a local reimplementation.
+    sanitizeLabelText,
     log: { info() {}, warn() {} },
     credentials: {
       isCredStoreEnabled: () => true,

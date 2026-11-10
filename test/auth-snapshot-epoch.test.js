@@ -24,7 +24,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import {
   addAccountByKey, removeAccount, setAccountTokens, refreshAccountBilling,
-  __setModelCatalogDeps,
+  __setModelCatalogDeps, sanitizeLabelText,
 } from '../src/auth.js';
 
 const created = [];
@@ -71,6 +71,9 @@ function loadFetchUserStatus({ statuses, ls = {} }) {
     getLsAdmissionForAccount: () => ({ wouldStart: false, key: null }),
     residentProbeSkip: () => null,
     safeAccountRef: a => a?.id || '?',
+    // The eval'd source calls the real label boundary on upstream fields —
+    // inject the actual helper so commit-path tests cannot hit ReferenceError.
+    sanitizeLabelText,
     MODELS: {},
     log: { info() {}, warn() {}, debug() {} },
     saveAccounts: () => { saves.count++; },
