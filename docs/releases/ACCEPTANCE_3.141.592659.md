@@ -51,9 +51,10 @@ auth/server、streaming、responses、identity/CTX、connect 与 tests/mutations
 
 **门禁实测**（每条注明实测 SHA；最终树为 `:src` = `6b3eb302…`，最后 src 提交 `18f54aaf`）：
 
-- wire 字节一致性：`a7af4702` 树，**270/270 byte-identical、0 expected diff** vs
-  `v3.141.592658`（`WIRE_BASE_TREE=D:/Project/WindsurfAPI-wirebase`）。
-- smoke:matrix：`a7af4702` 树，**137/137 flows、24/24 families、0 failed**。
+- wire 字节一致性：`a3592bc6` 树（src `18f54aaf`，冻结树），**270/270
+  byte-identical、0 expected diff** vs `v3.141.592658`
+  （`WIRE_BASE_TREE=D:/Project/WindsurfAPI-wirebase`）。
+- smoke:matrix：`a3592bc6` 树（冻结树），**137/137 flows、24/24 families、0 failed**。
 - spec 静态/基线：`spec-baseline-check --all` 在 `68efa521` 后实测 **99 spec / 0 drift**；
   `s4-r6` functionText harness 回归由 `68efa521` 修复后复测通过。
 - secret-scan：`68efa521` 树 exit 0。
