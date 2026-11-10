@@ -14,7 +14,7 @@
 // shapes can be compared without creating or deleting a tag.
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -37,12 +37,21 @@ describe('changelog counts: the git tag row is the published namespace', () => {
     const tags = listGitTags(ROOT);
     assert.ok(tags && tags.length > 0, 'precondition: this checkout must list tags');
     const register = unpublishedTagVersions(ROOT);
+    const packaged = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version;
     const withoutLocalOnly = tags.filter((tag) => !register.includes(tag.replace(/^v/, '')));
 
     assert.equal(
-      countPublishedTags(tags, register),
-      countPublishedTags(withoutLocalOnly, register),
+      countPublishedTags(tags, register, packaged),
+      countPublishedTags(withoutLocalOnly, register, packaged),
       'the row must not change when a registered local-only tag is present or absent',
+    );
+    // The other shape difference: master CI before the release tag is pushed, and the
+    // Release checkout at the tag. The packaged tag is excluded by name, so the count
+    // cannot move when it appears — that is the second half of the 2026-11-11 failure.
+    assert.equal(
+      countPublishedTags(tags, register, packaged),
+      countPublishedTags(tags.filter((tag) => tag !== `v${packaged}`), register, packaged),
+      'the row must not change when the packaged version’s own tag is present or absent',
     );
   });
 
@@ -52,6 +61,16 @@ describe('changelog counts: the git tag row is the published namespace', () => {
     assert.equal(countPublishedTags(['v1.0.0', 'v1.0.1'], ['1.0.2']), 2);
     // No register at all is not a licence to count refs: the published count is unchanged.
     assert.equal(countPublishedTags(['v1.0.0', 'v1.0.1'], []), 2);
+  });
+
+  it('the packaged version tag is excluded by name, before and after it exists', () => {
+    // master CI (tag not pushed) and the Release checkout (tag present) must derive the
+    // same number; excluding the tag being cut is what makes the row stable across the
+    // push. A `< package.json` comparison is invariant too, but it silently drops the
+    // three `v3.2.6-rc*` tags this repository carries, so the exclusion is by name.
+    assert.equal(countPublishedTags(['v1.0.0', 'v1.0.1', 'v1.0.2'], [], '1.0.2'), 2);
+    assert.equal(countPublishedTags(['v1.0.0', 'v1.0.1'], [], '1.0.2'), 2);
+    assert.equal(countPublishedTags(['v1.0.0', 'v3.2.6-rc4'], [], '1.0.0'), 1);
   });
 
   it('no tags at all is "cannot stand behind a count", not zero', () => {
@@ -65,12 +84,18 @@ describe('changelog counts: the git tag row is the published namespace', () => {
     // is 230 vs 229 on the authoring host, i.e. exactly the row CI rejected.
     const tags = listGitTags(ROOT);
     const register = unpublishedTagVersions(ROOT);
-    const published = countPublishedTags(tags, register);
+    const packaged = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version;
+    const published = countPublishedTags(tags, register, packaged);
     assert.equal(changelogCounts(ROOT).tags, published, 'the row must equal the published count');
     assert.equal(
       published,
-      countPublishedTags(tags.filter((tag) => !register.includes(tag.replace(/^v/, ''))), register),
+      countPublishedTags(tags.filter((tag) => !register.includes(tag.replace(/^v/, ''))), register, packaged),
       'and that count must be the same in a checkout without the local-only tags',
+    );
+    assert.equal(
+      countPublishedTags(tags.filter((tag) => tag !== `v${packaged}`), register, packaged),
+      published,
+      'and the same in a checkout that has not created the release tag yet',
     );
   });
 

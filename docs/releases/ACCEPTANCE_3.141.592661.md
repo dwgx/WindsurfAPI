@@ -55,7 +55,7 @@
 | 行 | 命令 | 结果 |
 |---|---|---|
 | D01 | `node --import ./test/setup-env.mjs --test test/docs-consistency-guard.test.js` | **47 pass / 0 fail**（9 suites） |
-| C01 | `node --import ./test/setup-env.mjs --test test/changelog-counts.test.js` | **5 pass / 0 fail** |
+| C01 | `node --import ./test/setup-env.mjs --test test/changelog-counts.test.js` | **6 pass / 0 fail** |
 | U01 | `node --import ./test/setup-env.mjs --test test/unverified-register.test.js` | **7 pass / 0 fail** |
 | J01 | `node --import ./test/setup-env.mjs --test test/json-schema-pattern-safety.test.js test/json-schema-budget.test.js` | **38 pass / 0 fail**（13 + 25） |
 | N01 | `node scripts/sync-changelog-counts.mjs --check` | **exit 0** —— `notes=221 tags=229` |
@@ -66,16 +66,19 @@
 | V02 | `git diff HEAD -- src/`（提交前）/ `git diff HEAD^ HEAD -- src/`（提交后） | **空**（`src/version.js` 未动） |
 | RC01 | `sha256sum runtime-config.json`（测试前后各一次） | **`c97393756ce00a29aaf283b1d40488ff5c6d7abd162b48fd89b02893315bb82f` 未变** |
 
-## 3. 两种 checkout 形状与 RED 对照（一次性 clone，不动工作树）
+## 3. 三种 checkout 形状与 RED 对照（一次性 clone，不动工作树）
 
 | 形状 | 命令 | 结果 |
 |---|---|---|
-| A（主机，230 tag） | `node --import ./test/setup-env.mjs --test test/docs-consistency-guard.test.js` + `node scripts/sync-changelog-counts.mjs --check` | **47/47**，`--check` **exit 0** |
-| B（模拟 CI，clone 里删除 `v3.141.592659` → 229 tag） | 同上 | **47/47**，`--check` **exit 0** |
-| RED（pristine `499fc285` + patch，删除冻结 tag 后 `git apply -R` 补丁） | 同上 | docs guard **45/47**，`--check` **exit 1** —— 3.141.592660 的 CI 失败形状 |
+| A（作者主机，231 tag：含冻结 `.592659` 与本地 `.592661`） | `node --import ./test/setup-env.mjs --test test/docs-consistency-guard.test.js` + `node scripts/sync-changelog-counts.mjs --check` | **47/47**，`--check` **exit 0**（`notes=221 tags=229`） |
+| B（master CI，clone 里删除 `.592659` 与 `.592661` → 229 tag） | 同上 | **47/47**，`--check` **exit 0**（`notes=221 tags=229`） |
+| C（Release CI，只删除冻结 `.592659`、保留 `.592661` → 230 tag） | 同上 | **47/47**，`--check` **exit 0**（`notes=221 tags=229`） |
+| RED（Shape C 里把行改成 `999`） | 同上 | docs guard **45/47**，`--check` **exit 1** —— `table says 999 tags, git lists 229` |
 
-Shape B 只删除 clone 里的 `v3.141.592659`；`v3.141.592660` 在两种形状里都存在，因此登记册
-**不能**列出它（列了会两边都减 1 → 228，RED 4）。逐字输出见本次交付报告。
+三种形状同值 **229**：登记册把主机独有的冻结 tag 减掉，`countPublishedTags()` 再把
+`package.json` 版本的 tag 按**名字**减掉（本版自己的 tag，创建前后都不计数）。因此打 tag
+不移动这一行，不需要第二次提交或移动 tag。登记册**不能**列出 `.592660`（远端可见，列了会
+在每种 checkout 都多减 1）。逐字输出见本次交付报告。
 
 ## 4. 发布顺序（本任务未执行）
 
@@ -93,11 +96,12 @@ Shape B 只删除 clone 里的 `v3.141.592659`；`v3.141.592660` 在两种形状
 7. GHSA 两个 canonical 对象发布，`patched_versions: >= 3.141.592661`。
 8. HMC 部署与回滚演练。
 
-**tag 计数的时间窗（已知，必须在第 5 步处理）。** `CHANGELOG.md` 的 `git tag` 行由
-`node scripts/sync-changelog-counts.mjs` 生成：本提交时点 **229**（主机 230−登记 1；CI
-229−0）。第 5 步创建 `v3.141.592661` 之后，主机 231−1=**230**、CI 230−0=**230**，两种形状
-一起移动；必须再跑一次生成器、提交、并把 tag 移到新提交（尚未 push 时可以移动）。与
-3.141.592660 不同，这次不会再出现「主机 230 / CI 229」的分裂。
+**tag 计数不随时间窗移动（本版修复）。** `CHANGELOG.md` 的 `git tag` 行由
+`node scripts/sync-changelog-counts.mjs` 生成，口径是「本 checkout 的 `git tag` 数减去
+`docs/releases/UNPUBLISHED-TAGS.txt` 里存在的未发布 tag，再减去 `package.json` 版本的
+tag」。作者主机 231−1−1、master CI 229−0−0、Release CI 230−0−1 都是 **229**。第 5 步
+创建 tag 之后**不需要**再跑生成器、再提交或移动 tag；三种 checkout 读同一棵树都得到 229，
+`.592660` 那种「主机 230 / CI 229」的分裂不会出现。
 
 ## 5. 仍未测 —— 不得写成已通过
 

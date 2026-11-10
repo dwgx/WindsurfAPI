@@ -61,22 +61,22 @@
 
 1 个小节 · 12 条：已复核 0 · 仍缺 12 · 已修 0（无 marker 1）
 
-小节 `## 7. 已知 / 尚未验证`（`:196`）
+小节 `## 7. 已知 / 尚未验证`（`:204`）
 
 | # | 位置 | bullet | marker | 状态 |
 |---:|---|---|---|---|
-| 1 | `RELEASE_NOTES_3.141.592661.md:200` | 99 spec / 878 mutation 的全量 sweep（本树）**：`babafeef` 改了 `src/json-schema.js` 与 `src/handlers/chat.js`，两者都在 spec 覆盖范围内。 `spec-baseline-check` 只证明锚点与基线成立、不执行变异体；本版没有新增 `src/` 改动， 但也没有在本树复跑全量 sweep。闭合命令（POSIX，干净树）： `for s in test/mutations/*.json; do npm run mutate -- "$s"; done`。 | `[UNVERIFIED]` | 仍缺 |
-| 2 | `RELEASE_NOTES_3.141.592661.md:205` | `npm run test:release` 全量 shard（本树）**：本 checkout 的 `listTopLevelTestFiles()` 发现 **627** 个 `*.test.js`（比 660 的 626 多出 `test/changelog-counts.test.js`）；本版只跑了受影响集合（docs guard 47 + changelog-counts 5 + unverified-register 7 + JSON Schema 38）。Windows 上该 shard 预期 103 条 skip （平台/环境守卫），skip 声明不是绿。 | `[UNVERIFIED]` | 仍缺 |
-| 3 | `RELEASE_NOTES_3.141.592661.md:210` | wire 270/270（本树）**：默认路径对 `v3.141.592658` 的 270/270 逐字节 一致是在 `deeb2539` 上测的（距本树 87 个提交 / 34 个 `src/` 文件）；本树未复测，本机 wire 门 inert（`skipped:1`）。`src/` 与 660 相同，但「相同」不是本树的测量。 | `[UNVERIFIED]` | 仍缺 |
-| 4 | `RELEASE_NOTES_3.141.592661.md:213` | POSIX 全量门 `gate:release`**：本机只跑 Windows 受影响集合；POSIX 干净树 的 `npm run gate:release` 未跑。 | `[UNVERIFIED]` | 仍缺 |
-| 5 | `RELEASE_NOTES_3.141.592661.md:215` | 托管 CI**：本分支没有 upstream；本文件的所有计数都是本机测量。3.141.592660 的失败正是托管 CI 的 docs-guard；本版的两种 checkout 形状已在一次性 clone 里复现，但 GitHub Actions 上的真实运行要等 push。 | `[UNVERIFIED]` | 仍缺 |
-| 6 | `RELEASE_NOTES_3.141.592661.md:218` | HMC 部署与回滚演练**：本版没有部署；回滚命令见 §5 与 `ReleasePrep.md` §7，未执行。 | `[UNVERIFIED]` | 仍缺 |
-| 7 | `RELEASE_NOTES_3.141.592661.md:220` | live 上游 / 真实 Desktop/客户端**：WA-001/002/003/A4 的验证全部是隔离 函数与 hermetic 测试；没有把病态 payload 发给真实服务，也没有真实客户端复跑。HMC 的 旧模块计时用的是 `/tmp` 副本，生产 `:18999` 未被写入。 | `[UNVERIFIED]` | 仍缺 |
-| 8 | `RELEASE_NOTES_3.141.592661.md:223` | 发布产物**：资产、cosign 签名、`SHA256SUMS`、release attestation 都要在 tag 之后由 release workflow 生成；3.141.592660 的资产数是 **0**，本文件不代表 661 已经 有产物。 | `[UNVERIFIED]` | 仍缺 |
-| 9 | `RELEASE_NOTES_3.141.592661.md:226` | pkg 单文件二进制**：本版未构建/启动 `@yao-pkg/pkg` 的 Windows/macOS 产物； `release.yml` 的 `exe-boot-smoke` 只在 tag 之后运行。 | `[UNVERIFIED]` | 仍缺 |
-| 10 | `RELEASE_NOTES_3.141.592661.md:228` | Node 22 全量（本树）**：`engines >=22.13.0`；22.23.4 的 605 文件全量跑在 更早的树上，本树未跑。 | `[UNVERIFIED]` | 仍缺 |
-| 11 | `RELEASE_NOTES_3.141.592661.md:230` | GHSA 公告本身**：canonical 对象 D1 身份中和器 → `GHSA-fx5f-49jr-fw6r`、 D2 JSON Schema `pattern` → `GHSA-r7v2-3h32-f5g6`；两者的 `patched_versions` 都是 **`>= 3.141.592661`**。公告在 push + CI 绿之后才发布，写本文件时尚未发布——在此之前 不得对外声称公告已存在。`GHSA-xp93-vpw9-39wx` 与 `GHSA-h858-8xv9-257g` 是重复草稿， 应关闭，不发布。 | `[UNVERIFIED]` | 仍缺 |
-| 12 | `RELEASE_NOTES_3.141.592661.md:235` | **沿用 3.141.592660 §7 的其余边界**：CTX-01 live、`clear_thinking` 模型族边界、S03 真实 dashboard 客户端、IMG-01 真实 Cascade abort、TRN-01 上游角色语义、G01–G03/G06 真实客户端 抓包、Q1 G4、support-bundle 生产形态、HTTP socket 端到端、进程级并发准入残余、Q4 G12、 Q4 `messages.js` 日志、592658 的 M4/多段/`pr-gate` 边界——这些不因本版改变，逐条见 `RELEASE_NOTES_3.141.592660.md` §7 与登记册。 | — | 仍缺 |
+| 1 | `RELEASE_NOTES_3.141.592661.md:208` | 99 spec / 878 mutation 的全量 sweep（本树）**：`babafeef` 改了 `src/json-schema.js` 与 `src/handlers/chat.js`，两者都在 spec 覆盖范围内。 `spec-baseline-check` 只证明锚点与基线成立、不执行变异体；本版没有新增 `src/` 改动， 但也没有在本树复跑全量 sweep。闭合命令（POSIX，干净树）： `for s in test/mutations/*.json; do npm run mutate -- "$s"; done`。 | `[UNVERIFIED]` | 仍缺 |
+| 2 | `RELEASE_NOTES_3.141.592661.md:213` | `npm run test:release` 全量 shard（本树）**：本 checkout 的 `listTopLevelTestFiles()` 发现 **627** 个 `*.test.js`（比 660 的 626 多出 `test/changelog-counts.test.js`）；本版只跑了受影响集合（docs guard 47 + changelog-counts 5 + unverified-register 7 + JSON Schema 38）。Windows 上该 shard 预期 103 条 skip （平台/环境守卫），skip 声明不是绿。 | `[UNVERIFIED]` | 仍缺 |
+| 3 | `RELEASE_NOTES_3.141.592661.md:218` | wire 270/270（本树）**：默认路径对 `v3.141.592658` 的 270/270 逐字节 一致是在 `deeb2539` 上测的（距本树 87 个提交 / 34 个 `src/` 文件）；本树未复测，本机 wire 门 inert（`skipped:1`）。`src/` 与 660 相同，但「相同」不是本树的测量。 | `[UNVERIFIED]` | 仍缺 |
+| 4 | `RELEASE_NOTES_3.141.592661.md:221` | POSIX 全量门 `gate:release`**：本机只跑 Windows 受影响集合；POSIX 干净树 的 `npm run gate:release` 未跑。 | `[UNVERIFIED]` | 仍缺 |
+| 5 | `RELEASE_NOTES_3.141.592661.md:223` | 托管 CI**：本分支没有 upstream；本文件的所有计数都是本机测量。3.141.592660 的失败正是托管 CI 的 docs-guard；本版的两种 checkout 形状已在一次性 clone 里复现，但 GitHub Actions 上的真实运行要等 push。 | `[UNVERIFIED]` | 仍缺 |
+| 6 | `RELEASE_NOTES_3.141.592661.md:226` | HMC 部署与回滚演练**：本版没有部署；回滚命令见 §5 与 `ReleasePrep.md` §7，未执行。 | `[UNVERIFIED]` | 仍缺 |
+| 7 | `RELEASE_NOTES_3.141.592661.md:228` | live 上游 / 真实 Desktop/客户端**：WA-001/002/003/A4 的验证全部是隔离 函数与 hermetic 测试；没有把病态 payload 发给真实服务，也没有真实客户端复跑。HMC 的 旧模块计时用的是 `/tmp` 副本，生产 `:18999` 未被写入。 | `[UNVERIFIED]` | 仍缺 |
+| 8 | `RELEASE_NOTES_3.141.592661.md:231` | 发布产物**：资产、cosign 签名、`SHA256SUMS`、release attestation 都要在 tag 之后由 release workflow 生成；3.141.592660 的资产数是 **0**，本文件不代表 661 已经 有产物。 | `[UNVERIFIED]` | 仍缺 |
+| 9 | `RELEASE_NOTES_3.141.592661.md:234` | pkg 单文件二进制**：本版未构建/启动 `@yao-pkg/pkg` 的 Windows/macOS 产物； `release.yml` 的 `exe-boot-smoke` 只在 tag 之后运行。 | `[UNVERIFIED]` | 仍缺 |
+| 10 | `RELEASE_NOTES_3.141.592661.md:236` | Node 22 全量（本树）**：`engines >=22.13.0`；22.23.4 的 605 文件全量跑在 更早的树上，本树未跑。 | `[UNVERIFIED]` | 仍缺 |
+| 11 | `RELEASE_NOTES_3.141.592661.md:238` | GHSA 公告本身**：canonical 对象 D1 身份中和器 → `GHSA-fx5f-49jr-fw6r`、 D2 JSON Schema `pattern` → `GHSA-r7v2-3h32-f5g6`；两者的 `patched_versions` 都是 **`>= 3.141.592661`**。公告在 push + CI 绿之后才发布，写本文件时尚未发布——在此之前 不得对外声称公告已存在。`GHSA-xp93-vpw9-39wx` 与 `GHSA-h858-8xv9-257g` 是重复草稿， 应关闭，不发布。 | `[UNVERIFIED]` | 仍缺 |
+| 12 | `RELEASE_NOTES_3.141.592661.md:243` | **沿用 3.141.592660 §7 的其余边界**：CTX-01 live、`clear_thinking` 模型族边界、S03 真实 dashboard 客户端、IMG-01 真实 Cascade abort、TRN-01 上游角色语义、G01–G03/G06 真实客户端 抓包、Q1 G4、support-bundle 生产形态、HTTP socket 端到端、进程级并发准入残余、Q4 G12、 Q4 `messages.js` 日志、592658 的 M4/多段/`pr-gate` 边界——这些不因本版改变，逐条见 `RELEASE_NOTES_3.141.592660.md` §7 与登记册。 | — | 仍缺 |
 
 ## 3.141.592660 — `docs/releases/RELEASE_NOTES_3.141.592660.md`
 

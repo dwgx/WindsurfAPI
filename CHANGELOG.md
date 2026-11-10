@@ -20,7 +20,7 @@
 | | |
 |---|---|
 | 发布说明 | **221** 份,v2.0.6 → v3.141.592661（生成：`node scripts/sync-changelog-counts.mjs`；口径 `ls docs/releases/RELEASE_NOTES_*.md \| wc -l`） |
-| git tag | 230 个（生成：`node scripts/sync-changelog-counts.mjs`；口径 `git tag \| wc -l` 减去 `docs/releases/UNPUBLISHED-TAGS.txt` 里本 checkout 存在的未发布 tag） |
+| git tag | 229 个（生成：`node scripts/sync-changelog-counts.mjs`；口径 `git tag \| wc -l` 减去 `docs/releases/UNPUBLISHED-TAGS.txt` 里本 checkout 存在的未发布 tag，再减去 `package.json` 版本的 tag——本次发布自己的 tag，创建前后都不计数，所以三种 checkout 同值） |
 | 当前 | **v3.141.592661**(2026-11-11) |
 | 运行时依赖 | **0** —— 从第一个版本保持到现在 |
 
@@ -47,8 +47,10 @@ flowchart LR
 首个真正公开发布的修复版（fix release）。`v3.141.592660` 的 tag 公开但 Release/CI 失败、
 零资产：docs guard 的 tag 行写 230，而 `fetch-depth: 0` 的 CI checkout 只有 229，差值正是
 本地冻结、从未 push 的 `v3.141.592659`。本版把 tag 行改为「本 checkout 的 tag 数减去
-`docs/releases/UNPUBLISHED-TAGS.txt` 里本 checkout 存在的未发布 tag」，主机 230−1 与 CI
-229−0 都得 229；登记册只登记 `v3.141.592659`（`.592660` 远端可见，不能登记）。同时把
+`docs/releases/UNPUBLISHED-TAGS.txt` 里本 checkout 存在的未发布 tag，再减去
+`package.json` 版本的 tag（本次发布自己的 tag，创建前后都不计数）」：作者主机
+231−1−1、master CI 229−0−0、Release CI 230−0−1 都得 229；登记册只登记
+`v3.141.592659`（`.592660` 远端可见，不能登记）。同时把
 `test/auth-warning.test.js` 的 SYNTHETIC 旧 blob 收入 history secret scan 基线，恢复
 0 unbaselined。`src/` 与 3.141.592660 逐字节相同（`babafeef`），无运行时变化；全量
 `test:release`、99 spec / 878 mutation sweep、wire 270/270、POSIX 门、HMC 与真实客户端仍

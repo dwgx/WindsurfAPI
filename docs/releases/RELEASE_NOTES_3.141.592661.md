@@ -50,28 +50,33 @@ Release 打成失败。
 - 新增 `docs/releases/UNPUBLISHED-TAGS.txt`：登记「存在于某些 checkout、但从未 push」的
   tag，一行一个版本，`#` 起注释。本版只登记 `v3.141.592659`。
 - 新增 `unpublishedTagVersions()`：读登记册，拒绝非版本行（拼错不能静默变成零减法）。
-- 新增纯函数 `countPublishedTags(tags, unpublished)`：
-  `|本 checkout 的 tags| − |登记册 ∩ 本 checkout 的 tags|`。登记册里但本 checkout 没有的
-  条目不减——那正是 CI checkout。
+- 新增纯函数 `countPublishedTags(tags, unpublished, packaged)`：
+  `|本 checkout 的 tags| − |登记册 ∩ 本 checkout 的 tags| − [v<packaged> ∈ tags]`。登记册
+  里但本 checkout 没有的条目不减——那正是 CI checkout；本版自己的 tag 按**名字**排除，
+  创建前后都不计数。不按版本比较：`v3.2.6-rc4/rc5/rc6` 不是纯 `x.y.z`，`< package.json`
+  会把它们静默丢掉。
 - `changelogCounts()` 改用 `listGitTags()` + `countPublishedTags()`；`countGitTags()` 被
   替换，不保留兼容别名。
 - tag 行的口径文字同步改为「`git tag \| wc -l` 减去
-  `docs/releases/UNPUBLISHED-TAGS.txt` 里本 checkout 存在的未发布 tag」。
+  `docs/releases/UNPUBLISHED-TAGS.txt` 里本 checkout 存在的未发布 tag，再减去
+  `package.json` 版本的 tag——本次发布自己的 tag，创建前后都不计数」。
 
 **算术（实测）。**
 
-| 时点 | 作者主机 `git tag` | 登记册命中 | 行值 | CI checkout `git tag` | 登记册命中 | 行值 |
-|---|---:|---:|---:|---:|---:|---:|
-| 本提交（661 未打 tag） | 230 | 1 | **229** | 229 | 0 | **229** |
-| 661 tag 创建后 | 231 | 1 | **230** | 230 | 0 | **230** |
+| checkout | `git tag` | 登记册命中 | 本版 tag 命中 | 行值 |
+|---|---:|---:|---:|---:|
+| 作者主机（661 本地已打） | 231 | 1（`.592659`） | 1（`.592661`） | **229** |
+| master CI（661 未 push） | 229 | 0 | 0 | **229** |
+| Release CI（661 tag checkout） | 230 | 0 | 1 | **229** |
 
-两种形状在任一时刻都自洽。**`.592660` 不能登记**：它是远端可见 tag（两种 checkout 都有），
-登记它会把两边都减成 228，反而制造新的不一致；它的零资产状态是发布流水线事实，不是
-`git tag` 事实。
+三种 checkout 同值 **229**，打 tag 不移动这一行。**`.592660` 不能登记**：它是远端可见 tag
+（每种 checkout 都有），登记它会在每种 checkout 都多减 1，反而制造新的不一致；它的零资产
+状态是发布流水线事实，不是 `git tag` 事实。
 
-**回归测试。** 新增 `test/changelog-counts.test.js`（5 个用例）：登记 tag 的存在与否不移动
-计数；登记只在有它的 checkout 里减；无 tag 时返回 `null` 而不是 0；CHANGELOG 的行等于
-「从未抓取本地 tag 的 checkout」的计数；登记册的坏行抛错而不是静默零减法。
+**回归测试。** `test/changelog-counts.test.js`（6 个用例）：登记 tag 的存在与否不移动
+计数；本版自己的 tag 出现与否也不移动计数；登记只在有它的 checkout 里减；无 tag 时返回
+`null` 而不是 0；CHANGELOG 的行等于「从未抓取本地 tag 的 checkout」的计数；登记册的坏行
+抛错而不是静默零减法。
 `test/docs-consistency-guard.test.js` **未改**——它仍按字节比较生成器的输出。
 
 ### 1.2 历史 secret scan：一条 SYNTHETIC 旧 blob 基线
@@ -106,9 +111,10 @@ Release 打成失败。
 - **运行时：无变化。** `src/` 零差异；没有数据格式、配置键、环境变量或 API 形状变化。
   3.141.592660 的全部用户可见变化仍以
   [`RELEASE_NOTES_3.141.592660.md`](RELEASE_NOTES_3.141.592660.md) 为准。
-- **发布基础设施：有变化。** `CHANGELOG.md` 的 tag 行从此在作者主机与 CI checkout 上
-  给出同一个数；tag 创建后仍需按 runbook 重生成一次（229 → 230），但两种形状会一起移动，
-  不再出现「一边 230、一边 229」。
+- **发布基础设施：有变化。** `CHANGELOG.md` 的 tag 行从此在作者主机、master CI 与
+  Release CI 三种 checkout 上给出同一个数（**229**）。tag 创建不再移动这一行，因此不需要
+  在打 tag 后重生成、再提交或移动 tag；`.592660` 那种「一边 230、一边 229」的分裂不会再
+  出现。
 - **历史扫描：只增加一条 reviewed 合成夹具基线。** 不降低规则、不缩路径、不影响新发现；
   负向对照仍失败。
 - **回滚成本：纯代码/文档回退。** 没有不可逆的数据迁移。
@@ -121,7 +127,7 @@ Release 打成失败。
 | 行 | 命令 | 结果 |
 |---|---|---|
 | D01 | `node --import ./test/setup-env.mjs --test test/docs-consistency-guard.test.js` | **47 pass / 0 fail** |
-| C01 | `node --import ./test/setup-env.mjs --test test/changelog-counts.test.js` | **5 pass / 0 fail** |
+| C01 | `node --import ./test/setup-env.mjs --test test/changelog-counts.test.js` | **6 pass / 0 fail** |
 | U01 | `node --import ./test/setup-env.mjs --test test/unverified-register.test.js` | **7 pass / 0 fail** |
 | J01 | `node --import ./test/setup-env.mjs --test test/json-schema-pattern-safety.test.js test/json-schema-budget.test.js` | **38 pass / 0 fail** |
 | N01 | `node scripts/sync-changelog-counts.mjs --check` | **exit 0** —— `notes=221 tags=229` |
@@ -132,13 +138,16 @@ Release 打成失败。
 | V02 | `git diff HEAD -- src/`（发布提交前） | **空**；`src/version.js` 未动 |
 | RC01 | `sha256sum runtime-config.json`（测试前后） | **`c97393756ce00a29aaf283b1d40488ff5c6d7abd162b48fd89b02893315bb82f` 未变** |
 
-**两种 checkout 形状（一次性 clone，不动工作树）：**
+**三种 checkout 形状（一次性 clone，不动工作树）：**
 
-- Shape A（主机形状，230 个 tag）：docs guard **47/47**，`--check` **exit 0**。
-- Shape B（模拟 CI，删除 clone 里唯一的冻结 tag `v3.141.592659` → 229 个 tag）：
-  docs guard **47/47**，`--check` **exit 0**。
-- RED 对照（在 229-tag 的 pristine clone 上 `git apply -R` 生成器补丁）：docs guard
-  **45/47**，`--check` **exit 1**——正是 3.141.592660 的 CI 失败形状。
+- Shape A（作者主机，231 个 tag：含冻结 `.592659` 与本地 `.592661`）：docs guard
+  **47/47**，`--check` **exit 0**（`notes=221 tags=229`）。
+- Shape B（master CI，删除 clone 里两个 tag → 229 个 tag）：docs guard **47/47**，
+  `--check` **exit 0**（`notes=221 tags=229`）。
+- Shape C（Release CI，只删除冻结 tag、保留 `.592661` → 230 个 tag）：docs guard
+  **47/47**，`--check` **exit 0**（`notes=221 tags=229`）。
+- RED 对照（Shape C 里把行改成 `999`）：docs guard **45/47**，`--check` **exit 1**——
+  `table says 999 tags, git lists 229`。
 
 逐条命令与逐字输出见 [`ACCEPTANCE_3.141.592661.md`](ACCEPTANCE_3.141.592661.md) §2–§3。
 
@@ -146,9 +155,9 @@ Release 打成失败。
 
 | 文件 | 改动 |
 |---|---|
-| `scripts/sync-changelog-counts.mjs` | `listGitTags` + `unpublishedTagVersions` + `countPublishedTags`；tag 行口径文字 |
-| `docs/releases/UNPUBLISHED-TAGS.txt` | 新增；只登记 `v3.141.592659` |
-| `test/changelog-counts.test.js` | 新增；5 个回归用例 |
+| `scripts/sync-changelog-counts.mjs` | `listGitTags` + `unpublishedTagVersions` + `countPublishedTags(tags, unpublished, packaged)`；tag 行口径文字 |
+| `docs/releases/UNPUBLISHED-TAGS.txt` | 只登记 `v3.141.592659`（冻结、从未 push） |
+| `test/changelog-counts.test.js` | 6 个回归用例；登记 tag 与本版 tag 出现与否都不移动计数 |
 | `docs/releases/README.md` | §7 增加一句：tag 计数是 checkout 不变量，登记册是减法来源 |
 | `scripts/history-secret-scan.baseline` | 第 27 行新增一条 SYNTHETIC 基线 |
 | `package.json` / `package-lock.json` | 版本 → `3.141.592661`（lock 两处） |
@@ -178,16 +187,15 @@ Release 打成失败。
 **本版修掉的两个阻断项：**
 
 1. **docs guard 的 tag 计数（已修，本文件 §1.1）**：230-vs-229 的根因是 `git tag` 的
-   checkout 局部性；登记册 + 纯函数减法让两种形状同值。回归测试
-   `test/changelog-counts.test.js` 钉住「登记 tag 的存在与否不移动计数」。
+   checkout 局部性；登记册 + 纯函数减法（登记 tag 与本版自己的 tag）让三种 checkout 同值。
+   回归测试 `test/changelog-counts.test.js` 钉住这两个不变量。
 2. **History secret scan（已修，本文件 §1.2）**：旧 blob 的 SYNTHETIC 夹具已基线化；
    扫描 21 findings / 0 unbaselined，负向对照仍失败。
 
-**tag 计数的时间窗（必须在打 tag 时处理）。** 本提交时点 `--check` 是
-`notes=221 tags=229`。创建 `v3.141.592661` 之后，作者主机与 CI checkout 都变成 230；
-必须在 tag 所在提交上再跑一次 `node scripts/sync-changelog-counts.mjs`，提交并（尚未 push
-时）把 tag 移到新提交。与 3.141.592660 不同的是：这次两种 checkout 形状会一起从 229 走到
-230，不会再一边 230、一边 229。
+**tag 计数不再有时间窗。** 本提交时点 `--check` 是 `notes=221 tags=229`；创建
+`v3.141.592661` 之后仍是 229（本版自己的 tag 按名字排除），所以**不需要**在 tag 所在提交
+上重跑生成器、提交或移动 tag。作者主机、master CI、Release CI 三种 checkout 读同一棵树
+都是 229；与 3.141.592660 不同，不会再一边 230、一边 229。
 
 **仍未闭合的阻断项：** 见 §7。全量 `npm run test:release`、99 spec / 878 mutation 的全量
 sweep、wire 270/270 的本树复测、POSIX `gate:release`、HMC 部署与真实客户端验证都**没有**

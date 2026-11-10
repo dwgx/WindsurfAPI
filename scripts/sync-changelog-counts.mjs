@@ -21,9 +21,13 @@
  *
  * The tag row counts the PUBLISHED namespace, not this checkout's refs: `git tag` minus
  * the tags named in `docs/releases/UNPUBLISHED-TAGS.txt` that this checkout happens to
- * carry. Without that subtraction the row is 230 on the authoring host and 229 in every
- * `fetch-depth: 0` CI checkout (measured 2026-11-11), and it can only be right in one of
- * them — which is how the row reached master at 230 while CI measured 229.
+ * carry, and minus the tag this release creates (`v<package.json version>`). Without the
+ * register the row is 230 on the authoring host and 229 in every `fetch-depth: 0` CI
+ * checkout (measured 2026-11-11), and it can only be right in one of them. Without the
+ * packaged-tag exclusion the row moves by one at the moment the release tag is pushed:
+ * 229 in master CI before the push, 230 in the Release checkout after it — the same
+ * split, one commit later. Excluding the tag being cut makes the row one number in the
+ * authoring checkout, in master CI, and at the tag.
  *
  * Run:  node scripts/sync-changelog-counts.mjs [--check]
  */
@@ -110,31 +114,41 @@ export function unpublishedTagVersions(root = ROOT) {
 }
 
 /**
- * The number the row claims: tags a PUBLISHED checkout has. Pure, so the invariance can be
- * asserted without creating or deleting a tag: a registered local-only tag is subtracted
- * where this checkout has it and ignored where it does not, which is what makes the
- * authoring host and a `fetch-depth: 0` CI checkout derive the same number.
+ * The number the row claims: tags a PUBLISHED checkout has, excluding the tag this release
+ * creates. Pure, so the invariance can be asserted without creating or deleting a tag:
+ *
+ *   - a registered local-only tag is subtracted where this checkout has it and ignored
+ *     where it does not (the authoring host vs a `fetch-depth: 0` CI checkout);
+ *   - the packaged version's tag is subtracted whether or not this checkout has it yet
+ *     (master CI before the push vs the Release checkout at the tag).
+ *
+ * The packaged tag is excluded BY NAME, not by comparing versions. A `< package.json`
+ * comparison is invariant too, but it silently drops tags that are not plain `x.y.z` —
+ * this repository carries `v3.2.6-rc4`/`rc5`/`rc6` — and a count that quietly stops
+ * counting tags is the defect this row exists to expose.
  *
  * Null — "cannot stand behind a count" — when git gave us no tags at all: a tarball
  * checkout has no history, and a shallow clone lists only the tags its fetched history
  * carries, so `fetch-depth: 1` reports zero for a repository that has hundreds. The caller
  * keeps the existing row instead of rewriting it to a zero.
  */
-export function countPublishedTags(tags, unpublished = []) {
+export function countPublishedTags(tags, unpublished = [], packaged = null) {
   if (!tags.length) return null;
   const localOnly = new Set(unpublished);
-  return tags.filter((tag) => !localOnly.has(tag.replace(/^v/, ''))).length;
+  const packagedTag = packaged === null ? null : `v${packaged}`;
+  return tags.filter((tag) => tag !== packagedTag && !localOnly.has(tag.replace(/^v/, ''))).length;
 }
 
 export function changelogCounts(root = ROOT) {
   const versions = releaseNoteVersions(root);
   if (!versions.length) throw new Error(`no RELEASE_NOTES_*.md files under ${RELEASES_DIR}`);
   const tags = listGitTags(root);
+  const { version: packaged } = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8'));
   return {
     notes: versions.length,
     first: versions[0],
     last: versions.at(-1),
-    tags: tags === null ? null : countPublishedTags(tags, unpublishedTagVersions(root)),
+    tags: tags === null ? null : countPublishedTags(tags, unpublishedTagVersions(root), packaged),
   };
 }
 
@@ -144,7 +158,8 @@ const notesRow = (counts) => `| 发布说明 | **${counts.notes}** 份,`
 
 const tagRow = (counts) => `| git tag | ${counts.tags} 个`
   + `（生成：\`node scripts/sync-changelog-counts.mjs\`；口径 \`git tag \\| wc -l\` 减去`
-  + ` \`${UNPUBLISHED_TAGS_FILE}\` 里本 checkout 存在的未发布 tag） |`;
+  + ` \`${UNPUBLISHED_TAGS_FILE}\` 里本 checkout 存在的未发布 tag，再减去 \`package.json\``
+  + ` 版本的 tag——本次发布自己的 tag，创建前后都不计数，所以三种 checkout 同值） |`;
 
 function replaceExactlyOnce(text, pattern, replacement, what) {
   const hits = [...text.matchAll(new RegExp(pattern.source, 'gm'))];
