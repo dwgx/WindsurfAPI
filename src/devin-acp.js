@@ -2,6 +2,7 @@ import { spawn } from 'child_process';
 import { VERSION } from './version.js';
 import { log } from './config.js';
 import { sanitizeToolName } from './tool-names.js';
+import { buildSubprocessEnv, buildMinimalSubprocessEnv } from './log-safety.js';
 
 // Spawn seam: `spawn` is captured behind an indirection so a test can inject a
 // fake child (EventEmitter stdio) to exercise the stdin 'error'/EPIPE guard
@@ -83,7 +84,15 @@ function probeOnce() {
     const done = (r) => { if (!settled) { settled = true; resolve(r); } };
     let child;
     try {
-      child = spawn(command, args, { windowsHide: true, stdio: ['ignore', 'ignore', 'ignore'] });
+      // STRICTEST env of any spawn in the repo: this binary is resolved via
+      // PATH (or an operator-supplied DEVIN_CLI_PATH), so a hijacked binary
+      // would have received every credential in process.env — including the
+      // credential-store KEK. `--version` needs nothing beyond exec basics.
+      child = spawn(command, args, {
+        env: buildMinimalSubprocessEnv(),
+        windowsHide: true,
+        stdio: ['ignore', 'ignore', 'ignore'],
+      });
     } catch (err) {
       done({ available: false, reason: 'spawn_failed', detail: err?.code || err?.message || 'spawn threw' });
       return;
@@ -626,7 +635,14 @@ export async function runDevinAcpProcess(prompt, { modelKey = '', apiKey = '', a
     });
   }
   const command = process.env.DEVIN_CLI_PATH || 'devin';
-  const env = { ...process.env };
+  // Denylist env: the CLI gets the operator's general environment (PATH, HOME,
+  // proxy vars, DEVIN_* config like DEVIN_PERMISSION_MODE) but no credentials —
+  // the upstream apiKey travels ONLY through the ACP `authenticate` RPC's
+  // _meta.api_key, never env. keep: SSH agent vars so the agent's local tools
+  // can still reach git-over-ssh; nothing else secret-shaped survives.
+  const env = buildSubprocessEnv(process.env, {
+    keep: ['SSH_AUTH_SOCK', 'SSH_AGENT_PID'],
+  });
   const args = parseAcpArgs();
   // One channel only: `devin acp --model` (do not also set DEVIN_MODEL — the
   // two can disagree). Leave DEVIN_PERMISSION_MODE to the operator; do not

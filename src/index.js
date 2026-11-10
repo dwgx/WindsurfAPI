@@ -21,6 +21,7 @@ import { fileURLToPath } from 'url';
 import { VERSION, BRAND } from './version.js';
 import { abortActiveSse } from './sse-registry.js';
 import { registerServer } from './server-registry.js';
+import { buildSubprocessEnv } from './log-safety.js';
 export { VERSION, BRAND };
 
 // v2.0.146 (audit F-1): last-resort process safety nets. This service must
@@ -121,7 +122,11 @@ async function main() {
         // extraction and hashing.
         execSync(`bash "${scriptPath}"`, {
           stdio: 'inherit',
-          env: { ...process.env, LS_INSTALL_PATH: binaryPath },
+          // Denylist env (L3b env-leak fix): the installer needs the general
+          // env — PATH for curl/node/sha256sum, HOME, TMPDIR, proxy + CA-trust
+          // vars for the downloads, WINDSURFAPI_LS_* overrides — but not the
+          // proxy's credentials. Nothing install-ls.sh reads is secret-shaped.
+          env: { ...buildSubprocessEnv(), LS_INSTALL_PATH: binaryPath },
           timeout: 1020000,
         });
         log.info('Language server binary installed.');

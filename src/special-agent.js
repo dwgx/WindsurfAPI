@@ -30,7 +30,7 @@ import { sanitizeText, PathSanitizeStream } from './sanitize.js';
 // to the client), so a CLI that prints its own token on an auth failure would leak
 // it. sanitizeText is a path/XML redactor and does not know any credential shape —
 // measured 2026-09-13: auth1_/devin-session-token$/JWT all passed through it.
-import { redactCredentialFragments } from './log-safety.js';
+import { redactCredentialFragments, buildSubprocessEnv } from './log-safety.js';
 import { runDevinAcpProcess, probeDevinCliAvailable, acpVisionEnabled } from './devin-acp.js';
 import { extractInlineImages as extractImagesFromContent } from './devin-connect.js';
 import { systemFingerprint } from './system-fingerprint.js';
@@ -431,9 +431,19 @@ export async function runDevinPrint(prompt, { modelKey = '', apiKey = '', signal
 
     const command = process.env.DEVIN_CLI_PATH || 'devin';
     const args = parseArgsTemplate(prompt, modelKey);
-    const env = { ...process.env };
+    const envName = process.env.DEVIN_CLI_API_KEY_ENV || 'WINDSURF_API_KEY';
+    // Denylist env (L3b env-leak fix): the CLI needs general env (PATH, HOME,
+    // proxy vars, operator DEVIN_* config) but must not inherit the proxy's
+    // credentials. keep: envName — the ONE deliberate credential channel:
+    // when a pool key exists it is written below (overwriting any ambient
+    // value); when none exists (or DEVIN_CLI_USE_ACCOUNT_POOL=0) an ambient
+    // value under that same name still passes through, matching the pre-fix
+    // reachability without leaking anything else. SSH_AUTH_SOCK/SSH_AGENT_PID
+    // stay so the agent's local tools keep git-over-ssh.
+    const env = buildSubprocessEnv(process.env, {
+      keep: [envName, 'SSH_AUTH_SOCK', 'SSH_AGENT_PID'],
+    });
     if (apiKey && process.env.DEVIN_CLI_USE_ACCOUNT_POOL !== '0') {
-      const envName = process.env.DEVIN_CLI_API_KEY_ENV || 'WINDSURF_API_KEY';
       env[envName] = apiKey;
     }
 
