@@ -30,6 +30,13 @@ describe('safeLogValue', () => {
     assert.ok(out.startsWith('a') && out.endsWith('e'), 'surrounding text is preserved');
   });
 
+
+  it('neutralizes U+2028/U+2029 line separators (forged-record class, L1-F3)', () => {
+    const out = safeLogValue('line1' + String.fromCharCode(0x2028) + '[INFO] forged' + String.fromCharCode(0x2029) + 'more');
+    assert.equal(/[\u2028\u2029]/.test(out), false, 'LS/PS survived: ' + JSON.stringify(out));
+    assert.ok(out.includes('[INFO]'), 'text stays readable');
+  });
+
   it('leaves ordinary model names untouched', () => {
     for (const name of ['claude-opus-4.8', 'gpt-5-6-sol-max', 'swe-1-6-slow', 'glm-5.2']) {
       assert.equal(safeLogValue(name), name);

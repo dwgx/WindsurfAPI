@@ -455,8 +455,8 @@ export function createDeferredSseResponse(realRes, {
     emit(event, ...args) { return realRes.emit?.(event, ...args); },
     // Cancellation releases the queued bytes, not just the timer: a route that
     // aborts before commit must not keep a held burst reachable from the gate.
-    dispose() { disposed = true; ended = true; clearTimer(); pending = []; pendingBytes = 0; pendingFrames = 0; scanCarry = Buffer.alloc(0); },
-    destroy(error) { disposed = true; ended = true; clearTimer(); pending = []; pendingBytes = 0; pendingFrames = 0; scanCarry = Buffer.alloc(0); return realRes.destroy?.(error); },
+    dispose() { disposed = true; ended = true; clearTimer(); pending = []; pendingBytes = 0; pendingFrames = 0; scanCarry = Buffer.alloc(0); pendingText = ''; },
+    destroy(error) { disposed = true; ended = true; clearTimer(); pending = []; pendingBytes = 0; pendingFrames = 0; scanCarry = Buffer.alloc(0); pendingText = ''; return realRes.destroy?.(error); },
     get socket() { return realRes.socket; },
   };
 }

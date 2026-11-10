@@ -49,7 +49,7 @@ export function sliceRedactedJson(value, n = 120) {
 // or inject ANSI escape sequences into an operator's terminal, so strip them at
 // the log boundary. Only C0/C1 controls and DEL are replaced (the value stays
 // readable), and the length is bounded so one request cannot flood a line.
-const LOG_CONTROL_CHARS = /[\u0000-\u001F\u007F-\u009F]/g;
+const LOG_CONTROL_CHARS = /[\u0000-\u001F\u007F-\u009F\u2028\u2029]/g;
 
 export function safeLogValue(value, max = 120) {
   const cleaned = String(value ?? '').replace(LOG_CONTROL_CHARS, '\u00b7');

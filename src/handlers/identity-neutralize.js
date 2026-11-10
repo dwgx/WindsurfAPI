@@ -161,6 +161,13 @@ const SECURITY_TERM_RESEARCH = 'security research';
  */
 function securitySpan(text) {
   let cursor = 0;
+  // End of the latest paragraph whose terminator scan already failed. A
+  // phrase starting inside it shares the same `limit`, so its scan would
+  // cover a strict subset — skipping those anchors stays linear WITHOUT the
+  // old `cursor = limit` bug: an anchor inside a dead paragraph whose
+  // whitespace gap carries its phrase into the NEXT paragraph still gets
+  // checked (L1-F5 — the old regex would have paired it).
+  let deadUntil = -1;
   for (;;) {
     const anchor = indexOfAsciiCI(text, SECURITY_ANCHOR, cursor);
     if (anchor < 0) return null;
@@ -177,6 +184,7 @@ function securitySpan(text) {
       continue;
     }
     const from = at + SECURITY_PHRASE.length;
+    if (from < deadUntil) { cursor = anchor + 1; continue; }
     // The terminator belongs to the notice itself, so the bound is the
     // paragraph the PHRASE sits in — the whitespace gap may have crossed into
     // it from the anchor's paragraph.
@@ -200,8 +208,12 @@ function securitySpan(text) {
       }
     }
     if (end >= 0) return { start: anchor, end };
-    // No terminator in this paragraph ⇒ no anchor inside it can have one either.
-    cursor = limit;
+    // No terminator in [from, limit) ⇒ any anchor whose phrase also lands in
+    // this paragraph cannot pair. Mark the paragraph dead and keep looking —
+    // an anchor inside it may still pair ACROSS the break via a whitespace
+    // gap into a live paragraph.
+    deadUntil = limit;
+    cursor = anchor + 1;
   }
 }
 

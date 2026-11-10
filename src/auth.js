@@ -1831,8 +1831,8 @@ const MAX_ACCOUNT_LABEL = 128;
 // reverse "treppa-metsyS"-style text; ZWSP/BOM/SHY/invisible operators hide
 // in plain sight). ZWJ/ZWNJ/LRM/RLM stay allowed — real RTL names and emoji
 // sequences use them.
-const LABEL_UNSAFE = /[\x00-\x1f\x7f-\x9f\xad\u034f\u180e\u200b\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/;
-const LABEL_UNSAFE_GLOBAL = /[\x00-\x1f\x7f-\x9f\xad\u034f\u180e\u200b\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/g;
+const LABEL_UNSAFE = /[\x00-\x1f\x7f-\x9f\xad\u034f\u180e\u200b\u2028\u2029\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/;
+const LABEL_UNSAFE_GLOBAL = /[\x00-\x1f\x7f-\x9f\xad\u034f\u180e\u200b\u2028\u2029\u202a-\u202e\u2060-\u2064\u2066-\u2069\ufeff]/g;
 
 function assertAccountLabel(label) {
   if (!label || label.length > MAX_ACCOUNT_LABEL || LABEL_UNSAFE.test(label)) {
@@ -5103,9 +5103,10 @@ function publicAccount(a, now, { view = 'full' } = {}) {
     // Last time the upstream session key changed (re-login / Firebase refresh).
     // 0 = never rotated since the account was added.
     keyRotatedAt: a.keyRotatedAt || 0,
-    // Same rule as maskApiKey: a short key must not be fully recoverable from
-    // its "prefix" (an 8-char key rendered all 8 chars here).
-    keyPrefix: a.apiKey.slice(0, a.apiKey.length <= 8 ? 2 : 8) + '...',
+    // Same rule as maskApiKey: the "prefix" must never be a recoverable
+    // fraction of the key. Cap at 8 chars but never show more than a third:
+    // a 9–12-char key otherwise leaks 8/9 of its entropy (L1-F4).
+    keyPrefix: a.apiKey.slice(0, Math.min(8, Math.max(2, Math.floor(a.apiKey.length / 3)))) + '...',
     apiKey_masked: maskApiKey(a.apiKey),
     tier: a.tier || 'unknown',
     lastProbed: a.lastProbed || 0,

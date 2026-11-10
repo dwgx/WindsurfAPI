@@ -4,7 +4,7 @@
     "test/detached-registry.test.js",
     "test/cascade-detach-lazy-resume.test.js"
   ],
-  "expectBaselinePass": 59,
+  "expectBaselinePass": 63,
   "mutations": [
     {
       "name": "M1 cursor completeness: snapshot() drops generatorOffset",

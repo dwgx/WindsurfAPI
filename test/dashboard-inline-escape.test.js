@@ -174,6 +174,8 @@ describe('updateAccountLabel: the label cannot carry hostile text into account.e
       'x⁠y',    // word joiner
       'x᠎y',    // Mongolian vowel separator (Cf)
       'x͏y',    // combining grapheme joiner
+      'x y',    // LINE SEPARATOR — renders a line break, forges a log line (L1-F3)
+      'x y',    // PARAGRAPH SEPARATOR — same forged-record class
     ];
     for (const label of spoof) {
       assert.throws(() => updateAccountLabel(a.id, label),
@@ -190,6 +192,7 @@ describe('updateAccountLabel: the label cannot carry hostile text into account.e
     // Upstream (login result / GetUserStatus) text is sanitized, not asserted:
     // a hostile response degrades to a clean label instead of throwing.
     assert.equal(sanitizeLabelText('a\u202Eb\u200bc'), 'abc');
+    assert.equal(sanitizeLabelText('a\u2028b\u2029c'), 'abc');
     assert.equal(sanitizeLabelText('  spaced@example.test  '), 'spaced@example.test');
     assert.equal(sanitizeLabelText('a\nb\rc'), 'abc');
     assert.equal(sanitizeLabelText(null), '');

@@ -194,3 +194,29 @@ describe('stripMetaTags ReDoS regression (CWE-1333)', () => {
     assert.ok(elapsed < BUDGET_MS, `fingerprintAfter took ${elapsed.toFixed(1)}ms`);
   });
 });
+
+// L1 meta-review F1: after a removed span the scanner must resume at the
+// NEXT literal '<' — `i = last` treated whatever char followed the closer as
+// a potential open char, so 'Xname' at that position was parsed as '<name'.
+// These shapes are the adjacency class the fuzz corpus missed.
+describe('post-span resume must re-anchor on a literal < (L1-F1)', () => {
+  it('text immediately after a removed span is literal, not an open', () => {
+    // 'Xsummary' is NOT '<summary' — the old regex kept the tail verbatim;
+    // the buggy `i = last` resume deleted the whole tail (fingerprint loss).
+    assert.equal(
+      __stripMetaTags('<summary>a</summary>Xsummary b>c</summary>'),
+      'Xsummary b>c</summary>',
+    );
+    assert.equal(
+      __stripMetaTags('<analysis>t</analysis>Xcommand-args b>c</command-args>'),
+      'Xcommand-args b>c</command-args>',
+    );
+  });
+  it('stray closers with no removed span still pass through', () => {
+    assert.equal(__stripMetaTags('keep</summary>vscommand-args x>y</command-args>tail'),
+      'keep</summary>vscommand-args x>y</command-args>tail');
+  });
+  it('consecutive real spans still strip correctly after the fix', () => {
+    assert.equal(__stripMetaTags('a<summary>x</summary>b<summary>y</summary>c'), 'abc');
+  });
+});

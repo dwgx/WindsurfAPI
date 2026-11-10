@@ -694,6 +694,34 @@ describe('G3: an upstream that never said how it ended is a failed turn', () => 
     const callItem = result.body.output.find(i => i.type === 'function_call');
     assert.ok(callItem, 'the partial tool call is still visible to the client');
     assert.equal(callItem.status, 'incomplete');
+    // Same invariant for the message item: nothing inside a status:'failed'
+    // response may claim 'completed' (L1-F2 — reasoning and text sealed
+    // 'completed' here until the itemStatus latch).
+    const msgItem = result.body.output.find(i => i.type === 'message');
+    assert.ok(msgItem, 'the partial message stays visible');
+    assert.equal(msgItem.status, 'incomplete');
+  });
+
+  it('non-stream: a failed turn marks a reasoning item incomplete too', async () => {
+    const result = await handleResponses(
+      { model: 'gpt-5.2', input: 'hi' },
+      nonStreamDeps((body) => ({
+        status: 200,
+        body: {
+          created: 123,
+          model: body.model,
+          choices: [{
+            index: 0,
+            message: { role: 'assistant', content: '', reasoning_content: 'half a chain' },
+            finish_reason: 'error',
+          }],
+        },
+      }), {}),
+    );
+    assert.equal(result.body.status, 'failed');
+    const rsItem = result.body.output.find(i => i.type === 'reasoning');
+    assert.ok(rsItem, 'the partial reasoning item stays visible');
+    assert.equal(rsItem.status, 'incomplete');
   });
 
   it('stream: an unterminated marker fails even when finish_reason is "stop"', async () => {

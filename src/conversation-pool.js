@@ -109,7 +109,12 @@ function stripMetaTagSpans(s) {
     if (ci === -1) { dead.add(name); i = s.indexOf('<', i + 1); continue; }
     parts.push(s.slice(last, i));
     last = ci + name.length + 3;               // '</' + name + '>'
-    i = last;                                  // consumed span is never rescanned
+    // The consumed span is never rescanned — but the engine still requires
+    // a literal '<' to open the next match, so resume at the NEXT real '<',
+    // not at `last` itself (which can be any character: '</a>Xname b>c</a>'
+    // must leave 'Xname b>c</a>' as literal text, not parse 'Xname' as an
+    // open — L1 meta-review finding, regex keeps it verbatim).
+    i = s.indexOf('<', last);
   }
   if (!parts.length) return s;
   parts.push(s.slice(last));

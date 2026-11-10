@@ -571,3 +571,33 @@ describe('identity-neutralize — a4-cli-line is bounded to the clause on long l
     assert.ok(out.endsWith(suffix), 'the text after the second anchor is preserved');
   });
 });
+
+describe('identity-neutralize — L1-F5: a dead paragraph must not hide a cross-paragraph pair', () => {
+  // Paragraph 1 holds TWO anchors. The first pairs its phrase inside paragraph 1
+  // but finds no terminator there, which proves paragraph 1 dead. The second
+  // anchor sits at the end of paragraph 1 with an all-whitespace gap into
+  // paragraph 2, where its phrase DOES find a terminator — on a LATER line of
+  // that paragraph, past where the line-scoped fallback can reach. The old
+  // `cursor = limit` skip never re-checked the second anchor, so the span was
+  // missed entirely and the phrase+terminator text leaked upstream.
+  const SRC = 'IMPORTANT: Assist with authorized security testing filler without a terminator.\n'
+    + 'IMPORTANT:'
+    + '\n\nassist with authorized security testing continues on this line\n'
+    + 'and ends with defensive use cases. TAIL-MARKER';
+
+  it('pairs the second anchor across the paragraph break', () => {
+    const out = neutralize(SRC);
+    assert.ok(out.includes(BENIGN), 'the security span must be neutralized');
+    assert.equal(out.includes('defensive use cases'), false,
+      'the cross-paragraph terminator line must not leak');
+    assert.ok(out.includes('TAIL-MARKER'), 'text after the span survives');
+  });
+
+  it('control: the first paragraph alone is genuinely dead', () => {
+    // No terminator: the bounded span stays null, only the line fallback
+    // rewrites the anchor line — the NEXT paragraph survives verbatim.
+    const out = neutralize('IMPORTANT: Assist with authorized security testing filler only.\n\nNEXT-PARA');
+    assert.ok(out.includes('NEXT-PARA'), 'the following paragraph is not the security span');
+    assert.equal(out.includes('security testing'), false, 'the fingerprint line is still rewritten');
+  });
+});

@@ -2,7 +2,7 @@
   "tests": [
     "test/cascade-image-history.test.js"
   ],
-  "expectBaselinePass": 9,
+  "expectBaselinePass": 13,
   "mutations": [
     {
       "name": "history images are extracted and counted but never reach field 6",

@@ -881,13 +881,47 @@ function customToolInput(argsText) {
  * tool input the client executes. Returns '' when the value is not a JSON
  * string (e.g. `{"input":123}`), in which case only the final item carries it.
  */
+// Finds the opening quote index of the TOP-LEVEL "input" value, or -1.
+// A bare /"input"\s*:\s*"/ regex accepts the first occurrence anywhere —
+// including inside a nested object (`{"w":{"input":"a"},"input":"b"}` decodes
+// "a") or inside a string value containing `"input":` verbatim. Depth +
+// in-string tracking keeps the match structural (L1-F7).
+function topLevelInputValueQuote(argsText) {
+  let depth = 0;
+  let inStr = false;
+  let esc = false;
+  for (let i = 0; i < argsText.length; i++) {
+    const ch = argsText[i];
+    if (inStr) {
+      if (esc) esc = false;
+      else if (ch === '\\') esc = true;
+      else if (ch === '"') inStr = false;
+      continue;
+    }
+    if (ch === '{' || ch === '[') { depth++; continue; }
+    if (ch === '}' || ch === ']') { depth--; continue; }
+    if (ch !== '"') continue;
+    if (depth === 1 && argsText.startsWith('"input"', i)) {
+      let j = i + 7;
+      while (j < argsText.length && ' \t\n\r'.includes(argsText[j])) j++;
+      if (argsText[j] === ':') {
+        j++;
+        while (j < argsText.length && ' \t\n\r'.includes(argsText[j])) j++;
+        if (argsText[j] === '"') return j;
+      }
+    }
+    inStr = true;
+  }
+  return -1;
+}
+
 function customToolInputPrefix(argsText) {
   if (typeof argsText !== 'string' || !argsText) return '';
-  const match = /"input"\s*:\s*"/.exec(argsText);
-  if (!match) return '';
+  const valueQuote = topLevelInputValueQuote(argsText);
+  if (valueQuote === -1) return '';
   const simpleEscapes = { '"': '"', '\\': '\\', '/': '/', b: '\b', f: '\f', n: '\n', r: '\r', t: '\t' };
   let out = '';
-  for (let i = match.index + match[0].length; i < argsText.length; i++) {
+  for (let i = valueQuote + 1; i < argsText.length; i++) {
     const ch = argsText[i];
     if (ch === '"') return out;
     if (ch !== '\\') {
@@ -985,10 +1019,14 @@ export function chatToResponse(chatBody, requestedModel, responseId = genRespons
   // the upstream actually supplied one. An upstream that sends reasoning without
   // it (this bridge's Connect path) yields no field at all — see reasoningItem.
   const encryptedContent = options.includeReasoningEncrypted ? upstreamEncryptedContent(message) : '';
+  // Same invariant the stream path enforces via failedTurn: nothing inside a
+  // status:'failed' response may report 'completed' — reasoning and text
+  // items seal 'incomplete' on an unterminated upstream turn too (L1-F2).
+  const itemStatus = upstreamUnterminated ? 'incomplete' : 'completed';
   if (message.reasoning_content || encryptedContent) {
-    output.push(reasoningItem('rs_' + msgId.slice(4), message.reasoning_content, 'completed', encryptedContent));
+    output.push(reasoningItem('rs_' + msgId.slice(4), message.reasoning_content, itemStatus, encryptedContent));
   }
-  if (text) output.push(textMessageItem(msgId, text));
+  if (text) output.push(textMessageItem(msgId, text, itemStatus));
   // One allocator per turn: duplicate upstream call ids become distinct wire ids.
   const allocateCallId = toolHygieneEnabled() ? createToolIdAllocator() : null;
   for (const tc of (message.tool_calls || [])) output.push(functionCallItem(tc, upstreamUnterminated ? 'incomplete' : 'completed', requestedTools, toolNameMap, allocateCallId));
