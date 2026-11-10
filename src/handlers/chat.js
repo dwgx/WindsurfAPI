@@ -1350,6 +1350,11 @@ export function stabilizeJsonPayload(text, messages) {
  * and the Connect wire have no such control), so the only honest options are to
  * check the answer and say so, or to stay silent — and silence is what let a
  * `strict` request return a body the caller's own validator rejects.
+ *
+ * A violation carries `unable: true` + `code` when the validator could not form
+ * a judgement at all (a `pattern` exhausted its execution budget, or a pattern
+ * / value / schema passed a size cap). That is NOT the model failing the
+ * schema, and the surfaces below must not report it as such.
  */
 export function structuredOutputViolation(text, schema) {
   if (!schema || typeof schema !== 'object') return null;
@@ -1357,21 +1362,47 @@ export function structuredOutputViolation(text, schema) {
   const parsed = safeJsonParse(extractJsonPayload(text));
   if (parsed === undefined) return { path: '$', message: 'the response is not valid JSON' };
   const verdict = validateJsonSchema(parsed, schema);
-  return verdict.ok ? null : { path: verdict.path, message: verdict.message };
+  if (verdict.ok) return null;
+  if (verdict.unable) {
+    return { path: verdict.path, message: verdict.message, unable: true, code: verdict.code };
+  }
+  return { path: verdict.path, message: verdict.message };
+}
+
+/**
+ * Message and code for a typed structured-output failure.
+ *
+ * One wording for all four surfaces. The two cases must not share a sentence:
+ * "the model's answer does not conform" is a statement about the model, and it
+ * is false when what happened is that this proxy could not finish judging.
+ */
+export function structuredOutputFailure(violation) {
+  if (violation && violation.unable) {
+    return {
+      code: 'STRUCTURED_OUTPUT_UNVALIDATED',
+      message: `The proxy could not validate the model's answer against the requested JSON Schema within its execution budget (${violation.path}: ${violation.message}).`
+        + ' The answer may or may not conform; this proxy cannot enforce structured output at the upstream, so it will not return an unjudged payload as a conforming one.',
+    };
+  }
+  return {
+    code: 'STRUCTURED_OUTPUT_NOT_CONFORMING',
+    message: `The model's answer does not conform to the requested JSON Schema (${violation.path}: ${violation.message}).`
+      + ' This proxy cannot enforce structured output at the upstream, so it reports the mismatch instead of returning a payload that violates the schema.',
+  };
 }
 
 /** The typed failure returned when a schema-constrained turn does not conform. */
 function structuredOutputError(violation) {
+  const { message, code } = structuredOutputFailure(violation);
   return {
     // 5xx: the request was valid, the upstream answer was not. A 4xx would blame
     // the caller for a schema this proxy accepted.
     status: 502,
     body: {
       error: {
-        message: `The model's answer does not conform to the requested JSON Schema (${violation.path}: ${violation.message}).`
-          + ' This proxy cannot enforce structured output at the upstream, so it reports the mismatch instead of returning a payload that violates the schema.',
+        message,
         type: 'server_error',
-        code: 'STRUCTURED_OUTPUT_NOT_CONFORMING',
+        code,
       },
     },
   };
@@ -4968,13 +4999,10 @@ async function _handleChatCompletionsInner(body, context = {}) {
                       ? structuredOutputViolation(deliveredText, jsonSchema)
                       : null;
                     if (violation) {
-                      log.warn(`Chat[${reqId}]: structured output does not conform (${violation.path}: ${violation.message}) — closing the stream with a typed error`);
+                      const failure = structuredOutputFailure(violation);
+                      log.warn(`Chat[${reqId}]: structured output ${violation.unable ? 'could not be validated' : 'does not conform'} (${violation.path}: ${violation.message}) — closing the stream with a typed error`);
                       terminalOk = false;
-                      await send(chatStreamError(
-                        `The model's answer does not conform to the requested JSON Schema (${violation.path}: ${violation.message}).`,
-                        'server_error',
-                        'STRUCTURED_OUTPUT_NOT_CONFORMING',
-                      ));
+                      await send(chatStreamError(failure.message, 'server_error', failure.code));
                       break;
                     }
                     // Conforming: release the held frames in their original order,
@@ -5237,7 +5265,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
         // never accepted.
         const connectViolation = structuredOutputViolation(r.out?.body?.choices?.[0]?.message?.content, jsonSchema);
         if (connectViolation) {
-          log.warn(`Chat[${reqId}]: structured output does not conform (${connectViolation.path}: ${connectViolation.message}) — returning a typed failure`);
+          log.warn(`Chat[${reqId}]: structured output ${connectViolation.unable ? 'could not be validated' : 'does not conform'} (${connectViolation.path}: ${connectViolation.message}) — returning a typed failure`);
           return structuredOutputError(connectViolation);
         }
         // Same cache-affinity pin as the streaming path above.
@@ -6881,7 +6909,7 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
       // answering 200 with a body the caller's own validator rejects.
       const violation = structuredOutputViolation(allText, jsonSchema);
       if (violation) {
-        log.warn(`Chat[${reqId}]: structured output does not conform (${violation.path}: ${violation.message}) — returning a typed failure`);
+        log.warn(`Chat[${reqId}]: structured output ${violation.unable ? 'could not be validated' : 'does not conform'} (${violation.path}: ${violation.message}) — returning a typed failure`);
         try { recordRequest(model, false, Date.now() - startTime, accountId); } catch {}
         return structuredOutputError(violation);
       }
@@ -8802,15 +8830,12 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
               // finish_reason:'stop', which would tell the caller its schema held.
               const violation = structuredOutputViolation(cleaned, deps.jsonSchema);
               if (violation) {
-                log.warn(`Chat[${reqId}]: structured output does not conform (${violation.path}: ${violation.message}) — closing with a typed error`);
+                const failure = structuredOutputFailure(violation);
+                log.warn(`Chat[${reqId}]: structured output ${violation.unable ? 'could not be validated' : 'does not conform'} (${violation.path}: ${violation.message}) — closing with a typed error`);
                 try {
                   await settleWriter();
                   if (!writerGone()) {
-                    await send(chatStreamError(
-                      `The model's answer does not conform to the requested JSON Schema (${violation.path}: ${violation.message}).`,
-                      'server_error',
-                      'STRUCTURED_OUTPUT_NOT_CONFORMING',
-                    ));
+                    await send(chatStreamError(failure.message, 'server_error', failure.code));
                   }
                   // The upstream turn really ran; bill it even though the answer
                   // is unusable. No cache write and no [DONE]: this is a failure.

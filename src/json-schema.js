@@ -16,118 +16,214 @@
  * (`#/$defs/...`, `#/definitions/...`). Unknown keywords are IGNORED, which is
  * exactly what the JSON Schema spec requires of an implementation that does not
  * know an annotation — it must never turn "I don't understand this" into a
- * failure.
+ * failure. A keyword this module DOES support, written malformed (an invalid
+ * `pattern`), is a different thing: the schema is not one we can evaluate, and
+ * that is reported as `unable` rather than folded into a pass.
  *
  * A `$ref` cycle is not followed: the depth guard reports non-conformance for a
  * schema that cannot be evaluated rather than looping forever.
+ *
+ * Every judgement is one of exactly three things, and the three are never
+ * blurred. "I could not judge, so it passes" is a lie the caller pays for: a
+ * schema whose `pattern` was skipped because it looked dangerous used to report
+ * `{ok:true}`, so a payload that genuinely violated the schema was returned as
+ * a conforming answer, and `not`/`oneOf`/`anyOf` inverted the skip into
+ * nonsense (a safe `^(cat|dog)+$` was "refused", making `not` reject a value it
+ * should accept and `oneOf` count two matches).
+ *
+ *   valid   -> { ok: true }
+ *   invalid -> { ok: false, path, message }        a real conformance failure
+ *   unable  -> { ok: false, path, message, unable: true, code: 'SCHEMA_UNVALIDATED' }
+ *              the schema asked for work this module will not spend: a pattern
+ *              that exhausts the request's execution budget, a pattern or value
+ *              past its size cap, or a schema past the traversal ceiling.
+ *
+ * `unable` is NOT a pass and NOT a conformance failure: callers must surface it
+ * as its own typed failure (the chat handlers map it to
+ * STRUCTURED_OUTPUT_UNVALIDATED), and the combinators propagate it instead of
+ * folding it into a boolean.
  */
+
+import { Script, createContext } from 'node:vm';
 
 const MAX_REF_DEPTH = 32;
 
-// A caller-supplied `pattern` is compiled with the platform RegExp engine,
-// which backtracks: catastrophic nesting makes the match cost exponential in
-// the length of the MODEL's output — i.e. a caller can aim a regex bomb at
-// this process's event loop on the request path. Three cheap bounds keep
-// `pattern` a judgement we can afford:
-//   1. MAX_PATTERN_CHARS caps the pattern text. No real-world schema needs
-//      more, and the tripwire scan below is O(len²) worst case.
-//   2. hasNestedQuantifier() is a static tripwire for the classic
-//      catastrophic shape — see its comment for the covered list and the
-//      documented gaps.
-//   3. MAX_PATTERN_TARGET_CHARS caps the string a pattern is run on. Even a
-//      safe pattern is a real bill against unbounded model output; a caller
-//      who needs a bound there has `maxLength`, which stays enforced.
-// A refused pattern is treated exactly like an unparseable one — skipped,
-// never a conformance failure. Failing open keeps the module's standing rule:
-// a judgement we cannot safely make is an annotation, not a violation.
+// ---------------------------------------------------------------------------
+// Pattern execution budget
+//
+// A caller-supplied `pattern` is compiled by the platform RegExp engine, which
+// backtracks: catastrophic nesting makes the match cost exponential in the
+// length of the MODEL's output, so a caller can aim a regex bomb at this
+// process's event loop on the request path. A static shape scan cannot close
+// that — the canonical bomb has an unbounded number of spellings. `^((a|a))+$`
+// defeats a "top-level alternation under a repeat" check by adding one harmless
+// group; adjacent quantified atoms (`a*a*a*…$`), backreferences and
+// bounded-but-large inner repeats defeat the nesting check.
+//
+// The only honest bound is to RUN the match under a watchdog that can interrupt
+// the engine and to say "I could not judge" when it fires. node:vm provides
+// that synchronously, which is what this call chain needs: the four sinks in
+// src/handlers/chat.js are synchronous. A constant, trusted script
+// (`new RegExp(pattern).test(value)`) is compiled ONCE at module load; the
+// caller's pattern and the model's value reach it only as primitive sandbox
+// bindings — never interpolated into source — inside a context where code
+// generation (eval/Function/WASM) is disabled.
+//
+// MEASURED (Node v24.19.0, this box): V8's `timeout` does interrupt a
+// backtracking regexp. `^((a|a))+$` on 26 `a`s plus a near-miss throws
+// ERR_SCRIPT_EXECUTION_TIMEOUT; a 50 ms grant returns at ~57-61 ms (the
+// watchdog's overshoot). Safe patterns cost 0.2-0.5 ms each in the shared
+// context (`^a+$`, `^(cat|dog)+$`), 0.4 ms for `^[a-z]+$` on a 256 KiB target,
+// ~5 ms for `^(a|b)+$` on the same target.
+//
+// BUDGET_MS is the whole request's allowance, not each pattern's: every
+// `pattern` in the schema tree draws from ONE absolute deadline created at the
+// top-level call, so a schema with many patterns cannot multiply the bill. The
+// deadline is absolute, so only the time actually spent is charged — granting
+// the remainder to a pattern that finishes in 0.3 ms costs 0.3 ms.
+//
+// 50 ms: enough for ~100 ordinary pattern checks, and the worst case a caller
+// can force is one budget plus the watchdog's overshoot (~61 ms observed) —
+// two orders of magnitude below the 1 s that made the original bomb a release
+// blocker, and a fraction of the upstream I/O on the same request.
+const BUDGET_MS = 50;
+
+// Traversal ceiling. The schema is caller-controlled too, so its SIZE needs a
+// bound that no regex watchdog can provide: a 10^5-entry `allOf`, an enum with
+// 10^6 candidates, or an array of 10^6 `uniqueItems` elements would otherwise
+// burn wall-clock in plain JavaScript. Steps are charged per schema node
+// visited, per enum candidate compared and per uniqueItems element serialised.
+// 20_000 is far above any real schema (50_000 trivial stringify steps measured
+// ~4.6 ms) and keeps the worst case to single-digit milliseconds.
+const MAX_SCHEMA_STEPS = 20_000;
+
+// Input-size caps. Past either one the module says "unable", never "pass":
+// silently skipping the match is what let a non-conforming answer through.
 const MAX_PATTERN_CHARS = 1024;
 const MAX_PATTERN_TARGET_CHARS = 256 * 1024;
 
-function isEscapedAt(s, i) {
-  let backslashes = 0;
-  for (let j = i - 1; j >= 0 && s[j] === '\\'; j--) backslashes++;
-  return backslashes % 2 === 1;
+const UNVALIDATED = 'SCHEMA_UNVALIDATED';
+
+// A constant, trusted program. `strings: false` means the context cannot
+// compile new source, so caller input can never become code even if the regexp
+// engine itself is compromised. The sandbox is module state, which is safe
+// because validation is synchronous end to end: no other request can interleave
+// between writing the bindings and running the script.
+const PATTERN_SCRIPT = new Script('new RegExp(pattern).test(value)', { filename: 'json-schema-pattern.js' });
+const PATTERN_SANDBOX = { pattern: '', value: '' };
+const PATTERN_CONTEXT = createContext(PATTERN_SANDBOX, {
+  name: 'json-schema-pattern',
+  codeGeneration: { strings: false, wasm: false },
+});
+
+function createBudget() {
+  return { expiresAt: performance.now() + BUDGET_MS, steps: 0, exhausted: false };
 }
 
-// True when `s` holds an unescaped `*`, `+` or `{` outside a character class
-// (inside `[…]` those are literals — `[{]+` is safe and must not trip).
-function hasQuantifierAtom(s) {
-  let inClass = false;
-  for (let k = 0; k < s.length; k++) {
-    const ch = s[k];
-    if (isEscapedAt(s, k)) continue;
-    if (inClass) { if (ch === ']') inClass = false; continue; }
-    if (ch === '[') { inClass = true; continue; }
-    if (ch === '*' || ch === '+' || ch === '{') return true;
+/**
+ * The module's bounds, exposed so a test can build a fixture at the boundary
+ * instead of hard-coding a number that may drift from the implementation.
+ * Read-only: the values are the defence, not configuration.
+ */
+export const __jsonSchemaLimits = Object.freeze({
+  BUDGET_MS,
+  MAX_SCHEMA_STEPS,
+  MAX_PATTERN_CHARS,
+  MAX_PATTERN_TARGET_CHARS,
+});
+
+function unableWithinBudget(path) {
+  return {
+    ok: false,
+    path,
+    message: 'schema could not be validated within budget',
+    unable: true,
+    code: UNVALIDATED,
+    reason: 'budget',
+  };
+}
+
+function unableCapacity(path, detail) {
+  return {
+    ok: false,
+    path,
+    message: `schema could not be validated: ${detail}`,
+    unable: true,
+    code: UNVALIDATED,
+    reason: 'capacity',
+  };
+}
+
+function unableInvalidPattern(path) {
+  return {
+    ok: false,
+    path,
+    message: 'schema could not be validated: the pattern is not a valid regular expression',
+    unable: true,
+    code: UNVALIDATED,
+    reason: 'invalid-pattern',
+  };
+}
+
+/**
+ * Charge `n` steps against the traversal ceiling.
+ * @returns {boolean} false once the ceiling is passed.
+ */
+function chargeSteps(budget, n = 1) {
+  budget.steps += n;
+  return budget.steps <= MAX_SCHEMA_STEPS;
+}
+
+/**
+ * Run one `pattern` assertion under the shared budget.
+ *
+ * `pattern` is a SEARCH assertion, not an anchored full match: the pattern text
+ * is used verbatim, ECMA-262 semantics, no implicit `^…$` and no truncation of
+ * the value.
+ *
+ * @returns {null | {ok: false, path: string, message: string, unable?: true, code?: string}}
+ *   null when the value conforms, otherwise the verdict. There is no "no
+ *   verdict, so pass" case: an invalid pattern, an over-size pattern or value,
+ *   and an exhausted budget are all reported as `unable`.
+ */
+function evaluatePattern(pattern, value, budget, path) {
+  if (pattern.length > MAX_PATTERN_CHARS) {
+    return unableCapacity(path, `a pattern longer than ${MAX_PATTERN_CHARS} characters cannot be evaluated`);
   }
-  return false;
-}
-
-// Top-level `|` inside a group body — alternation directly under a repeat
-// (`(a|b)+`) is the ambiguous-split bomb: overlapping or equal-length
-// branches (`(a|a)+`, `(a|ab)+`, `(a|a*)+`) give the engine an exponential
-// number of parses on a short near-miss (measured 5.4 s on a 26-char
-// non-match, ~4× per +2 chars). Nested alternation (`(x(a|b)y)+`) is not
-// the shape — the surrounding literals pin each iteration's span — so only
-// the group's OWN top level is refused. Refusing is safe: the pattern is
-// skipped like an unparseable one, never a conformance failure.
-function hasTopLevelAlternation(s) {
-  let inClass = false;
-  let depth = 0;
-  for (let k = 0; k < s.length; k++) {
-    const ch = s[k];
-    if (isEscapedAt(s, k)) continue;
-    if (inClass) { if (ch === ']') inClass = false; continue; }
-    if (ch === '[') { inClass = true; continue; }
-    if (ch === '(') depth++;
-    else if (ch === ')') depth--;
-    else if (ch === '|' && depth === 0) return true;
+  if (value.length > MAX_PATTERN_TARGET_CHARS) {
+    return unableCapacity(path, `a value longer than ${MAX_PATTERN_TARGET_CHARS} characters cannot be matched against a pattern`);
   }
-  return false;
-}
+  if (budget.exhausted) return unableWithinBudget(path);
+  const remaining = budget.expiresAt - performance.now();
+  if (!(remaining > 0)) return unableWithinBudget(path);
 
-// Static tripwire for the catastrophic-backtracking shape: a quantifier
-// applied to a group whose OWN body carries a quantifier —
-// `(a+)+`, `(\w*)*`, `([a-z]+)+`, `(\d{2,}){2,}`, `((x|y)+)+`, `(?:a+)*`,
-// `(?<n>a+)+` — or whose body carries top-level alternation —
-// `(a|a)+`, `(a|ab)+`, `(a|b)+`. The same closer check runs on `}`
-// (`(x{2}){3}`-style stacking); `]` closers are skipped outright because a
-// character-class body is literal text that cannot hold either shape —
-// `([a-z]+)+` is still caught at its `)`. A `?` after a closer is NOT an
-// outer quantifier here: it runs the group at most once and covers
-// ubiquitous legitimate shapes like `(\.\d+)?`.
-//
-// KNOWN GAPS, accepted: adjacent quantified atoms (`a*a*a*…$`),
-// backreference forms, and bounded-but-large inner repeats can still
-// backtrack exponentially even on SHORT input — the target-length cap does
-// not save them. They are detected only by a real regex-structure analysis,
-// which is out of scope for a dependency-free validator; this is a tripwire
-// for the canonical bomb, not a proof of linearity.
-function hasNestedQuantifier(pattern) {
-  for (let i = 0; i + 1 < pattern.length; i++) {
-    const c = pattern[i];
-    if (c === ']' || isEscapedAt(pattern, i)) continue;
-    if (c !== ')' && c !== '}') continue;
-    const n = pattern[i + 1];
-    const quantified = n === '*' || n === '+'
-      || (n === '{' && /^\{\d+(,\d*)?\}/.test(pattern.slice(i + 1)));
-    if (!quantified) continue;
-    const open = c === ')' ? '(' : '{';
-    let depth = 0;
-    for (let j = i - 1; j >= 0; j--) {
-      if (isEscapedAt(pattern, j)) continue;
-      if (pattern[j] === c) depth++;
-      else if (pattern[j] === open) {
-        if (depth === 0) {
-          const body = pattern.slice(j + 1, i);
-          if (hasQuantifierAtom(body) || hasTopLevelAlternation(body)) return true;
-          break;
-        }
-        depth--;
-      }
+  PATTERN_SANDBOX.pattern = pattern;
+  PATTERN_SANDBOX.value = value;
+  let matched;
+  try {
+    matched = PATTERN_SCRIPT.runInContext(PATTERN_CONTEXT, { timeout: Math.max(1, Math.ceil(remaining)) });
+  } catch (err) {
+    if (err && err.code === 'ERR_SCRIPT_EXECUTION_TIMEOUT') {
+      // The engine could not finish inside what was left of the request's
+      // budget. One bomb spends the budget for the whole schema: handing the
+      // next pattern a fresh slice would let a caller multiply the bill by the
+      // number of patterns in their schema.
+      budget.exhausted = true;
+      return unableWithinBudget(path);
     }
+    if (err && err.name === 'SyntaxError') {
+      // `pattern` is a keyword this module SUPPORTS; the caller wrote it
+      // malformed. That is not the neutral "unknown annotation" case (which is
+      // an unknown KEYWORD), and folding it into a pass is the same fail-open
+      // as refusing a valid pattern: `not` would invert the skip and `oneOf`
+      // would count it as a match. Report it as a schema we cannot evaluate.
+      return unableInvalidPattern(path);
+    }
+    budget.exhausted = true;
+    return unableCapacity(path, 'the pattern could not be evaluated');
   }
-  return false;
+  if (!matched) return { ok: false, path, message: `must match ${pattern}` };
+  return null;
 }
 
 function isPlainObject(v) {
@@ -167,12 +263,18 @@ function resolveRef(ref, root) {
 }
 
 /**
- * @returns {{ok: true} | {ok: false, path: string, message: string}}
+ * @returns {{ok: true} | {ok: false, path: string, message: string, unable?: true, code?: string}}
  */
-export function validateJsonSchema(value, schema, { path = '$', root = schema, depth = 0 } = {}) {
+export function validateJsonSchema(value, schema, { path = '$', root = schema, depth = 0, budget = null } = {}) {
+  // Created ONCE at the top-level call and threaded through every recursive
+  // call below: a sub-schema must never get a fresh allowance.
+  const scope = budget ?? createBudget();
+
   if (schema === undefined || schema === true || schema === null) return { ok: true };
   if (schema === false) return { ok: false, path, message: 'no value is allowed here' };
   if (!isPlainObject(schema)) return { ok: true };
+  if (!chargeSteps(scope)) return unableCapacity(path, `the schema exceeds ${MAX_SCHEMA_STEPS} evaluation steps`);
+  if (performance.now() > scope.expiresAt) return unableWithinBudget(path);
   if (depth > MAX_REF_DEPTH) {
     return { ok: false, path, message: 'schema $ref nesting is too deep to evaluate' };
   }
@@ -180,7 +282,7 @@ export function validateJsonSchema(value, schema, { path = '$', root = schema, d
   if (typeof schema.$ref === 'string') {
     const target = resolveRef(schema.$ref, root);
     if (target === undefined) return { ok: false, path, message: `unresolvable schema reference ${schema.$ref}` };
-    const viaRef = validateJsonSchema(value, target, { path, root, depth: depth + 1 });
+    const viaRef = validateJsonSchema(value, target, { path, root, depth: depth + 1, budget: scope });
     if (!viaRef.ok) return viaRef;
   }
 
@@ -200,7 +302,15 @@ export function validateJsonSchema(value, schema, { path = '$', root = schema, d
   }
 
   if (Array.isArray(schema.enum)) {
-    const hit = schema.enum.some((candidate) => JSON.stringify(candidate) === JSON.stringify(value));
+    // The charge comes first so an enormous enum is refused before it is
+    // walked, and the value is serialised ONCE — the old code re-serialised it
+    // per candidate, which is O(candidates × |value|) work the candidate count
+    // alone did not bound.
+    if (!chargeSteps(scope, schema.enum.length)) {
+      return unableCapacity(path, `the schema exceeds ${MAX_SCHEMA_STEPS} evaluation steps`);
+    }
+    const target = JSON.stringify(value);
+    const hit = schema.enum.some((candidate) => JSON.stringify(candidate) === target);
     if (!hit) return { ok: false, path, message: `must be one of ${JSON.stringify(schema.enum)}` };
   }
   if (Object.prototype.hasOwnProperty.call(schema, 'const')) {
@@ -237,15 +347,9 @@ export function validateJsonSchema(value, schema, { path = '$', root = schema, d
     if (typeof schema.maxLength === 'number' && value.length > schema.maxLength) {
       return { ok: false, path, message: `must be at most ${schema.maxLength} characters` };
     }
-    if (typeof schema.pattern === 'string'
-        && schema.pattern.length <= MAX_PATTERN_CHARS
-        && !hasNestedQuantifier(schema.pattern)
-        && value.length <= MAX_PATTERN_TARGET_CHARS) {
-      let re = null;
-      try { re = new RegExp(schema.pattern); } catch { re = null; }
-      // An unparseable — or refused — pattern is an annotation we cannot
-      // judge, not a failure.
-      if (re && !re.test(value)) return { ok: false, path, message: `must match ${schema.pattern}` };
+    if (typeof schema.pattern === 'string') {
+      const verdict = evaluatePattern(schema.pattern, value, scope, path);
+      if (verdict) return verdict;
     }
   }
 
@@ -257,6 +361,9 @@ export function validateJsonSchema(value, schema, { path = '$', root = schema, d
       return { ok: false, path, message: `must have at most ${schema.maxItems} items` };
     }
     if (schema.uniqueItems === true) {
+      if (!chargeSteps(scope, value.length)) {
+        return unableCapacity(path, `the schema exceeds ${MAX_SCHEMA_STEPS} evaluation steps`);
+      }
       const seen = new Set(value.map((v) => JSON.stringify(v)));
       if (seen.size !== value.length) return { ok: false, path, message: 'items must be unique' };
     }
@@ -265,12 +372,12 @@ export function validateJsonSchema(value, schema, { path = '$', root = schema, d
       for (let i = 0; i < value.length; i++) {
         const sub = itemSchemas[i] ?? schema.additionalItems;
         if (sub === undefined) continue;
-        const r = validateJsonSchema(value[i], sub, { path: `${path}[${i}]`, root, depth: depth + 1 });
+        const r = validateJsonSchema(value[i], sub, { path: `${path}[${i}]`, root, depth: depth + 1, budget: scope });
         if (!r.ok) return r;
       }
     } else if (schema.items !== undefined) {
       for (let i = 0; i < value.length; i++) {
-        const r = validateJsonSchema(value[i], schema.items, { path: `${path}[${i}]`, root, depth: depth + 1 });
+        const r = validateJsonSchema(value[i], schema.items, { path: `${path}[${i}]`, root, depth: depth + 1, budget: scope });
         if (!r.ok) return r;
       }
     }
@@ -291,33 +398,62 @@ export function validateJsonSchema(value, schema, { path = '$', root = schema, d
       const childPath = `${path}.${key}`;
       if (sub === false) return { ok: false, path: childPath, message: 'additional properties are not allowed' };
       if (sub !== undefined) {
-        const r = validateJsonSchema(child, sub, { path: childPath, root, depth: depth + 1 });
+        const r = validateJsonSchema(child, sub, { path: childPath, root, depth: depth + 1, budget: scope });
         if (!r.ok) return r;
       }
     }
   }
 
   if (Array.isArray(schema.allOf)) {
+    let pending = null;
     for (const sub of schema.allOf) {
-      const r = validateJsonSchema(value, sub, { path, root, depth: depth + 1 });
+      const r = validateJsonSchema(value, sub, { path, root, depth: depth + 1, budget: scope });
+      if (r.unable) { pending ??= r; continue; }
       if (!r.ok) return r;
     }
+    // A genuine counterexample in a sibling is decisive even when another
+    // branch could not be judged; only when nothing is provably wrong do we
+    // report that the combination itself could not be judged.
+    if (pending) return pending;
   }
   if (Array.isArray(schema.anyOf) && schema.anyOf.length) {
-    const results = schema.anyOf.map((sub) => validateJsonSchema(value, sub, { path, root, depth: depth + 1 }));
-    if (!results.some((r) => r.ok)) {
+    const results = [];
+    let satisfied = false;
+    for (const sub of schema.anyOf) {
+      const r = validateJsonSchema(value, sub, { path, root, depth: depth + 1, budget: scope });
+      // A conforming branch is a witness: it proves the disjunction without
+      // needing any other branch judged.
+      if (r.ok) { satisfied = true; break; }
+      results.push(r);
+    }
+    if (!satisfied) {
+      // A branch we could not judge is not a branch that failed.
+      const pending = results.find((r) => r.unable);
+      if (pending) return pending;
       return { ok: false, path, message: `does not match any allowed shape (${results.map((r) => r.message).join('; ')})` };
     }
   }
   if (Array.isArray(schema.oneOf) && schema.oneOf.length) {
-    const results = schema.oneOf.map((sub) => validateJsonSchema(value, sub, { path, root, depth: depth + 1 }));
-    const passed = results.filter((r) => r.ok).length;
-    if (passed !== 1) {
-      return { ok: false, path, message: `must match exactly one allowed shape, matched ${passed}` };
+    const results = [];
+    let passed = 0;
+    for (const sub of schema.oneOf) {
+      const r = validateJsonSchema(value, sub, { path, root, depth: depth + 1, budget: scope });
+      results.push(r);
+      if (r.ok) passed++;
     }
+    // Two matches already disprove `oneOf`, whatever an unjudged branch would
+    // have said; otherwise an unjudged branch could still be a second match,
+    // so the count is not trustworthy.
+    if (passed >= 2) return { ok: false, path, message: `must match exactly one allowed shape, matched ${passed}` };
+    const pending = results.find((r) => r.unable);
+    if (pending) return pending;
+    if (passed !== 1) return { ok: false, path, message: `must match exactly one allowed shape, matched ${passed}` };
   }
   if (schema.not !== undefined) {
-    const r = validateJsonSchema(value, schema.not, { path, root, depth: depth + 1 });
+    const r = validateJsonSchema(value, schema.not, { path, root, depth: depth + 1, budget: scope });
+    // `not` is the one combinator that inverts a verdict, so an unjudged child
+    // must never be inverted into a pass.
+    if (r.unable) return r;
     if (r.ok) return { ok: false, path, message: 'must not match the forbidden shape' };
   }
 
