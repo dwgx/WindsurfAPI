@@ -28,23 +28,26 @@ SSE JSON、队列字节预算、按未确认字节计 drain、history 预算改�
 
 **范围更正。** §0 与文首的计数（36 提交 / 45 文件 / +4,996 −501 / 6 个 `src/` 文件）
 度量的是 `v3.141.592658..deeb2539` 审计分支在发布提交前的冻结范围，**不包含**
-`e0c5c715` 之后的 hardening 与复审修复。发布提交之后本分支另有 **46 个提交 /
-98 个文件 / +8,358 −563 / 27 个 `src/` 文件**（`git rev-list --count
-e0c5c715..a7af4702`；`git diff --shortstat e0c5c715..a7af4702`；
-`git diff --name-only e0c5c715..a7af4702 -- src | wc -l`）：`c4931c40`（审计收口，
+`e0c5c715` 之后的 hardening 与复审修复。发布提交之后本分支另有 **68 个提交 /
+124 个文件 / +9,965 −649 / 34 个 `src/` 文件**（`git rev-list --count
+e0c5c715..HEAD`；`git diff --shortstat e0c5c715..HEAD`；
+`git diff --name-only e0c5c715..HEAD -- src | wc -l`）：`c4931c40`（审计收口，
 49 文件 / +5,010 −324）、`0aea4ea3`（connect 显式错误终止与 catalogue 边界）、
 `911e6674` / `d0359733`（纯文档）、复审修复波 `04503830`–`7c995f40`（含 spec
 基线重钉、文档订正与差分审计修复）、安全狩猎波 `f43b5b7a`–`18f54aaf`（七条
 只读 lane 报告的落地修复，含 S1 输入 DoS、S2 载体矩阵、S3 头回显/SSE、
-S4 解码器边界、S5 日志注入/XSS、S6 凭据基线与代理配置）共 42 个提交。
+S4 解码器边界、S5 日志注入/XSS、S6 凭据基线与代理配置）、最后一里批
+`b45b41e1`–`6dce60ad`（G08/G14 预算收口、L3b 残留 ReDoS、元标签线性扫描、
+子进程环境净化、post-error 封条、label 边界）与 L1 元审批 `e30baf6d`。
 逐提交证据记入验收附录的增补段（acceptance addendum，另行补写）；本文件只登记
 范围与用户可见变化。
 
 **tag 目标。** `v3.141.592659` 必须打在合并后的 master tip 上（流程：把
 `origin/master` 合入本分支 → `master --ff-only` → 在 master tip 打 annotated tag →
 push），**不是** `e0c5c715`——否则 `c4931c40`/`0aea4ea3` 与复审修复会被关在版本外。
-写作时最后一个改 `src/` 的提交为 `18f54aaf`（安全狩猎波收尾，SSE pending
-门增量扫描）；最终 tag 目标记作 `<merge-tip>`，以合并提交的实际 SHA 为准。
+写作时最后一个改 `src/` 的提交为 `e30baf6d`（L1 元审批收尾，扫描器重锚 +
+终态 item 封条 + U+2028/2029 边界）；最终 tag 目标记作 `<merge-tip>`，以合并
+提交的实际 SHA 为准。
 
 **复审修复波的用户可见变化**（`04503830`–`5fb21e70`，按面分组；`c4931c40` 已覆盖的
 面见上节）：
@@ -142,6 +145,37 @@ push），**不是** `e0c5c715`——否则 `c4931c40`/`0aea4ea3` 与复审修�
   日志行与终端注入不再成立；sketch 与主看板的内联 JS 字符串改走专用 JS 转义
   （修复 HTML-escape 复用导致的存储 XSS）；账户标签校验类型/非空/控制字符/长度；
   support-bundle 与 trace 的 secret-field 匹配扩到下划线/驼峰/复合凭据名。
+
+**最后一里与元审批的用户可见变化**（`b45b41e1`–`e30baf6d`；L3a/L3b/W-F3/W-F4
+修复批 + L1 元审 34 个 src 文件复审后的 8 findings 全修）：
+
+- **子进程环境净化（S6-F3）**：所有 spawn 点统一走 `buildSubprocessEnv`/
+  `buildMinimalSubprocessEnv`——版本探针用最小 allowlist，ACP/`devin -p`/LS 安装器
+  按形状剥离秘密形环境变量（`*_KEY`/`*_TOKEN`/`*_SECRET` 等）而保留 PATH/HOME/
+  代理/CA 与显式注入的凭据通道。此前 15/15 个秘密形 sentinel 全部漏进子进程
+  环境；修后 0 漏。ACP 认证继续走 `_meta.api_key` 通道而非环境变量。
+- **复杂度/注入边界**：`response_format.json_schema` 的 pattern 闸补
+  「量词组内顶层交替」形（`^(a|a)+$` 26 字符即 5.4 s 指数回退 → 按既有
+  fail-open 契约跳过该 pattern）；Cascade 身份中和的三处 `\s*` 收窄为
+  `[ \t]*`（128 KiB 换行负载 28.9 s → 2.0 ms）；会话池元标签剥离换成
+  单趟 `indexOf` 线性扫描（256 KiB 炸弹 ~7 s → ~4 ms），未知标签只审计
+  不学习，且移除 span 后在下一个字面 `<` 续扫（修复了扫描器初版把
+  `</a>Xname b>c</a>` 字面文本当 span 误删、腐蚀复用指纹的缺陷）。
+- **Responses 终态一致**：非流式 `chatToResponse` 在 `status:'failed'` 的
+  回合里把 reasoning/message/function_call item 一律封 `incomplete`——
+  此前 reasoning/message 仍写 `completed`；流式路径的 `failedTurn` 改为
+  见 error/unterminated 信号立即锁存，终态后继续到达的 chunk 不再封出
+  `completed` item；`customToolInputPrefix` 用深度+在字符串内状态机只匹配
+  顶层 `"input"` 值（嵌套对象或字符串值里的 `"input":` 不再错命中）。
+- **边界字符与标签**：账户 label 校验与日志消毒边界补 U+2028/U+2029
+  （行/段分隔符渲染为换行 → 可伪造日志行）；`keyPrefix` 显示上限收紧到
+  key 长的 1/3（9–12 位 key 曾泄 8/9 字符）；`sse-commit` dispose/destroy
+  清空 `pendingText` 保留窗口；`securitySpan` 用 deadUntil 标记死段而非
+  `cursor = limit` 跳段——段内 anchor 的空白 gap 跨段后仍可配对（此前
+  会被跳过的配对导致指纹句按原样送上游）。
+- **预算收口（G08/G14）**：Cascade 当前轮图片与历史回放共享同一计数/字节帽
+  ——历史里塞满预算后当前轮图片不再被静默丢弃而不计数；current-turn 丢弃
+  与历史丢弃分别有独立可观测日志。
 
 ## 0. 范围
 

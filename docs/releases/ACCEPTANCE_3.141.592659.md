@@ -99,6 +99,50 @@ auth/server、streaming、responses、identity/CTX、connect 与 tests/mutations
 （relogin 凭据缺口）、Node 22.13.x 精确下限矩阵（实测 22.23.4）。
 fishfish（周fish）预告的 3 份报告尚未提供，不作已确认缺陷处理。
 
+**§0.4 最后一里：L3a/L3b/W-F3/W-F4 修复批 + L1 元审批（`b45b41e1`…`e30baf6d`）**
+
+§0.3 的 POSIX 证据基于冻结 src `18f54aaf`；此后又合入两批安全修复（均红→绿，
+本段每条都附定向测试计数）：
+
+- `b45b41e1` **S6-F3 子进程环境净化**：`buildSubprocessEnv`/`buildMinimalSubprocessEnv`
+  （`src/log-safety.js`）+ `devin-acp`/`special-agent`/`index`/`dashboard/api` 四处
+  spawn 点接入。ACP 凭据走 `_meta.api_key` 通道而非环境；`devin -p` 保留显式注入的
+  凭据变量同时剥掉环境里的秘密形变量；版本探针用严格最小 allowlist；LS 安装器保留
+  非秘密 PATH/HOME/代理/CA/覆盖变量。红先集成测试 15/15 sentinel 全漏→修后 0 漏；
+  `subprocess-env` 10/10 + 回归 149/149、41/41。
+- `39108e11` **last-call 批次**：G08/G14（Cascade 当前轮图片预算与历史回放共享同一
+  计数/字节帽 + current-turn 丢弃独立可观测）；L3b-F1 `validateJsonSchema` 增补
+  「量词组内顶层交替」绊线（`^(a|a)+$` 26 字符 5.4s 指数爆 → 拒绝模式跳过，
+  `json-schema-pattern-safety` 5/5）；L3b-F2 `client.js` 身份中和 `\s*`→`[ \t]*`
+  （128KiB 换行负载 28,855ms → 2.0ms，`client-content` 5/5 + client 回归 32/32）；
+  Responses 流 `failedTurn` 提前锁存（error 终态后继续到达的 item 不再封 `completed`，
+  `responses-stream-truncation` 20/20）；账户 label 边界扩 Unicode bidi/Cf 集
+  （`dashboard-inline-escape` 相关断言）。
+- `6dce60ad` **L3b-F3 元标签线性扫描器**：`META_TAG_RE`（反向引用+懒惰体，256KB
+  炸弹 ~7s）换成单趟 `indexOf` 扫描（~4.3ms），输入帽 256KiB；未知标签只审计
+  不学习；20k 条 fuzz 语料与旧正则逐字节一致（邻接形状除外——见 L1-F1）。
+  `conversation-pool-meta-tags` 26/26。
+- `e30baf6d` **L1 元审批**（`.agent/review-final-meta/REPORT.md`，34 个 src 文件
+  复审后 8 findings 全修）：F1 扫描器移除 span 后在下一个字面 `<` 续扫
+  （`i = last` 把非 `<` 字符当开标签，`</summary>Xsummary b>c</summary>` 被误删 →
+  复用指纹腐蚀，红→绿）；F2 非流式 `chatToResponse` 失败回合的 reasoning/message
+  item 封 `incomplete`（与流式 `failedTurn` 同一不变式）；F3 label/log 边界补
+  U+2028/U+2029（行/段分隔符渲染换行 → 伪造日志行）；F4 `keyPrefix` 上限收紧到
+  key 长的 1/3（9–12 位 key 曾泄 8/9 字符）；F5 `securitySpan` 用 deadUntil 记死段
+  而非 `cursor = limit` 跳段（段内 anchor 的空白 gap 跨段后仍可配对——红→绿）；
+  F7 `customToolInputPrefix` 用深度+在字符串内状态机找顶层 `"input"`（嵌套
+  `{"w":{"input":..},"input":..}` 不再错命中）；F8 `sse-commit` dispose/destroy
+  清空 `pendingText` 保留窗口。
+- **已知自伤事故已闭环**：L1 批次期间 `userstatus-teams-tier-log` 的
+  `functionText` 提取一度因 CRLF 行尾失效（`\n}\n` 匹配不上 `}\r\n`）——根因是
+  编辑通道把 `\n` 写成 `\r\n`；LF 归一后 7/7 复绿，与产品逻辑无关。
+- 最终树 `e30baf6d`（+docs `3c7422cc`）：smoke:matrix **137/137 flows，
+  24/24 families**；docs-guard **47/47**；本批涉及面的回归电池 **177/177**。
+  全量 `gate:release` 在最终树执行中，计数出来后回填本节。
+
+**本节仍 [UNVERIFIED]**：§0.4 树的 POSIX `test:release` 复跑（HMC node22/24）与
+mutation sweep 复跑；wire-byte-identity 对 v3.141.592658 的 270/270（最终树待复测）。
+
 ## 1. 发布范围（产品变更）
 
 | 变更 | 实现 | 证明测试 |
