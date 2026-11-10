@@ -1814,6 +1814,32 @@ async function registerWithCodeium(idToken) {
 
 // ─── Account management ───────────────────────────────────
 
+// The label is stored into `email` and rendered into dashboard rows, batch
+// results, the search corpus and log lines. The write took the string
+// verbatim, so a caller-supplied label could carry C0/C1 controls (ANSI into
+// the operator's terminal when a log line prints it), characters that break
+// the markup contexts escapers don't reach, or a length that wedges the
+// table. Printable Unicode is legitimate (non-ASCII names exist); control
+// chars and a >128-char blob are not. Caller labels reject via a coded error
+// so the API layer can return a 400 with a stable code instead of a silent
+// no-op; upstream-derived names are sanitized instead — a hostile registry
+// name must not turn a successful login into a 400 (S5).
+const MAX_ACCOUNT_LABEL = 128;
+const LABEL_UNSAFE = /[\x00-\x1f\x7f-\x9f]/;
+const LABEL_UNSAFE_GLOBAL = /[\x00-\x1f\x7f-\x9f]/g;
+
+function assertAccountLabel(label) {
+  if (!label || label.length > MAX_ACCOUNT_LABEL || LABEL_UNSAFE.test(label)) {
+    throw Object.assign(new Error('ERR_ACCOUNT_LABEL_INVALID'), {
+      code: 'ERR_ACCOUNT_LABEL_INVALID', statusCode: 400,
+    });
+  }
+}
+
+function sanitizeLabelText(value) {
+  return String(value || '').replace(LABEL_UNSAFE_GLOBAL, '').trim().slice(0, MAX_ACCOUNT_LABEL);
+}
+
 /**
  * Add account via API key.
  */
@@ -1827,9 +1853,12 @@ export function addAccountByKey(apiKey, label = '', apiServerUrl = '') {
     return existing;
   }
 
+  if (label != null && typeof label !== 'string') assertAccountLabel('');
+  const callerLabel = typeof label === 'string' ? label.trim() : '';
+  if (callerLabel) assertAccountLabel(callerLabel);
   const account = {
     id: randomUUID().slice(0, 8),
-    email: label || `key-${apiKey.slice(0, 8)}`,
+    email: callerLabel || `key-${apiKey.slice(0, 8)}`,
     apiKey,
     apiServerUrl: apiServerUrl || '',
     method: 'api_key',
@@ -1899,9 +1928,12 @@ export async function addAccountByToken(token, label = '') {
   const existing = accounts.find(a => a.apiKey === reg.apiKey);
   if (existing) return existing;
 
+  if (label != null && typeof label !== 'string') assertAccountLabel('');
+  const callerLabel = typeof label === 'string' ? label.trim() : '';
+  if (callerLabel) assertAccountLabel(callerLabel);
   const account = {
     id: randomUUID().slice(0, 8),
-    email: label || reg.name || `token-${reg.apiKey.slice(0, 8)}`,
+    email: callerLabel || sanitizeLabelText(reg.name) || `token-${reg.apiKey.slice(0, 8)}`,
     apiKey: reg.apiKey,
     apiServerUrl: reg.apiServerUrl || '',
     method: 'token',
@@ -1945,7 +1977,7 @@ export async function addAccountByEmail(email, password) {
   if (!result?.apiKey) {
     throw new Error('Login succeeded but no apiKey returned');
   }
-  const label = result.name || email;
+  const label = sanitizeLabelText(result.name) || email;
   const existingByEmail = accounts.find(a => String(a.email || '').trim().toLowerCase() === emailKey);
   const account = existingByEmail || addAccountByKey(result.apiKey, label);
   if (existingByEmail) {
@@ -2573,18 +2605,11 @@ export function resetAccountErrors(id) {
 // Printable Unicode is legitimate (non-ASCII names exist); control chars and
 // a >128-char blob are not. Rejects via a coded error so the API layer can
 // return a 400 with a stable code instead of a silent no-op.
-const MAX_ACCOUNT_LABEL = 128;
-const LABEL_UNSAFE = /[\u0000-\u001F\u007F-\u009F]/;
-
 export function updateAccountLabel(id, label) {
   const account = accounts.find(a => a.id === id);
   if (!account) return false;
   const next = typeof label === 'string' ? label.trim() : '';
-  if (!next || next.length > MAX_ACCOUNT_LABEL || LABEL_UNSAFE.test(next)) {
-    throw Object.assign(new Error('ERR_ACCOUNT_LABEL_INVALID'), {
-      code: 'ERR_ACCOUNT_LABEL_INVALID', statusCode: 400,
-    });
-  }
+  assertAccountLabel(next);
   account.email = next;
   saveAccounts();
   return true;

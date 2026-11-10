@@ -139,4 +139,24 @@ describe('updateAccountLabel: the label cannot carry hostile text into account.e
     assert.equal(a.email, '张三 <zhang@corp.example>');
     assert.equal(updateAccountLabel(a.id, 'x'.repeat(128)), true);
   });
+
+  it('addAccountByKey applies the same boundary at write time (S5)', () => {
+    // The PATCH path got the validator first; add/import paths wrote `label`
+    // straight into `email`. A hostile add must be a coded 400, not a stored
+    // ANSI/forged-log label that only render-time sanitization would catch.
+    for (const label of ['a\nb', 'a\u001b[31m', 'x'.repeat(129), 42]) {
+      assert.throws(
+        () => addAccountByKey(`devin-session-token$bad-${randomUUID().slice(0, 8)}`, label),
+        (e) => e.code === 'ERR_ACCOUNT_LABEL_INVALID' && e.statusCode === 400,
+        `add label ${JSON.stringify(label)?.slice(0, 40)} must be refused`);
+    }
+    // An absent/blank label is not an error — it falls back to the key prefix.
+    const blank = addAccountByKey(`devin-session-token$blk-${randomUUID().slice(0, 8)}`, '   ');
+    created.add(blank.id);
+    assert.match(blank.email, /^key-/);
+    // Non-string labels passed as undefined/null keep the fallback too.
+    const none = addAccountByKey(`devin-session-token$non-${randomUUID().slice(0, 8)}`);
+    created.add(none.id);
+    assert.match(none.email, /^key-/);
+  });
 });
