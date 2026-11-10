@@ -164,6 +164,8 @@ bash setup.sh          # Create directories · Set permissions · Generate .env
 node src/index.js
 ```
 
+> Note: this project is not published to npm. `npm i windsurf-api` installs an **unrelated third-party package** — always install via the git/Docker path above.
+
 Dashboard: `http://YOUR_IP:3003/dashboard`
 
 ### Docker Deployment

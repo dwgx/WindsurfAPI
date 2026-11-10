@@ -198,6 +198,8 @@ bash setup.sh          # 建目录 · 配权限 · 生成 .env
 node src/index.js
 ```
 
+> 注意：本项目不发布到 npm。`npm i windsurf-api` 装到的是**无关的同名第三方包**，安装一律走上面的 git/Docker 路径。
+
 Dashboard：`http://你的IP:3003/dashboard`
 
 ### Docker 部署

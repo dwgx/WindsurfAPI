@@ -79,7 +79,7 @@ auth/server、streaming、responses、identity/CTX、connect 与 tests/mutations
 
 **仍 [UNVERIFIED]**：托管 CI、真实上游/live 客户端、HMC 部署/回滚演练、官方 `pr-gate`
 （relogin 凭据缺口）、mutation 全量 POSIX sweep 的最终树复跑（上轮 97/97 于 `c4931c40`）。
-周fish 预告的 3 份报告尚未提供，不作已确认缺陷处理。
+fishfish（周fish）预告的 3 份报告尚未提供，不作已确认缺陷处理。
 
 ## 1. 发布范围（产品变更）
 
