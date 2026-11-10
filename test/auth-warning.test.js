@@ -155,7 +155,7 @@ describe('S6-F1: maskApiKey never exposes more than ~25% of a short key', () => 
     assert.equal(maskApiKey('123456789'), '123...');
     assert.equal(maskApiKey('123456789012'), '123...');
     assert.equal(maskApiKey('1234567890123'), '12345678...0123');
-    assert.equal(maskApiKey('sk-ant-very-long-key-abcdef'), 'sk-ant-v...cdef');
+    assert.equal(maskApiKey('sk-ant-fixture-long-key-abcdef'), 'sk-ant-f...cdef');
     assert.equal(maskApiKey(''), '');
   });
 
