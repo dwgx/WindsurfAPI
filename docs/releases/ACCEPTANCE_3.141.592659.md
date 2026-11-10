@@ -60,8 +60,14 @@ auth/server、streaming、responses、identity/CTX、connect 与 tests/mutations
 - docs-consistency-guard：`d65a16e1` 树 **47/47**。
 - 聚焦回归：server-auth 35、https-proxy 13、sse-commit 34、auth/account 族 76、
   proto/cache/response-store 107、messages/responses/stream 294、chat 族 161 —— 全绿。
-- 最终 `gate:release`（`GATE_INERT_SKIP_PATHS` 挂 6 件 POSIX/live inert）：**见下表更新**
-  —— 跑于 `<final-tip>`，结果 `<files/tests/pass/fail/skip>`。
+- 最终 release shard（`3ced582a` 冻结树，`npm run test:release`）：**623 文件 / 7,726
+  测试 / 7,623 通过 / 0 失败 / 103 跳过**。前置 `gate:release` 同树跑出的静态段：
+  spec-static PASS、spec-baseline `--all` PASS（99 spec / 0 drift）、secret-scan PASS、
+  `git diff --check`/`--cached` PASS；其 test:release 段 5 个失败全部为两个过期源码
+  标记（已按新代码重钉，`ef7fe524`）与 UNVERIFIED 登记册过期（已重生成，
+  `3ced582a`）——冻结树复跑即为上行的 0 失败。
+- mutation EXECUTION：POSIX sweep 上轮 97/97 于 `c4931c40`；最终树由 HMC 复跑
+  subagent 执行，结果见本节末尾增补。
 - HMC Linux + mutation 复跑：subagent 派出，结果见本节末尾增补。
 
 **仍 [UNVERIFIED]**：托管 CI、真实上游/live 客户端、HMC 部署/回滚演练、官方 `pr-gate`
