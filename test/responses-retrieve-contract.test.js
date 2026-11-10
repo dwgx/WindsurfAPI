@@ -134,12 +134,14 @@ describe('identity signal does not travel where logs will capture it', () => {
   // header over real HTTP. What remains here is the one thing a behavioural test
   // cannot express: the standing reason headers are the primary channel.
 
-  it('the TLS front end still logs the whole URL — so the header path is load-bearing', () => {
-    // If this ever stops being true the query fallback becomes harmless, but while it
-    // holds, headers must remain the documented primary channel.
+  it('the TLS front end redacts the query credential before logging', () => {
+    // `?key=` is a documented Gemini credential carrier; S2-F2 made the access
+    // log redact it. Keep this pin so a refactor cannot silently restore
+    // raw-URL logging — while headers remain the documented primary channel,
+    // the query fallback must not leak into journals either.
     const proxySrc = readFileSync(new URL('../https-proxy.js', import.meta.url), 'utf8');
-    assert.match(proxySrc, /\$\{method\}\s+\$\{url\}/,
-      'https-proxy logs the full URL; identity in the query string would be captured');
+    assert.match(proxySrc, /redactUrlForLog\(url\)/,
+      'https-proxy must pass the URL through redactUrlForLog before logging (S2-F2)');
   });
 
   it('the POST-side scope vocabulary has not grown past what retrieval accepts', () => {
