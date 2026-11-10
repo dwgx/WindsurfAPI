@@ -132,16 +132,16 @@ const MAX_BYTES = parseByteSize(process.env.RESPONSE_STORE_MAX_BYTES)
 // `seen` makes the plain-object walk cycle-safe. Without it a self-referencing
 // message would recurse until the stack overflowed; with it the stored graph
 // mirrors the caller's shape and `retainedBytes` can meter the cycle too.
-// A stored body nested deeper than the stack can clone used to escape as a
-// per-request RangeError; bound the recursion like retainedBytes (S4-D14).
-const MAX_STORED_CLONE_DEPTH = 64;
-
 function copyStoredValue(value, seen = new WeakMap(), depth = 0) {
   // structuredClone refuses to clone functions and symbols; keep that loud
   // rejection instead of quietly storing a live reference.
   if (typeof value === 'function' || typeof value === 'symbol') return structuredClone(value);
   if (value === null || typeof value !== 'object') return value;
-  if (depth > MAX_STORED_CLONE_DEPTH) throw new Error('copyStoredValue: value exceeds maximum nesting depth');
+  // S4-D14: a stored body nested deeper than the stack can clone used to escape
+  // as a per-request RangeError; bound the recursion like retainedBytes. The
+  // literal stays inline — s4-r6.test.js evaluates this function's TEXT with
+  // no module scope, so a module-level const would be a ReferenceError there.
+  if (depth > 64) throw new Error('copyStoredValue: value exceeds maximum nesting depth (64)');
   if (seen.has(value)) return seen.get(value);
   if (Array.isArray(value)) {
     const out = new Array(value.length);

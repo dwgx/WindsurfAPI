@@ -118,11 +118,10 @@ function normalizeBinary(messages) {
 // JSON.parse accepts deeper nesting than an unguarded recursive clone can
 // survive: a body nested ~10k deep parsed fine, then the clone overflowed the
 // stack into a per-request RangeError. Same depth idiom as retainedBytes /
-// SUB_DUMP_MAX_DEPTH (S4-D14).
-const MAX_CLONE_DEPTH = 64;
-
+// SUB_DUMP_MAX_DEPTH (S4-D14). Literal stays inline: test harnesses evaluate
+// function text without module scope.
 function stableClone(value, depth = 0) {
-  if (depth > MAX_CLONE_DEPTH) throw new Error('stableClone: value exceeds maximum nesting depth');
+  if (depth > 64) throw new Error('stableClone: value exceeds maximum nesting depth (64)');
   if (Array.isArray(value)) return value.map((v) => stableClone(v, depth + 1));
   if (value && typeof value === 'object') {
     const out = {};
