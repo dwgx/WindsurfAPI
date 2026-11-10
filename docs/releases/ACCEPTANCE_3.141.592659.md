@@ -67,9 +67,15 @@ auth/server、streaming、responses、identity/CTX、connect 与 tests/mutations
   `git diff --check`/`--cached` PASS；其 test:release 段 5 个失败全部为两个过期源码
   标记（已按新代码重钉，`ef7fe524`）与 UNVERIFIED 登记册过期（已重生成，
   `3ced582a`）——冻结树复跑即为上行的 0 失败。
-- mutation EXECUTION：POSIX sweep 上轮 97/97 于 `c4931c40`；最终树由 HMC 复跑
-  subagent 执行，结果见本节末尾增补。
-- HMC Linux + mutation 复跑：subagent 派出，结果见本节末尾增补。
+- mutation EXECUTION（POSIX，HMC，node24）：`456aadf1` 树（src `18f54aaf` 即冻结
+  src）`node scripts/mutation-sweep.mjs --shard 0/1` —— **99/99 spec、878 变异体、
+  0 意外幸存、0 untrustworthy、0 异常终止**（~18 个书面 KNOWN SURVIVOR 全部符合
+  预期）；日志 `hmc:/tmp/wa-sweep-456aadf1.log`。
+- HMC Linux 全量（node24.21.0，`456aadf1`）：7717 pass / **5 fail** / 5 skip——5 败
+  全部为两个过期源码 grep 与 UNVERIFIED 登记册过期，与 Windows 门禁同根因，已由
+  `ef7fe524`/`3ced582a` 修复并在冻结树复测全绿；`3ced582a` 的 POSIX 复跑确认见
+  本节末尾增补。node20.19.2 低于 engines 下限（≥22.13.0），其 30 败不计；
+  HMC 无 node22，node22 全量维持 `[UNVERIFIED]`。
 
 **仍 [UNVERIFIED]**：托管 CI、真实上游/live 客户端、HMC 部署/回滚演练、官方 `pr-gate`
 （relogin 凭据缺口）、mutation 全量 POSIX sweep 的最终树复跑（上轮 97/97 于 `c4931c40`）。
