@@ -140,8 +140,14 @@ fishfish（周fish）预告的 3 份报告尚未提供，不作已确认缺陷�
   24/24 families**；docs-guard **47/47**；本批涉及面的回归电池 **177/177**。
   全量 `gate:release` 在最终树执行中，计数出来后回填本节。
 
-**本节仍 [UNVERIFIED]**：§0.4 树的 POSIX `test:release` 复跑（HMC node22/24）与
-mutation sweep 复跑；wire-byte-identity 对 v3.141.592658 的 270/270（最终树待复测）。
+- wire-byte-identity 对 v3.141.592658（最终树 HMC）：**270/270 byte-identical，0 diff**。
+- HMC node24 @3c7422cc：625 files / 7,781 tests / **7,773 pass / 3 fail / 5 skip**——
+  3 败全部为 bundle clone 缺 tag refs 的环境性失败（docs-guard tag-reachability ×2 +
+  smoke 内嵌检查 ×1）；补 228 tags 后 docs-guard 复跑 **47/47 绿**、smoke:matrix
+  POSIX **EXIT=0**（137/137）。
+- HMC smoke:matrix @3c7422cc：**EXIT=0**。
+
+**本节仍 [UNVERIFIED]**：HMC node22 @3c7422cc 与 mutation sweep 复跑（在飞，结果出来回填）。
 
 ## 1. 发布范围（产品变更）
 
