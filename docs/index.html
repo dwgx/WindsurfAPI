@@ -1062,6 +1062,14 @@ client = OpenAI(
     <p class="reveal" style="text-align:center;margin-top:2rem;font-size:.85rem;color:var(--muted)">
       想加入這份名單？到 <a href="https://github.com/dwgx/WindsurfAPI/issues" target="_blank" rel="noopener" style="color:var(--coral-deep)">Issues</a> 提 bug 或到 <a href="https://github.com/dwgx/WindsurfAPI/pulls" target="_blank" rel="noopener" style="color:var(--coral-deep)">Pull requests</a> 直接動手都歡迎。
     </p>
+
+    <!-- Static on purpose: the grid above renders from dashboard/data/contributors.json, and a
+         zero-commit security reporter has no row there. This block is hand-written text (not
+         inside `const MODELS = [`), so scripts/gen-docs-models.js leaves it untouched. -->
+    <div class="reveal" id="security-ack" style="max-width:52rem;margin:2rem auto 0;padding:1.25rem 1.5rem;border:1px solid rgba(0,0,0,.08);border-radius:14px;background:rgba(0,0,0,.02);font-size:.9rem;line-height:1.75;color:var(--muted);text-align:left">
+      <strong style="color:var(--coral-deep)">安全致謝 · Security acknowledgments</strong><br>
+      感謝 <a href="https://github.com/fishfish57" target="_blank" rel="noopener" style="color:var(--coral-deep)">fishfish</a> 負責任地披露兩個 <strong>CWE-1333</strong>（event-loop 阻塞）問題：客戶端身分中和器的二次正則掃描（2026-11-08 報告）與 <code>src/json-schema.js</code> 中 JSON Schema <code>pattern</code> 的無界求值（2026-11-10 報告）。分別追蹤為 <a href="https://github.com/dwgx/WindsurfAPI/security/advisories/GHSA-fx5f-49jr-fw6r" target="_blank" rel="noopener" style="color:var(--coral-deep)">GHSA-fx5f-49jr-fw6r</a> 與 <a href="https://github.com/dwgx/WindsurfAPI/security/advisories/GHSA-r7v2-3h32-f5g6" target="_blank" rel="noopener" style="color:var(--coral-deep)">GHSA-r7v2-3h32-f5g6</a>（CVSS 6.5，兩條均已發布），修復版本 <strong>3.141.592661</strong>（<code>patched_versions: &gt;= 3.141.592661</code>）。安全報告者沒有 commit，不進上面那份 PR 台账，所以在這裡靜態列名。
+    </div>
   </div>
 </section>
 

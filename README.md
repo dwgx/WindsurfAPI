@@ -775,6 +775,8 @@ A: 不能。长 thinking / 长输出在约 236-243 秒断流，是 Windsurf prov
 
 特别感谢下面的朋友，他们提交过 PR 或系统性地审了代码，让这个项目变得更稳：
 
+**安全致谢 / Security acknowledgments**：感谢 [fishfish](https://github.com/fishfish57) 负责任地披露两个 **CWE-1333**（event-loop 阻塞）问题——客户端身份中和器的二次正则扫描（2026-11-08 报告）与 `src/json-schema.js` 中 JSON Schema `pattern` 的无界求值（2026-11-10 报告）。分别跟踪为 [GHSA-fx5f-49jr-fw6r](https://github.com/dwgx/WindsurfAPI/security/advisories/GHSA-fx5f-49jr-fw6r) 与 [GHSA-r7v2-3h32-f5g6](https://github.com/dwgx/WindsurfAPI/security/advisories/GHSA-r7v2-3h32-f5g6)（CVSS 6.5，两条均已发布），修复版本 **3.141.592661**（`patched_versions: >= 3.141.592661`）。披露政策见 [SECURITY.md](SECURITY.md)。
+
 - [@dd373156](https://github.com/dd373156) — [PR #1](https://github.com/dwgx/WindsurfAPI/pull/1)
   修复 Pro 层级的模型合并逻辑：原本只看硬编码清单，云端动态拉回来的模型没进 tier 表，Pro 账号在 Cursor / Cherry Studio 里看不到新上线的模型。
 - [@colin1112a](https://github.com/colin1112a) — [PR #13](https://github.com/dwgx/WindsurfAPI/pull/13)
@@ -820,10 +822,12 @@ MIT License. See [LICENSE](LICENSE).
 
 ## 发布与密钥边界
 
-发布流程会自动推 Docker 镜像和 GitHub Release。本版发布 **v3.141.592661**；仓库共 229 个
-已发布 git tag / 221 份发布说明（2026-11-11 复核；`v3.141.592660` 是公开 tag，但它的
-Release/CI 因 tag 计数 230-vs-229 失败、未产出任何资产；`v3.141.592661` 的 tag 在发布提交
-之后创建。`v3.141.592659` 从未发布——它的本地 tag 冻结在未修复的 `d5519da3` 上）。
+发布流程会自动推 Docker 镜像和 GitHub Release。本版发布 **v3.141.592661**，发布说明 221 份；
+CHANGELOG 里的 **229** 是「发布命名空间」计数——`git tag | wc -l` 减去本 checkout 里存在的
+未发布 tag（`docs/releases/UNPUBLISHED-TAGS.txt`）再减去本版自己的 tag，所以它**不是**远端
+tag 总数，实际数量以 `git ls-remote --tags origin` 为准（annotated tag 会额外列出 `^{}` 行，
+不要直接数行）。`v3.141.592660` 是公开 tag，但它的 Release/CI 因 tag 计数 230-vs-229 失败、
+未产出任何资产；`v3.141.592659` 从未发布——它的本地 tag 冻结在未修复的 `d5519da3` 上。
 从 v3.10.0 起，每个 Release 为四个发布资产
 （Windows exe/zip、macOS arm64 二进制/zip）生成 `SHA256SUMS`，并用 **cosign keyless**
 （GitHub OIDC，仓库内没有任何私钥或签名 secret）为四个资产和清单各发布一个

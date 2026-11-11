@@ -55,6 +55,10 @@ flowchart LR
 0 unbaselined。`src/` 与 3.141.592660 逐字节相同（`babafeef`），无运行时变化；全量
 `test:release`、99 spec / 878 mutation sweep、wire 270/270、POSIX 门、HMC 与真实客户端仍
 `[UNVERIFIED]`，见发布说明 §7 与验收附录。
+本版同时是**安全修复版**：两条 **CWE-1333**（event-loop 阻塞）公告 `GHSA-fx5f-49jr-fw6r`
+（身份中和器的二次正则扫描）与 `GHSA-r7v2-3h32-f5g6`（JSON Schema `pattern` 无界求值）
+已于 2026-11-11 发布（`state=published`、CVSS 6.5、致谢 fishfish、`patched_versions` 为
+`>= 3.141.592661`）；修复代码与 `.592660` 同树（`babafeef`），本版推进的是公告里的修复版本指针。
 
 ### [v3.141.592660](docs/releases/RELEASE_NOTES_3.141.592660.md) · 2026-11-11
 

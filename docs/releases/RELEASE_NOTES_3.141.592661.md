@@ -178,8 +178,10 @@ Release 打成失败。
   revert 发布提交并重新走 release 流程。不要 `git reset` 已推送的 master。
 - **tag 侧**：`v3.141.592659` 与 `v3.141.592660` 都**不移动、不删除、不复用**；前者是冻结
   的未修复 tag，后者是公开但零资产的失败 tag。回滚不碰这两个 tag。
-- **HMC**：本版没有部署；部署切换前的备份与回滚命令仍按 3.141.592660 发布说明 §5 与
-  `ReleasePrep.md` §7 执行（未执行）。
+- **HMC**：本版没有部署（**2026-11-11 更正：这句写于发布前，已作废**——HMC 正跑
+  `3.141.592661`，`/health` 为 `ok`、`NRestarts=0`、切换前备份 `prev27-20261111T002607Z`
+  在位，R1/R2/R3 回滚演练 exit 0，见 §7「发布后核实」）；部署切换前的备份与回滚命令仍按
+  3.141.592660 发布说明 §5 与 `ReleasePrep.md` §7 执行。
 - **数据**：`data/` 不属于发布树的可替换部分；任何部署回滚都显式保留运行期间的账号与日志。
 
 ## 6. 发布门状态与阻断项
@@ -245,6 +247,62 @@ sweep、wire 270/270 的本树复测、POSIX `gate:release`、HMC 部署与真�
   抓包、Q1 G4、support-bundle 生产形态、HTTP socket 端到端、进程级并发准入残余、Q4 G12、
   Q4 `messages.js` 日志、592658 的 M4/多段/`pr-gate` 边界——这些不因本版改变，逐条见
   `RELEASE_NOTES_3.141.592660.md` §7 与登记册。
+
+### 发布后核实（2026-11-11）
+
+> 本节在 tag、Release 与托管 CI 之后**追加**，不改写上面任何一条（它们记录的是写文件时点的
+> 事实）。每条带 marker 与复核命令：`[VERIFIED]` = 2026-11-11 重测通过，`[UNVERIFIED]` = 仍未闭合。
+
+- **[VERIFIED] 全量 shard（release run `42926473911` 的 `Test` job）**：2026-11-11 复核：该 run
+  的 `Test` job `conclusion=success`，在 tag checkout 上跑的就是 `npm run test:release`
+  （`.github/workflows/release.yml:79`）；本波在一次性 clone 的 Path C 树（只删冻结 tag、保留
+  `.592661`，230 个 tag）上实测 **627** 文件 / **7,818** 测试 / 7,715 通过 / **0 失败** /
+  103 跳过。skip 声明仍然不是绿——Node 22 与 POSIX 全量门见下面两条。
+- **[VERIFIED] 托管 CI**：`CI` run `42925868761` = `completed` / `success`，`head_sha=fe98f0bc`
+  （`gh api repos/dwgx/WindsurfAPI/actions/runs/42925868761`）；release run `42926473911` 的
+  `Test` job 同样 `success`。
+- **[VERIFIED] HMC 部署与回滚演练（§5 与 §7 #6 的「本版没有部署」作废）**：HMC `/health` 返回
+  `version=3.141.592661`、`status=ok`；`systemctl show … -p NRestarts` = **0**；
+  `accounts.active` = **1**；切换前备份 `prev27-20261111T002607Z` 在位；R1/R2/R3 回滚演练
+  全部 exit 0。那两句是发布前的状态，已被本节取代（§5 另有 2026-11-11 的行内更正）。
+- **[VERIFIED] 发布产物**：release `441079956`（`v3.141.592661`）`draft=false`、`assets=14`、
+  `7` 个 `.sigstore.json`、每个资产都带 `digest`、`published_at=2026-11-11T00:18:15Z`，
+  `/releases/latest` 指向同一 id；`SHA256SUMS` 4/4 与 REST `digest` 逐条一致。
+- **[VERIFIED] pkg 三目标构建 + boot-smoke（CI 侧）**：Windows / macOS arm64 / macOS x64 三个
+  构建 job 都在上传前调用 `scripts/exe-boot-smoke.mjs`
+  （`release.yml:238`、`:277`、`:326`），run `42926473911` 里这三个 job 全 `success`。
+- **[UNVERIFIED] pkg 残余：本机启动**：上面证明的是 CI 构建出的二进制通过 smoke；本机没有
+  boot 过这三个产物，所以「本机启动」仍是未测项。
+- **[VERIFIED] GHSA 公告**：`GHSA-r7v2-3h32-f5g6` 与 `GHSA-fx5f-49jr-fw6r` 均
+  `state=published`、`patched_versions >= 3.141.592661`、`credits=fishfish57`、CVSS 6.5；
+  重复草稿 `GHSA-xp93-vpw9-39wx` / `GHSA-h858-8xv9-257g` 已 `closed`。**`cve_id` 仍为
+  `null`**（GitHub CNA 异步分配）——这一项未闭合。
+- **[VERIFIED] wire 托管侧（部分闭合）**：CI 的 `Default-path request bytes` job 在 `fe98f0bc` 上
+  `success`，且设了 `WIRE_BASE_REQUIRED=1`；基线由 `scripts/wire-base.mjs` 选最新严格祖先
+  annotated tag，本版选到 `v3.141.592660`（不是 `.592658`）。**仍未闭合**：本机 wire 门 inert，
+  270/270 没有在本树复测——所以本条不写成「本机 270/270 已复测」。
+- **[VERIFIED] POSIX 全量门托管侧（部分闭合）**：`gate:release` 的 6 个步骤里 4 个已在托管 run 上
+  分别跑过（`spec-static-check`、`spec-baseline-check --all`、`secret-scan`、`test:release`）。
+  **仍未闭合**：`git diff --check` 与 `git diff --cached --check` 两步没有任何 workflow 运行
+  （`grep -n 'diff --check' .github/workflows/*.yml` 为空），单命令 `npm run gate:release` 从未跑过。
+- **[UNVERIFIED] 99 spec / 878 mutation 全量 sweep**：本机 0 次执行；托管侧
+  `spec-baseline-check.mjs --all` 只校验锚点与基线、不执行变异体。闭合命令不变。
+- **[UNVERIFIED] live 上游 / 真实 Desktop 客户端抓包**：仍是隔离函数与 hermetic 测试，
+  没有把病态 payload 发给真实服务。
+- **[UNVERIFIED] Node 22 全量**：便携 Node 22 只在隔离目录里解包，全量没有跑。
+- **[UNVERIFIED] 沿用 3.141.592660 §7 的其余边界**：CTX-01 live、`clear_thinking` 族边界、
+  S03、IMG-01、TRN-01、G01–G03/G06、Q1 G4、support-bundle 生产形态、HTTP socket 端到端、
+  进程级并发准入残余、Q4 G12、Q4 `messages.js` 日志、592658 的 M4/多段/`pr-gate`——逐条见
+  `RELEASE_NOTES_3.141.592660.md` §7。
+
+**`Run 42926473911` 的 `conclusion=failure` 是历史记录，本节不替它改口。** 真因是
+`.github/workflows/release.yml` 的 `files:` 同时用 `*.sigstore.json` glob 和两行显式条目
+列举了 `image-digest.txt.sigstore.json` 与 `release-attestation.json.sigstore.json`
+（16 条路径 / 14 个唯一名）：action 不去重、无上限并发上传，同名两路上传互相 422 删除，
+幸存的那次 PUT 404，于是 `Create GitHub Release` 失败、两个 bundle 缺位，资产由 release id
+带外补齐。修法（显式 14 条清单 + `preserve_order` + `overwrite_files: false` +
+`fail_on_unmatched_files` + 独立 `verify` job + 每 ref 串行 concurrency）只对之后创建的 tag
+生效，本版无法回改。
 
 ## Security acknowledgments / 致谢
 

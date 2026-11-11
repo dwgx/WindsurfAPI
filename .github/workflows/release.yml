@@ -4,6 +4,14 @@ on:
   push:
     tags: ['v*']
 
+# Two runs for the same tag would upload into the same release object and
+# delete each other's assets (that is one of the two failure modes v3.141.592661
+# hit). Serialise per ref instead of cancelling: a cancelled run leaves a
+# half-populated release behind, a queued one just waits.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   test:
     name: Test
@@ -378,7 +386,9 @@ jobs:
     name: GitHub Release
     needs: [docker, windows-exe, macos-exe-arm64]
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    # 15, not 10: uploads are serialised (`preserve_order`) so 14 assets no longer
+    # race, which trades wall clock for determinism.
+    timeout-minutes: 15
     permissions:
       contents: write
       # SEC-04: keyless cosign signing exchanges this job's GitHub OIDC token
@@ -542,23 +552,90 @@ jobs:
           ls -l release-attestation.json release-attestation.json.sigstore.json
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3
+        # Duplicate-free manifest on purpose. v3.141.592661 shipped `*.sigstore.json`
+        # (7 matches) PLUS `image-digest.txt.sigstore.json` and
+        # `release-attestation.json.sigstore.json` as separate lines: 16 paths for 14
+        # names. The action does not de-duplicate and uploads with unbounded
+        # `Promise.all`, so two uploads of the same name ran concurrently, each 422
+        # deleted the other's asset, and the survivor's PUT 404'd — the release ended
+        # `failure` with a hole where those two bundles should have been.
+        #
+        # So: one path per published name — 14 names through 11 patterns, no overlap. Ten
+        # paths are explicit; the four `windsurfapi*` bundles (one per build artifact) come
+        # from a single glob, and the three non-build bundles stay explicit because each is
+        # produced by its own step. `*.sig` and `*.pem` are gone: nothing produces
+        # them any more, and with `fail_on_unmatched_files` an unmatched pattern is a hard
+        # failure, so a dead pattern would fail every release. `preserve_order` uploads
+        # serially, `overwrite_files: false` makes a re-run fill gaps instead of
+        # re-deleting siblings, and the `verify` job below asserts the published set is
+        # exactly these 14 names, so a stray or missing bundle still fails the run.
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64 # v3.0.3
         with:
           name: v${{ steps.version.outputs.VERSION }}
           body_path: ${{ steps.notes.outputs.found == 'true' && steps.notes.outputs.file || '' }}
           generate_release_notes: ${{ steps.notes.outputs.found != 'true' }}
           draft: false
           prerelease: ${{ contains(github.ref_name, '-') }}
+          overwrite_files: false
+          preserve_order: true
+          fail_on_unmatched_files: true
           files: |
-            *.sig
-            *.pem
-            *.sigstore.json
             dist-windows/windsurfapi.exe
             dist-windows/windsurfapi-windows.zip
             dist-macos/windsurfapi-macos-arm64
             windsurfapi-macos.zip
             image-digest.txt
-            image-digest.txt.sigstore.json
             release-attestation.json
+            windsurfapi*.sigstore.json
+            SHA256SUMS.sigstore.json
+            image-digest.txt.sigstore.json
             release-attestation.json.sigstore.json
             SHA256SUMS
+
+  verify:
+    # Post-publish read-back, independent of whether the upload step itself
+    # succeeded: `if: always()` means a failed upload still prints which of the 14
+    # names is missing instead of leaving "assets: 14" as an assumption.
+    name: Verify published release
+    needs: release
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - name: Assert the release is complete and public
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          expected=$(printf '%s\n' \
+            SHA256SUMS SHA256SUMS.sigstore.json \
+            windsurfapi.exe windsurfapi.exe.sigstore.json \
+            windsurfapi-windows.zip windsurfapi-windows.zip.sigstore.json \
+            windsurfapi-macos-arm64 windsurfapi-macos-arm64.sigstore.json \
+            windsurfapi-macos.zip windsurfapi-macos.zip.sigstore.json \
+            image-digest.txt image-digest.txt.sigstore.json \
+            release-attestation.json release-attestation.json.sigstore.json | sort)
+          id=$(gh api "repos/$REPO/releases/tags/$TAG" --jq .id)
+          got=$(gh api "repos/$REPO/releases/$id" --jq '.assets[].name' | sort)
+          if [ "$expected" != "$got" ]; then
+            echo "::error::published asset set differs from the 14-name manifest"
+            diff -u <(printf '%s\n' "$expected") <(printf '%s\n' "$got") || true
+            exit 1
+          fi
+          [ "$(gh api "repos/$REPO/releases/$id" --jq '.assets|length')" = 14 ] || { echo "::error::expected 14 assets"; exit 1; }
+          [ "$(gh api "repos/$REPO/releases/$id" --jq '[.assets[].name|select(endswith(".sigstore.json"))]|length')" = 7 ] || { echo "::error::expected 7 sigstore bundles"; exit 1; }
+          [ "$(gh api "repos/$REPO/releases/$id" --jq '.draft')" = false ] || { echo "::error::release is still a draft"; exit 1; }
+          [ -n "$(gh api "repos/$REPO/releases/$id" --jq '.published_at // empty')" ] || { echo "::error::release has no published_at"; exit 1; }
+          [ "$(gh api "repos/$REPO/releases/$id" --jq '[.assets[]|select(.digest==null)]|length')" = 0 ] || { echo "::error::an asset carries no digest"; exit 1; }
+          [ "$(gh api "repos/$REPO/releases/latest" --jq .id)" = "$id" ] || { echo "::error::the release is not the latest pointer"; exit 1; }
+          dir=$(mktemp -d)
+          gh release download "$TAG" -R "$REPO" -p SHA256SUMS -D "$dir" --clobber
+          while read -r sum name; do
+            api=$(gh api "repos/$REPO/releases/$id" --jq ".assets[]|select(.name==\"$name\")|.digest")
+            [ "$api" = "sha256:$sum" ] || { echo "::error::digest mismatch for $name: api=$api manifest=sha256:$sum"; exit 1; }
+          done < "$dir/SHA256SUMS"
+          echo "verified $TAG id=$id assets=14 bundles=7 draft=false digest=$id manifest=4/4"

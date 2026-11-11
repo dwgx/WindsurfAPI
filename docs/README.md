@@ -200,6 +200,10 @@ silently stopped guarding. These are the tools that close that gap:
   task, rather than being summarised here. Read it before shipping anything: the version
   it replaced would have failed at step 3, because it told you to commit on `master`
   and the pre-commit hook refuses that.
+- **A Release body is a publication-time snapshot.** Post-publication verification is appended
+  to the published Release through the REST API (see the dated 「发布后核实」 section at the end
+  of the v3.141.592661 body), never by rewriting the notes file's own history. The 2026-11-11
+  run that produced it keeps its plan outside this tree (`OPTIMIZATION-PLAN.md`).
 
 ## Generated output
 
