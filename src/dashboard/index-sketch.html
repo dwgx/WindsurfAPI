@@ -3480,16 +3480,43 @@ const App = {
     if (!okConfirm) return;
     try {
       const r = await this.api('PUT', '/settings/credentials', { [field]: value });
+      // The API wrapper returns failure envelopes as values. Publication is
+      // separate from HTTP success: a warning can describe already-live values.
+      const updatedFlag = field === 'apiKey' ? 'apiKeyUpdated' : 'dashboardPasswordUpdated';
+      const applied = r?.applied === true
+        || (r?.applied !== false && r?.success === true && r?.[updatedFlag] === true);
+      if (!applied) {
+        const error = typeof r?.error === 'string' ? r.error : (r?.error?.message || 'ERR_CREDENTIAL_NOT_APPLIED');
+        this.toast(I18n.t('toast.saveFailed', { error }), 'error');
+        return;
+      }
+
       el.value = '';
-      this.toast(r.success ? 'saved' : '保存失败');
-      if (field === 'dashboardPassword' && !cleared) {
-        sessionStorage.removeItem('dashboard_password');
-        setTimeout(() => location.reload(), 800);
+      const warnings = Array.isArray(r.warnings) ? r.warnings : [];
+      const notices = [];
+      if (r.durability === 'unconfirmed' || warnings.includes('ERR_CREDENTIAL_DURABILITY_UNCONFIRMED')) {
+        notices.push(I18n.t('toast.credentialsAppliedDurabilityWarning'));
+      }
+      if (r.protection === 'failed' || warnings.includes('ERR_CREDENTIAL_PROTECTION_FAILED')) {
+        notices.push(I18n.t('toast.credentialsAppliedProtectionWarning'));
+      }
+      if (warnings.length && !notices.length) notices.push(I18n.t('toast.credentialsAppliedWarning'));
+      this.toast(notices.length ? notices.join(' ') : I18n.t('toast.saved'), notices.length ? 'error' : 'success');
+
+      // Clearing an override may also change the effective password. Invalidate
+      // the same credential store used by login, and stop polls before reload.
+      if (field === 'dashboardPassword') {
+        this.password = null;
+        try { localStorage.removeItem('dp'); } catch {}
+        Object.values(this.pollers || {}).forEach(clearInterval);
+        this.pollers = {};
+        // Let the operator read an applied-with-warning result before re-login.
+        setTimeout(() => location.reload(), notices.length ? 8000 : 800);
         return;
       }
       this.loadCredentials();
     } catch (e) {
-      this.toast('保存失败: ' + (e.message || ''));
+      this.toast(I18n.t('toast.saveFailed', { error: e.message || '' }), 'error');
     }
   },
   async toggleExperimental(key, val) {
