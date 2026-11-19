@@ -70,11 +70,11 @@ import { acpVisionEnabled } from '../devin-acp.js';
 import { selectBackend, usesCascadeFlow } from '../backend-router.js';
 import { toChatCompletion as _toChatCompletion, streamChatCompletion as _streamChatCompletion } from '../devin-connect-openai.js';
 import { resolveConnectSelector, DROUGHT_SAFE_SELECTORS, getConnectSelectorImageCapability } from '../devin-connect-models.js';
-import { getToolDefTags, parseToolCallTagMap, isParallelToolCallsHintIgnored, stripImageParts, findFilePartInMessages, unsupportedFilePartError } from '../devin-connect.js';
+import { getToolDefTags, parseToolCallTagMap, isParallelToolCallsHintIgnored, getImageFieldTag, stripImageParts, findFilePartInMessages, unsupportedFilePartError } from '../devin-connect.js';
 import { recordRateLimitBurstEvent, RATE_LIMIT_BURST_WINDOW_MS } from '../rate-limit-burst.js';
 import { isRouterModel, assignModel as _assignModel } from '../devin-connect-catalog.js';
 import { bumpConnect } from '../devin-connect-metrics.js';
-import { resolveSessionBinding as resolveConnectSessionBinding, commitSessionBinding as commitConnectSession, isSessionReuseEnabled } from '../session-continuity.js';
+import { canonicalize as canonicalizeConnectHistory, resolveSessionBinding as resolveConnectSessionBinding, commitSessionBinding as commitConnectSession, isSessionReuseEnabled } from '../session-continuity.js';
 import { newTraceId, traceClientRequest, traceRouting, traceClientResponse, traceEnabled } from '../trace.js';
 import { sanitizeText, sanitizeToolCall, PathSanitizeStream } from '../sanitize.js';
 import {
@@ -4496,8 +4496,18 @@ async function _handleChatCompletionsInner(body, context = {}) {
         }
       }
     }
-    const scopedSession = hasPerUserScope(callerKey);
-    const connectSession = scopedSession && !__sHit ? resolveConnectSessionBinding(callerKey, connectMessages) : null;
+    const hasCallerScope = hasPerUserScope(callerKey);
+    // With image transport disabled, continuity follows only the text/tools
+    // that can reach the model. Keep connectParams.messages for the adapter.
+    const stripped = hasCallerScope && !__sHit && getImageFieldTag() === 0 && isSessionReuseEnabled()
+      ? stripImageParts(connectMessages) : null;
+    const continuityMessages = stripped?.messages ?? connectMessages;
+    const emptyAfterStrip = stripped?.dropped && !canonicalizeConnectHistory(continuityMessages).some(
+      event => event.kind === 'tool_result' || event.kind === 'tool_call'
+        || (event.role === 'user' && event.kind === 'text' && event.payload.trim()),
+    );
+    const scopedSession = hasCallerScope && !emptyAfterStrip;
+    const connectSession = scopedSession && !__sHit ? resolveConnectSessionBinding(callerKey, continuityMessages) : null;
     if (connectSession) {
       const { sessionId: connectSessionId, modelConfig, reasoningTrail } = connectSession;
       connectParams.sessionId = connectSessionId;
@@ -4505,8 +4515,10 @@ async function _handleChatCompletionsInner(body, context = {}) {
       if (reasoningTrail) connectParams.continuityTrail = reasoningTrail;
       log.info(`Chat[${reqId}]: DEVIN_CONNECT session reuse active → session_id=${connectSessionId}${modelConfig ? ` model_config=stable turn=${modelConfig.turn}` : ''} acct=${ccAcct?.account?.id || 'env-token'}`);
     } else if (!__sHit) {
-      const reason = !scopedSession ? 'no per-user or session scope'
-        : isSessionReuseEnabled() ? 'image content identity unavailable' : 'DEVIN_CONNECT_SESSION_REUSE off';
+      let reason = 'DEVIN_CONNECT_SESSION_REUSE off';
+      if (!hasCallerScope) reason = 'no per-user or session scope';
+      else if (emptyAfterStrip) reason = 'no input identity after disabling images';
+      else if (isSessionReuseEnabled()) reason = 'image content identity unavailable';
       log.debug(`Chat[${reqId}]: DEVIN_CONNECT session_id source=fresh-per-request (${reason})`);
       if (!_connectSessionSourceNoted) {
         _connectSessionSourceNoted = true;
@@ -5033,7 +5045,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
                       // Ids are untouched by the name map and already client-normalized
                       // by the adapter, so `r.sr.toolCalls` is exactly the right shape.
                       const tc = r.sr?.toolCalls;
-                      const commitMsgs = [...connectMessages, {
+                      const commitMsgs = [...continuityMessages, {
                         role: 'assistant',
                         content: r.sr?.content || '',
                         ...(tc?.length ? { tool_calls: tc.map((t, idx) => ({ id: t.id || `tc_${idx}`, function: { name: t.name, arguments: t.argumentsJson || t.arguments || '' } })) } : {}),
@@ -5294,7 +5306,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
         if (connectParams.sessionId) {
           try {
             const msg = r.out?.body?.choices?.[0]?.message;
-            const commitMsgs = [...connectMessages, {
+            const commitMsgs = [...continuityMessages, {
               role: 'assistant',
               content: msg?.content || '',
               ...(msg?.tool_calls ? { tool_calls: msg.tool_calls } : {}),

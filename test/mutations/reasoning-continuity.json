@@ -6,8 +6,8 @@
     "test/devin-connect-openai.test.js",
     "test/session-continuity-commit-fallback.test.js"
   ],
-  "_baseline_provenance": "Measured on 2026-11-19 JST, Windows Node v24.19.0. The buffered and streamed post-dispatch eviction checks and the image-identity routing check add three cases to the previous 344. Running the five declared files with node --import ./test/setup-env.mjs --test yielded 347 passed, 0 failed, 0 skipped.",
-  "expectBaselinePass": 347,
+  "_baseline_provenance": "Measured on 2026-11-19 JST, Windows Node v24.19.0. The buffered and streamed cases for disabled-image text continuity and fresh media-only openers add four cases to the previous 347. Running the five declared files with node --import ./test/setup-env.mjs --test yielded 351 passed, 0 failed, 0 skipped.",
+  "expectBaselinePass": 351,
   "mutations": [
     {
       "name": "T1 store: the overlap-target commit path stops saving the reasoning tail",

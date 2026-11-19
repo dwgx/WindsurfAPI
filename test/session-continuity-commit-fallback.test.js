@@ -57,7 +57,7 @@ async function scopedChat(singleTenant) {
 describe('Connect continuity follows the caller scope at dispatch and completion', () => {
   const settings = {
     DEVIN_CONNECT: '1', DEVIN_CONNECT_SESSION_REUSE: '1', DEVIN_CONNECT_MODEL_CONFIG_STABLE: '1',
-    DEVIN_CONNECT_SESSION_REASONING_INJECT: '1', RESPONSE_CACHE_ENABLED: '0',
+    DEVIN_CONNECT_SESSION_REASONING_INJECT: '1', DEVIN_CONNECT_IMAGE_TAG: '10', RESPONSE_CACHE_ENABLED: '0',
   };
   let account, saved;
   beforeEach(() => {
@@ -84,6 +84,8 @@ describe('Connect continuity follows the caller scope at dispatch and completion
     { name: 'single-tenant guessed client', callerKey: 'api:fixture:client:fixture', singleTenant: true, reuse: true },
     { name: 'single-tenant unattributed key', callerKey: 'api:fixture', singleTenant: true },
     { name: 'disabled reuse', callerKey: 'session:fixture', disabled: true },
+    { name: 'disabled image transport', callerKey: 'session:fixture', imagesOff: true, reuse: true },
+    { name: 'media-only opener with disabled image transport', callerKey: 'session:fixture', imagesOff: true, mediaOnly: true },
   ];
   for (const stream of [false, true]) {
     it(`${stream ? 'streamed' : 'buffered'} completion cannot recreate a state evicted after dispatch`, async (t) => {
@@ -151,6 +153,7 @@ describe('Connect continuity follows the caller scope at dispatch and completion
         const chat = await scopedChat(!!example.singleTenant);
         t.after(() => chat.__resetConnectDeps());
         if (example.disabled) delete process.env.DEVIN_CONNECT_SESSION_REUSE;
+        if (example.imagesOff) process.env.DEVIN_CONNECT_IMAGE_TAG = '0';
         const notices = [];
         t.mock.method(log, 'debug', (message) => {
           if (typeof message === 'string' && message.includes('session_id source=fresh-per-request')) notices.push(message);
@@ -168,7 +171,13 @@ describe('Connect continuity follows the caller scope at dispatch and completion
             return { content: 'ok' };
           },
         });
-        for (const messages of [[{ role: 'user', content: 'hi' }], nextTurnMessages()]) {
+        const image = { type: 'image_url', image_url: { url: 'https://fixture.invalid/image' } };
+        let openingContent = 'hi';
+        if (example.imagesOff) {
+          openingContent = example.mediaOnly ? [image] : [{ type: 'text', text: 'hi' }, image];
+        }
+        const opening = [{ role: 'user', content: openingContent }];
+        for (const messages of [opening, example.mediaOnly ? opening : nextTurnMessages()]) {
           const result = await chat.handleChatCompletions(
             { model: 'swe-1-6-slow', stream, messages, __incomingThinking: INCOMING },
             { callerKey: example.callerKey },
@@ -183,10 +192,14 @@ describe('Connect continuity follows the caller scope at dispatch and completion
           }
         }
         assert.equal(calls.length, 2);
+        if (example.imagesOff) {
+          // Only the continuity view strips images. This mock never fetches the reference.
+          assert.ok(calls[0].messages.some(m => Array.isArray(m.content) && m.content.some(p => p.type === 'image_url')));
+        }
         if (example.reuse) {
-          assert.equal(notices.length, 0);
           const [first, second] = calls;
-          assert.ok(first.sessionId);
+          assert.ok(first.sessionId, 'the opening turn must receive a continuity session ID');
+          assert.equal(notices.length, 0);
           assert.equal(second.sessionId, first.sessionId);
           assert.ok(first.sessionModelConfig.id);
           assert.deepEqual(second.sessionModelConfig, { id: first.sessionModelConfig.id, turn: 2 });
@@ -194,7 +207,8 @@ describe('Connect continuity follows the caller scope at dispatch and completion
           assert.equal(_getStoreSize(), 1);
         } else {
           assert.equal(_getStoreSize(), 0, 'a caller on the fresh-session path must leave no continuity state');
-          const reason = example.disabled ? 'DEVIN_CONNECT_SESSION_REUSE off' : 'no per-user or session scope';
+          const reason = example.disabled ? 'DEVIN_CONNECT_SESSION_REUSE off'
+            : example.mediaOnly ? 'no input identity after disabling images' : 'no per-user or session scope';
           assert.equal(notices.length, 2);
           assert.ok(notices.every(line => line.includes(reason)));
           for (const params of calls) {
