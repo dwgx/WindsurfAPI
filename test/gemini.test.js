@@ -253,9 +253,14 @@ describe('geminiToOpenAI request translation', () => {
   it('maps toolConfig ANY+single name to a pinned function tool_choice', () => {
     const out = geminiToOpenAI({
       contents: [{ role: 'user', parts: [{ text: 'x' }] }],
+      // ANY is a function-calling constraint on declared functions; the old
+      // fixture omitted tools entirely, which the adapter must now refuse.
+      tools: [{ functionDeclarations: [{ name: 'only_fn' }] }],
       toolConfig: { functionCallingConfig: { mode: 'ANY', allowedFunctionNames: ['only_fn'] } },
     });
     assert.deepEqual(out.tool_choice, { type: 'function', function: { name: 'only_fn' } });
+    assert.deepEqual(out.tools.map((t) => t.function.name), ['only_fn'],
+      'ANY narrows the offered declarations to the allowlist');
   });
 
   it('maps responseMimeType json to response_format', () => {
@@ -471,6 +476,104 @@ describe('handleGemini non-stream', () => {
       assert.equal(result.body.error.param, 'tools');
       assert.match(result.body.error.message, new RegExp(key));
     }
+    assert.equal(upstreamCalls, 0, 'the rejected request must never reach the upstream');
+  });
+
+  it('ANY with a nonempty allowlist offers exactly the allowed declarations (route entry)', async () => {
+    let forwarded = null;
+    const result = await handleGemini('gemini-2.5-pro', {
+      contents: [{ role: 'user', parts: [{ text: 'go' }] }],
+      tools: [{ functionDeclarations: [
+        { name: 'lookup_weather', parameters: { type: 'OBJECT' } },
+        { name: 'lookup_timezone', parameters: { type: 'OBJECT' } },
+        { name: 'lookup_city', parameters: { type: 'OBJECT' } },
+      ] }],
+      toolConfig: { functionCallingConfig: { mode: 'ANY', allowedFunctionNames: ['lookup_weather', 'lookup_timezone'] } },
+    }, {
+      async handleChatCompletions(body) {
+        forwarded = {
+          tools: body.tools.map((t) => t.function.name),
+          toolChoice: body.tool_choice,
+        };
+        return {
+          status: 200,
+          body: { choices: [{ message: { content: 'ok' }, finish_reason: 'stop' }], usage: {} },
+        };
+      },
+    }, { stream: false });
+    assert.equal(result.status, 200);
+    assert.deepEqual(forwarded.tools, ['lookup_weather', 'lookup_timezone'],
+      'the chat boundary must receive exactly the two allowed declarations, not all three');
+    assert.equal(forwarded.toolChoice, 'required',
+      'a multi-name allowlist keeps the required-call mode');
+  });
+
+  it('ANY without a list keeps every declaration offered (control)', async () => {
+    let forwarded = null;
+    const result = await handleGemini('gemini-2.5-pro', {
+      contents: [{ role: 'user', parts: [{ text: 'go' }] }],
+      tools: [{ functionDeclarations: [
+        { name: 'lookup_weather' }, { name: 'lookup_timezone' }, { name: 'lookup_city' },
+      ] }],
+      toolConfig: { functionCallingConfig: { mode: 'ANY' } },
+    }, {
+      async handleChatCompletions(body) {
+        forwarded = body.tools.map((t) => t.function.name);
+        return { status: 200, body: { choices: [{ message: { content: 'ok' }, finish_reason: 'stop' }], usage: {} } };
+      },
+    }, { stream: false });
+    assert.equal(result.status, 200);
+    assert.deepEqual(forwarded, ['lookup_weather', 'lookup_timezone', 'lookup_city']);
+  });
+
+  it('applies the wire-name map to a narrowed ANY allowlist (route entry)', async () => {
+    let forwarded = null;
+    const result = await handleGemini('gemini-2.5-pro', {
+      contents: [{ role: 'user', parts: [{ text: 'go' }] }],
+      tools: [{ functionDeclarations: [{ name: 'foo.bar' }, { name: 'plain' }] }],
+      toolConfig: { functionCallingConfig: { mode: 'ANY', allowedFunctionNames: ['foo.bar'] } },
+    }, {
+      async handleChatCompletions(body) {
+        forwarded = {
+          tools: body.tools.map((t) => t.function.name),
+          toolChoice: body.tool_choice,
+        };
+        return { status: 200, body: { choices: [{ message: { content: 'ok' }, finish_reason: 'stop' }], usage: {} } };
+      },
+    }, { stream: false });
+    assert.equal(result.status, 200);
+    assert.deepEqual(forwarded.tools, ['foo_bar'],
+      'the narrowed declaration must carry the sanitized wire name');
+    assert.deepEqual(forwarded.toolChoice, { type: 'function', function: { name: 'foo_bar' } },
+      'the single-name pin must map to the wire name too');
+  });
+
+  it('rejects an ANY allowlist naming an undeclared function with a typed 400', async () => {
+    let upstreamCalls = 0;
+    assert.throws(
+      () => geminiToOpenAI({
+        contents: [{ role: 'user', parts: [{ text: 'x' }] }],
+        tools: [{ functionDeclarations: [{ name: 'a' }] }],
+        toolConfig: { functionCallingConfig: { mode: 'ANY', allowedFunctionNames: ['a', 'ghost'] } },
+      }),
+      (err) => err.status === 400 && err.code === 'unknown_allowed_function_name',
+      'the translator must name the offending allowlist entry',
+    );
+    const result = await handleGemini('gemini-2.5-pro', {
+      contents: [{ role: 'user', parts: [{ text: 'go' }] }],
+      tools: [{ functionDeclarations: [{ name: 'a' }] }],
+      toolConfig: { functionCallingConfig: { mode: 'ANY', allowedFunctionNames: ['ghost'] } },
+    }, {
+      async handleChatCompletions() {
+        upstreamCalls++;
+        return { status: 200, body: { choices: [{ message: { content: 'ok' }, finish_reason: 'stop' }], usage: {} } };
+      },
+    }, { stream: false });
+    assert.equal(result.status, 400);
+    assert.equal(result.body.error.code, 400);
+    assert.equal(result.body.error.status, 'INVALID_ARGUMENT');
+    assert.equal(result.body.error.type, 'unknown_allowed_function_name');
+    assert.match(result.body.error.message, /ghost/);
     assert.equal(upstreamCalls, 0, 'the rejected request must never reach the upstream');
   });
 });
@@ -825,11 +928,15 @@ describe('geminiToOpenAI supplemental part + config coverage', () => {
     assert.equal(none.tool_choice, 'none');
 
     // ANY with several (or zero) allowed names is a generic "must call a tool".
+    // A nonempty list also narrows the offered declarations; without one every
+    // declaration stays offered.
     const anyMulti = geminiToOpenAI({
       contents: [{ role: 'user', parts: [{ text: 'x' }] }],
+      tools: [{ functionDeclarations: [{ name: 'a' }, { name: 'b' }] }],
       toolConfig: { functionCallingConfig: { mode: 'ANY', allowedFunctionNames: ['a', 'b'] } },
     });
     assert.equal(anyMulti.tool_choice, 'required');
+    assert.deepEqual(anyMulti.tools.map((t) => t.function.name), ['a', 'b']);
   });
 
   it('omits tool_choice when no toolConfig is present', () => {

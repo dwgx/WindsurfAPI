@@ -162,7 +162,11 @@ function mapGeminiToolChoice(toolConfig) {
   switch (String(mode).toUpperCase()) {
     case 'AUTO': return 'auto';
     case 'ANY': {
-      // ANY with a single allowed name pins that function; otherwise "required".
+      // ANY pins a single allowed function; several (or zero) allowed names are
+      // a generic "must call one of the offered tools" ('required'). The offered
+      // set itself is narrowed in geminiToOpenAI to exactly the allowlisted
+      // declarations (and unknown names are rejected there), so 'required' can
+      // only propose functions the caller actually allowed this turn.
       const allowed = toolConfig.functionCallingConfig.allowedFunctionNames;
       if (Array.isArray(allowed) && allowed.length === 1) {
         return { type: 'function', function: { name: allowed[0] } };
@@ -212,6 +216,30 @@ export function geminiToOpenAI(body, modelFromPath) {
   const allowedNames = Array.isArray(body?.toolConfig?.functionCallingConfig?.allowedFunctionNames)
     ? body.toolConfig.functionCallingConfig.allowedFunctionNames.filter((n) => typeof n === 'string' && n)
     : [];
+  // P2 (adapters audit): Gemini's ANY mode with a nonempty allowedFunctionNames
+  // list constrains WHICH declared functions the model may call this turn. The
+  // old mapping forwarded every declaration with a generic tool_choice, so a
+  // callable the caller meant to exclude for this turn stayed offered and could
+  // be proposed. Narrow the offered declarations to exactly the requested
+  // client names (mapGeminiToolChoice keeps the pin/required shape), and reject
+  // an allowlist that names a function nobody declared — Google's own API
+  // refuses that instead of letting the upstream resolve an unknown name.
+  // Checked before any model turn, like the server-side-tool refusal.
+  const fnCallMode = String(body?.toolConfig?.functionCallingConfig?.mode || '').toUpperCase();
+  const rawAllowedNames = body?.toolConfig?.functionCallingConfig?.allowedFunctionNames;
+  let anyAllowlist = null;
+  if (fnCallMode === 'ANY' && Array.isArray(rawAllowedNames) && rawAllowedNames.length) {
+    const unknown = rawAllowedNames.filter((n) => !declaredNames.includes(n));
+    if (unknown.length) {
+      const err = new Error(
+        `toolConfig.functionCallingConfig.allowedFunctionNames must name functions declared in tools.functionDeclarations (unknown: ${unknown.map((n) => JSON.stringify(n)).join(', ')})`,
+      );
+      err.status = 400;
+      err.code = 'unknown_allowed_function_name';
+      throw err;
+    }
+    anyAllowlist = new Set(rawAllowedNames);
+  }
   const toolNameMap = toolHygieneEnabled()
     ? buildToolNameMap([...declaredNames, ...historyNames, ...allowedNames])
     : null;
@@ -339,6 +367,10 @@ export function geminiToOpenAI(body, modelFromPath) {
   for (const t of (body?.tools || [])) {
     if (Array.isArray(t?.functionDeclarations)) {
       for (const fd of t.functionDeclarations) {
+        // ANY + nonempty allowlist: only the requested client names are offered
+        // this turn (validated as a declared subset above). Other modes keep
+        // every declaration.
+        if (anyAllowlist && !anyAllowlist.has(fd.name)) continue;
         tools.push({
           type: 'function',
           function: {
@@ -987,6 +1019,14 @@ export async function handleGemini(model, body, context = {}, { stream = false, 
       // carries a numeric `code` + status enum, so the shared string code rides
       // as `type` (the field OpenAI-family clients branch on) instead of
       // clobbering the numeric code.
+      const mapped = geminiError(err.status || 400, null, err.message);
+      mapped.body.error.type = err.code;
+      if (err.param) mapped.body.error.param = err.param;
+      return mapped;
+    }
+    if (err?.code === 'unknown_allowed_function_name') {
+      // P2: an ANY allowlist naming an undeclared function. Same envelope as
+      // the server-side-tool refusal — the string code rides as `type`.
       const mapped = geminiError(err.status || 400, null, err.message);
       mapped.body.error.type = err.code;
       if (err.param) mapped.body.error.param = err.param;
