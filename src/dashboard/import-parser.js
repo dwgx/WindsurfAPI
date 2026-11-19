@@ -67,7 +67,11 @@ export function redactedProxyLabel(proxy) {
     const [ip] = address.split('%');
     return `${type}://[${ip}]:${port}`;
   }
-  if (!/^[\p{L}\p{N}\p{M}._-]+$/u.test(host)) return null;
+  // Keep the bare-host check before URL host parsing: a URL suffix can be
+  // discarded by domainToASCII. IDNA accepts three Unicode dot separators
+  // and a Catalan middle dot between two Ls. Convert only for the syntax check.
+  const bare = host.replace(/(?<=[lL])·(?=[lL])/g, '').replace(/[\u3002\uFF0E\uFF61]/g, '.');
+  if (!/^[\p{L}\p{N}\p{M}._-]+$/u.test(bare)) return null;
   const ascii = domainToASCII(host).replace(/\.$/, '');
   if (ascii.length > 253 || !ascii.split('.').every(label => DNS_LABEL.test(label))) return null;
   return `${type}://${host}:${port}`;

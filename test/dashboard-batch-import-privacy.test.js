@@ -57,3 +57,13 @@ test('import keeps usable public labels for DNS, IP and supported proxy types', 
     assert.deepEqual(binding, { accountId: 'row-1', proxy });
   }
 });
+
+test('object proxies retain bare IDNA hosts with Catalan middle dot and standard label separators', () => {
+  for (const host of ['l·l.example', '例え。テスト', '例え．テスト', '例え｡テスト']) {
+    const proxy = { type: 'https', host, port: 443 };
+    const entry = parser.parseBatchImportJsonItem({ token: 'sample', proxy }, 1, dashboard.parseProxyUrl);
+    assert.equal(entry.kind, 'token');
+    assert.equal(entry.proxy.host, host);
+    assert.equal(parser.redactedProxyLabel(entry.proxy), `https://${host}:443`);
+  }
+});
