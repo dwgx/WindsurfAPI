@@ -64,7 +64,7 @@ describe('Connect continuity follows the caller scope at dispatch and completion
     saved = Object.fromEntries(Object.keys(settings).map(key => [key, process.env[key]]));
     Object.assign(process.env, settings);
     _resetForTests();
-    account = addAccountByKey('sk-test-scoped-continuity', 'scope-fixture');
+    account = addAccountByKey('fixture-connect-scope', 'scope-fixture');
   });
   afterEach(() => {
     removeAccount(account.id);
