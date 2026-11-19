@@ -260,14 +260,14 @@ describe('shutdown finalization is single-flight', () => {
     assert.deepEqual(unhandled, []);
   });
 
-  test('a throwing log sink cannot strand shutdown as an unhandled rejection', async () => {
+  test('a throwing log sink cannot strand shutdown after the drain settles', async () => {
     const h = makeHarness({ drain: 'resolved', logThrows: true });
     h.shutdown('SIGTERM');
     h.closeCallback();
     await tick();
     await tick();
-    assert.deepEqual(h.exits, [], 'the failure is swallowed after the drain, not retried into an exit loop');
+    assert.deepEqual(h.exits, [0], 'a completion log failure must not suppress the one exit request');
     assert.deepEqual(unhandled, []);
-    assert.equal(hasLog(h.logs, 'error', /Shutdown finalization failed/), true);
+    assert.equal(hasLog(h.logs, 'error', /Shutdown completion log failed/), true);
   });
 });

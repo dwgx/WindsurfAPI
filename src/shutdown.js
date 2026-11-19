@@ -50,7 +50,12 @@ export function createShutdownController({
         } catch {
           try { stopLanguageServer(); } catch {}
         }
-        log.info(`Shutdown complete (${reason})`);
+        // Logging must not strand shutdown after the deadline is retired.
+        // The exit request remains mandatory once the bounded drain settles.
+        try { log.info(`Shutdown complete (${reason})`); }
+        catch (e) {
+          try { log.error(`Shutdown completion log failed: ${e?.message || e}`); } catch {}
+        }
         exit(0);
       } catch (e) {
         // process.exit never returns in production; anything that does throw
