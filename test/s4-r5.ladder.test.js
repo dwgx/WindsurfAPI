@@ -42,7 +42,11 @@ async function run(pattern, env = {}, emittedInitially = false) {
     jsonSchema: null,
     log: { info() {}, error() {} }, AbortController,
   };
-  const body = `${topFunction('acquireConnectFailover')}\n${topFunction('connectFailoverMax')}\nreturn (async () => {
+  // The extracted success arm uses the real delivery helper and its private
+  // Symbol, including the no-hook direct Chat behaviour pinned by this fixture.
+  const deliverySymbol = source.match(/^export (const DEFER_STREAM_DELIVERY = Symbol\([^\r\n]*\);)$/m)?.[1];
+  assert.ok(deliverySymbol, 'actual DEFER_STREAM_DELIVERY declaration must exist');
+  const body = `${deliverySymbol}\n${topFunction('publishStreamDelivery')}\n${topFunction('acquireConnectFailover')}\n${topFunction('connectFailoverMax')}\nreturn (async () => {
     const connectParams = {}, connectMeta = {}, reqId = 'r', reqModelName = 'model', selector = 'model', connectDisplayModel = 'model';
     const ccStart = 0, ccAcct = accounts[0], callerKey = 'owner', connectMessages = [], incomingConnectReasoning = '';
     const abortController = new AbortController(), triedKeys = [], maxHops = connectFailoverMax(env);
