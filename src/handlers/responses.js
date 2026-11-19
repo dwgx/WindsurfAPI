@@ -2618,20 +2618,20 @@ export async function handleResponses(body, deps = {}) {
       // Chat handler returns. A false verdict there parks the translator's writer
       // until the real socket drains — or until the client closes/errors and the
       // writer times out. Everything below is delivery-dependent, so settle that
-      // pressure FIRST: committing while the terminal is still unacknowledged
-      // stored a turn the caller may never receive, and a close/timeout during
-      // this window left both the stored record and a late `[DONE]` attempt.
+      // pressure FIRST: committing while the terminal is still locally queued
+      // can retain a turn after a close/timeout and permit a late `[DONE]`.
+      // This is a server-observable egress check, not a peer receipt or ACK.
       await translator.settleEgress();
 
-      // Persist only a DELIVERED completed/incomplete turn. Committing a
-      // half-turn (aborted, errored or undelivered) would poison the next
-      // request's context with a reply the client never received.
+      // Persist a completed/incomplete turn only after the observed egress
+      // conditions settle successfully. Close/error/timeout must suppress
+      // retention; successful local drain does not prove peer consumption.
       //
       // The gate is `aborted`, NOT `truncated`. Those are different things and
       // conflating them broke chaining for legitimate truncation: a turn that
       // ended with a real finish_reason of 'length' / 'content_filter' IS a
-      // complete, client-delivered turn — the model stopped for a reason the
-      // client can see and act on, and OpenAI lets it be chained from. The
+      // valid terminal result when the egress checks pass: the model stopped
+      // for a reported reason, and OpenAI lets it be chained from. The
       // non-streaming path always committed those, so gating the streaming path
       // on `truncated` split the two paths' behaviour for the identical
       // finish_reason (verified: streaming length → not chainable, non-streaming
@@ -2641,9 +2641,8 @@ export async function handleResponses(body, deps = {}) {
       // `aborted` is the case `failed` cannot see: a stream that ended with no
       // (real) terminal chunk at all raises no error, so it reached here looking
       // clean and its half answer was stored as the next turn's context.
-      // `clientGone` (V-08): a drain timeout means the client stopped reading,
-      // so the half turn it never received must not become the next turn's
-      // context either. `clientClosed` / `clientErrored` are the same verdict for
+      // `clientGone` (V-08): a drain timeout leaves egress unresolved, so
+      // the turn must not become the next request's context. `clientClosed` / `clientErrored` are the same verdict for
       // a socket that closed or failed while the terminal was parked on `drain`.
       const terminalDelivered = translator.finished
         && !translator.failed
