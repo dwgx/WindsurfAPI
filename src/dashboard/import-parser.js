@@ -53,6 +53,10 @@ function getFirstString(obj, keys) {
 
 const PROXY_TYPES = new Set(['http', 'https', 'socks', 'socks5', 'socks5h']);
 const DNS_LABEL = /^[a-z0-9_](?:[a-z0-9_-]{0,61}[a-z0-9_])?$/i;
+const NON_HOST_ASCII = /[^A-Za-z0-9._\u0080-\u{10FFFF}-]/u;
+// IDNA checks the two contextual joiners. Other invisible formatting and
+// controls do not belong in the public display label.
+const UNSAFE_DISPLAY = /[\s\p{Cc}\p{Cs}]|(?![\u200C\u200D])\p{Cf}/u;
 
 // Only bare hostnames and IP literals belong in a public proxy label.
 // DNS resolution and the private-address policy still run before use.
@@ -67,13 +71,14 @@ export function redactedProxyLabel(proxy) {
     const [ip] = address.split('%');
     return `${type}://[${ip}]:${port}`;
   }
-  // Keep the bare-host check before URL host parsing: a URL suffix can be
-  // discarded by domainToASCII. IDNA accepts three Unicode dot separators
-  // and a Catalan middle dot between two Ls. Convert only for the syntax check.
-  const bare = host.replace(/(?<=[lL])·(?=[lL])/g, '').replace(/[\u3002\uFF0E\uFF61]/g, '.');
-  if (!/^[\p{L}\p{N}\p{M}._-]+$/u.test(bare)) return null;
-  const ascii = domainToASCII(host).replace(/\.$/, '');
-  if (ascii.length > 253 || !ascii.split('.').every(label => DNS_LABEL.test(label))) return null;
+  if (UNSAFE_DISPLAY.test(host) || NON_HOST_ASCII.test(host) || NON_HOST_ASCII.test(host.normalize('NFKC'))) return null;
+  const ascii = domainToASCII(host);
+  const name = ascii.replace(/\.$/, '');
+  if (name.length > 253 || !name.split('.').every(label => DNS_LABEL.test(label))) return null;
+  // Node's host parser must consume the entire input. An appended label must
+  // survive and change the result, even if the input already ends in .invalid.
+  const suffixed = domainToASCII(`${host}.invalid`);
+  if (suffixed === ascii || !suffixed.endsWith('.invalid')) return null;
   return `${type}://${host}:${port}`;
 }
 
