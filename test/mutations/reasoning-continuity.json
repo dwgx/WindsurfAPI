@@ -6,8 +6,8 @@
     "test/devin-connect-openai.test.js",
     "test/session-continuity-commit-fallback.test.js"
   ],
-  "_baseline_provenance": "Measured on 2026-11-19 JST, Windows Node v24.19.0, after adding 16 caller-scope cases. Running the five declared test files with node --import ./test/setup-env.mjs --test yielded 344 passed, 0 failed, 0 skipped.",
-  "expectBaselinePass": 344,
+  "_baseline_provenance": "Measured on 2026-11-19 JST, Windows Node v24.19.0. The buffered and streamed post-dispatch eviction checks and the image-identity routing check add three cases to the previous 344. Running the five declared files with node --import ./test/setup-env.mjs --test yielded 347 passed, 0 failed, 0 skipped.",
+  "expectBaselinePass": 347,
   "mutations": [
     {
       "name": "T1 store: the overlap-target commit path stops saving the reasoning tail",
@@ -54,14 +54,14 @@
     {
       "name": "T2 stream commit fallback dropped — outbound-empty reasoning no longer falls back to the inbound captured thinking (caught by test/session-continuity-commit-fallback.test.js stream fixture)",
       "file": "src/handlers/chat.js",
-      "anchor": "commitConnectSession(callerKey || '', commitMsgs, undefined, { reasoning: r.sr?.reasoning || incomingConnectReasoning });",
-      "replacement": "commitConnectSession(callerKey || '', commitMsgs, undefined, { reasoning: r.sr?.reasoning });"
+      "anchor": "commitConnectSession(callerKey, connectSession, commitMsgs, undefined, { reasoning: r.sr?.reasoning || incomingConnectReasoning });",
+      "replacement": "commitConnectSession(callerKey, connectSession, commitMsgs, undefined, { reasoning: r.sr?.reasoning });"
     },
     {
       "name": "T2 non-stream commit fallback dropped — same conjunction on the second call site (caught by the non-stream fixture)",
       "file": "src/handlers/chat.js",
-      "anchor": "commitConnectSession(callerKey || '', commitMsgs, undefined, { reasoning: msg?.reasoning_content || incomingConnectReasoning });",
-      "replacement": "commitConnectSession(callerKey || '', commitMsgs, undefined, { reasoning: msg?.reasoning_content });"
+      "anchor": "commitConnectSession(callerKey, connectSession, commitMsgs, undefined, { reasoning: msg?.reasoning_content || incomingConnectReasoning });",
+      "replacement": "commitConnectSession(callerKey, connectSession, commitMsgs, undefined, { reasoning: msg?.reasoning_content });"
     },
     {
       "name": "count clamp fractional hole — n=0.5 must fall back to the default 5, not Math.floor to a silent 0 (queue empty, digests gone)",

@@ -53,7 +53,7 @@ describe('chat handler: DEVIN_CONNECT reuse log carries the account', () => {
 // deployment had no way to see that every turn was a new upstream session.
 describe('chat handler: the session-id source is observable either way', () => {
   it('the reuse-off branch logs the fresh-per-request source', () => {
-    const idx = CHAT.indexOf('const connectSessionId = resolveConnectSessionId');
+    const idx = CHAT.indexOf('const connectSession = scopedSession && !__sHit ? resolveConnectSessionBinding');
     assert.ok(idx !== -1, 'the connect session resolution must exist');
     const block = CHAT.slice(idx, idx + 1800);
     assert.match(block, /session_id source=fresh-per-request/,

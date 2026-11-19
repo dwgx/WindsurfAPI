@@ -86,6 +86,66 @@ describe('Connect continuity follows the caller scope at dispatch and completion
     { name: 'disabled reuse', callerKey: 'session:fixture', disabled: true },
   ];
   for (const stream of [false, true]) {
+    it(`${stream ? 'streamed' : 'buffered'} completion cannot recreate a state evicted after dispatch`, async (t) => {
+      const chat = await scopedChat(false);
+      t.after(() => chat.__resetConnectDeps());
+      let dispatches = 0;
+      const evict = (params) => {
+        assert.ok(params.sessionId);
+        assert.equal(_getStoreSize(), 1);
+        _resetForTests();
+        dispatches++;
+      };
+      chat.__setConnectDeps({
+        async toChatCompletion(params) {
+          evict(params);
+          return { status: 200, body: { choices: [{ message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }] } };
+        },
+        async streamChatCompletion(params, send) {
+          evict(params);
+          await send('data: {"choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\n');
+          await send('data: [DONE]\n\n');
+          return { content: 'ok' };
+        },
+      });
+      const result = await chat.handleChatCompletions(
+        { model: 'swe-1-6-slow', stream, messages: [{ role: 'user', content: 'one work item' }] },
+        { callerKey: CALLER },
+      );
+      assert.equal(result.status, 200);
+      if (stream) {
+        const res = makeRes();
+        await result.handler(res);
+        assert.match(res.body, /\[DONE\]/);
+      } else assert.equal(result.body.choices[0].message.content, 'ok');
+      assert.equal(dispatches, 1);
+      assert.equal(_getStoreSize(), 0);
+    });
+  }
+  it('reports a fresh session for an image with no stable content identity', async (t) => {
+    const chat = await scopedChat(false);
+    t.after(() => chat.__resetConnectDeps());
+    const notices = [];
+    t.mock.method(log, 'debug', line => notices.push(line));
+    chat.__setConnectDeps({
+      async toChatCompletion(params) {
+        assert.equal(params.sessionId, undefined);
+        assert.equal(params.sessionModelConfig, undefined);
+        assert.equal(params.continuityTrail, undefined);
+        return { status: 200, body: { choices: [{ message: { role: 'assistant', content: 'ok' }, finish_reason: 'stop' }] } };
+      },
+    });
+    const result = await chat.handleChatCompletions({
+      model: 'swe-1-6-slow', messages: [{ role: 'user', content: [
+        { type: 'text', text: 'image input' },
+        { type: 'image_url', image_url: { url: 'https://fixture.invalid/image' } },
+      ] }],
+    }, { callerKey: CALLER });
+    assert.equal(result.status, 200);
+    assert.equal(_getStoreSize(), 0);
+    assert.ok(notices.some(line => String(line).includes('image content identity unavailable')));
+  });
+  for (const stream of [false, true]) {
     for (const example of cases) {
       it(`${stream ? 'streamed' : 'buffered'} / ${example.name}`, async (t) => {
         const chat = await scopedChat(!!example.singleTenant);

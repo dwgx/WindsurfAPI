@@ -74,7 +74,7 @@ import { getToolDefTags, parseToolCallTagMap, isParallelToolCallsHintIgnored, st
 import { recordRateLimitBurstEvent, RATE_LIMIT_BURST_WINDOW_MS } from '../rate-limit-burst.js';
 import { isRouterModel, assignModel as _assignModel } from '../devin-connect-catalog.js';
 import { bumpConnect } from '../devin-connect-metrics.js';
-import { resolveSessionId as resolveConnectSessionId, commitAfterResponse as commitConnectSession, getSessionModelConfig as getSessionConnectModelConfig, getSessionReasoningTrail as getSessionConnectReasoningTrail } from '../session-continuity.js';
+import { resolveSessionBinding as resolveConnectSessionBinding, commitSessionBinding as commitConnectSession, isSessionReuseEnabled } from '../session-continuity.js';
 import { newTraceId, traceClientRequest, traceRouting, traceClientResponse, traceEnabled } from '../trace.js';
 import { sanitizeText, sanitizeToolCall, PathSanitizeStream } from '../sanitize.js';
 import {
@@ -4497,19 +4497,16 @@ async function _handleChatCompletionsInner(body, context = {}) {
       }
     }
     const scopedSession = hasPerUserScope(callerKey);
-    if (scopedSession) {
-      const connectSessionId = resolveConnectSessionId(callerKey, connectMessages);
-      if (connectSessionId) {
-        connectParams.sessionId = connectSessionId;
-        const modelCfg = getSessionConnectModelConfig(callerKey, connectMessages);
-        if (modelCfg) connectParams.sessionModelConfig = { id: modelCfg.configId, turn: modelCfg.turn };
-        const reasoningTrail = getSessionConnectReasoningTrail(callerKey, connectMessages);
-        if (reasoningTrail) connectParams.continuityTrail = reasoningTrail;
-        log.info(`Chat[${reqId}]: DEVIN_CONNECT session reuse active → session_id=${connectSessionId}${modelCfg ? ` model_config=stable turn=${modelCfg.turn}` : ''} acct=${ccAcct?.account?.id || 'env-token'}`);
-      }
-    }
-    if (!connectParams.sessionId) {
-      const reason = scopedSession ? 'DEVIN_CONNECT_SESSION_REUSE off' : 'no per-user or session scope';
+    const connectSession = scopedSession && !__sHit ? resolveConnectSessionBinding(callerKey, connectMessages) : null;
+    if (connectSession) {
+      const { sessionId: connectSessionId, modelConfig, reasoningTrail } = connectSession;
+      connectParams.sessionId = connectSessionId;
+      if (modelConfig) connectParams.sessionModelConfig = modelConfig;
+      if (reasoningTrail) connectParams.continuityTrail = reasoningTrail;
+      log.info(`Chat[${reqId}]: DEVIN_CONNECT session reuse active → session_id=${connectSessionId}${modelConfig ? ` model_config=stable turn=${modelConfig.turn}` : ''} acct=${ccAcct?.account?.id || 'env-token'}`);
+    } else if (!__sHit) {
+      const reason = !scopedSession ? 'no per-user or session scope'
+        : isSessionReuseEnabled() ? 'image content identity unavailable' : 'DEVIN_CONNECT_SESSION_REUSE off';
       log.debug(`Chat[${reqId}]: DEVIN_CONNECT session_id source=fresh-per-request (${reason})`);
       if (!_connectSessionSourceNoted) {
         _connectSessionSourceNoted = true;
@@ -5041,7 +5038,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
                         content: r.sr?.content || '',
                         ...(tc?.length ? { tool_calls: tc.map((t, idx) => ({ id: t.id || `tc_${idx}`, function: { name: t.name, arguments: t.argumentsJson || t.arguments || '' } })) } : {}),
                       }];
-                      commitConnectSession(callerKey || '', commitMsgs, undefined, { reasoning: r.sr?.reasoning || incomingConnectReasoning });
+                      commitConnectSession(callerKey, connectSession, commitMsgs, undefined, { reasoning: r.sr?.reasoning || incomingConnectReasoning });
                     } catch { /* session commit is best-effort */ }
                   }
                   // [STREAM-CACHE] store full text + usage AFTER commit, BEFORE the
@@ -5302,7 +5299,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
               content: msg?.content || '',
               ...(msg?.tool_calls ? { tool_calls: msg.tool_calls } : {}),
             }];
-            commitConnectSession(callerKey || '', commitMsgs, undefined, { reasoning: msg?.reasoning_content || incomingConnectReasoning });
+            commitConnectSession(callerKey, connectSession, commitMsgs, undefined, { reasoning: msg?.reasoning_content || incomingConnectReasoning });
           } catch { /* session commit is best-effort */ }
         }
         // [STREAM-CACHE] store non-stream text + usage BEFORE the return

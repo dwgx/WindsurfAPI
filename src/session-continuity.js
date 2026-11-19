@@ -51,6 +51,9 @@ const commitIndex = new Map();     // commitKey → stateId
 // stateId → every key this state wrote into pairIndex/commitIndex, so eviction
 // touches its own keys instead of scanning the (unbounded) whole index.
 const ownedIndexKeys = new Map();
+// A receipt is private to the dispatched request. It owns no state lifetime
+// and cannot make an evicted session eligible again.
+const dispatches = new WeakMap();
 
 export function isSessionReuseEnabled(env = process.env) {
   const v = String(env.DEVIN_CONNECT_SESSION_REUSE ?? '').trim().toLowerCase();
@@ -63,10 +66,52 @@ function deriveScopeId(callerKey) {
   return crypto.createHmac('sha256', SECRET).update(callerKey || '').digest('hex');
 }
 
-function messageText(msg) {
-  if (typeof msg?.content === 'string') return msg.content;
-  if (Array.isArray(msg?.content)) return msg.content.map((p) => p?.text || '').join('');
-  return '';
+function isImagePart(part) {
+  return part?.type === 'image' || part?.type === 'image_url' || part?.type === 'input_image';
+}
+
+// Fingerprint only inline, identifiable images. The request takes the fresh
+// path when the media would require a fetch or exceeds the HTTP body's budget.
+function imageIdentity(part) {
+  let mime, data;
+  if (part.type === 'image') {
+    const source = part.source;
+    if (!source || (source.type && source.type !== 'base64')) return null;
+    mime = source.media_type ?? 'image/png';
+    data = source.data;
+  } else {
+    const url = part.image_url?.url ?? (part.type === 'input_image' ? part.image_url : null);
+    if (typeof url !== 'string') return null;
+    const header = /^data:(image\/[a-z0-9.+-]+);base64,/i.exec(url);
+    if (!header) return null;
+    mime = header[1];
+    data = url.slice(header[0].length);
+  }
+  if (typeof mime !== 'string' || !/^image\/(png|jpeg|gif|webp)$/i.test(mime)) return null;
+  if (typeof data !== 'string' || data.length > 10 * 1024 * 1024) return null;
+  const encoded = data.replace(/\s/g, '');
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(encoded) || encoded.length % 4 === 1
+      || (encoded.endsWith('=') && encoded.length % 4 !== 0)) return null;
+  return { mime: mime.toLowerCase(), digest: crypto.createHash('sha256').update(encoded, 'base64').digest('hex') };
+}
+
+function messageContent(msg) {
+  if (typeof msg.content === 'string') return msg.content;
+  if (!Array.isArray(msg.content)) return isImagePart(msg.content) ? null : '';
+  if (!msg.content.some(isImagePart)) return msg.content.map(part => part?.text || '').join('');
+  const parts = [];
+  for (const part of msg.content) {
+    if (isImagePart(part)) {
+      const image = imageIdentity(part);
+      if (!image) return null;
+      parts.push({ kind: 'image', payload: image });
+    } else if (typeof part?.text === 'string' && part.text) {
+      const last = parts.at(-1);
+      if (last?.kind === 'text') last.payload += part.text;
+      else parts.push({ kind: 'text', payload: part.text });
+    }
+  }
+  return parts;
 }
 
 function canonicalizeArgs(args) {
@@ -87,18 +132,21 @@ export function canonicalize(messages) {
     if (!msg) continue;
     const role = msg.role || '';
     if (role === 'system' || role === 'developer') continue;
+    const content = messageContent(msg);
+    if (content === null) return [{ role, kind: 'unidentified_image' }];
 
     if (role === 'tool') {
       events.push({
         role: 'tool',
         kind: 'tool_result',
-        payload: { rawLink: msg.tool_call_id || '', content: messageText(msg) },
+        payload: { rawLink: msg.tool_call_id || '', content },
       });
       continue;
     }
 
-    const text = messageText(msg);
-    if (text) events.push({ role, kind: 'text', payload: text });
+    if (Array.isArray(content)) {
+      for (const part of content) events.push({ role, ...part });
+    } else if (content) events.push({ role, kind: 'text', payload: content });
 
     if (Array.isArray(msg.tool_calls)) {
       for (const tc of msg.tool_calls) {
@@ -113,7 +161,7 @@ export function canonicalize(messages) {
     }
 
     // Anchor empty assistant turns (no text, no tool_calls) so they still form a pair boundary
-    if (role === 'assistant' && !text && !Array.isArray(msg.tool_calls)) {
+    if (role === 'assistant' && !content && !Array.isArray(msg.tool_calls)) {
       events.push({ role: 'assistant', kind: 'empty_output', payload: '' });
     }
   }
@@ -123,7 +171,7 @@ export function canonicalize(messages) {
 // ─── Tool Linkage Normalizer ───────────────────────────────────────────────
 
 function isAssistantOutput(ev) {
-  return ev.role === 'assistant' && (ev.kind === 'text' || ev.kind === 'tool_call' || ev.kind === 'empty_output');
+  return ev.role === 'assistant' && (ev.kind === 'text' || ev.kind === 'image' || ev.kind === 'tool_call' || ev.kind === 'empty_output');
 }
 
 /**
@@ -199,7 +247,8 @@ export function analyzeHistory(events, scopeId) {
   const hashes = postBarrierRecords.map((r) => hashPair(r, scopeId));
   const canResolve = !hasTrailingBarrier && hashes.length > 0;
 
-  return { records, trailingInput, hasTrailingBarrier, lastBarrierIndex, postBarrierRecords, hashes, canResolve };
+  const identityUnavailable = events?.[0]?.kind === 'unidentified_image';
+  return { records, trailingInput, hasTrailingBarrier, lastBarrierIndex, postBarrierRecords, hashes, canResolve, identityUnavailable };
 }
 
 function splitWithTrailing(events) {
@@ -525,6 +574,7 @@ function pushReasoningTail(state, reasoning, env) {
 // through its root). The #242 refactor moved this scan out of resolveSessionId,
 // so the signal is handed back rather than read from a shared local.
 function findExistingState(scopeId, analysis, env, outSeen = null) {
+  if (analysis.identityUnavailable) return null;
   const { hashes, canResolve, postBarrierRecords } = analysis;
   const ttl = getTtl(env);
   const now = Date.now();
@@ -607,8 +657,11 @@ export function getSessionReasoningTrail(callerKey, messages, env = process.env)
   const scopeId = deriveScopeId(callerKey);
   const analysis = analyzeHistory(canonicalize(messages), scopeId);
   const found = findExistingState(scopeId, analysis, env);
-  if (!found) return null;
-  const tails = found.state.reasoningTails;
+  return reasoningTrailForState(found?.state, budget);
+}
+
+function reasoningTrailForState(state, budget) {
+  const tails = state?.reasoningTails;
   if (!Array.isArray(tails) || !tails.length) return null;
   const picked = [];
   let total = 0;
@@ -621,19 +674,25 @@ export function getSessionReasoningTrail(callerKey, messages, env = process.env)
   return buildContinuityBlock(picked);
 }
 
-export function resolveSessionId(callerKey, messages, env = process.env) {
+function resolveState(callerKey, messages, env, forDispatch = false) {
   if (!isSessionReuseEnabled(env)) return null;
 
   const scopeId = deriveScopeId(callerKey);
   const events = canonicalize(messages);
   const analysis = analyzeHistory(events, scopeId);
+  if (analysis.identityUnavailable) return null;
   const { hashes, canResolve, postBarrierRecords } = analysis;
   const now = Date.now();
 
   const ttl = getTtl(env);
   const seenProbe = { count: 0 };
   const found = findExistingState(scopeId, analysis, env, seenProbe);
-  if (found) {
+  // A bare opener has no completed pair linking it to an already finished
+  // dialog. A bound write cannot fork after dispatch, so select its new state
+  // here. In-flight indistinguishable openers can still share a provisional ID.
+  const newOpener = forDispatch && found?.viaRoot && found.state.turnCount > 0
+    && analysis.records.length === 0 && analysis.trailingInput[0]?.role === 'user';
+  if (found && !newOpener) {
     found.state.lastSeen = now;
     if (!found.viaRoot) {
       const newWindow = hashes.slice(-PAIR_WINDOW_SIZE);
@@ -644,7 +703,7 @@ export function resolveSessionId(callerKey, messages, env = process.env) {
       found.state.pairWindow = newWindow;
       found.state.pairRecords = postBarrierRecords.slice(-PAIR_WINDOW_SIZE);
     }
-    return found.state.sessionId;
+    return found.state;
   }
 
   if (!canResolve || hashes.length === 0) {
@@ -660,7 +719,7 @@ export function resolveSessionId(callerKey, messages, env = process.env) {
     const state = { stateId, scopeId, sessionId, pairWindow: [], pairRecords: [], lastSeen: now, commitKey: null, dialogAnchor: null, rootKey, configId: crypto.randomUUID(), turnCount: 0, reasoningTails: [] };
     statesById.set(stateId, state);
     linkPairIndex(stateId, rootKey);
-    return sessionId;
+    return state;
   }
 
   // Root fallback (compaction survival). Measured on a real kimi compaction:
@@ -691,7 +750,7 @@ export function resolveSessionId(callerKey, messages, env = process.env) {
         state.pairWindow = newWindow;
         indexState(state.stateId, state);
         state.pairRecords = postBarrierRecords.slice(-PAIR_WINDOW_SIZE);
-        return state.sessionId;
+        return state;
       }
     }
   }
@@ -707,7 +766,30 @@ export function resolveSessionId(callerKey, messages, env = process.env) {
   const state = { stateId, scopeId, sessionId, pairWindow, pairRecords: postBarrierRecords.slice(-PAIR_WINDOW_SIZE), lastSeen: now, commitKey: null, dialogAnchor, configId: crypto.randomUUID(), turnCount: 0, reasoningTails: [] };
   statesById.set(stateId, state);
   indexState(stateId, state);
-  return sessionId;
+  return state;
+}
+
+export function resolveSessionId(callerKey, messages, env = process.env) {
+  return resolveState(callerKey, messages, env)?.sessionId ?? null;
+}
+
+export function resolveSessionBinding(callerKey, messages, env = process.env) {
+  if (typeof callerKey !== 'string' || !callerKey) return null;
+  const state = resolveState(callerKey, messages, env, true);
+  if (!state) return null;
+  const receipt = Object.freeze({
+    sessionId: state.sessionId,
+    modelConfig: isModelConfigStableEnabled(env) ? { id: state.configId, turn: state.turnCount + 1 } : null,
+    reasoningTrail: isReasoningInjectEnabled(env) ? reasoningTrailForState(state, getSessionReasoningMaxChars(env)) : null,
+  });
+  dispatches.set(receipt, { stateId: state.stateId, sessionId: state.sessionId, revision: state.turnCount });
+  return receipt;
+}
+
+export function commitSessionBinding(callerKey, binding, messagesWithResponse, env = process.env, opts = {}) {
+  const dispatch = dispatches.get(binding);
+  if (!dispatch || typeof callerKey !== 'string' || !callerKey) return null;
+  return commitResponse(callerKey, messagesWithResponse, env, opts, dispatch);
 }
 
 /**
@@ -715,52 +797,64 @@ export function resolveSessionId(callerKey, messages, env = process.env) {
  * Called AFTER upstream response completes.
  */
 export function commitAfterResponse(callerKey, messagesWithResponse, env = process.env, opts = {}) {
+  return commitResponse(callerKey, messagesWithResponse, env, opts, null);
+}
+
+// Legacy direct callers have no dispatch receipt and still use their original
+// overlap selection. The production handler always uses commitSessionBinding.
+function findCommitTarget(scopeId, hashes, now, ttl) {
+  const seen = new Set();
+  for (let i = hashes.length - 1; i >= 0; i--) {
+    const candidates = pairIndex.get(`${scopeId}:${hashes[i]}`);
+    if (!candidates) continue;
+    for (const stateId of candidates) {
+      if (seen.has(stateId)) continue;
+      seen.add(stateId);
+      const state = statesById.get(stateId);
+      if (state && now - state.lastSeen <= ttl && overlapScore(hashes, state.pairWindow) > 0) return { state, stateId };
+    }
+  }
+  return null;
+}
+
+function commitResponse(callerKey, messagesWithResponse, env, opts, dispatch) {
   if (!isSessionReuseEnabled(env)) return null;
 
   const scopeId = deriveScopeId(callerKey);
+  const ttl = getTtl(env);
+  const now = Date.now();
+  const selected = dispatch && statesById.get(dispatch.stateId);
+  if (dispatch && (!selected || selected.scopeId !== scopeId || selected.sessionId !== dispatch.sessionId
+      || now - selected.lastSeen >= ttl)) return null;
   const events = canonicalize(messagesWithResponse);
   const analysis = analyzeHistory(events, scopeId);
   const { hashes, postBarrierRecords } = analysis;
   if (hashes.length === 0) return null;
 
   const pairWindow = hashes.slice(-PAIR_WINDOW_SIZE);
-  const ttl = getTtl(env);
-  const now = Date.now();
 
   // Compute commitKey for idempotency
   const commitKey = crypto.createHmac('sha256', SECRET)
-    .update(JSON.stringify({ scopeId, pairWindow }))
+    .update(JSON.stringify({ scopeId, stateId: dispatch?.stateId, pairWindow }))
     .digest('hex');
 
   const existingId = commitIndex.get(commitKey);
   if (existingId) {
     const existing = statesById.get(existingId);
-    if (existing && now - existing.lastSeen < ttl) {
+    if (existing && (!dispatch || existing === selected) && now - existing.lastSeen < ttl) {
       existing.lastSeen = now;
       return existing.sessionId;
     }
   }
 
-  // Find existing state to update (by overlap)
-  let target = null;
-  const seen = new Set();
-  for (let i = hashes.length - 1; i >= 0; i--) {
-    const idxKey = `${scopeId}:${hashes[i]}`;
-    const candidates = pairIndex.get(idxKey);
-    if (!candidates) continue;
-    for (const stateId of candidates) {
-      if (seen.has(stateId)) continue;
-      seen.add(stateId);
-      const state = statesById.get(stateId);
-      if (!state || now - state.lastSeen > ttl) continue;
-      const score = overlapScore(hashes, state.pairWindow);
-      if (score > 0) { target = { state, stateId }; break; }
-    }
-    if (target) break;
-  }
+  // A retry of the same completion was handled above. A different completion
+  // for a superseded revision cannot advance this state or create another.
+  if (dispatch && selected.turnCount !== dispatch.revision) return null;
+  const target = dispatch ? { state: selected, stateId: dispatch.stateId } : findCommitTarget(scopeId, hashes, now, ttl);
 
   if (target) {
     // Update existing state
+    if (!target.state.dialogAnchor) target.state.dialogAnchor = pairWindow[0]?.slice(0, 16) || null;
     target.state.lastSeen = now;
     target.state.pairWindow = pairWindow;
     target.state.pairRecords = postBarrierRecords.slice(-PAIR_WINDOW_SIZE);
