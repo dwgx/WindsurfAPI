@@ -2585,52 +2585,87 @@ export async function handleResponses(body, deps = {}) {
     async handler(realRes) {
       const translator = new ResponsesStreamTranslator(realRes, responseId, requestedModel, requestedTools, toolNameMap, responseMetadata, { includeReasoningEncrypted });
       const captureRes = createCaptureRes(translator, realRes);
-
+      // Delivery latch: the real response can close or error at ANY point,
+      // including AFTER captureRes.end() has marked the capture ended and, in
+      // particular, while the terminal event's write is parked on a drain wait.
+      // The old guard skipped teardown once `captureRes.writableEnded` was true,
+      // so a client that vanished during that wait was invisible here: the turn
+      // was committed to the store and `[DONE]` was then attempted on a dead
+      // socket. Latch first, unconditionally, and let the post-stream gate read
+      // it. Disposing the translator writer on a terminal event settles the
+      // drain wait and makes every later write a no-op.
+      let clientClosed = false;
+      let clientErrored = false;
       realRes.on('close', () => {
+        clientClosed = true;
         if (!captureRes.writableEnded) captureRes._clientDisconnected();
+        else translator.writer.dispose();
+      });
+      realRes.on('error', () => {
+        clientErrored = true;
+        translator.writer.dispose();
       });
 
       try {
         await streamResult.handler(captureRes);
-        // Persist only a COMPLETED turn. Committing a half-turn (aborted or
-        // errored) would poison the next request's context with a truncated
-        // assistant reply the client never received.
-        //
-        // The gate is `aborted`, NOT `truncated`. Those are different things and
-        // conflating them broke chaining for legitimate truncation: a turn that
-        // ended with a real finish_reason of 'length' / 'content_filter' IS a
-        // complete, client-delivered turn — the model stopped for a reason the
-        // client can see and act on, and OpenAI lets it be chained from. The
-        // non-streaming path always committed those, so gating the streaming path
-        // on `truncated` split the two paths' behaviour for the identical
-        // finish_reason (verified: streaming length → not chainable, non-streaming
-        // length → chainable). That is this repo's recurring "fix covered only some
-        // paths" trap.
-        //
-        // `aborted` is the case `failed` cannot see: a stream that ended with no
-        // (real) terminal chunk at all raises no error, so it reached here looking
-        // clean and its half answer was stored as the next turn's context.
-        // `clientGone` (V-08): a drain timeout means the client stopped reading,
-        // so the half turn it never received must not become the next turn's
-        // context either.
-        if (translator.finished && !translator.failed && !translator.aborted && !translator.clientGone) {
-          // Same as the non-streaming path: persist the status the client was told,
-          // so a later retrieval does not report a truncated turn as completed.
-          const reason = translator.streamFinishReason;
-          commit({
-            role: 'assistant',
-            content: translator.text || '',
-            ...(translator.committedToolCalls?.length ? { tool_calls: translator.committedToolCalls } : {}),
-          }, translator.truncated
-            ? {
-              status: 'incomplete',
-              incompleteReason: reason === 'length' ? 'max_output_tokens' : 'content_filter',
-            }
-            : { status: 'completed' }, translator.model, translator.committedItems);
-        }
       } catch (e) {
         log.error(`Responses stream error: ${e.message}`);
         translator.error(e);
+      }
+
+      // The terminal frame (response.completed / .incomplete / .failed) is
+      // written by translator.finish() inside captureRes.end(), i.e. BEFORE the
+      // Chat handler returns. A false verdict there parks the translator's writer
+      // until the real socket drains — or until the client closes/errors and the
+      // writer times out. Everything below is delivery-dependent, so settle that
+      // pressure FIRST: committing while the terminal is still unacknowledged
+      // stored a turn the caller may never receive, and a close/timeout during
+      // this window left both the stored record and a late `[DONE]` attempt.
+      await translator.settleEgress();
+
+      // Persist only a DELIVERED completed/incomplete turn. Committing a
+      // half-turn (aborted, errored or undelivered) would poison the next
+      // request's context with a reply the client never received.
+      //
+      // The gate is `aborted`, NOT `truncated`. Those are different things and
+      // conflating them broke chaining for legitimate truncation: a turn that
+      // ended with a real finish_reason of 'length' / 'content_filter' IS a
+      // complete, client-delivered turn — the model stopped for a reason the
+      // client can see and act on, and OpenAI lets it be chained from. The
+      // non-streaming path always committed those, so gating the streaming path
+      // on `truncated` split the two paths' behaviour for the identical
+      // finish_reason (verified: streaming length → not chainable, non-streaming
+      // length → chainable). That is this repo's recurring "fix covered only some
+      // paths" trap.
+      //
+      // `aborted` is the case `failed` cannot see: a stream that ended with no
+      // (real) terminal chunk at all raises no error, so it reached here looking
+      // clean and its half answer was stored as the next turn's context.
+      // `clientGone` (V-08): a drain timeout means the client stopped reading,
+      // so the half turn it never received must not become the next turn's
+      // context either. `clientClosed` / `clientErrored` are the same verdict for
+      // a socket that closed or failed while the terminal was parked on `drain`.
+      const terminalDelivered = translator.finished
+        && !translator.failed
+        && !translator.aborted
+        && !translator.clientGone
+        && !clientClosed
+        && !clientErrored
+        && !translator.writer.gone();
+      if (terminalDelivered) {
+        // Same as the non-streaming path: persist the status the client was told,
+        // so a later retrieval does not report a truncated turn as completed.
+        const reason = translator.streamFinishReason;
+        commit({
+          role: 'assistant',
+          content: translator.text || '',
+          ...(translator.committedToolCalls?.length ? { tool_calls: translator.committedToolCalls } : {}),
+        }, translator.truncated
+          ? {
+            status: 'incomplete',
+            incompleteReason: reason === 'length' ? 'max_output_tokens' : 'content_filter',
+          }
+          : { status: 'completed' }, translator.model, translator.committedItems);
       }
 
       // The `[DONE]` sentinel, after the terminal event and before the socket closes.
@@ -2657,13 +2692,17 @@ export async function handleResponses(body, deps = {}) {
       // A06/KH-024: `aborted` is an upstream truncation, not a clean end. A
       // relay that sees [DONE] treats the stream as whole, which would erase
       // the only failure signal the Responses client got.
-      // V-08: the sentinel is part of the same sequential emission — wait out any
-      // outstanding drain so it cannot overtake a frame the socket has not taken.
-      if (translator.finished && !translator.failed && !translator.aborted && !realRes.writableEnded) {
-        await translator.settleEgress();
+      // V-08: the sentinel is part of the same sequential emission. The terminal
+      // pressure was settled above; re-read the delivery latches immediately
+      // before the write so a close/error/timeout that landed while that wait was
+      // outstanding cannot put a trailing `[DONE]` on a dead socket.
+      if (terminalDelivered
+        && !clientClosed && !clientErrored && !translator.clientGone
+        && !translator.writer.gone()
+        && !realRes.writableEnded && !realRes.destroyed) {
         translator.writeRaw('data: [DONE]\n\n');
       }
-      if (!realRes.writableEnded) realRes.end();
+      if (!clientClosed && !clientErrored && !realRes.writableEnded && !realRes.destroyed) realRes.end();
     },
   };
 }
