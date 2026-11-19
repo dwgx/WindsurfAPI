@@ -40,19 +40,79 @@ function save() {
 // Passwords never leave the server. The masked view returns
 // `hasPassword: boolean` in place of the plaintext. When the dashboard
 // PUTs a config back it omits the `password` key if the user didn't
-// retype it, which mergePassword() treats as "keep the stored value".
-// An explicit empty string still clears the password.
+// retype it; mergePassword() keeps the stored value only while the
+// normalized destination + username still match, and rejects the edit
+// otherwise. An explicit empty string still clears the password.
 function maskProxy(p) {
   if (!p) return p;
   const { password, ...rest } = p;
   return { ...rest, hasPassword: !!password };
 }
 
+// A retained password belongs to the proxy destination and username that were
+// saved with it. Compare the tuple the transports actually dial:
+// src/socks.js treats socks/socks5/socks5h as one SOCKS5 transport, while HTTP
+// and HTTPS select different first hops; host names are case-insensitive.
+const PROXY_PASSWORD_IDENTITY_CHANGED = 'ERR_PROXY_PASSWORD_IDENTITY_CHANGED';
+
+function normalizeProxyType(type) {
+  const t = String(type || 'http').trim().toLowerCase();
+  return t === 'socks' || t === 'socks5h' ? 'socks5' : t;
+}
+
+function proxyIdentity(cfg, { legacy = false } = {}) {
+  if (!cfg || !cfg.host) return null;
+  const type = normalizeProxyType(cfg.type);
+  const parsedPort = parseInt(cfg.port, 10);
+  // The setters persist `parseInt(port) || 8080` for every type. A proxy.json
+  // written before that (or edited by hand) can lack a port, and the transport
+  // then falls back to 1080 for SOCKS5 and 8080 for HTTP CONNECT.
+  const port = parsedPort || (legacy && type === 'socks5' ? 1080 : 8080);
+  return {
+    type,
+    host: String(cfg.host).trim().toLowerCase(),
+    port,
+    username: typeof cfg.username === 'string' ? cfg.username : '',
+  };
+}
+
+function sameProxyIdentity(a, b) {
+  return !!a && !!b
+    && a.type === b.type
+    && a.host === b.host
+    && a.port === b.port
+    && a.username === b.username;
+}
+
 function mergePassword(newCfg, oldCfg) {
-  if (!newCfg || !Object.prototype.hasOwnProperty.call(newCfg, 'password')) {
-    return oldCfg?.password || '';
+  if (newCfg && Object.prototype.hasOwnProperty.call(newCfg, 'password')) {
+    return newCfg.password || '';
   }
-  return newCfg.password || '';
+  const oldPassword = oldCfg?.password || '';
+  if (!oldPassword) return '';
+  if (!sameProxyIdentity(proxyIdentity(newCfg), proxyIdentity(oldCfg, { legacy: true }))) {
+    const err = new Error(
+      `${PROXY_PASSWORD_IDENTITY_CHANGED}: proxy type, host, port or username changed; `
+      + 'send the password explicitly, or send an explicit empty password to clear it.',
+    );
+    err.code = PROXY_PASSWORD_IDENTITY_CHANGED;
+    err.statusCode = 400;
+    throw err;
+  }
+  return oldPassword;
+}
+
+function buildProxyEntry(cfg, oldCfg) {
+  // Build the complete entry before the caller assigns it: mergePassword() can
+  // reject a changed identity, and a rejected edit must not leave a partially
+  // updated in-memory config behind.
+  return {
+    type: cfg.type || 'http',
+    host: String(cfg.host).trim(),
+    port: parseInt(cfg.port, 10) || 8080,
+    username: cfg.username || '',
+    password: mergePassword(cfg, oldCfg),
+  };
 }
 
 /** Full config including plaintext passwords — internal callers only. */
@@ -71,25 +131,13 @@ export function getProxyConfigMasked() {
 }
 
 export function setGlobalProxy(cfg) {
-  _config.global = cfg && cfg.host ? {
-    type: cfg.type || 'http',
-    host: String(cfg.host).trim(),
-    port: parseInt(cfg.port, 10) || 8080,
-    username: cfg.username || '',
-    password: mergePassword(cfg, _config.global),
-  } : null;
+  _config.global = cfg && cfg.host ? buildProxyEntry(cfg, _config.global) : null;
   save();
 }
 
 export function setAccountProxy(accountId, cfg) {
   if (cfg && cfg.host) {
-    _config.perAccount[accountId] = {
-      type: cfg.type || 'http',
-      host: String(cfg.host).trim(),
-      port: parseInt(cfg.port, 10) || 8080,
-      username: cfg.username || '',
-      password: mergePassword(cfg, _config.perAccount[accountId]),
-    };
+    _config.perAccount[accountId] = buildProxyEntry(cfg, _config.perAccount[accountId]);
   } else {
     delete _config.perAccount[accountId];
   }

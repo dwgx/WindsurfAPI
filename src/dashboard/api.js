@@ -3016,7 +3016,17 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
         return json(res, 400, { error: e?.message || 'ERR_PROXY_PRIVATE_HOST' });
       }
     }
-    setGlobalProxy(body);
+    try {
+      setGlobalProxy(body);
+    } catch (e) {
+      if (e?.code === 'ERR_PROXY_PASSWORD_IDENTITY_CHANGED') {
+        // A saved password is bound to its destination + username. The edit
+        // was refused before either config was touched; the caller must send
+        // the password explicitly or send an explicit empty value to clear it.
+        return json(res, 400, { error: e.message, code: e.code });
+      }
+      throw e;
+    }
     return json(res, 200, { success: true, config: getProxyConfigMasked() });
   }
 
@@ -3036,7 +3046,16 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
         return json(res, 400, { error: e?.message || 'ERR_PROXY_PRIVATE_HOST' });
       }
     }
-    setAccountProxy(proxyAccount[1], body);
+    try {
+      setAccountProxy(proxyAccount[1], body);
+    } catch (e) {
+      if (e?.code === 'ERR_PROXY_PASSWORD_IDENTITY_CHANGED') {
+        // Same identity boundary as /proxy/global: refuse before admission or
+        // warmup so a rejected edit cannot partially rebind the account.
+        return json(res, 400, { error: e.message, code: e.code });
+      }
+      throw e;
+    }
     const admission = getLsAdmissionStatus(body?.host ? body : null);
     const warmupRequested = body?.warmup === true || body?.prewarm === true || shouldPrewarmLsOnAccountAdd();
     let warmup = { ok: true, skipped: true, reason: 'warmup_not_requested' };
