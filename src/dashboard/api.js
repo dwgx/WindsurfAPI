@@ -909,7 +909,7 @@ export function extractOAuthToken(input) {
 // persist their plaintext password, defeating the DEVIN_CONNECT_ALLOW_REMOTE_CRED_STORE
 // gate. Mirror the /accounts/import-local double gate. Store is still a no-op
 // unless DEVIN_CONNECT_CRED_KEY is set.
-function credStoreGateOpen(wantStore, req) {
+export function credStoreGateOpen(wantStore, req) {
   if (wantStore !== true) return false;
   // Consistency with v2.0.55 AUTH-1 and checkAuth: the proxy is not the client.
   const remote = dashboardClientIp(req);

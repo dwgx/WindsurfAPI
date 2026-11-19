@@ -1964,6 +1964,14 @@ export async function addAccountByToken(token, label = '') {
   return account;
 }
 
+// Test seam for the email/password import path. Production resolves the real
+// login module; tests inject a fake login (and, when they want to observe the
+// store contract, fake store functions) so no provider call or real key is
+// needed. The locality/consent decision is NOT made here — callers pass the
+// already-gated boolean, so this path cannot invent consent of its own.
+let _emailImportDeps = null;
+export function __setEmailImportDeps(deps) { _emailImportDeps = deps || null; }
+
 /**
  * Add account via email/password.
  *
@@ -1972,13 +1980,20 @@ export async function addAccountByToken(token, label = '') {
  * CheckUserLoginMethod (with /_devin-auth/connections fallback), then
  * register a Codeium api_key. Refresh token (Firebase path) is persisted
  * so the background renewal loop in checkAndRefreshTokens picks it up.
+ *
+ * `opts.storeCredential === true` is the operation's explicit consent to retain
+ * the password. Without it the login still succeeds and the verified identity
+ * is recorded, but nothing is written to the encrypted store and no lookup
+ * binding is claimed. The caller is responsible for the locality gate.
  */
-export async function addAccountByEmail(email, password) {
+export async function addAccountByEmail(email, password, opts = {}) {
   if (!email || !password) {
     throw new Error('email and password required');
   }
+  const wantStore = opts?.storeCredential === true;
   const emailKey = String(email).trim().toLowerCase();
-  const { windsurfLogin } = await import('./dashboard/windsurf-login.js');
+  const loginMod = await import('./dashboard/windsurf-login.js');
+  const windsurfLogin = _emailImportDeps?.windsurfLogin || loginMod.windsurfLogin;
   const result = await windsurfLogin(email, password, null);
   if (!result?.apiKey) {
     throw new Error('Login succeeded but no apiKey returned');
@@ -2011,14 +2026,29 @@ export async function addAccountByEmail(email, password) {
       idToken: result.idToken || '',
     });
   }
-  // Persist the password (encrypted) so a dead session_id can be auto-recovered
-  // via re-login. No-op unless DEVIN_CONNECT_CRED_KEY is set. Best-effort: a
-  // store failure must not break the login that already succeeded.
-  try {
-    const { storeCredential, isCredStoreEnabled } = await import('./devin-connect-credentials.js');
-    if (isCredStoreEnabled()) storeCredential(email, password);
-  } catch (e) {
-    log.warn(`could not persist credential for re-login: ${e.message}`);
+  // Persist the password (encrypted) only when THIS operation explicitly asked
+  // for retention. Login success never implies consent: without wantStore the
+  // store is not even imported, and no lookup binding is claimed. Best-effort:
+  // a disabled/failed store must not break the login that already succeeded.
+  if (wantStore) {
+    try {
+      const credMod = (_emailImportDeps && _emailImportDeps.storeCredential)
+        ? _emailImportDeps
+        : await import('./devin-connect-credentials.js');
+      if (credMod.isCredStoreEnabled()) {
+        if (credMod.storeCredential(emailKey, password) === true) {
+          // The record is keyed by the normalized login address; remember it so
+          // a later rename cannot orphan the secret.
+          account.credentialEmail = emailKey;
+        } else {
+          log.warn(`Credential NOT stored for ${safeAccountRef(account)} — auto-relogin stays disarmed`);
+        }
+      } else {
+        log.debug(`Credential NOT stored for ${safeAccountRef(account)} — credential storage is disabled`);
+      }
+    } catch (e) {
+      log.warn(`could not persist credential for re-login: ${e.code || e.message}`);
+    }
   }
   saveAccounts();
   log.info(`Account added via email: ${safeAccountRef(account)}`);
