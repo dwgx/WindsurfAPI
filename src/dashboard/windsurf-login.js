@@ -3,13 +3,11 @@
  * Supports proxy tunneling and fingerprint randomization.
  */
 
-import http from 'http';
 import https from 'https';
 import { randomBytes } from 'crypto';
 import { config, log } from '../config.js';
-import { resolveProxyConnectHost } from '../net-safety.js';
 import { safeEmailRef, safeKeyRef, logHash, sliceRedactedJson } from '../log-safety.js';
-import { isSocks, createSocksTunnel } from '../socks.js';
+import { createProxyTunnel } from '../proxy-connector.js';
 import { getEmailLockThreshold, getEmailLockMs, getBackendSwitch } from '../runtime-config.js';
 import { parseFields, getField, getAllFields } from '../proto.js';
 // R-1 (RATE-RETRY audit): bounded response-body reads, shared with the
@@ -288,42 +286,6 @@ function buildJsonHeaders(fingerprint, body, extra = {}) {
     'x-client-version': CLIENT_VERSION,
     ...extra,
   };
-}
-
-// ─── Proxy tunnel (HTTP CONNECT or SOCKS5) ───────────────
-
-async function createProxyTunnel(proxy, targetHost, targetPort) {
-  if (isSocks(proxy)) return createSocksTunnel(proxy, targetHost, targetPort);
-  // #11: pin the proxy host to a vetted IP literal (no second rebindable lookup).
-  const rawHost = proxy.host.replace(/:\d+$/, '');
-  const proxyHost = await resolveProxyConnectHost(rawHost, { allowPrivate: config.allowPrivateProxyHosts });
-  return new Promise((resolve, reject) => {
-    const proxyPort = proxy.port || 8080;
-
-    const connectReq = http.request({
-      host: proxyHost,
-      port: proxyPort,
-      method: 'CONNECT',
-      path: `${targetHost}:${targetPort}`,
-      headers: {
-        Host: `${targetHost}:${targetPort}`,
-        ...(proxy.username ? { 'Proxy-Authorization': `Basic ${Buffer.from(`${proxy.username}:${proxy.password || ''}`).toString('base64')}` } : {}),
-      },
-    });
-
-    connectReq.on('connect', (res, socket) => {
-      if (res.statusCode === 200) {
-        resolve(socket);
-      } else {
-        socket.destroy();
-        reject(new Error(`Proxy CONNECT failed: ${res.statusCode}`));
-      }
-    });
-
-    connectReq.on('error', (err) => reject(new Error(`Proxy connection error: ${err.message}`)));
-    connectReq.setTimeout(15000, () => { connectReq.destroy(); reject(new Error('Proxy connection timeout')); });
-    connectReq.end();
-  });
 }
 
 // ─── HTTPS request with optional proxy ────────────────────

@@ -17,6 +17,7 @@ import { randomUUID } from 'crypto';
 import { freemem, totalmem } from 'os';
 import { posix, resolve } from 'path';
 import { log } from './config.js';
+import { isHttpsProxy } from './proxy-connector.js';
 import { closeSessionForPort } from './grpc.js';
 
 const DEFAULT_BINARY = '/opt/windsurf/language_server_linux_x64';
@@ -282,12 +283,17 @@ function dataDirForKey(key) {
   return `${root}/${key}`;
 }
 
-function proxyUrl(proxy) {
+export function proxyUrl(proxy) {
   if (!proxy || !proxy.host) return null;
   const auth = proxy.username
     ? `${encodeURIComponent(proxy.username)}:${encodeURIComponent(proxy.password || '')}@`
     : '';
-  return `http://${auth}${proxy.host}:${proxy.port || 8080}`;
+  // Preserve the operator's selected first hop: an HTTPS proxy must not be
+  // handed to the child as a plaintext http:// URL. HTTP and SOCKS selections
+  // keep the existing http:// form (the child's own transport support for
+  // SOCKS/HTTPS URLs is external and remains unverified).
+  const scheme = isHttpsProxy(proxy) ? 'https' : 'http';
+  return `${scheme}://${auth}${proxy.host}:${proxy.port || 8080}`;
 }
 
 function touchEntry(entry) {

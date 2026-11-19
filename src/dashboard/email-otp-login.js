@@ -17,7 +17,6 @@
 
 import tls from 'node:tls';
 import { config, log } from '../config.js';
-import { resolveProxyConnectHost } from '../net-safety.js';
 import { safeEmailRef, safeKeyRef, sliceRedactedJson } from '../log-safety.js';
 // R-1 (RATE-RETRY audit): bounded response-body reads, shared with the
 // devin-connect readers — one ceiling, one truncation contract.
@@ -87,42 +86,7 @@ function buildJsonHeaders(fingerprint, body, extra = {}) {
 // ─── HTTPS request with proxy support (minimal replica) ───
 
 import https from 'node:https';
-import http from 'node:http';
-import { isSocks, createSocksTunnel } from '../socks.js';
-
-async function createProxyTunnel(proxy, targetHost, targetPort) {
-  if (isSocks(proxy)) return createSocksTunnel(proxy, targetHost, targetPort);
-  // #11: pin the proxy host to a vetted IP literal (no second rebindable lookup).
-  const rawHost = proxy.host.replace(/:\d+$/, '');
-  const proxyHost = await resolveProxyConnectHost(rawHost, { allowPrivate: config.allowPrivateProxyHosts });
-  return new Promise((resolve, reject) => {
-    const proxyPort = proxy.port || 8080;
-
-    const connectReq = http.request({
-      host: proxyHost,
-      port: proxyPort,
-      method: 'CONNECT',
-      path: `${targetHost}:${targetPort}`,
-      headers: {
-        Host: `${targetHost}:${targetPort}`,
-        ...(proxy.username ? { 'Proxy-Authorization': `Basic ${Buffer.from(`${proxy.username}:${proxy.password || ''}`).toString('base64')}` } : {}),
-      },
-    });
-
-    connectReq.on('connect', (res, socket) => {
-      if (res.statusCode === 200) {
-        resolve(socket);
-      } else {
-        socket.destroy();
-        reject(new Error(`Proxy CONNECT failed: ${res.statusCode}`));
-      }
-    });
-
-    connectReq.on('error', (err) => reject(new Error(`Proxy connection error: ${err.message}`)));
-    connectReq.setTimeout(15000, () => { connectReq.destroy(); reject(new Error('Proxy connection timeout')); });
-    connectReq.end();
-  });
-}
+import { createProxyTunnel } from '../proxy-connector.js';
 
 function httpsRequest(url, opts, postData, proxy) {
   if (_transportOverride) return _transportOverride(url, opts, postData, proxy);

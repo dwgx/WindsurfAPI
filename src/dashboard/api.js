@@ -91,6 +91,7 @@ import { getNativeBridgeConfigStatus } from '../cascade-native-bridge.js';
 import { getNativeBridgeStats } from '../native-bridge-stats.js';
 import { assertPublicUrlHost } from '../image.js';
 import { validateHostFormat, resolveProxyConnectHost, trustedClientIp } from '../net-safety.js';
+import { createProxyTunnel, proxyScheme } from '../proxy-connector.js';
 import { discoverWindsurfCredentials, isLoopbackAddress } from './local-windsurf.js';
 import { parseAccountText, classifyToken } from './account-text-parser.js';
 import {
@@ -4957,39 +4958,35 @@ export async function testProxy({ host, port, username, password, type }, tlsTim
   } else {
     await assertPublicUrlHost(host);
   }
-  const { isSocks, createSocksTunnel } = await import('../socks.js');
   const tls = await import('node:tls');
   const targetHost = 'api.ipify.org';
   const targetPort = 443;
   const proxy = { host, port, username, password, type };
 
-  // Get a raw TCP socket — either via SOCKS5 or HTTP CONNECT
+  // One shared connector decides the first hop: SOCKS5, plaintext HTTP CONNECT,
+  // or certificate-verified TLS to an HTTPS proxy before CONNECT/auth is sent.
+  // The host was validated above; for a TCP first hop resolve it once here and
+  // hand the vetted literal over so the connector performs no second lookup.
   let socket;
-  if (isSocks(proxy)) {
-    socket = await createSocksTunnel(proxy, targetHost, targetPort, 10000);
-  } else {
-    const http = await import('node:http');
-    // #11: pin the proxy host to a vetted IP literal so this CONNECT does not
-    // re-resolve the (already validated) hostname via a second, rebindable lookup.
-    const dialHost = await resolveProxyConnectHost(host, { allowPrivate: config.allowPrivateProxyHosts });
-    socket = await new Promise((resolve, reject) => {
-      const authHeader = username
-        ? { 'Proxy-Authorization': 'Basic ' + Buffer.from(`${username}:${password || ''}`).toString('base64') }
-        : {};
-      const req = http.request({
-        host: dialHost, port, method: 'CONNECT',
-        path: `${targetHost}:${targetPort}`,
-        headers: { Host: `${targetHost}:${targetPort}`, ...authHeader },
-        timeout: 10000,
-      });
-      req.on('connect', (res, sock) => {
-        if (res.statusCode !== 200) { sock.destroy(); return reject(new Error(`ERR_PROXY_HTTP_ERROR:${res.statusCode}`)); }
-        resolve(sock);
-      });
-      req.on('error', (err) => reject(new Error(`ERR_CONNECTION_FAILED:${err.message}`)));
-      req.on('timeout', () => { req.destroy(); reject(new Error('ERR_TIMEOUT')); });
-      req.end();
-    });
+  try {
+    const dialHost = proxyScheme(proxy) === 'socks5'
+      ? undefined
+      : await resolveProxyConnectHost(host, { allowPrivate: config.allowPrivateProxyHosts });
+    socket = await createProxyTunnel(proxy, targetHost, targetPort, { timeoutMs: 10000, dialHost });
+  } catch (err) {
+    // SOCKS errors were surfaced verbatim before this refactor; keep them.
+    if (proxyScheme(proxy) === 'socks5') throw err;
+    // Preserve the dashboard's existing error-code contract (i18n keys).
+    if (err.code === 'ERR_PROXY_CONNECT') {
+      throw new Error(`ERR_PROXY_HTTP_ERROR:${err.statusCode ?? err.message}`);
+    }
+    if (err.code === 'ERR_PROXY_TLS') {
+      throw new Error(`ERR_TLS_FAILED:${err.message}`);
+    }
+    if (err.code === 'ERR_PROXY_CONNECT_TIMEOUT' || err.code === 'ERR_PROXY_TLS_TIMEOUT') {
+      throw new Error('ERR_TIMEOUT');
+    }
+    throw new Error(`ERR_CONNECTION_FAILED:${err.message}`);
   }
 
   // TLS handshake + GET to verify the tunnel works. SEC-W5: verify the cert —

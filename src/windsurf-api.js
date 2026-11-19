@@ -17,11 +17,10 @@
  *     rides in Metadata.user_jwt on chat RPCs via src/windsurf.js)
  */
 
-import http from 'http';
 import https from 'https';
 import { config, log } from './config.js';
 import { redactCredentialFragments, safeKeyRef } from './log-safety.js';
-import { resolveProxyConnectHost } from './net-safety.js';
+import { createProxyTunnel } from './proxy-connector.js';
 // R-1 (RATE-RETRY audit): bounded response-body reads, shared with the
 // devin-connect readers — one ceiling, one truncation contract.
 import { createBoundedBodyAccumulator, MAX_ERROR_BODY_BYTES } from './devin-connect.js';
@@ -65,43 +64,10 @@ const _jwtInflight = new Map(); // `${apiKey}@${host}` → Promise
 /** Test seam: advance the epoch (logout/rotation path in auth.js calls this). */
 export function __bumpUserJwtCacheEpoch() { _cacheEpoch++; }
 
-import { isSocks, createSocksTunnel } from './socks.js';
-
-// Tunnel HTTPS through an HTTP CONNECT proxy or SOCKS5 proxy.
-async function createProxyTunnel(proxy, targetHost, targetPort) {
-  if (isSocks(proxy)) return createSocksTunnel(proxy, targetHost, targetPort);
-  // #11: pin the proxy host to a vetted IP literal so the CONNECT socket does no
-  // second (rebindable) DNS lookup. Honors ALLOW_PRIVATE_PROXY_HOSTS.
-  const rawHost = proxy.host.replace(/:\d+$/, '');
-  const proxyHost = await resolveProxyConnectHost(rawHost, { allowPrivate: config.allowPrivateProxyHosts });
-  return new Promise((resolve, reject) => {
-    const proxyPort = proxy.port || 8080;
-    const req = http.request({
-      host: proxyHost,
-      port: proxyPort,
-      method: 'CONNECT',
-      path: `${targetHost}:${targetPort}`,
-      headers: {
-        Host: `${targetHost}:${targetPort}`,
-        ...(proxy.username ? {
-          'Proxy-Authorization': `Basic ${Buffer.from(`${proxy.username}:${proxy.password || ''}`).toString('base64')}`,
-        } : {}),
-      },
-    });
-    req.on('connect', (res, socket) => {
-      if (res.statusCode === 200) resolve(socket);
-      else { socket.destroy(); reject(new Error(`Proxy CONNECT failed: ${res.statusCode}`)); }
-    });
-    req.on('error', (err) => reject(new Error(`Proxy tunnel: ${err.message}`)));
-    req.setTimeout(15000, () => { req.destroy(); reject(new Error('Proxy tunnel timeout')); });
-    req.end();
-  });
-}
-
 /** Detect errors caused by the proxy itself (not the upstream API). */
 function isProxyError(err) {
   const m = err?.message || '';
-  return /Proxy CONNECT failed|Proxy tunnel|Proxy connection/i.test(m);
+  return /Proxy CONNECT failed|Proxy tunnel|Proxy connection|Proxy TLS/i.test(m);
 }
 
 let postJsonOverride = null;
