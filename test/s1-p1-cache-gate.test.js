@@ -59,7 +59,14 @@ function keyHarness({ baseline = false, singleTenant = false, enabled = '1', ali
   const inner = chat.match(/  const reuseOriginalCkey = [\s\S]*?  const ckey = [^\n]+;/)?.[0];
   assert(inner, 'The real inner key-selection statements must be loaded');
   const globals = { process: { env }, computeCacheKey: compute, cacheKey: compute,
-    isCacheEnabled: cache.isCacheEnabled };
+    isCacheEnabled: cache.isCacheEnabled,
+    // The real inner statement (and the real outer wrapper, below) derive the
+    // effective routed identity via chat.js cascadeCacheIdentity. This harness
+    // pins the GATE mechanics (hash-count, scope skip, H-3 capture) and the
+    // identity-less key format against the pinned 014204f cache — both are
+    // identity-neutral, so the routing identity itself is stubbed out here.
+    // Its derivation is behaviorally covered by cache-routing-identity.test.js.
+    cascadeCacheIdentity: () => undefined };
   const api = evaluate(singleTenantDeclaration + '\n' + scope + gated +
     '\nfunction innerKey(body, callerKey, context) {\n' + inner + '\nreturn ckey;\n}\n',
     ['cacheKey', 'hasPerUserScope', 'innerKey'], globals);
@@ -161,6 +168,7 @@ test('the actual outer wrapper captures the original key before the inner mutate
     ['handleChatCompletions'], {
       cacheKey: h.cacheKey, newTraceId: () => 'trace', traceEnabled: () => false,
       shouldAutoFallback: () => false,
+      cascadeCacheIdentity: () => undefined,
       _handleChatCompletionsInner: async (b, context) => {
         captured = context.__originalCkey;
         b.model = 'mutated-after-key';

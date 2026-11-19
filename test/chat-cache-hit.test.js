@@ -2,7 +2,7 @@ import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { addAccountByKey, removeAccount } from '../src/auth.js';
 import { cacheClear, cacheKey, cacheSet, cacheStats } from '../src/cache.js';
-import { handleChatCompletions, __setConnectDeps, __resetConnectDeps } from '../src/handlers/chat.js';
+import { handleChatCompletions, cascadeCacheIdentity, __setConnectDeps, __resetConnectDeps } from '../src/handlers/chat.js';
 import { stopLanguageServerAndWait } from '../src/langserver.js';
 
 const createdAccountIds = [];
@@ -75,7 +75,9 @@ describe('chat cache-hit stream shape', () => {
       // :user: scope (as a legit single user would) so it exercises the hit path.
       __callerKey: 'api:test:user:cachetester',
     };
-    cacheSet(cacheKey(body, body.__callerKey), { text: 'cached answer', thinking: 'cached thinking' });
+    // The handler looks the slot up under the effective routed identity
+    // (cascadeCacheIdentity) — seed with the same derivation, not the raw key.
+    cacheSet(cacheKey(body, body.__callerKey, cascadeCacheIdentity(body)), { text: 'cached answer', thinking: 'cached thinking' });
 
     const result = await handleChatCompletions(body);
     assert.equal(result.status, 200);
@@ -113,7 +115,9 @@ describe('chat cache-hit stream shape', () => {
       messages: [{ role: 'user', content: 'hi' }],
       __callerKey: 'api:test:user:cachetester',  // SEC-W2: trusted scope for cache-hit path
     };
-    cacheSet(cacheKey(body, body.__callerKey), { text: 'cached answer', thinking: 'cached thinking' });
+    // The handler looks the slot up under the effective routed identity
+    // (cascadeCacheIdentity) — seed with the same derivation, not the raw key.
+    cacheSet(cacheKey(body, body.__callerKey, cascadeCacheIdentity(body)), { text: 'cached answer', thinking: 'cached thinking' });
 
     const result = await handleChatCompletions(body);
     assert.equal(result.status, 200);
@@ -142,7 +146,9 @@ describe('chat cache-hit stream shape', () => {
       messages: [{ role: 'user', content: 'hi' }],
       __callerKey: 'api:test:user:cachetester',  // SEC-W2: trusted scope for cache-hit path
     };
-    cacheSet(cacheKey(body, body.__callerKey), { text: 'cached answer', thinking: 'cached thinking' });
+    // The handler looks the slot up under the effective routed identity
+    // (cascadeCacheIdentity) — seed with the same derivation, not the raw key.
+    cacheSet(cacheKey(body, body.__callerKey, cascadeCacheIdentity(body)), { text: 'cached answer', thinking: 'cached thinking' });
 
     const result = await handleChatCompletions(body);
     const res = fakeRes();

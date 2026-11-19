@@ -72,7 +72,7 @@ import { acpVisionEnabled } from '../devin-acp.js';
 import { selectBackend, usesCascadeFlow } from '../backend-router.js';
 import { toChatCompletion as _toChatCompletion, streamChatCompletion as _streamChatCompletion } from '../devin-connect-openai.js';
 import { resolveConnectSelector, DROUGHT_SAFE_SELECTORS, getConnectSelectorImageCapability } from '../devin-connect-models.js';
-import { getToolDefTags, parseToolCallTagMap, isParallelToolCallsHintIgnored, getImageFieldTag, stripImageParts, findFilePartInMessages, unsupportedFilePartError, messageText as connectMessageText } from '../devin-connect.js';
+import { getToolDefTags, parseToolCallTagMap, isParallelToolCallsHintIgnored, isToolChoicePassthroughEnabled, getImageFieldTag, stripImageParts, findFilePartInMessages, unsupportedFilePartError, messageText as connectMessageText } from '../devin-connect.js';
 import { recordRateLimitBurstEvent, RATE_LIMIT_BURST_WINDOW_MS } from '../rate-limit-burst.js';
 import { isRouterModel, assignModel as _assignModel } from '../devin-connect-catalog.js';
 import { bumpConnect } from '../devin-connect-metrics.js';
@@ -1487,12 +1487,51 @@ export function hasPerUserScope(callerKey) {
 // Keep both existing key sites gated without moving either snapshot in time.
 // The outer key must still precede fallback/body rewrites; the inner fallback
 // key must still describe the rewritten body. The cache module's public key
-// function remains unconditional for its other callers.
-function cacheKey(body, callerKey, keepReasoningSeparate = false) {
+// function remains unconditional for its other callers. The routing identity
+// (third arg) threads through untouched — it only reshapes the hashed body.
+function cacheKey(body, callerKey, identity, keepReasoningSeparate = false) {
   if (!isCacheEnabled() || !hasPerUserScope(callerKey)) return null;
-  const key = computeCacheKey(body, callerKey);
+  const key = computeCacheKey(body, callerKey, identity);
   // Text promoted for another route must not replay as final Gemini content.
   return keepReasoningSeparate ? `gemini:${key}` : key;
+}
+
+// The Cascade generation this body routes to RIGHT NOW: resolved model key +
+// thinking-sibling route + router-canonical effort — the same expression the
+// inner handler dispatches on (chat.js `resolveEffectiveModelKey(resolveModel(
+// mergeReasoningEffortIntoModel(body.model, body)), isThinkingRequested(body))`).
+// The response cache keys THIS, not the raw spelling: flat vs nested
+// `reasoning.effort` produced equal raw keys while routing to different
+// Cascade variants, and a warm cache replayed the first variant's answer for
+// the second (BLUE-CACHE P2). Pure function of (body, catalog) — the wrapper's
+// pre-rewrite key and the inner's post-rewrite key for the same body agree by
+// construction, which keeps the H-3 original/fallback slot roles intact.
+// Exported for tests that pre-seed a cache slot the real handler will look up.
+export function cascadeCacheIdentity(body) {
+  const reqModel = mergeReasoningEffortIntoModel(body.model, body);
+  const wantThinking = isThinkingRequested(body);
+  return {
+    model: resolveEffectiveModelKey(resolveModel(reqModel || config.defaultModel), wantThinking),
+    thinking: wantThinking,
+    effort: resolveReasoningEffort(body) || null,
+  };
+}
+
+// The connect generation this body routes to. The selector derives
+// deterministically from (raw model spelling, canonical effort) via
+// mergeReasoningEffortIntoModel + resolveConnectSelector, and the response
+// echoes the requested name — keying the raw spelling keeps alias display
+// names truthful on replay. The one extra output-affecting knob is the
+// opt-in sequential preference: the encoder emits #11 disable_parallel_tool_calls
+// only when DEVIN_CONNECT_TOOL_CHOICE=1 AND parallel_tool_calls === false
+// (the exact expression below mirrors devin-connect.js buildGetChatMessageRequest).
+// With the switch off the field is dropped, so opposite preferences are
+// default-equivalent and must keep sharing one slot.
+function connectCacheIdentity(body) {
+  return {
+    effort: resolveReasoningEffort(body) || null,
+    connectSequential: isToolChoicePassthroughEnabled() && body.parallel_tool_calls === false,
+  };
 }
 
 function isToolSensitiveOpusModel(modelKey = '') {
@@ -3373,6 +3412,17 @@ async function waitForAccount(tried, signal, maxWaitMs = QUEUE_MAX_WAIT_MS, mode
 // two fields, the user's `xhigh` knob is silently dropped (zhqsuo's #115
 // followup: log shows `model=gpt-5.5-medium reasoning=xhigh`).
 //
+// Router-canonical reasoning-effort value, shared by routing AND cache-key
+// construction so the two can never disagree again (BLUE-CACHE P2). Truthy
+// flat-over-nested precedence (a blank flat value must NOT shadow a nested
+// one), trimmed + lowercased, with the `minimal` → `none` catalog spelling
+// applied. null when absent or blank.
+export function normalizeReasoningEffortValue(body) {
+  const raw = String(body?.reasoning_effort || body?.reasoning?.effort || '').toLowerCase().trim();
+  if (!raw) return null;
+  return raw === 'minimal' ? 'none' : raw;
+}
+
 // Merge logic: the effort field is folded into the model id ONLY when the id
 // carries no effort suffix. An explicit suffix in the requested model is the
 // caller's tier selection and is AUTHORITATIVE — neither `reasoning.effort` nor
@@ -3400,12 +3450,12 @@ export function mergeReasoningEffortIntoModel(reqModel, body) {
     const suffix = '-' + (e === 'minimal' ? 'none' : e);
     if (reqModel.toLowerCase().endsWith(suffix)) return reqModel;
   }
-  const normalizedEffort = effort === 'minimal' ? 'none' : effort;
   // Try the merged form. resolveModel returns the model key if it exists,
   // unchanged input otherwise; getModelInfo returns null for unknown models.
   // Both checks together guard against accidentally inventing a model that
-  // doesn't exist in the catalog.
-  const merged = `${reqModel}-${normalizedEffort}`;
+  // doesn't exist in the catalog. `effort` is already router-canonical
+  // (lowercased, minimal→none) — normalizeReasoningEffortValue did it.
+  const merged = `${reqModel}-${effort}`;
   const resolved = resolveModel(merged);
   if (resolved && getModelInfo(resolved)) return merged;
   return reqModel;
@@ -3488,7 +3538,10 @@ export async function handleChatCompletions(body, context = {}) {
   // successful fallback writes into the cache slot the NEXT identical
   // original-model request will look up, instead of the fallback-model
   // slot that the next request will miss.
-  const originalCkey = cacheKey(body, context.callerKey || body.__callerKey || '', context.keepReasoningSeparate === true);
+  // BLUE-CACHE P2: the key carries the effective routed identity, not the raw
+  // spelling — the next identical original-model request resolves the same
+  // identity, so the fallback's alias write and that request's lookup agree.
+  const originalCkey = cacheKey(body, context.callerKey || body.__callerKey || '', cascadeCacheIdentity(body), context.keepReasoningSeparate === true);
   // A model fallback is another attempt of the same request. Keep the
   // generation from its first cache lookup across both attempts.
   let requestCacheGeneration;
@@ -4416,7 +4469,7 @@ async function _handleChatCompletionsInner(body, context, captureCacheGeneration
     let __sHit = null;
     let cacheWriteGeneration = null;
     try {
-      __sCkey = cacheKey(body, callerKey, keepReasoningSeparate);
+      __sCkey = cacheKey(body, callerKey, connectCacheIdentity(body), keepReasoningSeparate);
       if (__sCkey) {
         cacheWriteGeneration = captureCacheGeneration();
         __sHit = cacheGet(__sCkey);
@@ -6037,7 +6090,11 @@ async function _handleChatCompletionsInner(body, context, captureCacheGeneration
   const reuseOriginalCkey = typeof context.__originalCkey === 'string'
     && context.__originalCkey
     && !context.__fallbackAttempt;
-  const ckey = reuseOriginalCkey ? context.__originalCkey : cacheKey(body, callerKey, context.keepReasoningSeparate === true);
+  // BLUE-CACHE P2: a fresh computation carries the effective routed identity so
+  // lookup and store describe the generation this (possibly fallback-rewritten)
+  // body dispatches to. The reused outer key was computed from the SAME body by
+  // cascadeCacheIdentity, so the two agree for non-fallback requests.
+  const ckey = reuseOriginalCkey ? context.__originalCkey : cacheKey(body, callerKey, cascadeCacheIdentity(body), context.keepReasoningSeparate === true);
   // SEC-W2: only share the response cache ACROSS requests when the caller has a
   // trustworthy per-user scope. A guessed `:client:` bucket (shared key behind a
   // proxy) must never serve one user's cached answer to another — treat it as

@@ -151,9 +151,19 @@ export function resolveReasoningEffort(body) {
   }
 }
 
-function normalize(body) {
+function normalize(body, identity = null) {
+  // The handler resolves the output-affecting routing decisions (model alias +
+  // effort merge + thinking-sibling route; the connect sequential preference)
+  // and threads them here. The key must describe the GENERATION the request
+  // selects, not the raw client spelling: two accepted spellings can route to
+  // different Cascade models while normalizing to one raw key, and a warm cache
+  // would replay the first variant's answer for the second (BLUE-CACHE P2).
+  // Only the dimensions the caller actually resolved are overridden — an
+  // identity without `model` keeps the raw spelling, so non-routing callers
+  // (tests, other handlers) hash exactly what they always did.
+  const ident = identity && typeof identity === 'object' ? identity : null;
   return {
-    model: body.model || '',
+    model: ident && ident.model !== undefined ? ident.model : (body.model || ''),
     messages: normalizeBinary(body.messages || []),
     // tools / tool_choice / response_format / thinking / stream_options are
     // nested objects whose inner JSON-Schema key order is not canonical across
@@ -169,9 +179,12 @@ function normalize(body) {
       ? { parallel_tool_calls: false }
       : {}),
     response_format: body.response_format ? stableClone(body.response_format) : null,
-    // This same helper feeds both effort-suffix routing and thinking selection
-    // in Chat; equal keys must not choose different model/output policies.
-    reasoning_effort: resolveReasoningEffort(body) || null,
+    // With a routing identity the handler passes the ROUTER-CANONICAL effort
+    // (resolveReasoningEffort — the same truthy flat-then-nested precedence the
+    // router's mergeReasoningEffortIntoModel uses) so spellings that route
+    // identically share the slot; the raw normalized spelling stays for
+    // identity-less callers.
+    reasoning_effort: ident && ident.effort !== undefined ? ident.effort : (resolveReasoningEffort(body) || null),
     thinking: body.thinking ? stableClone(body.thinking) : null,
     stream_options: body.stream_options ? stableClone(body.stream_options) : null,
     temperature: body.temperature ?? null,
@@ -199,6 +212,22 @@ function normalize(body) {
     // so two key-order-permuted-but-equal maps land in the same cache slot (#10).
     logit_bias: body.logit_bias ? stableClone(body.logit_bias) : null,
     n: body.n ?? null,
+    // Routing-identity dimensions (identity callers only, so identity-less
+    // keys stay byte-identical):
+    //   - reasoning_mode: the thinking-sibling route already folds into the
+    //     model override, but when NO sibling exists (or the opus-4.7 auto-route
+    //     is disabled) wantThinking still changes output handling — it gates the
+    //     thinking→text promotion (chat.js shouldFallbackThinkingToText). Two
+    //     requests on the same base model with opposite reasoning modes can
+    //     diverge there, so they must not share a slot.
+    //   - parallel_tool_calls: the DEVIN_CONNECT encoder emits the sequential
+    //     flag (#11) only when the passthrough is enabled AND the caller asked
+    //     for `parallel_tool_calls:false`. The handler passes
+    //     connectSequential:true exactly then; any other state (switch off,
+    //     field absent/true) is default-equivalent on the wire and must keep
+    //     sharing the slot — a miss, never a wrong replay.
+    ...(ident && ident.thinking !== undefined ? { reasoning_mode: ident.thinking ? 'thinking' : 'plain' } : {}),
+    ...(ident && ident.connectSequential === true ? { parallel_tool_calls: false } : {}),
   };
 }
 
@@ -211,13 +240,19 @@ function normalize(body) {
  * model. Pass an empty string only for tests; production callers must
  * thread the request's authenticated callerKey through.
  *
+ * `identity` (optional) carries the effective routed generation the handler
+ * resolved for this body: `{ model, effort, thinking, connectSequential }`.
+ * Lookup and store MUST pass the same identity — chat.js derives it from the
+ * body alone, so both sides agree by construction. Omit it to hash the raw
+ * request spelling (tests, non-routing callers).
+ *
  * Implementation note: prefix the JSON with the caller scope and a
  * separator so two distinct callers can't collide by crafting bodies
  * that serialize to identical strings.
  */
-export function cacheKey(body, callerKey = '') {
+export function cacheKey(body, callerKey = '', identity = null) {
   const scope = String(callerKey || '');
-  const json = JSON.stringify(normalize(body));
+  const json = JSON.stringify(normalize(body, identity));
   return createHash('sha256').update(scope).update('\0').update(json).digest('hex');
 }
 
