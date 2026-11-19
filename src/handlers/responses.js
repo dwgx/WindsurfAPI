@@ -6,7 +6,7 @@
  */
 
 import { randomUUID } from 'crypto';
-import { handleChatCompletions, normalizeOpenAIErrorType, connectErrorToHttp, hasPerUserScope } from './chat.js';
+import { handleChatCompletions, normalizeOpenAIErrorType, connectErrorToHttp, hasPerUserScope, DEFER_STREAM_DELIVERY } from './chat.js';
 import { selectBackend } from '../backend-router.js';
 import { findFilePartInMessages, unsupportedFilePartError } from '../devin-connect.js';
 import { getResponse, putResponse, deleteResponse, isResponseStoreEnabled, wantsPersistence } from '../response-store.js';
@@ -2567,11 +2567,37 @@ export async function handleResponses(body, deps = {}) {
   // response.completed usage block), so it must opt in regardless of what the
   // Responses client sent — the Responses API reports usage on its own terminal
   // event, not via an OpenAI-style stream_options toggle.
-  const streamResult = await chatHandler(
-    { ...chatBody, messages: dispatchMessages, stream: true, __route: 'responses', stream_options: { ...(chatBody.stream_options || {}), include_usage: true } },
-    context,
-  );
-  if (!streamResult.stream) return streamResult;
+  // Chat's finish chunk precedes our terminal response envelope. Defer only its
+  // reusable state (cache/session/affinity/pool publication), never accounting,
+  // reservations, LS leases or writer cleanup. This is independent of store:false.
+  const deliveryEffects = [];
+  let deliveryPending = true;
+  const settleDeliveryEffects = (delivered) => {
+    if (!deliveryPending) return;
+    deliveryPending = false;
+    const effects = deliveryEffects.splice(0);
+    if (!delivered) return;
+    for (const effect of effects) {
+      try { effect(); }
+      catch { log.warn('Responses: deferred delivery state could not be published'); }
+    }
+  };
+  let streamResult;
+  try {
+    streamResult = await chatHandler(
+      { ...chatBody, messages: dispatchMessages, stream: true, __route: 'responses', stream_options: { ...(chatBody.stream_options || {}), include_usage: true } },
+      { ...context, [DEFER_STREAM_DELIVERY]: (effect) => {
+        if (deliveryPending && typeof effect === 'function') deliveryEffects.push(effect);
+      } },
+    );
+  } catch (error) {
+    settleDeliveryEffects(false);
+    throw error;
+  }
+  if (!streamResult.stream) {
+    settleDeliveryEffects(false);
+    return streamResult;
+  }
 
   return {
     status: 200,
@@ -2598,11 +2624,13 @@ export async function handleResponses(body, deps = {}) {
       let clientErrored = false;
       realRes.on('close', () => {
         clientClosed = true;
+        settleDeliveryEffects(false);
         if (!captureRes.writableEnded) captureRes._clientDisconnected();
         else translator.writer.dispose();
       });
       realRes.on('error', () => {
         clientErrored = true;
+        settleDeliveryEffects(false);
         translator.writer.dispose();
       });
 
@@ -2651,6 +2679,7 @@ export async function handleResponses(body, deps = {}) {
         && !clientClosed
         && !clientErrored
         && !translator.writer.gone();
+      settleDeliveryEffects(terminalDelivered);
       if (terminalDelivered) {
         // Same as the non-streaming path: persist the status the client was told,
         // so a later retrieval does not report a truncated turn as completed.

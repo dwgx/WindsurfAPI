@@ -2703,6 +2703,16 @@ export function bindConnectSticky(callerKey, acct, selector = null) {
   } catch { /* affinity is best-effort — never fail a served request over it */ }
 }
 
+// Internal adapter contract: a translated stream can publish delivery-dependent
+// state only after its own terminal egress settles. A Symbol keeps this hook out
+// of JSON request bodies. Direct Chat has no hook and keeps its existing timing.
+export const DEFER_STREAM_DELIVERY = Symbol('deferStreamDelivery');
+function publishStreamDelivery(context, effect) {
+  const defer = context?.[DEFER_STREAM_DELIVERY];
+  if (typeof defer === 'function') defer(effect);
+  else effect();
+}
+
 // How many times a single DEVIN_CONNECT request may hop to a fresh pooled
 // account after a dead-token failure. 0 disables failover (same-account
 // re-login still applies). Default 2 so a request survives a couple of stale
@@ -5018,6 +5028,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
                     for (const frame of r.frames) await send(frame);
                     r.frames.length = 0;
                   }
+                  publishStreamDelivery(context, () => {
                   // Pin this conversation to the account that just served it, so the
                   // next turn reads the prompt cache back instead of re-writing it.
                   // Complementary to the pair-chain commit below: that keeps the
@@ -5061,6 +5072,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
                       log.info('[STREAM-CACHE-STORE] ckey=' + __sCkey);
                     }
                   } catch (e) { log.info('[STREAM-CACHE-ERR] store ' + (e && e.message)); }
+                  });
                 }
                 break;
               }
@@ -8781,7 +8793,10 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
               const turnComplete = appendAssistantTurn(messages, accText, collectedToolCalls);
               const fpAfter = fingerprintAfter(turnComplete, modelKey, callerKey, fpOpts);
               const ttlHint = ttlHintFromCachePolicy(cachePolicy);
-              poolCheckin(fpAfter, {
+              // This pool is only a reusable-description Map, not an account
+              // reservation or LS lease. Snapshot the successful turn now;
+              // translated routes publish it only after their terminal passes.
+              const completedPoolEntry = {
                 cascadeId: cascadeResult.cascadeId,
                 sessionId: cascadeResult.sessionId,
                 lsPort: ls.port,
@@ -8792,12 +8807,15 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
                 generatorOffset: Number.isFinite(cascadeResult.generatorOffset) ? cascadeResult.generatorOffset : reuseEntry?.generatorOffset,
                 historyCoverage: cascadeResult.historyCoverage || reuseEntry?.historyCoverage || null,
                 createdAt: reuseEntry?.createdAt,
-              }, callerKey, ttlHint === undefined ? 0 : ttlHint);
-
-              // Bind caller to this account for the next turn
-              if (callerKey && isStickyEnabled() && acct) {
-                setStickyBinding(callerKey, modelKey, acct.id, acct.apiKey);
-              }
+              };
+              const completedAccount = acct ? { id: acct.id, apiKey: acct.apiKey } : null;
+              publishStreamDelivery(deps.context, () => {
+                poolCheckin(fpAfter, completedPoolEntry, callerKey, ttlHint === undefined ? 0 : ttlHint);
+                // Bind caller to this account for the next turn.
+                if (callerKey && isStickyEnabled() && completedAccount) {
+                  setStickyBinding(callerKey, modelKey, completedAccount.id, completedAccount.apiKey);
+                }
+              });
             }
             // success — P2-1: same identity split as the non-stream twin
             // (nonStreamResponse). `currentApiKey` is the per-attempt snapshot;
@@ -8982,7 +9000,8 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
               // A capped turn caches what was DELIVERED, exactly like a stopped
               // one: replaying bytes the client never received would change the
               // answer between the first and second identical request.
-              cacheSet(ckey, { text: (stopMatched || outputCapReached) ? visibleText : accText, thinking: accThinking, stop: stopMatched });
+              const completedCacheEntry = { text: (stopMatched || outputCapReached) ? visibleText : accText, thinking: accThinking, stop: stopMatched };
+              publishStreamDelivery(deps.context, () => cacheSet(ckey, completedCacheEntry));
             }
             return;
           } catch (err) {
