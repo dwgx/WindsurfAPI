@@ -12,43 +12,89 @@ export function releaseEvidence(output) {
   if (files.length !== expected || new Set(files).size !== expected) throw new Error('release file plan mismatch');
   const rows = new Map();
   // A file whose whole suite is skipped at the describe level reports zero tests
-  // with a `suites N` line as its only witness. The runner accepts that shape
-  // (see parseFileSummary); the gate must accept exactly the same shape or the
-  // gate can never pass on a suite that contains such a file.
+  // with a `suites N` line as its only count witness. The runner accepts that
+  // shape (see parseFileSummary); the gate must accept exactly the same shape or
+  // the gate can never pass on a suite that contains such a file.
   const suiteRows = new Map();
   for (const m of text.matchAll(/^((?:\[[^\]]+\]\s+)+)(?:#|ℹ) (tests|pass|fail|skipped|cancelled|todo|suites) (\d+)$/gm)) {
     const names = [...m[1].matchAll(/\[([^\]]+)\]/g)].map(x => x[1].replace(/\\/g, '/'));
     const file = names[0];
     if (!names.every(name => name === file) || !files.includes(file)) throw new Error('unexpected release file');
-    if (m[2] === 'suites') { suiteRows.set(file, Number(m[3])); continue; }
+    if (m[2] === 'suites') {
+      if (suiteRows.has(file)) throw new Error('duplicate release summary');
+      suiteRows.set(file, Number(m[3]));
+      continue;
+    }
     const row = rows.get(file) || {};
     if (Object.hasOwn(row, m[2])) throw new Error('duplicate release summary');
     row[m[2]] = Number(m[3]); rows.set(file, row);
   }
   if (rows.size !== expected) throw new Error(`release parsed ${rows.size}/${expected} files`);
+
+  // The shard authors one unprefixed receipt per file; a child test's stdout is
+  // prefixed with `[file] `, so a test cannot forge this line. It is the only
+  // channel carrying the runner's suite-skip event: the counters alone cannot
+  // distinguish a deliberately skipped suite from an empty one.
+  const receipts = new Map();
+  for (const m of text.matchAll(/^TEST_FILE_RESULT (\{.*\})$/gm)) {
+    let receipt;
+    try { receipt = JSON.parse(m[1]); } catch { throw new Error('malformed release file receipt'); }
+    if (!receipt || typeof receipt.file !== 'string' || receipts.has(receipt.file)) {
+      throw new Error('duplicate or malformed release file receipt');
+    }
+    receipts.set(receipt.file, receipt);
+  }
+  if (receipts.size !== expected) throw new Error(`release parsed ${receipts.size}/${expected} file receipts`);
+
   const totals = { tests: 0, pass: 0, fail: 0, skipped: 0, cancelled: 0, todo: 0 };
   // Per-file skip census. Two shapes execute nothing while still declaring
   // work: a file whose every test skipped (zero pass+fail, tests counted), and
   // a suite skipped whole at the describe level (zero tests, with `suites N`
-  // as its only witness — the same shape the runner accepts). A load-time
+  // plus the receipt's explicit skip event as its witnesses). A load-time
   // throw is NOT one of them: measured on node v24.21.0 it fails the file
   // (`tests 1 / fail 1`, exit 1), which counts.fail already catches. Summing
   // per file lets the caller name the offenders instead of only reporting a
   // total it cannot act on.
   const inert = [];
-  for (const [file, row] of rows) {
-    const zeroWithSuite = row.tests === 0 && Number.isSafeInteger(suiteRows.get(file)) && suiteRows.get(file) > 0;
-    if (!Object.keys(totals).every(k => Number.isSafeInteger(row[k]))
-        || (row.tests === 0 && !zeroWithSuite)
+  const failedFiles = [];
+  for (const file of files) {
+    const row = rows.get(file);
+    if (!row || !Object.keys(totals).every(k => Number.isSafeInteger(row[k]))
         || row.tests !== row.pass + row.fail + row.skipped + row.cancelled + row.todo) {
       throw new Error('incomplete release summary');
     }
-    if ((row.tests > 0 && row.pass + row.fail === 0) || zeroWithSuite) {
-      inert.push({ file, tests: row.tests, suites: zeroWithSuite ? suiteRows.get(file) : 0 });
+    const receipt = receipts.get(file);
+    if (!receipt) throw new Error(`missing release file receipt: ${file}`);
+    const counts = receipt.counts;
+    if (!counts || !Object.keys(totals).every(k => Number.isSafeInteger(counts[k]) && counts[k] >= 0)
+        || counts.tests !== counts.pass + counts.fail + counts.skipped + counts.cancelled + counts.todo) {
+      throw new Error(`invalid release file receipt: ${file}`);
     }
-    for (const key of Object.keys(totals)) totals[key] += row[key];
+    if (Object.keys(totals).some(k => counts[k] !== row[k])) {
+      throw new Error(`release file receipt disagrees with its summary: ${file}`);
+    }
+    const suiteCount = suiteRows.get(file);
+    if (counts.tests === 0) {
+      if (!Number.isSafeInteger(suiteCount) || suiteCount < 1) throw new Error(`missing suite summary: ${file}`);
+      // An empty suite and a deliberately skipped one have identical counters.
+      // Only the runner's suite-skip event separates them; without it the file
+      // is not evidence, and an allowlist declaration cannot supply the event.
+      if (!receipt.suiteSkip) {
+        throw new Error(`release file ${file} measured zero tests without an explicit suite skip`);
+      }
+      if (receipt.suites !== suiteCount) {
+        throw new Error(`release file receipt disagrees with its suite summary: ${file}`);
+      }
+    } else if (!Number.isSafeInteger(receipt.suites) || receipt.suites < 0) {
+      throw new Error(`invalid suite count in release file receipt: ${file}`);
+    }
+    if (receipt.ok !== true) failedFiles.push(file);
+    if ((counts.tests > 0 && counts.pass + counts.fail === 0) || counts.tests === 0) {
+      inert.push({ file, tests: counts.tests, suites: counts.tests === 0 ? suiteCount : 0 });
+    }
+    for (const key of Object.keys(totals)) totals[key] += counts[key];
   }
-  return { files: rows.size, ...totals, inert };
+  return { files: rows.size, ...totals, inert, failedFiles };
 }
 
 function execute(command, args, root, env) {
@@ -142,7 +188,14 @@ export async function runGate(root = process.cwd(), options = {}) {
       try {
         const counts = releaseEvidence(result.output);
         detail = `${counts.pass} pass / ${counts.fail} fail / ${counts.skipped} skip (${counts.files} files)`;
-        if ((counts.fail || counts.cancelled) && result.code === 0) result.code = 1;
+        if (counts.todo || counts.cancelled) detail += ` — todo ${counts.todo}, cancelled ${counts.cancelled}`;
+        if (counts.failedFiles.length) detail += ` — not ok: ${counts.failedFiles.join(', ')}`;
+        // TODO and cancelled results are red even when the child exits 0: node
+        // 22 has reported `pass=99 fail=0 cancelled=95` with exit 0, so the
+        // gate cannot infer the verdict from the child status alone.
+        if ((counts.fail || counts.cancelled || counts.todo || counts.failedFiles.length) && result.code === 0) {
+          result.code = 1;
+        }
         // A file that declares tests and executes none is invisible in the
         // verdict. The shard summary folds it into a skip total, so on a host
         // where 4813 tests ran and 6 files did not, the gate still says PASS

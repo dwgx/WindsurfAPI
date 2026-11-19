@@ -24,7 +24,7 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { execFileSync, spawnSync } from 'node:child_process';
 
-import { gateSteps, parseGateArgs } from '../scripts/local-gate.mjs';
+import { gateSteps, parseGateArgs, releaseEvidence } from '../scripts/local-gate.mjs';
 
 const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const plain = "import {it} from 'node:test';\nit('works',()=>{});\n";
@@ -99,7 +99,10 @@ function fixture() {
   write('npm-fixture.mjs',
     `console.log(${JSON.stringify('Running test shard 1/1: 1/1 files\n- test/fixture.test.js\n'
       + ['tests 1', 'pass 1', 'fail 0', 'skipped 0', 'cancelled 0', 'todo 0']
-        .map(line => `[test/fixture.test.js] # ${line}\n`).join(''))});\n`);
+        .map(line => `[test/fixture.test.js] # ${line}\n`).join('')
+      + 'TEST_FILE_RESULT {"file":"test/fixture.test.js","counts":'
+      + '{"tests":1,"pass":1,"fail":0,"skipped":0,"cancelled":0,"todo":0},'
+      + '"suites":0,"suiteSkip":null,"ok":true,"problem":null}\n')});\n`);
 
   git('init', '-q');
   git('add', '.');
@@ -177,3 +180,53 @@ it('a drifted pin also fails the release gate, which measures specs the diff nev
   assert.match(result.stdout, /baseline pass=1 but spec expects 3\./);
   assert.match(result.stdout, /RELEASE GATE: FAIL exit=1/);
 }));
+
+// ── release evidence: the shard's receipt is the per-file verdict ───────────
+
+const evidenceReceipt = (file, counts, extra = {}) => 'TEST_FILE_RESULT ' + JSON.stringify({
+  file, counts, suites: 0, suiteSkip: null, ok: true, problem: null, ...extra,
+}) + '\n';
+const evidencePlan = file => `Running test shard 1/1: 1/1 files\n- ${file}\n`;
+const evidenceCounts = (tests, pass, fail, skipped, cancelled, todo) =>
+  ({ tests, pass, fail, skipped, cancelled, todo });
+const evidenceRows = (file, c, suites) => ['tests', 'pass', 'fail', 'skipped', 'cancelled', 'todo']
+  .map(key => `[${file}] # ${key} ${c[key]}\n`).join('')
+  + (suites ? `[${file}] # suites ${suites}\n` : '');
+
+it('release evidence requires a receipt and a runner skip event for zero-test files', () => {
+  const file = 'test/fixture.test.js';
+  const healthy = evidencePlan(file) + evidenceRows(file, evidenceCounts(1, 1, 0, 0, 0, 0))
+    + evidenceReceipt(file, evidenceCounts(1, 1, 0, 0, 0, 0));
+  const evidence = releaseEvidence(healthy);
+  assert.equal(evidence.pass, 1);
+  assert.deepEqual(evidence.inert, []);
+  assert.deepEqual(evidence.failedFiles, []);
+  assert.throws(() => releaseEvidence(evidencePlan(file) + evidenceRows(file, evidenceCounts(1, 1, 0, 0, 0, 0))),
+    /receipt/);
+  const empty = evidencePlan(file) + evidenceRows(file, evidenceCounts(0, 0, 0, 0, 0, 0), 1)
+    + evidenceReceipt(file, evidenceCounts(0, 0, 0, 0, 0, 0), { suites: 1 });
+  assert.throws(() => releaseEvidence(empty), /explicit suite skip/);
+  const skipped = evidencePlan(file) + evidenceRows(file, evidenceCounts(0, 0, 0, 0, 0, 0), 1)
+    + evidenceReceipt(file, evidenceCounts(0, 0, 0, 0, 0, 0), { suites: 1, suiteSkip: 'platform reason' });
+  assert.deepEqual(releaseEvidence(skipped).inert, [{ file, tests: 0, suites: 1 }]);
+});
+
+it('release evidence exposes TODO, cancelled and file-level failures', () => {
+  const file = 'test/fixture.test.js';
+  for (const [c, extra] of [
+    [evidenceCounts(2, 1, 0, 0, 0, 1), { ok: false, problem: '1 todo' }],
+    [evidenceCounts(1, 0, 0, 0, 1, 0), { ok: false, problem: '1 cancelled' }],
+    [evidenceCounts(1, 0, 1, 0, 0, 0), { ok: false, problem: 'exit 1; 1 failed' }],
+  ]) {
+    const evidence = releaseEvidence(evidencePlan(file) + evidenceRows(file, c) + evidenceReceipt(file, c, extra));
+    assert.equal(evidence.todo + evidence.cancelled + evidence.fail, c.todo + c.cancelled + c.fail);
+    assert.deepEqual(evidence.failedFiles, [file]);
+  }
+});
+
+it('release evidence rejects a receipt that disagrees with the visible summary', () => {
+  const file = 'test/fixture.test.js';
+  const output = evidencePlan(file) + evidenceRows(file, evidenceCounts(1, 1, 0, 0, 0, 0))
+    + evidenceReceipt(file, evidenceCounts(1, 0, 1, 0, 0, 0));
+  assert.throws(() => releaseEvidence(output), /disagrees/);
+});
