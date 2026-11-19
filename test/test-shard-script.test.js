@@ -132,6 +132,12 @@ function gateOn(run, inertPaths = '') {
   return runGateWithReleaseOutput(run.stdout, { inertPaths });
 }
 
+function singleFileReceipt(run) {
+  const lines = run.stdout.split(/\r?\n/).filter(line => line.startsWith('TEST_FILE_RESULT '));
+  assert.equal(lines.length, 1, run.stdout + run.stderr);
+  return JSON.parse(lines[0].slice('TEST_FILE_RESULT '.length));
+}
+
 describe('test shard verdicts', () => {
   it('rejects an empty suite even when its path is declared inert', () => {
     const run = runShardFixture('empty.test.js', SUITES.empty);
@@ -170,6 +176,50 @@ describe('test shard verdicts', () => {
       [{ file: 'test/skipped-bare.test.js', tests: 0, suites: 1 }]);
     const gate = gateOn(run, 'test/skipped-bare.test.js');
     assert.equal(gate.status, 0, gate.stdout + gate.stderr);
+  });
+
+  it('rejects SKIP text in escaped suite names even when the path is declared inert', () => {
+    for (const [kind, name] of [
+      ['hash', 'fake # SKIP title'],
+      ['backslashes', 'C:\\fixtures\\# SKIP title'],
+    ]) {
+      const file = 'escaped-name-' + kind + '.test.js';
+      // Node escapes the title's hash in real TAP. It is not a skip directive.
+      const source = "import { describe } from 'node:test';\n"
+        + 'describe(' + JSON.stringify(name) + ', () => {});\n';
+      const run = runShardFixture(file, source);
+      assert.equal(run.status, 1, run.stdout + run.stderr);
+      const receipt = singleFileReceipt(run);
+      assert.equal(receipt.counts.tests, 0);
+      assert.equal(receipt.suiteSkip, null, 'an escaped title cannot supply runner skip evidence');
+      assert.equal(receipt.ok, false);
+      const gate = gateOn(run, 'test/' + file);
+      assert.equal(gate.status, 2, gate.stdout + gate.stderr);
+      assert.match(gate.stdout, /explicit suite skip/);
+    }
+  });
+
+  it('accepts a real skip directive after escaped suite names and keeps its actual reason', () => {
+    for (const [kind, name, skip] of [
+      ['hash', 'fake # SKIP title', 'platform reason'],
+      ['backslashes', 'C:\\fixtures\\# SKIP title', 'platform reason'],
+      ['bare', '中文 # SKIP title', true],
+    ]) {
+      const file = 'escaped-skip-' + kind + '.test.js';
+      const source = "import { describe } from 'node:test';\n"
+        + 'describe(' + JSON.stringify(name) + ', { skip: ' + JSON.stringify(skip) + ' }, () => {});\n';
+      const run = runShardFixture(file, source);
+      assert.equal(run.status, 0, run.stdout + run.stderr);
+      const receipt = singleFileReceipt(run);
+      assert.equal(receipt.suiteSkip, skip, 'only the real directive supplies the reason');
+      assert.equal(receipt.ok, true);
+      assert.deepEqual(releaseEvidence(run.stdout).inert,
+        [{ file: 'test/' + file, tests: 0, suites: 1 }]);
+      const undeclared = gateOn(run);
+      assert.equal(undeclared.status, 1, undeclared.stdout + undeclared.stderr);
+      const declared = gateOn(run, 'test/' + file);
+      assert.equal(declared.status, 0, declared.stdout + declared.stderr);
+    }
   });
 
   it('rejects TODO results in an otherwise passing file', () => {

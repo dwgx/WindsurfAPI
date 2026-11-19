@@ -118,7 +118,7 @@ export function parseFileSummary(output) {
 export function parseSuiteSkipEvidence(tap) {
   const lines = String(tap).replace(/\r\n/g, '\n').split('\n');
   for (let i = 0; i < lines.length; i++) {
-    const result = lines[i].match(/^\s*(?:not )?ok \d+ - .*?#\s*SKIP\b(.*)$/);
+    const result = lines[i].match(/^\s*(?:not )?ok \d+ - (?:\\.|[^\\#])*#\s*SKIP\b(.*)$/);
     if (!result) continue;
     for (let j = i + 1; j < lines.length; j++) {
       const line = lines[j];
