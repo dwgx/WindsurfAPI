@@ -60,19 +60,71 @@ function normalizeProxyType(type) {
   return t === 'socks' || t === 'socks5h' ? 'socks5' : t;
 }
 
+function boundedSocksUsername(username) {
+  // RFC 1929 carries the username length in one byte. Do not pass arbitrary
+  // JSON array-like objects to Buffer.from: a { length: ... } value would
+  // otherwise allocate that many bytes during a mere configuration edit.
+  const maxBytes = 255;
+  let input = username;
+  if (typeof input === 'string') {
+    if (input.length > maxBytes || Buffer.byteLength(input, 'utf8') > maxBytes) return null;
+  } else {
+    if (!Buffer.isBuffer(input) && !Array.isArray(input)) {
+      if (input?.type !== 'Buffer' || !Array.isArray(input.data)) return null;
+      input = input.data;
+    }
+    if (input.length > maxBytes) return null;
+  }
+  return Buffer.from(input).toString('hex');
+}
+
 function proxyIdentity(cfg, { legacy = false } = {}) {
   if (!cfg || !cfg.host) return null;
   const type = normalizeProxyType(cfg.type);
+  if (legacy && cfg.port && (!Number.isInteger(cfg.port) || cfg.port < 1 || cfg.port > 65535)) {
+    // Current setters save numbers. For old raw JSON, parseInt('0x1f91', 10)
+    // gives 0 while the HTTP connector's Number(...) dials 8081; SOCKS also
+    // accepts a different net.connect overload for string values. Require an
+    // explicit password instead of guessing which endpoint owned the secret.
+    return null;
+  }
+  if (legacy && !cfg.port && type === 'socks5') {
+    // A portless legacy SOCKS entry means 1080 to the direct SOCKS client but
+    // 8080 in the LS proxy URL. No new numeric port preserves both consumers.
+    return null;
+  }
   const parsedPort = parseInt(cfg.port, 10);
-  // The setters persist `parseInt(port) || 8080` for every type. A proxy.json
-  // written before that (or edited by hand) can lack a port, and the transport
-  // then falls back to 1080 for SOCKS5 and 8080 for HTTP CONNECT.
-  const port = parsedPort || (legacy && type === 'socks5' ? 1080 : 8080);
+  // The setters persist this numeric default for every type. A portless old
+  // HTTP/HTTPS entry also means 8080 in both the connector and LS proxy URL.
+  const port = parsedPort || 8080;
+  const host = String(cfg.host).trim();
+  const username = cfg.username || '';
+  let usernameText;
+  let socksUsername = null;
+  try {
+    // HTTP Basic and the LS proxy URL stringify the value, while the direct
+    // SOCKS transport encodes Buffer.from(value). JSON arrays and Buffer-shaped
+    // objects can have the same text but different SOCKS authentication bytes.
+    if (type === 'socks5' && username) {
+      socksUsername = boundedSocksUsername(username);
+      if (socksUsername === null) return null;
+    }
+    usernameText = String(username);
+  } catch {
+    // An unencodable identity cannot safely inherit a previously saved secret.
+    return null;
+  }
   return {
     type,
-    host: String(cfg.host).trim().toLowerCase(),
+    // A scoped IPv6 literal contains an interface/zone identifier, not only a
+    // case-insensitive DNS name. Preserve that spelling when binding a secret.
+    host: host.includes('%') ? host : host.toLowerCase(),
     port,
-    username: typeof cfg.username === 'string' ? cfg.username : '',
+    username: usernameText,
+    // Empty arrays are truthy and enable authentication even though their
+    // text is empty; an empty string sends no authentication at all.
+    authenticates: !!username,
+    socksUsername,
   };
 }
 
@@ -81,7 +133,9 @@ function sameProxyIdentity(a, b) {
     && a.type === b.type
     && a.host === b.host
     && a.port === b.port
-    && a.username === b.username;
+    && a.username === b.username
+    && a.authenticates === b.authenticates
+    && a.socksUsername === b.socksUsername;
 }
 
 function mergePassword(newCfg, oldCfg) {
@@ -92,7 +146,7 @@ function mergePassword(newCfg, oldCfg) {
   if (!oldPassword) return '';
   if (!sameProxyIdentity(proxyIdentity(newCfg), proxyIdentity(oldCfg, { legacy: true }))) {
     const err = new Error(
-      `${PROXY_PASSWORD_IDENTITY_CHANGED}: proxy type, host, port or username changed; `
+      `${PROXY_PASSWORD_IDENTITY_CHANGED}: proxy type, host, port or username changed or could not be verified; `
       + 'send the password explicitly, or send an explicit empty password to clear it.',
     );
     err.code = PROXY_PASSWORD_IDENTITY_CHANGED;

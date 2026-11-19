@@ -8,7 +8,7 @@
 
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { config } from '../src/config.js';
 import { configureBindHost } from '../src/auth.js';
@@ -91,6 +91,23 @@ function assertUnchanged(beforeMemory, beforeFile, beforeMasked) {
   assert.deepEqual(getProxyConfig(), beforeMemory, 'in-memory config must not change');
   assert.deepEqual(readProxyFile(), beforeFile, 'proxy.json must not be rewritten');
   assert.deepEqual(getProxyConfigMasked(), beforeMasked, 'masked view must not change');
+}
+
+function snapshotStorage() {
+  return {
+    memory: snapshotMemory(),
+    file: readFileSync(proxyFile()),
+    stat: statSync(proxyFile(), { bigint: true }),
+    masked: getProxyConfigMasked(),
+  };
+}
+
+function assertStorageUnchanged(before) {
+  assertUnchanged(before.memory, JSON.parse(before.file), before.masked);
+  assert.deepEqual(readFileSync(proxyFile()), before.file, 'proxy.json bytes must not change');
+  const after = statSync(proxyFile(), { bigint: true });
+  assert.equal(after.mtimeNs, before.stat.mtimeNs, 'a refused edit must not rewrite proxy.json');
+  assert.equal(after.ino, before.stat.ino, 'a refused edit must not atomically replace proxy.json');
 }
 
 beforeEach(() => {
@@ -195,6 +212,116 @@ describe('proxy password identity — global setter', () => {
 });
 
 describe('proxy password identity — normalization', () => {
+  it('preserves equivalent HTTP Basic usernames after numeric-to-string conversion', () => {
+    seedGlobal({ username: 1 });
+    setGlobalProxy(withoutPassword(GLOBAL_BASE, { username: '1' }));
+
+    assert.equal(getProxyConfig().global.password, SECRET);
+    assert.equal(readProxyFile().global.password, SECRET);
+  });
+
+  it('preserves equivalent SOCKS text and authentication bytes for accepted array values', () => {
+    seedGlobal({ type: 'socks5', username: [65] });
+    setGlobalProxy(withoutPassword(GLOBAL_BASE, { type: 'socks5', username: ['65'] }));
+
+    assert.equal(getProxyConfig().global.password, SECRET);
+    assert.equal(readProxyFile().global.password, SECRET);
+  });
+
+  it('refuses unsafe SOCKS username shapes before Buffer.from can allocate them', () => {
+    seedGlobal({ type: 'socks5' });
+    const before = snapshotStorage();
+    for (const username of [
+      { length: 1073741824 },
+      { type: 'Buffer', data: { length: 1073741824 } },
+      Array(256).fill(65),
+      '\u00e9'.repeat(128), // 256 UTF-8 bytes despite only 128 UTF-16 units.
+    ]) {
+      const from = Buffer.from;
+      let conversionAttempts = 0;
+      Buffer.from = function (value, ...args) {
+        if (value === username || (typeof username === 'object' && value === username.data)) {
+          conversionAttempts++;
+          // The pre-fix regression must fail without actually allocating the
+          // requested 1 GiB. Ordinary buffer operations retain their behavior.
+          throw new Error('fixture refused an unsafe username allocation');
+        }
+        return Reflect.apply(from, Buffer, [value, ...args]);
+      };
+      try {
+        assertIdentityRefusal(() => setGlobalProxy(withoutPassword(GLOBAL_BASE, {
+          type: 'socks5', username,
+        })));
+        assert.equal(conversionAttempts, 0, 'unsafe input must be rejected before encoding');
+      } finally {
+        Buffer.from = from;
+      }
+      assertStorageUnchanged(before);
+    }
+  });
+
+  for (const scope of ['global', 'account']) {
+    it(`refuses a ${scope} SOCKS username whose text is unchanged but authentication bytes change`, () => {
+      seedGlobal({ type: 'socks5', username: [65] });
+      seedAccount({ type: 'socks5', username: [65] });
+      const before = snapshotStorage();
+      const cfg = withoutPassword(scope === 'global' ? GLOBAL_BASE : ACCOUNT_BASE, {
+        type: 'socks5', username: '65',
+      });
+      // Both values stringify as "65", but Buffer.from([65]) sends 0x41 and
+      // Buffer.from('65') sends 0x36 0x35 in the SOCKS username/password frame.
+      assertIdentityRefusal(() => scope === 'global'
+        ? setGlobalProxy(cfg)
+        : setAccountProxy(ACCOUNT, cfg));
+
+      assertStorageUnchanged(before);
+
+      // A truthy number cannot be encoded by Buffer.from for SOCKS. The
+      // setter must give the same actionable refusal, not a coercion error.
+      assertIdentityRefusal(() => scope === 'global'
+        ? setGlobalProxy({ ...cfg, username: 1 })
+        : setAccountProxy(ACCOUNT, { ...cfg, username: 1 }));
+      assertStorageUnchanged(before);
+    });
+  }
+
+  it('does not reuse a dormant password when an empty-text username enables authentication', () => {
+    seedGlobal({ username: '' });
+    const before = snapshotStorage();
+
+    // [] is truthy, so the actual HTTP connector sends Basic :password;
+    // an empty string skips Proxy-Authorization altogether.
+    assertIdentityRefusal(() => setGlobalProxy(withoutPassword(GLOBAL_BASE, { username: [] })));
+
+    assertStorageUnchanged(before);
+  });
+
+  for (const [label, savedPort, type, editedPort] of [
+    ['a legacy hexadecimal HTTP port', '0x1f91', 'http', 8080],
+    ['a legacy SOCKS port with different direct/LS defaults', undefined, 'socks5', 1080],
+  ]) {
+    it(`requires an explicit password for ${label}`, async () => {
+      // The loader intentionally accepts preexisting proxy.json verbatim;
+      // these shapes cannot be produced by the current setter's numeric port.
+      writeFileSync(proxyFile(), JSON.stringify({
+        global: { ...GLOBAL_BASE, type, port: savedPort, password: SECRET },
+        perAccount: {},
+      }));
+      const legacy = await import(`../src/dashboard/proxy-config.js?legacy-port=${encodeURIComponent(label)}`);
+      const beforeMemory = structuredClone(legacy.getProxyConfig());
+      const beforeBytes = readFileSync(proxyFile());
+      const beforeStat = statSync(proxyFile(), { bigint: true });
+
+      assertIdentityRefusal(() => legacy.setGlobalProxy(withoutPassword(GLOBAL_BASE, { type, port: editedPort })));
+
+      assert.deepEqual(legacy.getProxyConfig(), beforeMemory);
+      assert.deepEqual(readFileSync(proxyFile()), beforeBytes);
+      const afterStat = statSync(proxyFile(), { bigint: true });
+      assert.equal(afterStat.mtimeNs, beforeStat.mtimeNs);
+      assert.equal(afterStat.ino, beforeStat.ino);
+    });
+  }
+
   it('treats host case and surrounding whitespace as the same destination', () => {
     seedGlobal({ host: 'Proxy-A.Example.COM' });
 
@@ -207,6 +334,19 @@ describe('proxy password identity — normalization', () => {
 
     assert.equal(getProxyConfig().global.password, SECRET);
     assert.equal(getProxyConfig().global.host, 'proxy-a.example.com');
+  });
+
+  it('preserves an unchanged IPv6 zone spelling and refuses a changed spelling', () => {
+    seedGlobal({ host: 'fe80::1%FixtureScope' });
+    setGlobalProxy(withoutPassword(GLOBAL_BASE, { host: 'fe80::1%FixtureScope' }));
+    assert.equal(getProxyConfig().global.password, SECRET);
+    const before = snapshotStorage();
+
+    assertIdentityRefusal(() => setGlobalProxy(withoutPassword(GLOBAL_BASE, {
+      host: 'fe80::1%fixturescope',
+    })));
+
+    assertStorageUnchanged(before);
   });
 
   it('treats an omitted port as the stored 8080 default for HTTP', () => {
@@ -365,6 +505,27 @@ describe('proxy password identity — dashboard routes', () => {
     config.allowPrivateProxyHosts = original.allowPrivateProxyHosts;
     configureBindHost('0.0.0.0');
   });
+
+  for (const scope of ['global', 'account']) {
+    it(`PUT ${scope} refuses numeric username 1 → 2 without changing either scope or disk`, async () => {
+      seedGlobal({ host: '127.0.0.1', username: 1 });
+      seedAccount({ host: '127.0.0.1', username: 1 });
+      const before = snapshotStorage();
+      const { res, captured } = mkRes();
+
+      await handleDashboardApi(
+        'PUT',
+        scope === 'global' ? '/proxy/global' : `/proxy/accounts/${ACCOUNT}`,
+        { type: 'http', host: '127.0.0.1', port: 8080, username: 2, warmup: true },
+        mkAuthedReq(),
+        res,
+      );
+
+      assert.equal(captured.status, 400);
+      assert.equal(captured.body?.code, IDENTITY_ERROR);
+      assertStorageUnchanged(before);
+    });
+  }
 
   it('PUT /proxy/global refuses an identity change without a password and leaves state intact', async () => {
     setGlobalProxy({
