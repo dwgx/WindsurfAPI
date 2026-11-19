@@ -4478,9 +4478,9 @@ async function _handleChatCompletionsInner(body, context = {}) {
     // response pair chain so a multi-turn dialog reuses ONE session_id instead of
     // minting a fresh randomUUID per call — which the upstream velocity limiter
     // reads as N brand-new sessions. Resolves BEFORE dispatch on the client's own
-    // history; returns null (⇒ fresh per-request uuid, byte-identical to today) when
-    // the gate is off. Uses connectMessages so the fingerprint reflects exactly what
-    // rides the wire.
+    // history only for an admitted caller scope. Without that scope or with reuse
+    // off, the adapter mints its ordinary per-request UUID. Uses connectMessages
+    // so the fingerprint reflects exactly what rides the wire.
     // T2 (Thinking-core): incoming reasoning as fallback continuity source —
     // anthropic-in thinking rides the body as __incomingThinking (messages.js
     // captures it before the drop); openai/responses-in still carry
@@ -4496,22 +4496,24 @@ async function _handleChatCompletionsInner(body, context = {}) {
         }
       }
     }
-    const connectSessionId = resolveConnectSessionId(callerKey || '', connectMessages);
-    if (connectSessionId) {
-      connectParams.sessionId = connectSessionId;
-      const modelCfg = getSessionConnectModelConfig(callerKey || '', connectMessages);
-      if (modelCfg) connectParams.sessionModelConfig = { id: modelCfg.configId, turn: modelCfg.turn };
-      const reasoningTrail = getSessionConnectReasoningTrail(callerKey || '', connectMessages);
-      if (reasoningTrail) connectParams.continuityTrail = reasoningTrail;
-      log.info(`Chat[${reqId}]: DEVIN_CONNECT session reuse active → session_id=${connectSessionId}${modelCfg ? ` model_config=stable turn=${modelCfg.turn}` : ''} acct=${ccAcct?.account?.id || 'env-token'}`);
-    } else {
-      // O3: name the source on the DEFAULT path too. Without this line an operator
-      // cannot tell a fresh-per-request uuid (#16) from a lost reuse hit, and the
-      // upstream velocity limiter sees every turn as a new session.
-      log.debug(`Chat[${reqId}]: DEVIN_CONNECT session_id source=fresh-per-request (DEVIN_CONNECT_SESSION_REUSE off)`);
+    const scopedSession = hasPerUserScope(callerKey);
+    if (scopedSession) {
+      const connectSessionId = resolveConnectSessionId(callerKey, connectMessages);
+      if (connectSessionId) {
+        connectParams.sessionId = connectSessionId;
+        const modelCfg = getSessionConnectModelConfig(callerKey, connectMessages);
+        if (modelCfg) connectParams.sessionModelConfig = { id: modelCfg.configId, turn: modelCfg.turn };
+        const reasoningTrail = getSessionConnectReasoningTrail(callerKey, connectMessages);
+        if (reasoningTrail) connectParams.continuityTrail = reasoningTrail;
+        log.info(`Chat[${reqId}]: DEVIN_CONNECT session reuse active → session_id=${connectSessionId}${modelCfg ? ` model_config=stable turn=${modelCfg.turn}` : ''} acct=${ccAcct?.account?.id || 'env-token'}`);
+      }
+    }
+    if (!connectParams.sessionId) {
+      const reason = scopedSession ? 'DEVIN_CONNECT_SESSION_REUSE off' : 'no per-user or session scope';
+      log.debug(`Chat[${reqId}]: DEVIN_CONNECT session_id source=fresh-per-request (${reason})`);
       if (!_connectSessionSourceNoted) {
         _connectSessionSourceNoted = true;
-        log.info(`Chat[${reqId}]: DEVIN_CONNECT session_id source=fresh-per-request (DEVIN_CONNECT_SESSION_REUSE off — every request mints a new #16; enable it for multi-turn continuity)`);
+        log.info(`Chat[${reqId}]: DEVIN_CONNECT session_id source=fresh-per-request (${reason})`);
       }
     }
     if (ccAcct) {
@@ -5023,23 +5025,25 @@ async function _handleChatCompletionsInner(body, context = {}) {
                   // (no-op when reuse is off). r.sr is threaded from every success
                   // path (initial, transient replay, re-login retry) so the commit
                   // fires even after an upstream wobble — exactly when reuse helps.
-                  try {
-                    // Session continuity hashes the message pair (session-continuity
-                    // canonicalize(): name + id + args). The NEXT turn's
-                    // `connectMessages` carries the WIRE name, because this handler
-                    // renames history before the wire — so the committed assistant
-                    // turn must carry the same spelling, or the pair never matches
-                    // and a fresh session_id is minted after every rewritten call.
-                    // Ids are untouched by the name map and already client-normalized
-                    // by the adapter, so `r.sr.toolCalls` is exactly the right shape.
-                    const tc = r.sr?.toolCalls;
-                    const commitMsgs = [...connectMessages, {
-                      role: 'assistant',
-                      content: r.sr?.content || '',
-                      ...(tc?.length ? { tool_calls: tc.map((t, idx) => ({ id: t.id || `tc_${idx}`, function: { name: t.name, arguments: t.argumentsJson || t.arguments || '' } })) } : {}),
-                    }];
-                    commitConnectSession(callerKey || '', commitMsgs, undefined, { reasoning: r.sr?.reasoning || incomingConnectReasoning });
-                  } catch { /* session commit is best-effort */ }
+                  if (connectParams.sessionId) {
+                    try {
+                      // Session continuity hashes the message pair (session-continuity
+                      // canonicalize(): name + id + args). The NEXT turn's
+                      // `connectMessages` carries the WIRE name, because this handler
+                      // renames history before the wire — so the committed assistant
+                      // turn must carry the same spelling, or the pair never matches
+                      // and a fresh session_id is minted after every rewritten call.
+                      // Ids are untouched by the name map and already client-normalized
+                      // by the adapter, so `r.sr.toolCalls` is exactly the right shape.
+                      const tc = r.sr?.toolCalls;
+                      const commitMsgs = [...connectMessages, {
+                        role: 'assistant',
+                        content: r.sr?.content || '',
+                        ...(tc?.length ? { tool_calls: tc.map((t, idx) => ({ id: t.id || `tc_${idx}`, function: { name: t.name, arguments: t.argumentsJson || t.arguments || '' } })) } : {}),
+                      }];
+                      commitConnectSession(callerKey || '', commitMsgs, undefined, { reasoning: r.sr?.reasoning || incomingConnectReasoning });
+                    } catch { /* session commit is best-effort */ }
+                  }
                   // [STREAM-CACHE] store full text + usage AFTER commit, BEFORE the
                   // loop-exit break (code after break is unreachable).
                   try {
@@ -5290,15 +5294,17 @@ async function _handleChatCompletionsInner(body, context = {}) {
         // spelling (this handler renames history before the wire). Committing the
         // caller's spelling here made the pair never match, so a new session_id was
         // minted after every rewritten tool call.
-        try {
-          const msg = r.out?.body?.choices?.[0]?.message;
-          const commitMsgs = [...connectMessages, {
-            role: 'assistant',
-            content: msg?.content || '',
-            ...(msg?.tool_calls ? { tool_calls: msg.tool_calls } : {}),
-          }];
-          commitConnectSession(callerKey || '', commitMsgs, undefined, { reasoning: msg?.reasoning_content || incomingConnectReasoning });
-        } catch { /* session commit is best-effort */ }
+        if (connectParams.sessionId) {
+          try {
+            const msg = r.out?.body?.choices?.[0]?.message;
+            const commitMsgs = [...connectMessages, {
+              role: 'assistant',
+              content: msg?.content || '',
+              ...(msg?.tool_calls ? { tool_calls: msg.tool_calls } : {}),
+            }];
+            commitConnectSession(callerKey || '', commitMsgs, undefined, { reasoning: msg?.reasoning_content || incomingConnectReasoning });
+          } catch { /* session commit is best-effort */ }
+        }
         // [STREAM-CACHE] store non-stream text + usage BEFORE the return
         // (code after return is unreachable).
         try {

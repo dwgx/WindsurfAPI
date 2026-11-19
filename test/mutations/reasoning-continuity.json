@@ -6,7 +6,8 @@
     "test/devin-connect-openai.test.js",
     "test/session-continuity-commit-fallback.test.js"
   ],
-  "expectBaselinePass": 328,
+  "_baseline_provenance": "Measured on 2026-11-19 JST, Windows Node v24.19.0, after adding 16 caller-scope cases. Running the five declared test files with node --import ./test/setup-env.mjs --test yielded 344 passed, 0 failed, 0 skipped.",
+  "expectBaselinePass": 344,
   "mutations": [
     {
       "name": "T1 store: the overlap-target commit path stops saving the reasoning tail",
