@@ -45,8 +45,8 @@
     {
       "name": "DOCUMENTED EQUIVALENT after V-12 — the store commit takes only the last segment. The flat `content` is read ONLY when `items` is empty, and every turn that streamed text has a message item: emitTextDelta calls ensureTextPart → ensureMessage (messageStarted=true), and finish() calls finishMessage whenever messageStarted, which pushes the item into outputItems. commit() prefers historyFromResponseItems(items) whenever that list is non-empty, so the mutated value is discarded. In the one branch that does read it (items empty), text is necessarily '' — the mutation changes '' to ''. Not dead code by intent: it is the LEGACY flat fallback for a turn the item list cannot express. If the item commit ever stops being preferred (or finishMessage stops publishing text items), this mutation becomes CAUGHT and this spec will say so.",
       "file": "src/handlers/responses.js",
-      "anchor": "            content: translator.text || '',",
-      "replacement": "            content: translator.segmentText || '',",
+      "anchor": "          content: translator.text || '',",
+      "replacement": "          content: translator.segmentText || '',",
       "expectCaught": false
     },
     {

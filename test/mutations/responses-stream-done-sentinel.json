@@ -8,14 +8,14 @@
     {
       "name": "the original defect \u2014 no [DONE] sentinel at all, so the /v1/responses stream ends on the terminal event and a new-api relay drops it (and its usage block)",
       "file": "src/handlers/responses.js",
-      "anchor": "      if (translator.finished && !translator.failed && !translator.aborted && !realRes.writableEnded) {\n        await translator.settleEgress();\n        translator.writeRaw('data: [DONE]\\n\\n');\n      }\n      if (!realRes.writableEnded) realRes.end();",
-      "replacement": "      if (!realRes.writableEnded) realRes.end();"
+      "anchor": "      if (terminalDelivered\n        && !clientClosed && !clientErrored && !translator.clientGone\n        && !translator.writer.gone()\n        && !realRes.writableEnded && !realRes.destroyed) {\n        translator.writeRaw('data: [DONE]\\n\\n');\n      }\n      if (!clientClosed && !clientErrored && !realRes.writableEnded && !realRes.destroyed) realRes.end();",
+      "replacement": "      if (!clientClosed && !clientErrored && !realRes.writableEnded && !realRes.destroyed) realRes.end();"
     },
     {
       "name": "the guard is dropped but the write kept \u2014 the sentinel now fires unconditionally, sealing a half-delivered turn a disconnected client never settled",
       "file": "src/handlers/responses.js",
-      "anchor": "      if (translator.finished && !translator.failed && !translator.aborted && !realRes.writableEnded) {\n        await translator.settleEgress();\n        translator.writeRaw('data: [DONE]\\n\\n');\n      }\n      if (!realRes.writableEnded) realRes.end();",
-      "replacement": "      if (!realRes.writableEnded) { await translator.settleEgress(); translator.writeRaw('data: [DONE]\\n\\n'); }\n      if (!realRes.writableEnded) realRes.end();"
+      "anchor": "      if (terminalDelivered\n        && !clientClosed && !clientErrored && !translator.clientGone\n        && !translator.writer.gone()\n        && !realRes.writableEnded && !realRes.destroyed) {\n        translator.writeRaw('data: [DONE]\\n\\n');\n      }\n      if (!clientClosed && !clientErrored && !realRes.writableEnded && !realRes.destroyed) realRes.end();",
+      "replacement": "      if (!realRes.writableEnded) { translator.writeRaw('data: [DONE]\\n\\n'); }\n      if (!clientClosed && !clientErrored && !realRes.writableEnded && !realRes.destroyed) realRes.end();"
     }
   ]
 }
