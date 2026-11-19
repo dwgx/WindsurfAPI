@@ -131,6 +131,19 @@ function stableClone(value, depth = 0) {
   return value;
 }
 
+// The request cache and Chat's model/thinking selection must interpret the
+// two effort spellings identically. Keep the router's existing truthy flat-
+// then-nested precedence, followed by case/whitespace normalization.
+export function resolveReasoningEffort(body) {
+  try {
+    return String(body?.reasoning_effort || body?.reasoning?.effort || '').toLowerCase().trim();
+  } catch {
+    // Keys are built before request validation. A malformed JSON object with
+    // non-callable coercion properties must not make normalization throw.
+    return '';
+  }
+}
+
 function normalize(body) {
   return {
     model: body.model || '',
@@ -142,14 +155,16 @@ function normalize(body) {
     // slot instead of splitting it (a miss, never wrong data). Arrays keep order.
     tools: body.tools ? stableClone(body.tools) : null,
     tool_choice: body.tool_choice ? stableClone(body.tool_choice) : null,
+    // Only the opt-in sequential preference changes the Connect encoder's
+    // output. Off, true and omitted all retain the default policy and the
+    // existing key bytes. The provider meaning of this field remains opt-in.
+    ...(String(process.env.DEVIN_CONNECT_TOOL_CHOICE ?? '').trim() === '1' && body.parallel_tool_calls === false
+      ? { parallel_tool_calls: false }
+      : {}),
     response_format: body.response_format ? stableClone(body.response_format) : null,
-    // cache-01: resolve the reasoning effort the SAME way the router does
-    // (chat.js mergeReasoningEffortIntoModel: reasoning_effort || reasoning.effort).
-    // The nested `reasoning:{effort}` form (codex CLI, OpenAI Responses) merges
-    // into the model id before routing but never mutates body.model, so keying
-    // only the flat field collapsed two different reasoning tiers into one slot →
-    // the second request got the first's wrong-tier answer.
-    reasoning_effort: (body.reasoning_effort ?? body.reasoning?.effort) ?? null,
+    // This same helper feeds both effort-suffix routing and thinking selection
+    // in Chat; equal keys must not choose different model/output policies.
+    reasoning_effort: resolveReasoningEffort(body) || null,
     thinking: body.thinking ? stableClone(body.thinking) : null,
     stream_options: body.stream_options ? stableClone(body.stream_options) : null,
     temperature: body.temperature ?? null,

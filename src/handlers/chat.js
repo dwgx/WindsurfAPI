@@ -18,6 +18,7 @@ import { recordRequest, recordTokenUsage, recordPolicyBlocked, recordRateLimited
 import { extractIntentFromNarrative, detectToolIntentInNarrative, maskNonActionableRegions } from './intent-extractor.js';
 import { isModelAllowed } from '../dashboard/model-access.js';
 import { cacheKey as computeCacheKey, cacheGet, cacheSet, isCacheEnabled } from '../cache.js';
+import { resolveReasoningEffort } from '../cache.js';
 import { isExperimentalEnabled, getBreakerTunable, strictUsageTotal } from '../runtime-config.js';
 import { budgetExceededError, isBudgetExceededError } from '../request-budget.js';
 import { checkOutboundHistory, historyBudgetErrorMessage, HISTORY_BUDGET_ERROR_CODE } from '../history-budget.js';
@@ -1510,7 +1511,7 @@ export function isToolEmulatedReusableModel(modelKey = '') {
 export function isThinkingRequested(body) {
   const thinkingType = body?.thinking?.type;
   if (thinkingType && thinkingType !== 'disabled') return true;
-  if (body?.reasoning_effort) return true;
+  if (resolveReasoningEffort(body)) return true;
   return false;
 }
 
@@ -3301,11 +3302,7 @@ async function waitForAccount(tried, signal, maxWaitMs = QUEUE_MAX_WAIT_MS, mode
 // catalog model; anything else returns reqModel unchanged.
 export function mergeReasoningEffortIntoModel(reqModel, body) {
   if (!reqModel || typeof reqModel !== 'string') return reqModel;
-  const effort = String(
-    body?.reasoning_effort
-    || body?.reasoning?.effort
-    || ''
-  ).toLowerCase().trim();
+  const effort = resolveReasoningEffort(body);
   if (!effort) return reqModel;
   const VALID = new Set(['minimal', 'none', 'low', 'medium', 'high', 'xhigh', 'max']);
   if (!VALID.has(effort)) return reqModel;
@@ -5272,6 +5269,16 @@ async function _handleChatCompletionsInner(body, context = {}) {
       if (acct) triedKeys.push(acct.apiKey);
       const r = await attempt(acct);
       if (r.kind === 'ok') {
+        // The upstream work completed even when cancellation won the delivery
+        // race. Keep its usage/spend (and attempt()'s finalization) exactly once
+        // before checking whether this caller can receive the result. Both the
+        // initial success and the re-login retry converge here.
+        try { recordTokenUsage(r.out?.body?.usage, r.out?.body?.model || connectDisplayModel); } catch {}
+        try { recordAccountSpend(acct, r.out?.body?.usage, connectSpendOpts(r.out?.body?._windsurf_billing)); } catch {}
+        if (context.signal?.aborted) {
+          log.info(`Chat[${reqId}]: DEVIN_CONNECT non-stream completed after the client disconnected — skipping session commit, cache write and affinity`);
+          return { status: 499, body: { error: { message: 'Client closed request', type: 'client_disconnect', code: 'client_disconnect' } } };
+        }
         // V-10: a schema-constrained turn that does not conform is a failure, and
         // it must be reported BEFORE the cache write / session commit / affinity
         // pin — otherwise the next chained turn inherits a payload the caller
@@ -5283,16 +5290,6 @@ async function _handleChatCompletionsInner(body, context = {}) {
         }
         // Same cache-affinity pin as the streaming path above.
         bindConnectSticky(callerKey, acct, selector);
-        // Feed the dashboard token-usage breakdown from the DEVIN_CONNECT path
-        // too. Without this the non-stream connect responses never reached
-        // recordTokenUsage (only the cascade paths did), so the "Token 用量分布"
-        // card stayed empty on connect-only deployments (homecloud). Safe no-op
-        // when usage is absent (recordTokenUsage guards null).
-        // The adapter stamps the SERVED name on the body; the fallback is the same
-        // attribution name the stream arm and finalizeConnectAccount use (P2-6).
-        try { recordTokenUsage(r.out?.body?.usage, r.out?.body?.model || connectDisplayModel); } catch {}
-        // K8: per-account lifetime spend (non-stream connect path).
-        try { recordAccountSpend(acct, r.out?.body?.usage, connectSpendOpts(r.out?.body?._windsurf_billing)); } catch {}
         // Session continuity: commit the completed request→response pair so the
         // next turn resolves to this session_id via pair-chain overlap. The
         // response tool_calls already ride the OpenAI function shape here.
