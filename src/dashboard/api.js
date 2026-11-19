@@ -2960,6 +2960,11 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
     }
     const hasApiKey = Object.prototype.hasOwnProperty.call(body, 'apiKey');
     const hasPassword = Object.prototype.hasOwnProperty.call(body, 'dashboardPassword');
+    // A diagnostic sink failure must not conceal an already-applied rotation
+    // or turn a pre-publication failure into an uncaught handler rejection.
+    const logOutcome = (level, message) => {
+      try { log[level](message); } catch {}
+    };
     let committed;
     try {
       committed = setRuntimeCredentials({
@@ -2972,7 +2977,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
         // `applied:false` keeps this distinct from the applied-but-unconfirmed
         // outcome below; a client must not read this as a warning on a
         // rotation that happened.
-        log.warn(`Settings: credential rotation was NOT applied: ${err.cause?.message || err.message}`);
+        logOutcome('warn', `Settings: credential rotation was NOT applied: ${err.cause?.message || err.message}`);
         return json(res, 500, {
           success: false,
           applied: false,
@@ -2991,10 +2996,10 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
     if (committed.durability === 'unconfirmed') warnings.push('ERR_CREDENTIAL_DURABILITY_UNCONFIRMED');
     if (committed.protection === 'failed') warnings.push('ERR_CREDENTIAL_PROTECTION_FAILED');
     if (committed.durability === 'unconfirmed') {
-      log.warn('Settings: credential rotation is visible in runtime-config.json but its directory entry durability is unconfirmed');
+      logOutcome('warn', 'Settings: credential rotation is visible in runtime-config.json but its directory entry durability is unconfirmed');
     }
     if (committed.protection === 'failed') {
-      log.warn('Settings: credential rotation applied but owner-only protection of runtime-config.json failed');
+      logOutcome('warn', 'Settings: credential rotation applied but owner-only protection of runtime-config.json failed');
     }
     const out = {
       success: true,
@@ -3008,7 +3013,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
       out.apiKey_masked = maskApiKey(committed.apiKey || getEffectiveApiKey());
     }
     if (hasPassword) out.dashboardPasswordUpdated = true;
-    log.info(`Settings: credentials rotated from ${dashboardClientIp(req) || 'unknown'} (apiKey=${!!out.apiKeyUpdated}, dashboardPassword=${!!out.dashboardPasswordUpdated}, durability=${committed.durability}, protection=${committed.protection})`);
+    logOutcome('info', `Settings: credentials rotated from ${dashboardClientIp(req) || 'unknown'} (apiKey=${!!out.apiKeyUpdated}, dashboardPassword=${!!out.dashboardPasswordUpdated}, durability=${committed.durability}, protection=${committed.protection})`);
     return json(res, 200, out);
   }
 

@@ -224,6 +224,12 @@ const PERSIST_NOT_APPLIED = 'not-applied';
 const PERSIST_DURABLE = 'durable';
 const PERSIST_UNCONFIRMED = 'unconfirmed';
 
+// Diagnostics must never change whether credentials were published or prevent
+// the owner-only protection pass. Console/log sinks can fail independently.
+function warnCredentialPersistence(message) {
+  try { log.warn(message); } catch {}
+}
+
 function protectOwnerOnly() {
   // SEC-03 follow-up: runtime-config.json holds the plaintext runtime API key
   // and the scrypt dashboard-password hash. `mode: 0o600` is a POSIX contract;
@@ -233,14 +239,14 @@ function protectOwnerOnly() {
   try {
     const result = (_fsHooksForTests?.restrictFileToOwnerSync || restrictFileToOwnerSync)(
       FILE,
-      { warn: (m) => log.warn(m) },
+      { warn: (m) => warnCredentialPersistence(m) },
     );
     if (result?.applied) return 'applied';
     // The helper reports not-windows only when it deliberately did nothing;
     // every other non-applied result is a real hardening failure.
     return result?.reason === 'not-windows' ? 'not-applicable' : 'failed';
   } catch (e) {
-    log.warn(`runtime-config: owner-only protection failed for ${FILE}: ${e.message}`);
+    warnCredentialPersistence(`runtime-config: owner-only protection failed for ${FILE}: ${e.message}`);
     return 'failed';
   }
 }
@@ -260,7 +266,7 @@ function protectOwnerOnly() {
  */
 function persist() {
   if (_persistFailureForTests) {
-    log.warn(`runtime-config: failed to persist: ${_persistFailureForTests.message}`);
+    warnCredentialPersistence(`runtime-config: failed to persist: ${_persistFailureForTests.message}`);
     return {
       applied: false,
       durability: PERSIST_NOT_APPLIED,
@@ -274,7 +280,7 @@ function persist() {
     durability = PERSIST_DURABLE;
   } catch (e) {
     if (!e?.renamePublished) {
-      log.warn(`runtime-config: failed to persist: ${e.message}`);
+      warnCredentialPersistence(`runtime-config: failed to persist: ${e.message}`);
       return { applied: false, durability: PERSIST_NOT_APPLIED, protection: 'not-applicable', error: e };
     }
     // rename(2) succeeded, so the new name is visible to every reader; only
@@ -282,7 +288,7 @@ function persist() {
     // would leave the live process on the old pair while the file holds the
     // new one — and a later unrelated save would write the stale pair back
     // over the published credentials.
-    log.warn(`runtime-config: published ${FILE} but directory sync failed: ${e.message}`);
+    warnCredentialPersistence(`runtime-config: published ${FILE} but directory sync failed: ${e.message}`);
     durability = PERSIST_UNCONFIRMED;
   }
   // The bytes are at FILE in both branches, so the Windows ACL inheritance
