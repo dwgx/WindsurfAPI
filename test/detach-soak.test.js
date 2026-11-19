@@ -321,10 +321,10 @@ function handlerContext(port, acct, lsFake, overrides = {}) {
       lsFake.beginCalls += 1;
       lsFake.activeRequests += 1;
       lsFake.maxActive = Math.max(lsFake.maxActive, lsFake.activeRequests);
-      return lsFake;
+      return { entry: lsFake, key: 'default', port, generation: lsFake.generation };
     },
-    endLsUse: (p) => {
-      if (!lsFake || p !== port) return;
+    endLsUse: (lease) => {
+      if (!lsFake || lease?.entry !== lsFake) return;
       lsFake.endCalls += 1;
       lsFake.activeRequests = Math.max(0, lsFake.activeRequests - 1);
     },
