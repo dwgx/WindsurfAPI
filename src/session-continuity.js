@@ -833,9 +833,10 @@ function commitResponse(callerKey, messagesWithResponse, env, opts, dispatch) {
 
   const pairWindow = hashes.slice(-PAIR_WINDOW_SIZE);
 
-  // Compute commitKey for idempotency
+  // Separate successive dispatch revisions even when their entire ten-pair
+  // windows match. A replay of the same revision and output stays idempotent.
   const commitKey = crypto.createHmac('sha256', SECRET)
-    .update(JSON.stringify({ scopeId, stateId: dispatch?.stateId, pairWindow }))
+    .update(JSON.stringify({ scopeId, stateId: dispatch?.stateId, revision: dispatch?.revision, pairWindow }))
     .digest('hex');
 
   const existingId = commitIndex.get(commitKey);

@@ -113,6 +113,23 @@ describe('Connect dispatch binding', () => {
     assert.equal(continuity._getIndexStats().commitKeys, 1);
   });
 
+  it('advances identical turns past the pair window while retries of each receipt stay idempotent', () => {
+    const history = [];
+    let sessionId;
+    for (let turn = 1; turn <= 14; turn++) {
+      history.push(message('user', 'status'));
+      const receipt = bind(history);
+      sessionId ??= receipt.sessionId;
+      assert.equal(receipt.sessionId, sessionId);
+      assert.equal(receipt.modelConfig.turn, turn, 'each completed dispatch advances the next turn once');
+      assert.equal(commit(receipt, history), sessionId);
+      assert.equal(commit(receipt, history), sessionId);
+      history.push(answer);
+    }
+    assert.equal(continuity._getStoreSize(), 1);
+    assert.equal(continuity._getIndexStats().commitKeys, 14);
+  });
+
   it('preserves pure-image turn identity and gives unidentifiable images the fresh path', () => {
     const request = [message('user', [imageUrl(png)])];
     const receipt = bind(request);
