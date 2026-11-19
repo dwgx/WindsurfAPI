@@ -1076,6 +1076,9 @@ export class WindsurfClient {
     // below), not on every handler exit path remembering to end a duplicate.
     if (!leaseHeld) acquireLease(this.port);
     const aborted = () => signal?.aborted;
+    const abortError = () => Object.assign(new Error('Cascade aborted by client'), {
+      name: 'AbortError', code: 'ABORT_ERR',
+    });
     const inputChars = messages.reduce((n, m) => n + contentToString(m?.content).length, 0);
 
     log.debug(`CascadeChat: uid=${modelUid} enum=${modelEnum} msgs=${messages.length} reuse=${!!reuseEntry}${resumeTurn ? ' resume=1' : ''}`);
@@ -1119,24 +1122,29 @@ export class WindsurfClient {
         `request budget exhausted during ${phase} (${turnBudgetMs}ms)`, err,
       );
     };
-    // Awaits a shared promise (the per-LS workspace init is shared and cannot
-    // be cancelled) under the turn deadline; the work keeps running for its
-    // owner, this turn stops spending time on it.
-    const awaitWithinBudget = (promise, label) => {
+    // Bound this caller's wait without cancelling shared workspace or JWT work.
+    const awaitWithinBudget = async (promise, label, waitSignal) => {
       const left = remainingBudgetMs();
-      if (left <= 0) return Promise.reject(turnDeadlineError(`request budget exhausted before ${label} (${turnBudgetMs}ms)`));
-      return new Promise((resolve, reject) => {
-        // Deliberately NOT unref'd: while this await is the only pending work,
-        // the timer is what makes the deadline real.
-        const timer = setTimeout(
-          () => reject(turnDeadlineError(`${label} exceeded the ${turnBudgetMs}ms request budget`)),
-          left,
-        );
-        Promise.resolve(promise).then(
-          (value) => { clearTimeout(timer); resolve(value); },
-          (err) => { clearTimeout(timer); reject(err); },
-        );
-      });
+      if (left <= 0) throw turnDeadlineError(`request budget exhausted before ${label} (${turnBudgetMs}ms)`);
+      let timer, onAbort;
+      try {
+        return await new Promise((resolve, reject) => {
+          // Keep the timer referenced when the shared work is the only pending task.
+          timer = setTimeout(
+            () => reject(turnDeadlineError(`${label} exceeded the ${turnBudgetMs}ms request budget`)),
+            left,
+          );
+          if (waitSignal) {
+            onAbort = () => reject(abortError());
+            if (waitSignal.aborted) onAbort();
+            else waitSignal.addEventListener('abort', onAbort, { once: true });
+          }
+          Promise.resolve(promise).then(resolve, reject);
+        });
+      } finally {
+        clearTimeout(timer);
+        waitSignal?.removeEventListener('abort', onAbort);
+      }
     };
 
     // One-shot per-LS workspace init (idempotent; typically pre-warmed at
@@ -1393,7 +1401,10 @@ export class WindsurfClient {
       const sendMessage = async () => {
         // Same best-effort JWT as the legacy channel (env-gated, default OFF);
         // a mint failure must not fail the cascade message.
-        const userJwt = await this._fetchUserJwtForChat().catch(() => null);
+        if (aborted()) throw abortError();
+        const userJwt = await awaitWithinBudget(
+          this._fetchUserJwtForChat().catch(() => null), 'Cascade user JWT lookup', signal,
+        );
         const sendProto = buildSendCascadeMessageRequest(this.apiKey, cascadeId, text, modelEnum, modelUid, sessionId, {
           toolPreamble, images,
           nativeMode: !!nativeMode,
@@ -1402,8 +1413,13 @@ export class WindsurfClient {
           additionalSteps: effectiveAdditionalSteps(),
           maxOutputTokens: completion?.maxTokens,
         }, userJwt);
+        const body = grpcFrame(sendProto);
+        // A lookup can settle before its timer runs, or framing can spend the
+        // final tick. Check ownership at the point the Send leaves this process.
+        if (aborted()) throw abortError();
+        assertBudget('Cascade SendUserCascadeMessage');
         await grpcUnary(
-          this.port, this.csrfToken, `${LS_SERVICE}/SendUserCascadeMessage`, grpcFrame(sendProto),
+          this.port, this.csrfToken, `${LS_SERVICE}/SendUserCascadeMessage`, body,
           budgetTimeout(30_000)
         );
       };
@@ -1445,6 +1461,7 @@ export class WindsurfClient {
           await sendMessage();
           break;
         } catch (e) {
+          if (aborted()) throw abortError();
           // The Send was bounded by what the turn had left: once that is gone
           // the failure is the route deadline, not a panel/transport fault.
           throwIfSpent(e, 'Cascade SendUserCascadeMessage');
@@ -2211,10 +2228,7 @@ export class WindsurfClient {
         // Mirror the normal return's reset so a reused client instance never
         // carries this turn's recovery flag into the next call.
         this._lastReuseInvalidated = false;
-        const err = new Error('Cascade aborted by client');
-        err.name = 'AbortError';
-        err.code = 'ABORT_ERR';
-        throw err;
+        throw abortError();
       }
 
       // Structured summary so we can diagnose short/empty completions after

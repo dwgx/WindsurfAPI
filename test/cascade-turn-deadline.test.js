@@ -182,6 +182,88 @@ function idleStatus() {
 }
 
 describe('F3 the route budget covers the whole turn', () => {
+  for (const cause of ['abort', 'deadline']) {
+    it(`a pending JWT lookup cannot send after ${cause}`, async (t) => {
+      const budgetMs = 1000;
+      const controller = new AbortController();
+      const lookupStarted = Promise.withResolvers();
+      const jwt = Promise.withResolvers();
+      class PendingJwtClient extends NoWarmClient {
+        _fetchUserJwtForChat() {
+          lookupStarted.resolve();
+          return jwt.promise;
+        }
+      }
+
+      await withFakeLs((method) => {
+        if (method === 'StartCascade') return { body: writeStringField(1, 'fixture-cascade') };
+      }, async (server) => {
+        t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: Date.now() });
+        const turn = runTurn({
+          port: server.port, Client: PendingJwtClient, maxWaitMs: budgetMs, signal: controller.signal,
+        });
+        assert.ok(await Promise.race([lookupStarted.promise.then(() => true), turn.then(() => false)]),
+          'the turn must reach JWT preparation');
+
+        if (cause === 'abort') {
+          // Client cancellation still owns the result inside the RPC timeout tolerance.
+          t.mock.timers.tick(budgetMs - 1);
+          controller.abort();
+        } else {
+          t.mock.timers.tick(budgetMs);
+        }
+        const finishedBeforeJwt = await Promise.race([
+          turn.then(() => true),
+          new Promise(resolve => setImmediate(() => resolve(false))),
+        ]);
+        jwt.resolve(null);
+        const result = await turn;
+        assert.equal(server.state.sends, 0, 'a late JWT completion must never submit a generation');
+        assert.ok(finishedBeforeJwt, 'the caller must finish while the shared JWT is still pending');
+        if (cause === 'abort') {
+          assert.equal(result.err?.name, 'AbortError');
+          assert.equal(result.err.code, 'ABORT_ERR');
+        } else {
+          assert.ok(isBudgetExceededError(result.err), 'the caller must receive the route deadline error');
+        }
+      });
+    });
+  }
+
+  it('an ordinary JWT lookup failure still submits one unsigned turn', async () => {
+    class FailedJwtClient extends NoWarmClient {
+      async _fetchUserJwtForChat() { throw new Error('fixture lookup failure'); }
+    }
+    await withFakeLs((method) => {
+      if (method === 'StartCascade') return { body: writeStringField(1, 'fixture-cascade') };
+      if (method === 'GetCascadeTrajectorySteps') return { body: stepsBody(['answer']) };
+      if (method === 'GetCascadeTrajectory') return { body: idleStatus() };
+    }, async (server) => {
+      const result = await runTurn({ port: server.port, Client: FailedJwtClient });
+      assert.equal(result.text, 'answer');
+      assert.equal(server.state.sends, 1);
+    });
+  });
+
+  it('checks the wall clock after the JWT resolves, before the deadline timer runs', async (t) => {
+    const budgetMs = 1000;
+    await withFakeLs((method) => {
+      if (method === 'StartCascade') return { body: writeStringField(1, 'fixture-cascade') };
+    }, async (server) => {
+      t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: Date.now() });
+      class ElapsedJwtClient extends NoWarmClient {
+        async _fetchUserJwtForChat() {
+          await Promise.resolve();
+          t.mock.timers.setTime(Date.now() + budgetMs);
+          return null;
+        }
+      }
+      const result = await runTurn({ port: server.port, Client: ElapsedJwtClient, maxWaitMs: budgetMs });
+      assert.equal(server.state.sends, 0, 'a completed lookup cannot grant time for a new Send');
+      assert.ok(isBudgetExceededError(result.err));
+    });
+  });
+
   it('a slow Send cannot outlive the budget, and nothing is polled after it', async () => {
     await withFakeLs((method, state) => {
       if (method === 'StartCascade') return { body: writeStringField(1, `cascade-${state.starts}`) };

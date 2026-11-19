@@ -1,11 +1,11 @@
 {
   "_scope_note": "F2/F3 (evidence/audit2/Cascade.md:254-296): the final-sweep text must count as turn output, and the route budget must cover warmup/StartCascade/Send/retry/polling/detach instead of starting at the poll loop. Both defects were reproduced at 2598299e (streamed 'answer' -> 502 EMPTY_RESPONSE; 100 ms budget -> 310 ms behind a 250 ms Send) and re-pinned here against the fixed producer. Each mutation re-introduces one half of the fix; the two expectCaught:false entries are MEASURED survivors with the reason they cannot be seen from outside.",
-  "_baseline_provenance": "MEASURED 2026-10-26 on the deadline-flake fix commit, Windows, Node v24.19.0, worktree D:/Project/WindsurfAPI. The sweep is run with scripts/mutate-verify-dirty.mjs in WSL (Ubuntu 24.04, /usr/bin/git, /opt/node24/bin/node v24.21.0) because mutation-harness-utils.mjs requires git at a POSIX absolute path. Baseline 19/19 green and identical in every mutated run. Results: 6 CAUGHT arms and 2 declared SURVIVORS (see their names). Full log: evidence/final/DeadlineFlake.md.",
+  "_baseline_provenance": "Measured 2026-11-19 on Windows, Node v24.19.0, base eecd3819 plus the Cascade JWT cancellation change. Four JWT lifecycle tests increase the combined suite from 19 to 23. Command: node --import ./test/setup-env.mjs --test test/cascade-final-sweep-terminal.test.js test/cascade-turn-deadline.test.js. Result: 23 passed, 0 failed, 0 skipped. The Send RPC now takes its preframed body. Its mutation still removes the remaining-time bound from that same call. Historical full sweep: 6 caught and 2 expected survivors at 19/19 on the 2026-10-26 baseline, recorded in evidence/final/DeadlineFlake.md.",
   "tests": [
     "test/cascade-final-sweep-terminal.test.js",
     "test/cascade-turn-deadline.test.js"
   ],
-  "expectBaselinePass": 19,
+  "expectBaselinePass": 23,
   "mutations": [
     {
       "name": "F2: the idle_empty classifier arm ignores delivered output again — a turn whose text arrived in the final sweep is reported as an empty upstream failure (502 EMPTY_RESPONSE) after the bytes were streamed",
@@ -48,8 +48,8 @@
     {
       "name": "F3: the Send RPC loses its remaining-time bound — a Send issued inside the budget can run to gRPC's 30 s default, so the turn returns after the deadline instead of stopping at it",
       "file": "src/client.js",
-      "anchor": "        await grpcUnary(\n          this.port, this.csrfToken, `${LS_SERVICE}/SendUserCascadeMessage`, grpcFrame(sendProto),\n          budgetTimeout(30_000)\n        );",
-      "replacement": "        await grpcUnary(\n          this.port, this.csrfToken, `${LS_SERVICE}/SendUserCascadeMessage`, grpcFrame(sendProto),\n          30_000\n        );"
+      "anchor": "        await grpcUnary(\n          this.port, this.csrfToken, `${LS_SERVICE}/SendUserCascadeMessage`, body,\n          budgetTimeout(30_000)\n        );",
+      "replacement": "        await grpcUnary(\n          this.port, this.csrfToken, `${LS_SERVICE}/SendUserCascadeMessage`, body,\n          30_000\n        );"
     },
     {
       "name": "F3: the shared workspace warmup is awaited without the deadline race — a warmup started by another request can hold a short route for the full multi-RPC handshake",
