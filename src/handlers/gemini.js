@@ -458,21 +458,35 @@ function extractText(node) {
 }
 
 // ─── usageMetadata builder (OpenAI usage → Gemini) ──────────────
+// The shared Cascade producer folds thinking into completion_tokens and exposes
+// the reasoning count as a subset (completion_tokens_details.reasoning_tokens).
+// Gemini's UsageMetadata reports candidates and thoughts as SEPARATE buckets
+// (a consumer that adds them reads generated+candidates), so the combined
+// completion count must NOT be copied into candidatesTokenCount verbatim: the
+// candidate bucket is completion minus the bounded thinking subset. The supplied
+// total is preserved verbatim — including the shared producer's cache-write
+// accounting, which deliberately breaks OpenAI's total identity (#118).
 function buildUsageMetadata(usage) {
   if (!usage || typeof usage !== 'object') return undefined;
-  const prompt = usage.prompt_tokens ?? usage.input_tokens ?? 0;
-  const candidates = usage.completion_tokens ?? usage.output_tokens ?? 0;
+  const prompt = Number(usage.prompt_tokens ?? usage.input_tokens) || 0;
+  const generated = Number(usage.completion_tokens ?? usage.output_tokens) || 0;
   const cached = usage.cache_read_input_tokens
     ?? usage.prompt_tokens_details?.cached_tokens
     ?? 0;
-  const thoughts = usage.completion_tokens_details?.reasoning_tokens ?? 0;
-  const total = usage.total_tokens ?? (prompt + candidates);
+  // The producer already clamps reasoning_tokens ≤ completion_tokens; the extra
+  // bound keeps a lying upstream from driving the candidate bucket negative.
+  const thoughts = Math.min(
+    Number(usage.completion_tokens_details?.reasoning_tokens) || 0,
+    Math.max(0, generated),
+  );
+  const candidates = Math.max(0, generated - thoughts);
+  const total = usage.total_tokens ?? (prompt + candidates + thoughts);
   const meta = {
     promptTokenCount: prompt,
     candidatesTokenCount: candidates,
     totalTokenCount: total,
   };
-  if (cached) meta.cachedContentTokenCount = cached;
+  if (cached) meta.cachedContentTokenCount = Number(cached) || 0;
   if (thoughts) meta.thoughtsTokenCount = thoughts;
   return meta;
 }

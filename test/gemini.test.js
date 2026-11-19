@@ -578,6 +578,88 @@ describe('handleGemini non-stream', () => {
   });
 });
 
+// ─── usage: disjoint thinking buckets (audit P2) ────────────────
+// The shared Cascade producer folds thinking into completion_tokens and exposes
+// the reasoning count as a subset (completion_tokens_details.reasoning_tokens).
+// Gemini's UsageMetadata reports candidates and thoughts as SEPARATE buckets, so
+// copying the combined count to candidatesTokenCount while also emitting the
+// subset as thoughtsTokenCount let a consumer that adds both read seven
+// generated tokens for a four-token answer. The derivation must hold on every
+// adapter mode (buffered, SSE, JSON-array) — they share buildUsageMetadata.
+describe('Gemini usageMetadata disjoint thinking buckets (all adapter modes)', () => {
+  const usageWithThinking = {
+    prompt_tokens: 10, completion_tokens: 4, total_tokens: 14,
+    prompt_tokens_details: { cached_tokens: 6 },
+    completion_tokens_details: { reasoning_tokens: 3 },
+  };
+  const usageNoThinking = {
+    ...usageWithThinking,
+    completion_tokens_details: { reasoning_tokens: 0 },
+  };
+
+  async function geminiUsage({ alt, usage }) {
+    const fakeRes = {
+      body: '', writableEnded: false,
+      write(chunk) { this.body += String(chunk); return true; },
+      end(chunk) { if (chunk) this.write(chunk); this.writableEnded = true; },
+      on() { return this; }, once() { return this; },
+    };
+    const result = await handleGemini('gemini-2.5-pro', {
+      contents: [{ role: 'user', parts: [{ text: 'hi' }] }],
+    }, {
+      async handleChatCompletions() {
+        if (alt == null) {
+          return {
+            status: 200,
+            body: { choices: [{ message: { content: 'hello' }, finish_reason: 'stop' }], usage },
+          };
+        }
+        return {
+          stream: true,
+          status: 200,
+          async handler(res) {
+            res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: { content: 'hello' } }] })}\n\n`);
+            res.write(`data: ${JSON.stringify({ choices: [{ index: 0, delta: {}, finish_reason: 'stop' }], usage })}\n\n`);
+            res.end('data: [DONE]\n\n');
+          },
+        };
+      },
+    }, alt != null ? { stream: true, alt } : { stream: false });
+    if (alt != null) await result.handler(fakeRes);
+    let meta;
+    if (alt == null) {
+      meta = result.body.usageMetadata;
+    } else if (alt === 'sse') {
+      meta = fakeRes.body.split('\r\n\r\n')
+        .filter(Boolean)
+        .filter((frame) => frame.startsWith('data: '))
+        .map((frame) => JSON.parse(frame.slice(6)))
+        .map((frame) => frame.usageMetadata)
+        .filter(Boolean)
+        .at(-1);
+    } else {
+      meta = JSON.parse(fakeRes.body).map((frame) => frame.usageMetadata).filter(Boolean).at(-1);
+    }
+    return [meta.promptTokenCount, meta.cachedContentTokenCount ?? 0, meta.candidatesTokenCount, meta.thoughtsTokenCount ?? 0, meta.totalTokenCount];
+  }
+
+  it('derives candidates 1 / thoughts 3 with the supplied total 14 in every mode', async () => {
+    for (const alt of [null, 'sse', 'array']) {
+      assert.deepEqual(await geminiUsage({ alt, usage: usageWithThinking }),
+        [10, 6, 1, 3, 14],
+        `${alt ?? 'buffered'} mode must report disjoint candidate/thought buckets`);
+    }
+  });
+
+  it('keeps the candidate bucket whole when no thinking was reported (control)', async () => {
+    for (const alt of [null, 'sse', 'array']) {
+      assert.deepEqual(await geminiUsage({ alt, usage: usageNoThinking }),
+        [10, 6, 4, 0, 14],
+        `${alt ?? 'buffered'} mode must not subtract an absent reasoning subset`);
+    }
+  });
+});
+
 // ─── main entry: streaming ──────────────────────────────────────
 describe('handleGemini streaming', () => {
   // #234 — every frame's modelVersion must name what ACTUALLY ran.
@@ -1012,6 +1094,30 @@ describe('openAIToGemini supplemental response coverage', () => {
     });
     assert.equal(g.usageMetadata.cachedContentTokenCount, 6);
     assert.equal(g.usageMetadata.thoughtsTokenCount, 3);
+    // Gemini reports candidate and thought buckets disjointly: a consumer that
+    // adds them reads generated+candidates. The shared producer folds thinking
+    // into completion_tokens, so the candidate bucket is completion minus the
+    // bounded thinking subset — 4 generated including 3 thinking → 1 candidate.
+    assert.equal(g.usageMetadata.candidatesTokenCount, 1,
+      'candidatesTokenCount must exclude the reasoning subset');
+    assert.equal(g.usageMetadata.totalTokenCount, 14,
+      'the supplied total is preserved verbatim');
+  });
+
+  it('keeps the candidate bucket whole when no thinking was reported (control)', () => {
+    const g = openAIToGemini({
+      choices: [{ message: { content: 'ok' }, finish_reason: 'stop' }],
+      usage: {
+        prompt_tokens: 10,
+        completion_tokens: 4,
+        total_tokens: 14,
+        prompt_tokens_details: { cached_tokens: 6 },
+        completion_tokens_details: { reasoning_tokens: 0 },
+      },
+    });
+    assert.equal(g.usageMetadata.candidatesTokenCount, 4);
+    assert.equal(g.usageMetadata.thoughtsTokenCount, undefined);
+    assert.equal(g.usageMetadata.totalTokenCount, 14);
   });
 
   it('accepts Anthropic-style usage field names (input_tokens/output_tokens)', () => {
