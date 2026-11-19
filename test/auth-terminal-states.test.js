@@ -34,6 +34,8 @@ function newAccount(status = 'active', label = 'terminal') {
     `${label}-${seq}@example.com`,
   );
   account.email = `${label}-${seq}@example.com`;
+  account.identityEmail = account.email;
+  account.credentialEmail = account.email;
   account.method = 'email';
   if (status !== 'active') account.status = status;
   created.add(account.id);
@@ -150,7 +152,7 @@ describe('automatic re-login cannot resurrect a terminal account', () => {
       getCredential: () => 'pw',
       windsurfLogin: async () => {
         account.status = 'disabled';
-        return { apiKey: 'devin-session-token$FRESH' };
+        return { apiKey: 'devin-session-token$FRESH', identityEmail: account.email };
       },
     });
 
@@ -168,7 +170,7 @@ describe('automatic re-login cannot resurrect a terminal account', () => {
       getCredential: () => 'pw',
       windsurfLogin: async () => {
         removeAccount(account.id);
-        return { apiKey: 'devin-session-token$FRESH' };
+        return { apiKey: 'devin-session-token$FRESH', identityEmail: account.identityEmail };
       },
     });
 
@@ -184,7 +186,7 @@ describe('automatic re-login cannot resurrect a terminal account', () => {
       getCredential: () => 'pw',
       windsurfLogin: async () => {
         account.apiKey = 'devin-session-token$OPERATOR';
-        return { apiKey: 'devin-session-token$FRESH' };
+        return { apiKey: 'devin-session-token$FRESH', identityEmail: account.identityEmail };
       },
     });
 

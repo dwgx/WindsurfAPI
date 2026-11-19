@@ -12,7 +12,7 @@
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { config } from '../src/config.js';
-import { addAccountByKey, getAccountInternal, removeAccount, setAccountStatus } from '../src/auth.js';
+import { addAccountByKey, getAccountInternal, removeAccount, setAccountCredentialEmail, setAccountIdentityEmail, setAccountStatus } from '../src/auth.js';
 import { handleDashboardApi } from '../src/dashboard/api.js';
 import {
   __setLoginTransportForTests,
@@ -92,6 +92,9 @@ function postauthOk(sessionToken) {
 
 function seedOwner() {
   const account = addAccountByKey(OWNER_KEY, OWNER_EMAIL);
+  // The row's stable identity is the address a login proved. The display email
+  // is only a label and must not be the expected identity for a bound login.
+  setAccountIdentityEmail(account.id, OWNER_EMAIL);
   created.add(account.id);
   return account;
 }
@@ -167,6 +170,77 @@ describe('bound login identity (password flow)', () => {
     const after = getAccountInternal(owner.id);
     assert.equal(after.apiKey, fresh, 'case differences are not an identity difference');
     assert.equal(after.status, 'active');
+  });
+});
+
+describe('bound login identity — unverified and legacy rows', () => {
+  it('refuses to bind a row that has no verified identity', async () => {
+    const account = addAccountByKey('devin-session-token$UNVERIFIED', OWNER_EMAIL);
+    created.add(account.id);
+    setAccountStatus(account.id, 'reauth');
+    __setLoginTransportForTests(makeTransport([CONN_PASSWORD, PASSWORD_OK, postauthOk('devin-session-token$TAKEOVER')]));
+
+    const r = await post('/windsurf-login', {
+      email: OWNER_EMAIL,
+      password: PASSWORD,
+      accountId: account.id,
+    });
+
+    assert.equal(r.status, 409, JSON.stringify(r.body));
+    assert.equal(r.body.error, 'ERR_ACCOUNT_IDENTITY_UNVERIFIED');
+    const after = getAccountInternal(account.id);
+    assert.equal(after.apiKey, 'devin-session-token$UNVERIFIED', 'no token mutation without a verified expectation');
+    assert.equal(after.status, 'reauth', 'no health mutation without a verified expectation');
+    assert.equal(after.identityEmail || '', '', 'a refused bind must not invent an identity');
+  });
+
+  it('lets a legacy credentialEmail binding verify the row and persists the identity', async () => {
+    const account = addAccountByKey('devin-session-token$LEGACY', OWNER_EMAIL);
+    created.add(account.id);
+    setAccountCredentialEmail(account.id, OWNER_EMAIL);
+    setAccountStatus(account.id, 'reauth');
+    const fresh = 'devin-session-token$LEGACYFRESH';
+    __setLoginTransportForTests(makeTransport([CONN_PASSWORD, PASSWORD_OK, postauthOk(fresh)]));
+
+    const r = await post('/windsurf-login', {
+      email: OWNER_EMAIL,
+      password: PASSWORD,
+      accountId: account.id,
+    });
+
+    assert.equal(r.status, 200, JSON.stringify(r.body));
+    const after = getAccountInternal(account.id);
+    assert.equal(after.apiKey, fresh);
+    assert.equal(after.identityEmail, OWNER_EMAIL, 'the successful login promotes the store binding to a verified identity');
+    assert.equal(after.status, 'active');
+  });
+
+  it('refuses an email-code bind for an unverified row before the code is spent', async () => {
+    const account = addAccountByKey('devin-session-token$EMAILUNVERIFIED', OWNER_EMAIL);
+    created.add(account.id);
+    setAccountStatus(account.id, 'reauth');
+    __setLoginTransportForTests(makeTransport([START_OK, COMPLETE_OK, postauthOk('devin-session-token$EMAILTAKEOVER')]));
+
+    const started = await emailLoginStart(OWNER_EMAIL, null, { host: 'windsurf' });
+    const first = await post('/windsurf-login/email/complete', {
+      flowId: started.flowId,
+      code: CODE,
+      accountId: account.id,
+    });
+    assert.equal(first.status, 409, JSON.stringify(first.body));
+    assert.equal(first.body.error, 'ERR_ACCOUNT_IDENTITY_UNVERIFIED');
+
+    // The early refusal did not consume the flow: a second call reports the same
+    // binding error, not ERR_EMAIL_FLOW_USED.
+    const second = await post('/windsurf-login/email/complete', {
+      flowId: started.flowId,
+      code: CODE,
+      accountId: account.id,
+    });
+    assert.equal(second.body.error, 'ERR_ACCOUNT_IDENTITY_UNVERIFIED', JSON.stringify(second.body));
+    const after = getAccountInternal(account.id);
+    assert.equal(after.apiKey, 'devin-session-token$EMAILUNVERIFIED');
+    assert.equal(after.status, 'reauth');
   });
 });
 

@@ -1236,7 +1236,7 @@ function emailLockedError(lockMs) {
 // is not a comparable key here — the authenticated address is.
 
 /** Case/whitespace-insensitive identity key. '' means "no identity proof". */
-function normalizeLoginIdentity(email) {
+export function normalizeLoginIdentity(email) {
   return String(email ?? '').trim().toLowerCase();
 }
 
@@ -1263,7 +1263,16 @@ function maskIdentityEmail(email) {
  */
 export function assertLoginIdentity(result, expectedEmail) {
   const expected = normalizeLoginIdentity(expectedEmail);
-  if (!expected) return;
+  // An empty expectation is NOT a wildcard. A caller that has no verified
+  // identity must take the explicit re-verification path instead of silently
+  // skipping the check for a bound login.
+  if (!expected) {
+    const err = new Error('ERR_LOGIN_IDENTITY_UNVERIFIED');
+    err.code = 'ERR_LOGIN_IDENTITY_UNVERIFIED';
+    err.statusCode = 409;
+    err.detail = 'This account has no verified login identity; re-verify it with a fresh login before binding a credential.';
+    throw err;
+  }
   const actual = loginResultIdentity(result);
   if (actual && actual === expected) return;
   const err = new Error('ERR_LOGIN_IDENTITY_MISMATCH');

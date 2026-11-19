@@ -28,6 +28,8 @@ function seed(label, email) {
   const key = `devin-session-token$sig-${label}-${Math.random().toString(36).slice(2)}`;
   const acct = addAccountByKey(key, email || label);
   acct.email = email || `${label}@example.com`;
+  acct.identityEmail = acct.email;
+  acct.credentialEmail = acct.email;
   acct.status = 'active';
   createdIds.push(acct.id);
   return acct;
@@ -155,10 +157,14 @@ describe('reLoginAccount signal reaches the liveness sweep', () => {
 
     const held = reLoginAccount(holder.id);
     const deadline = Date.now() + 2000;
-    while (__reloginGateState().active === 0 && Date.now() < deadline) {
+    // Wait for the slot AND for the holder to actually enter the login call:
+    // the slot is acquired before the (now async) login-module resolution, so
+    // releasing on active alone could race the assignment of releaseHolder.
+    while ((__reloginGateState().active === 0 || !releaseHolder) && Date.now() < deadline) {
       await new Promise((r) => setTimeout(r, 5));
     }
     assert.equal(__reloginGateState().active, 1, 'precondition: the global slot is held');
+    assert.equal(typeof releaseHolder, 'function', 'precondition: the holder entered the login');
 
     const started = Date.now();
     const result = await probeAndRecoverConnectAccount(target.id, { signal: AbortSignal.abort() });
@@ -169,7 +175,7 @@ describe('reLoginAccount signal reaches the liveness sweep', () => {
     assert.ok(elapsed < 1000, `probe returned promptly on abort (took ${elapsed}ms, queue timeout is 5000ms)`);
 
     // Release the holder so its attempt can settle during cleanup.
-    releaseHolder?.({ apiKey: `${holder.apiKey}$FRESH` });
+    releaseHolder?.({ apiKey: `${holder.apiKey}$FRESH`, identityEmail: holder.identityEmail });
     await held.catch(() => {});
   });
 });

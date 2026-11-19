@@ -178,6 +178,23 @@ describe('row menu', () => {
     assert.equal(self._closedDrawer, 1, 'the drawer must close');
     assert.deepEqual(opened, [{ tab: 'login', opts: { email: 'dead@example.test', accountId: 'acct-reauth' } }]);
   });
+
+  it('prefills the verified login address instead of a renamed display label', () => {
+    const opened = [];
+    const self = appBase({
+      _accountsById: new Map([['acct-reauth', {
+        ...reauthRow,
+        email: 'renamed-label@example.test',
+        loginEmail: 'real-identity@example.test',
+      }]]),
+      openAddAccountModal: (tab, opts) => opened.push({ tab, opts }),
+    });
+    self.reloginAccount('acct-reauth');
+    assert.deepEqual(opened, [{
+      tab: 'login',
+      opts: { email: 'real-identity@example.test', accountId: 'acct-reauth' },
+    }], 'a renamed label must not be submitted as the login identity');
+  });
 });
 
 describe('bound login banner', () => {

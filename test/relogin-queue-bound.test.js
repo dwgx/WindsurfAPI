@@ -20,6 +20,10 @@ function seed(label) {
   const key = `devin-session-token$queue-${label}-${Math.random().toString(36).slice(2)}`;
   const acct = addAccountByKey(key, label);
   acct.email = `${label}-${acct.id}@example.com`;
+  // Re-login requires a verified identity; the display label is deliberately a
+  // different string so the test also proves it is not used.
+  acct.identityEmail = `identity-${label}-${acct.id}@example.com`;
+  acct.credentialEmail = acct.identityEmail;
   createdIds.push(acct.id);
   return acct;
 }
@@ -49,11 +53,11 @@ function hungHolder(a, hung) {
     isCredStoreEnabled: () => true,
     getCredential: () => 'pw',
     windsurfLogin: (email) => {
-      if (email === a.email) {
+      if (email === a.identityEmail) {
         started();
         return hung;
       }
-      return Promise.resolve({ apiKey: 'devin-session-token$OTHER' });
+      return Promise.resolve({ apiKey: 'devin-session-token$OTHER', identityEmail: email });
     },
   });
   return startedPromise;
@@ -84,7 +88,7 @@ describe('re-login gate: waiters are bounded', () => {
     assert.equal(__reloginGateState().waiting, 0, 'timed-out waiter is removed from the queue');
     assert.equal(__reloginGateState().active, 1, 'the holder still owns its slot');
 
-    release({ apiKey: 'devin-session-token$TIMEOUT-A' });
+    release({ apiKey: 'devin-session-token$TIMEOUT-A', identityEmail: a.identityEmail });
     await held;
     assert.equal(__reloginGateState().active, 0, 'slot is returned when the holder finishes');
   });
@@ -110,7 +114,7 @@ describe('re-login gate: waiters are bounded', () => {
     assert.equal(__reloginGateState().waiting, 0, 'aborted waiter is removed from the queue');
     assert.equal(__reloginGateState().active, 1, 'the holder still owns its slot');
 
-    release({ apiKey: 'devin-session-token$ABORT-A' });
+    release({ apiKey: 'devin-session-token$ABORT-A', identityEmail: a.identityEmail });
     await held;
     assert.equal(__reloginGateState().active, 0, 'slot is returned when the holder finishes');
   });

@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { trustedClientIp } from '../src/net-safety.js';
 import { isLoopbackAddress } from '../src/dashboard/local-windsurf.js';
 import { sanitizeLabelText } from '../src/auth.js';
+import { normalizeLoginIdentity } from '../src/dashboard/windsurf-login.js';
 
 const source = readFileSync(new URL('../src/dashboard/api.js', import.meta.url), 'utf8');
 function functionText(name) {
@@ -25,6 +26,8 @@ function boundary(env = {}, localBind = true) {
     addAccountByKey: () => ({ id: 'offline-account', email: 'a@example.test', status: 'active' }),
     setAccountTokens() {}, setAccountProxy() {}, scheduleAccountWarmup() {},
     setAccountCredentialEmail() {},
+    setAccountIdentityEmail() {},
+    normalizeLoginIdentity,
     maskApiKey: () => '[masked]',
     // The production function sanitizes upstream-supplied names through the
     // real boundary — feed the same helper, not a local reimplementation.

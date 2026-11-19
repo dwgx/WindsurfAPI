@@ -100,10 +100,11 @@ describe('removeAccount deletes the stored credential', () => {
     else process.env.DEVIN_CONNECT_CRED_FILE = previousFile;
   });
 
-  it('removes the password record with the account', () => {
+  it('removes the password record bound to the account', () => {
     assert.equal(storeCredential('orphan@example.test', 'hunter2'), true);
     assert.deepEqual(listCredentialEmails(), ['orphan@example.test']);
     const a = account('orphan@example.test');
+    setAccountCredentialEmail(a.id, 'orphan@example.test');
     assert.equal(removeAccount(a.id), true);
     created.delete(a.id);
     assert.deepEqual(listCredentialEmails(), [], 'a deleted account must not leave a decryptable password behind');
@@ -126,5 +127,18 @@ describe('removeAccount deletes the stored credential', () => {
     assert.equal(removeAccount(a.id), true);
     created.delete(a.id);
     assert.deepEqual(listCredentialEmails(), ['keep@example.test']);
+  });
+
+  it('does not guess a binding from the display label for an unverified row', () => {
+    // A historical row with neither credentialEmail nor identityEmail has no
+    // trustworthy store binding. Its label may even have been renamed to
+    // another account's address; deleting by that label could remove a secret
+    // this row does not own. Leave the unknown record in place.
+    assert.equal(storeCredential('label-owner@example.test', 'hunter2'), true);
+    const a = account('label-owner@example.test');
+    assert.equal(removeAccount(a.id), true);
+    created.delete(a.id);
+    assert.deepEqual(listCredentialEmails(), ['label-owner@example.test'],
+      'an unverified row must not delete a record by its display label');
   });
 });
