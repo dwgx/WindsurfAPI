@@ -473,10 +473,11 @@ function buildUsageMetadata(usage) {
   const cached = usage.cache_read_input_tokens
     ?? usage.prompt_tokens_details?.cached_tokens
     ?? 0;
-  // The producer already clamps reasoning_tokens ≤ completion_tokens; the extra
-  // bound keeps a lying upstream from driving the candidate bucket negative.
+  // Bound the reasoning subset to [0, generated]. An unexpected negative count
+  // must not increase the candidate bucket, just as excess reasoning must not
+  // make it negative.
   const thoughts = Math.min(
-    Number(usage.completion_tokens_details?.reasoning_tokens) || 0,
+    Math.max(0, Number(usage.completion_tokens_details?.reasoning_tokens) || 0),
     Math.max(0, generated),
   );
   const candidates = Math.max(0, generated - thoughts);

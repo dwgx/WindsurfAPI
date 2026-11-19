@@ -658,6 +658,18 @@ describe('Gemini usageMetadata disjoint thinking buckets (all adapter modes)', (
         `${alt ?? 'buffered'} mode must not subtract an absent reasoning subset`);
     }
   });
+
+  it('clamps a negative reasoning count to zero in every mode', async () => {
+    const usage = {
+      ...usageWithThinking,
+      completion_tokens_details: { reasoning_tokens: -1 },
+    };
+    for (const alt of [null, 'sse', 'array']) {
+      assert.deepEqual(await geminiUsage({ alt, usage }),
+        [10, 6, 4, 0, 14],
+        `${alt ?? 'buffered'} mode must not add a negative reasoning count to candidates`);
+    }
+  });
 });
 
 // ─── main entry: streaming ──────────────────────────────────────
