@@ -4,7 +4,7 @@
     "test/gemini.test.js",
     "test/intent-extractor.test.js"
   ],
-  "expectBaselinePass": 107,
+  "expectBaselinePass": 115,
   "mutations": [
     {
       "name": "the original defect: fd.parameters is passed through verbatim again, so an UPPERCASE Gemini schema reaches consumers that compare lowercase",
