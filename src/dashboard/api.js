@@ -99,7 +99,7 @@ import {
   reconcileDockerSelfUpdateState,
   runDockerSelfUpdate,
 } from './docker-self-update.js';
-import { BatchImportParseError, parseBatchImportInput } from './import-parser.js';
+import { BatchImportParseError, parseBatchImportInput, redactedProxyLabel } from './import-parser.js';
 import {
   DEFAULT_ATTESTATION_REPOSITORY,
   normalizeAttestationMode,
@@ -212,8 +212,8 @@ export async function validateProxyHost(proxy) {
 export function buildBatchProxyBinding(result, proxy) {
   const accountId = result?.account?.id || null;
   if (!result?.success || !proxy || !accountId) return null;
-  const parsed = parseProxyUrl(proxy);
-  if (!parsed) return null;
+  const parsed = typeof proxy === 'string' ? parseProxyUrl(proxy) : proxy;
+  if (!redactedProxyLabel(parsed)) return null;
   return {
     accountId,
     proxy: parsed,
@@ -230,12 +230,15 @@ export function buildBatchProxyBinding(result, proxy) {
 // derived from the PARSED item (kind, line number, error code) plus a
 // credential-free proxy label. Nothing here is a substring of the input.
 
-/** `type://host:port` — never the username/password the proxy URL carried. */
-function redactedProxyLabel(proxy) {
-  if (!proxy || typeof proxy !== 'object' || !proxy.host) return null;
-  const type = typeof proxy.type === 'string' && proxy.type ? proxy.type : 'http';
-  const port = Number.isInteger(proxy.port) && proxy.port > 0 ? proxy.port : null;
-  return `${type}://${proxy.host}${port ? `:${port}` : ''}`;
+// Single-login export can return a raw key. Both batch routes publish this
+// narrower representation, including only the public account summary.
+export function publicBatchLoginResult(result) {
+  const { success, email, name, apiServerUrl, method, reauthenticated, viaHost, credentialStored, account } = result;
+  return {
+    success, email, name, apiServerUrl, method, reauthenticated, viaHost, credentialStored,
+    account: account && { id: account.id, email: account.email, status: account.status },
+    apiKey_masked: result.apiKey ? maskApiKey(result.apiKey) : result.apiKey_masked,
+  };
 }
 
 const IMPORT_KIND_LABELS = Object.freeze({
@@ -3705,16 +3708,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
         const password = String(acct?.password || '').trim();
         try {
           const result = await processWindsurfLogin({ email, password, loginProxy, autoAdd, storeCredential, req });
-          // V-25: /windsurf-login returns the raw key for a one-time export
-          // when autoAdd:false. A BATCH response has no such contract — every
-          // row is keyed by an address whose password the caller just sent, so
-          // a raw key here is only a leak. Mask it and keep the same shape.
-          if (result && result.apiKey) {
-            const { apiKey, ...rest } = result;
-            results.push({ ...rest, apiKey_masked: maskApiKey(apiKey) });
-          } else {
-            results.push(result);
-          }
+          results.push(publicBatchLoginResult(result));
         } catch (err) {
           results.push({
             success: false,
@@ -3759,6 +3753,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
             email: item.label,
             error: item.error,
             lineNumber: item.lineNumber,
+            importKind: item.kind,
             // V-25: never `item.raw` — that string is the operator's pasted
             // line (password/token included). The kind label is derived from
             // the parsed shape, so it cannot contain any of the input.
@@ -3779,7 +3774,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
               storeCredential,
               req,
             });
-            const binding = buildBatchProxyBinding(result, item.proxyRaw);
+            const binding = buildBatchProxyBinding(result, item.proxy);
             if (binding) {
               setAccountProxy(binding.accountId, binding.proxy);
               scheduleAccountWarmup(binding.accountId);
@@ -3813,9 +3808,11 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
           }
           // V-25: `proxyRaw` carried user:pass@; the label drops the userinfo
           // and is what the dashboard shows / stores in login history.
-          result.proxy = redactedProxyLabel(item.proxy);
-          result.importKind = item.kind;
-          results.push(result);
+          results.push({
+            ...publicBatchLoginResult(result),
+            proxy: redactedProxyLabel(item.proxy),
+            importKind: item.kind,
+          });
         } catch (err) {
           results.push({
             success: false,
