@@ -2968,22 +2968,48 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
       });
     } catch (err) {
       if (err?.code === 'ERR_CREDENTIAL_PERSIST_FAILED') {
-        // The file write failed and both fields were rolled back; saying
-        // "success" here would leave the operator with credentials that only
-        // exist until the next restart.
-        log.warn(`Settings: credential rotation was NOT persisted: ${err.cause?.message || err.message}`);
-        return json(res, 500, { error: 'ERR_CREDENTIAL_PERSIST_FAILED' });
+        // Nothing reached the file and both fields were rolled back in memory.
+        // `applied:false` keeps this distinct from the applied-but-unconfirmed
+        // outcome below; a client must not read this as a warning on a
+        // rotation that happened.
+        log.warn(`Settings: credential rotation was NOT applied: ${err.cause?.message || err.message}`);
+        return json(res, 500, {
+          success: false,
+          applied: false,
+          durability: 'not-applied',
+          protection: 'not-applicable',
+          error: 'ERR_CREDENTIAL_PERSIST_FAILED',
+        });
       }
       return json(res, 400, { error: err.message });
     }
-    const out = {};
+    // 200 means the pair is applied (live + visible on disk). Durability and
+    // ACL hardening are reported separately: 'unconfirmed' / 'failed' are
+    // warnings about an already-applied rotation, not an unapplied failure, so
+    // they must never be encoded as a rollback or as an ordinary success.
+    const warnings = [];
+    if (committed.durability === 'unconfirmed') warnings.push('ERR_CREDENTIAL_DURABILITY_UNCONFIRMED');
+    if (committed.protection === 'failed') warnings.push('ERR_CREDENTIAL_PROTECTION_FAILED');
+    if (committed.durability === 'unconfirmed') {
+      log.warn('Settings: credential rotation is visible in runtime-config.json but its directory entry durability is unconfirmed');
+    }
+    if (committed.protection === 'failed') {
+      log.warn('Settings: credential rotation applied but owner-only protection of runtime-config.json failed');
+    }
+    const out = {
+      success: true,
+      applied: true,
+      durability: committed.durability,
+      protection: committed.protection,
+      ...(warnings.length ? { warnings } : {}),
+    };
     if (hasApiKey) {
       out.apiKeyUpdated = true;
       out.apiKey_masked = maskApiKey(committed.apiKey || getEffectiveApiKey());
     }
     if (hasPassword) out.dashboardPasswordUpdated = true;
-    log.info(`Settings: credentials rotated from ${dashboardClientIp(req) || 'unknown'} (apiKey=${!!out.apiKeyUpdated}, dashboardPassword=${!!out.dashboardPasswordUpdated})`);
-    return json(res, 200, { success: true, ...out });
+    log.info(`Settings: credentials rotated from ${dashboardClientIp(req) || 'unknown'} (apiKey=${!!out.apiKeyUpdated}, dashboardPassword=${!!out.dashboardPasswordUpdated}, durability=${committed.durability}, protection=${committed.protection})`);
+    return json(res, 200, out);
   }
 
   // GET /settings/prefs — dashboard UI preferences (booleans, shared across

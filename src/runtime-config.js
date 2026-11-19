@@ -204,24 +204,90 @@ function load() {
   }
 }
 
-function persist({ strict = false } = {}) {
+// Test seams. `_persistFailureForTests` simulates a fault BEFORE any byte is
+// written (the historical ENOSPC seam). `_fsHooksForTests` replaces the two fs
+// steps so a test can drive the REAL rename and then fail the parent-directory
+// sync, or deny the owner-only ACL pass. A pre-write fault alone cannot prove
+// the published-rename contract: the file must actually be visible first.
+let _persistFailureForTests = null;
+let _fsHooksForTests = null;
+
+export function __setRuntimeConfigPersistFailureForTests(err) {
+  _persistFailureForTests = err || null;
+}
+
+export function __setRuntimeConfigFsHooksForTests(hooks) {
+  _fsHooksForTests = hooks || null;
+}
+
+const PERSIST_NOT_APPLIED = 'not-applied';
+const PERSIST_DURABLE = 'durable';
+const PERSIST_UNCONFIRMED = 'unconfirmed';
+
+function protectOwnerOnly() {
+  // SEC-03 follow-up: runtime-config.json holds the plaintext runtime API key
+  // and the scrypt dashboard-password hash. `mode: 0o600` is a POSIX contract;
+  // on Windows the renamed file keeps the inherited directory ACL
+  // (Users/Authenticated Users). Same best-effort icacls pass as
+  // accounts.json — the helper warns and never throws past this point.
   try {
-    writeJsonAtomic(FILE, _state);
-    // SEC-03 follow-up: runtime-config.json holds the plaintext runtime API
-    // key and the scrypt dashboard-password hash. `mode: 0o600` is a POSIX
-    // contract; on Windows the renamed file keeps the inherited directory ACL
-    // (Users/Authenticated Users). Same best-effort icacls pass as
-    // accounts.json — the helper warns and never throws past this point.
-    restrictFileToOwnerSync(FILE, { warn: (m) => log.warn(m) });
+    const result = (_fsHooksForTests?.restrictFileToOwnerSync || restrictFileToOwnerSync)(
+      FILE,
+      { warn: (m) => log.warn(m) },
+    );
+    if (result?.applied) return 'applied';
+    // The helper reports not-windows only when it deliberately did nothing;
+    // every other non-applied result is a real hardening failure.
+    return result?.reason === 'not-windows' ? 'not-applicable' : 'failed';
   } catch (e) {
-    log.warn(`runtime-config: failed to persist: ${e.message}`);
-    // Ordinary setters stay best-effort (a read-only config file must not
-    // break a running process). A CREDENTIAL rotation is different: reporting
-    // success while the file still holds the old key would leave the operator
-    // with a rotated-in-memory / stale-on-disk split, so its caller asks for
-    // the error and rolls back.
-    if (strict) throw e;
+    log.warn(`runtime-config: owner-only protection failed for ${FILE}: ${e.message}`);
+    return 'failed';
   }
+}
+
+/**
+ * Persist `_state` and report what actually reached the filesystem.
+ *
+ *   applied    — the new JSON is visible at FILE
+ *   durability — 'durable' (rename + parent sync) | 'unconfirmed' (rename
+ *                published, directory entry not proven) | 'not-applied'
+ *   protection — 'applied' | 'failed' | 'not-applicable' (non-Windows)
+ *
+ * Never throws. Ordinary setters stay best-effort (a read-only config file
+ * must not break a running process) and ignore the result. The credential
+ * transaction is the one caller that must distinguish "nothing happened" from
+ * "the new pair is live but its directory entry is not proven".
+ */
+function persist() {
+  if (_persistFailureForTests) {
+    log.warn(`runtime-config: failed to persist: ${_persistFailureForTests.message}`);
+    return {
+      applied: false,
+      durability: PERSIST_NOT_APPLIED,
+      protection: 'not-applicable',
+      error: _persistFailureForTests,
+    };
+  }
+  let durability;
+  try {
+    (_fsHooksForTests?.writeJsonAtomic || writeJsonAtomic)(FILE, _state);
+    durability = PERSIST_DURABLE;
+  } catch (e) {
+    if (!e?.renamePublished) {
+      log.warn(`runtime-config: failed to persist: ${e.message}`);
+      return { applied: false, durability: PERSIST_NOT_APPLIED, protection: 'not-applicable', error: e };
+    }
+    // rename(2) succeeded, so the new name is visible to every reader; only
+    // the directory-entry durability is unproven. Rolling memory back here
+    // would leave the live process on the old pair while the file holds the
+    // new one — and a later unrelated save would write the stale pair back
+    // over the published credentials.
+    log.warn(`runtime-config: published ${FILE} but directory sync failed: ${e.message}`);
+    durability = PERSIST_UNCONFIRMED;
+  }
+  // The bytes are at FILE in both branches, so the Windows ACL inheritance
+  // must be dropped even when the directory sync failed.
+  return { applied: true, durability, protection: protectOwnerOnly() };
 }
 
 load();
@@ -762,12 +828,6 @@ export function getCredentials() {
   };
 }
 
-// Test seam for the strict-commit path. Never set from production code.
-let _persistFailureForTests = null;
-export function __setRuntimeConfigPersistFailureForTests(err) {
-  _persistFailureForTests = err || null;
-}
-
 function credentialInputError(message) {
   const err = new Error(message);
   err.code = 'ERR_CREDENTIAL_INVALID';
@@ -778,19 +838,24 @@ function writeCredentialPatch(patch) {
   const previous = { ...(_state.credentials || {}) };
   if (!_state.credentials) _state.credentials = {};
   Object.assign(_state.credentials, patch);
-  try {
-    if (_persistFailureForTests) throw _persistFailureForTests;
-    persist({ strict: true });
-  } catch (e) {
+  const outcome = persist();
+  if (!outcome.applied) {
     // Nothing reached the file, so nothing may stay in memory either: a key
     // that only exists in RAM would silently disappear on the next restart.
     _state.credentials = previous;
     const err = new Error('ERR_CREDENTIAL_PERSIST_FAILED');
     err.code = 'ERR_CREDENTIAL_PERSIST_FAILED';
-    err.cause = e;
+    err.cause = outcome.error;
     throw err;
   }
-  return getCredentials();
+  // The pair is live and visible on disk. A post-rename directory-sync
+  // failure does NOT undo that: keep memory and disk identical and let the
+  // caller report durability as unconfirmed instead of claiming a rollback.
+  return {
+    ...getCredentials(),
+    durability: outcome.durability,
+    protection: outcome.protection,
+  };
 }
 
 /**
@@ -800,9 +865,19 @@ function writeCredentialPatch(patch) {
  * still validating the password field, so a request that ended in 400 had
  * already persisted a new chat key. Every input is validated here first; only
  * a fully valid request mutates state, and both fields are written by a single
- * atomic file replace. A failed write rolls BOTH fields back and throws
- * `ERR_CREDENTIAL_PERSIST_FAILED` so the caller cannot report a rotation that
- * did not happen.
+ * atomic file replace.
+ *
+ * Three outcomes, never conflated:
+ *   - not applied (fault before the rename): both fields roll back in memory
+ *     and on disk, and `ERR_CREDENTIAL_PERSIST_FAILED` is thrown.
+ *   - applied and durable: returns the new pair with `durability:'durable'`.
+ *   - applied but durability unconfirmed (rename published, parent-directory
+ *     sync failed): returns the new pair with `durability:'unconfirmed'`.
+ *     Memory is deliberately NOT rolled back — disk, live getters and a
+ *     process reload all agree on the new pair.
+ * `protection` reports the owner-only ACL pass: 'applied' | 'failed' |
+ * 'not-applicable' (non-Windows). A protection failure after publication is
+ * reported, not hidden, and never turns into an ordinary success.
  *
  * Input contract (unchanged from the route that used to implement it):
  *   apiKey            — string (null/undefined mean "clear"); trimmed, must not
