@@ -51,6 +51,12 @@ describe('release workflow', () => {
     // users get a KiroStudio-style "unzip → double-click" distribution.
     assert.match(winExe, /windsurfapi-windows\.zip/);
     assert.match(winExe, /tray\.vbs/);
+    // The extracted tray must retain its process-ownership helper. Omitting
+    // it silently removes generation receipts even when the EXE itself boots.
+    assert.match(winExe, /Copy-Item\s+deploy\\windows\\ownership\.psm1\s+\$stage\\/,
+      'the flat Windows archive must copy the ownership module beside tray.ps1');
+    assert.match(winExe, /\$must\s*=\s*@\([^\n]*'ownership\.psm1'/,
+      'ZIP read-back must reject a missing ownership helper');
     const release = jobBlock('release');
     assert.match(release, /download-artifact/);
     // Both the bare exe and the tray zip are attached to the release.

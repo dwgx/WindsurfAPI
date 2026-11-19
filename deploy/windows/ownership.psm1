@@ -1,252 +1,244 @@
-# WindsurfAPI Windows 所有权辅助模块(narrow ownership helper)。
-# 纯函数:只做判定与 pidfile 元数据读写,绝不枚举/终止真实进程 —— stop.ps1
-# 是唯一的动作编排者,测试可对这些函数注入合成 Win32_Process 行(见
-# test/stop-ownership-harness.ps1)。
-#
-# 背景(审计 P1/P2, 70defee2):
-#   P1  旧 stop.ps1 机器级按脚本名子串杀 powershell/wscript,可误杀其它安装
-#       甚至仅"提到"同名脚本的进程(编辑器/文档参数/缺失命令行)。
-#   P2  pidfile 只存数字 PID,按"存在即命中"判定;PID 复用(含优雅停 3s
-#       窗口内的复用)会把强杀打到无关进程上。
-# 解法:
-#   - 监督者选择 = 命令行里实际启动的脚本路径 == 本安装目录下的规范脚本
-#     (run.ps1/start.ps1/tray.ps1/run.vbs/tray.vbs),引号空格路径真实解析。
-#     相对路径/裸脚本名无法核实所属安装 → 保守不选。
-#   - 子进程归属 = pidfile 数字 PID + 同目录 windsurfapi.pid.meta 代际记录
-#     (pid + 进程创建时刻 UTC + root + mode)。元数据齐全且创建时刻吻合 →
-#     trusted;缺元数据(旧格式 pidfile)→ 退化到"父进程是已验证监督者"
-#     的保守链路;两者皆不成立 → unowned,不动手。
-#   - 每次动作(初杀 / 升级 /F)前重验代际,PID 复用即中止升级。
-
+# Windows launcher ownership and generation-bound pid tickets.
+# This module never enumerates, signals or terminates a process. Callers provide
+# CIM rows. Missing/ambiguous metadata and unsupported launch syntax fail closed.
 Set-StrictMode -Version 2.0
 
-# 规范化路径用于比较:去外层引号、统一斜杠、小写、去尾反斜杠。
-# 不处理 8.3 短名与 UNC(启动器全部用 %~dp0 / WScript.ScriptFullName 长路径)。
 function ConvertTo-OwnershipPath {
   param([string]$Value)
-  if ([string]::IsNullOrWhiteSpace($Value)) { return $null }
-  $p = $Value.Trim().Trim('"').Trim("'").Trim()
-  if (-not $p) { return $null }
-  $p = $p -replace '/', '\'
-  $p = $p.ToLowerInvariant()
-  while ($p.EndsWith('\')) { $p = $p.Substring(0, $p.Length - 1) }
-  if (-not $p) { return $null }
-  return $p
+  if ([string]::IsNullOrWhiteSpace($Value) -or $Value -ne $Value.Trim() -or
+      $Value.Contains('"')) { return $null }
+  return ($Value.Replace('/', '\').TrimEnd('\').ToLowerInvariant())
 }
 
 function Test-OwnershipPathEquals {
   param([string]$A, [string]$B)
-  $na = ConvertTo-OwnershipPath $A
-  $nb = ConvertTo-OwnershipPath $B
-  if (-not $na -or -not $nb) { return $false }
-  return ($na -eq $nb)
+  $left = ConvertTo-OwnershipPath $A
+  $right = ConvertTo-OwnershipPath $B
+  return ($left -and $right -and $left -ceq $right)
 }
 
-# 本安装目录下的规范监督脚本(与 stop.ps1/tray.ps1/run.vbs/tray.vbs 同目录;
-# 源码模式在 deploy\windows,分发包与 windsurfapi.exe 同层)。
 function Get-OwnedSupervisorScripts {
   param([string]$ScriptDir)
-  return @('run.ps1', 'start.ps1', 'tray.ps1', 'run.vbs', 'tray.vbs') |
+  @('run.ps1', 'start.ps1', 'tray.ps1', 'run.vbs', 'tray.vbs') |
     ForEach-Object { Join-Path $ScriptDir $_ }
 }
 
-# 引号感知分词:丢双引号字符、引号内空格保留、引号外空格分词。
-# 单引号保留在 token 里(由 ConvertTo-OwnershipPath 剥外层)。
+# Deliberately small grammar for the shipped launchers. No escaped/embedded
+# quotes, single-quote shell syntax, empty arguments or unmatched quotes.
 function Split-OwnershipCommandLine {
   param([string]$CommandLine)
-  if ([string]::IsNullOrEmpty($CommandLine)) { return @() }
+  if ([string]::IsNullOrWhiteSpace($CommandLine)) { return @() }
   $tokens = New-Object System.Collections.Generic.List[string]
-  $cur = New-Object System.Text.StringBuilder
-  $inQuote = $false
-  foreach ($ch in $CommandLine.ToCharArray()) {
-    if ($ch -eq '"') { $inQuote = -not $inQuote; continue }
-    if (-not $inQuote -and ($ch -eq ' ' -or $ch -eq "`t")) {
-      if ($cur.Length -gt 0) { $tokens.Add($cur.ToString()) | Out-Null; $cur.Length = 0 }
-      continue
-    }
-    $cur.Append($ch) | Out-Null
+  $matches = [regex]::Matches($CommandLine, '(?:^|\s)(?:"([^"\r\n]+)"|([^\s"\r\n]+))(?=\s|$)')
+  $end = 0
+  foreach ($match in $matches) {
+    if ($CommandLine.Substring($end, $match.Index - $end).Trim()) { return @() }
+    $token = if ($match.Groups[1].Success) { $match.Groups[1].Value } else { $match.Groups[2].Value }
+    if ($token.Contains('"')) { return @() }
+    $tokens.Add($token)
+    $end = $match.Index + $match.Length
   }
-  if ($cur.Length -gt 0) { $tokens.Add($cur.ToString()) | Out-Null }
+  if ($CommandLine.Substring($end).Trim()) { return @() }
   return $tokens.ToArray()
 }
 
-# 候选脚本路径是否 == 本安装规范脚本。必须绝对路径:相对路径/裸名无法核实
-# 所属安装(进程 CWD 不可靠),保守不选 → 宁可漏杀,不可误杀。
 function Test-OwnershipScriptPath {
-  param([string]$Candidate, [string]$ScriptDir)
-  if ([string]::IsNullOrWhiteSpace($Candidate)) { return $false }
-  $p = $Candidate.Trim().Trim('"').Trim("'").Trim()
-  if (-not $p) { return $false }
-  if (-not [System.IO.Path]::IsPathRooted($p)) { return $false }
-  $norm = ConvertTo-OwnershipPath $p
-  if (-not $norm) { return $false }
-  foreach ($canonical in (Get-OwnedSupervisorScripts -ScriptDir $ScriptDir)) {
-    if ((ConvertTo-OwnershipPath $canonical) -eq $norm) { return $true }
+  param([string]$Candidate, [string]$ScriptDir, [string]$Extension)
+  if (-not (ConvertTo-OwnershipPath $Candidate) -or -not [IO.Path]::IsPathRooted($Candidate)) { return $false }
+  if ($Extension -and [IO.Path]::GetExtension($Candidate) -ine $Extension) { return $false }
+  foreach ($canonical in (Get-OwnedSupervisorScripts $ScriptDir)) {
+    if (Test-OwnershipPathEquals $Candidate $canonical) { return $true }
   }
   return $false
 }
 
-# -Command 值必须以调用操作符(& 或 .)紧邻规范路径才算监督者启动;
-# Get-Content / Select-String / iex 等文档参数一律拒绝。
+# Arbitrary -Command expressions are intentionally unsupported. Paths inside a
+# literal, document argument or later -File token are not proof of invocation.
 function Test-OwnershipInvocation {
   param([string]$CommandValue, [string]$ScriptDir)
-  if ([string]::IsNullOrWhiteSpace($CommandValue)) { return $false }
-  $norm = ConvertTo-OwnershipPath $CommandValue
-  if (-not $norm) { return $false }
-  foreach ($canonical in (Get-OwnedSupervisorScripts -ScriptDir $ScriptDir)) {
-    $target = ConvertTo-OwnershipPath $canonical
-    if (-not $target) { continue }
-    $esc = [Regex]::Escape($target)
-    # (^|分隔符)(& 或 .) 空白 可选引号 <规范路径> 可选引号 (结束|分隔符)
-    $pattern = '(^|[\s;&|(])(\&|\.)\s*["'']?' + $esc + '["'']?(\s|$|[;|&)])'
-    if ($norm -match $pattern) { return $true }
-  }
   return $false
 }
 
-# 监督者判定(纯谓词):powershell/pwsh 看 -File / -Command 调用 / 首个位置参数;
-# wscript/cscript 看第一个非 // 开关参数;其它宿主一律拒绝。
 function Test-IsOwnedSupervisor {
   param($Process, [string]$ScriptDir)
-  if ($null -eq $Process) { return $false }
-  $name = ''
-  try { $name = ([string]$Process.Name).ToLowerInvariant() } catch { }
-  $cl = $null
-  try { $cl = [string]$Process.CommandLine } catch { $cl = $null }
-  if ([string]::IsNullOrWhiteSpace($cl)) { return $false }
-
-  $tokens = @(Split-OwnershipCommandLine -CommandLine $cl)
-  if ($tokens.Count -lt 2) { return $false }
-  $rest = @($tokens[1..($tokens.Count - 1)])   # 丢弃宿主映像 token
-
-  if ($name -in @('powershell.exe', 'pwsh.exe')) {
-    for ($i = 0; $i -lt $rest.Count; $i++) {
-      $t = $rest[$i].ToLowerInvariant()
-      if ($t -eq '-file' -or $t -eq '/file') {
-        if ($i + 1 -ge $rest.Count) { return $false }
-        return (Test-OwnershipScriptPath -Candidate $rest[$i + 1] -ScriptDir $ScriptDir)
+  try {
+    $name = ([string]$Process.Name).ToLowerInvariant()
+    $tokens = @(Split-OwnershipCommandLine ([string]$Process.CommandLine))
+    if ($tokens.Count -lt 2) { return $false }
+    $hostName = [IO.Path]::GetFileName($tokens[0]).ToLowerInvariant()
+    if ($hostName -ne $name -and ($hostName + '.exe') -ne $name) { return $false }
+    if ($name -in @('powershell.exe', 'pwsh.exe')) {
+      for ($i = 1; $i -lt $tokens.Count; $i++) {
+        $option = $tokens[$i].ToLowerInvariant()
+        if ($option -eq '-file') {
+          if ($i + 1 -ge $tokens.Count) { return $false }
+          return (Test-OwnershipScriptPath $tokens[$i + 1] $ScriptDir '.ps1')
+        }
+        if ($option -in @('-noprofile', '-nologo', '-noninteractive', '-sta', '-mta')) { continue }
+        if ($option -in @('-executionpolicy', '-windowstyle')) {
+          $i++
+          if ($i -ge $tokens.Count) { return $false }
+          if ($option -eq '-executionpolicy' -and $tokens[$i] -notin @('Bypass', 'RemoteSigned', 'AllSigned', 'Restricted', 'Unrestricted', 'Default')) { return $false }
+          if ($option -eq '-windowstyle' -and $tokens[$i] -notin @('Normal', 'Hidden', 'Minimized', 'Maximized')) { return $false }
+          continue
+        }
+        return $false
       }
-      if ($t.StartsWith('-file:')) {
-        return (Test-OwnershipScriptPath -Candidate $t.Substring(6) -ScriptDir $ScriptDir)
-      }
-    }
-    for ($i = 0; $i -lt $rest.Count; $i++) {
-      $t = $rest[$i].ToLowerInvariant()
-      if ($t -eq '-command' -or $t -eq '-c' -or $t -eq '/command' -or $t -eq '/c') {
-        if ($i + 1 -ge $rest.Count) { return $false }
-        $cmdVal = (@($rest[($i + 1)..($rest.Count - 1)]) -join ' ')
-        return (Test-OwnershipInvocation -CommandValue $cmdVal -ScriptDir $ScriptDir)
-      }
-    }
-    # 位置参数默认绑 -File。
-    foreach ($t in $rest) {
-      if (-not $t.StartsWith('-')) {
-        return (Test-OwnershipScriptPath -Candidate $t -ScriptDir $ScriptDir)
+    } elseif ($name -in @('wscript.exe', 'cscript.exe')) {
+      for ($i = 1; $i -lt $tokens.Count; $i++) {
+        if ($tokens[$i] -in @('//nologo', '//b', '//i', '//u')) { continue }
+        return (Test-OwnershipScriptPath $tokens[$i] $ScriptDir '.vbs')
       }
     }
-    return $false
-  }
-  if ($name -in @('wscript.exe', 'cscript.exe')) {
-    foreach ($t in $rest) {
-      if (-not $t.StartsWith('/')) {
-        return (Test-OwnershipScriptPath -Candidate $t -ScriptDir $ScriptDir)
-      }
-    }
-    return $false
-  }
+  } catch { return $false }
   return $false
 }
 
-# 代际校验:进程创建时刻与期望值(本地 DateTime 或 UTC ISO 字符串)差 ≤ 容差。
-# PID 复用必然换创建时刻 —— 这是判定"还是那一个进程"的唯一可靠依据。
-function Test-ProcessGeneration {
-  param($Process, $Creation, [long]$ToleranceTicks = 30000000)   # 3s(1s = 1e7 ticks)
-  if ($null -eq $Process -or $null -eq $Creation) { return $false }
+function Test-IsOwnedScheduledTask {
+  param([string]$Xml, [string]$ScriptDir)
+  $reader = $null
   try {
-    $rowTicks = ([datetime]$Process.CreationDate).ToUniversalTime().Ticks
-    $expectedTicks = $null
-    if ($Creation -is [datetime]) {
-      $expectedTicks = $Creation.ToUniversalTime().Ticks
-    } else {
-      $expectedTicks = ([DateTimeOffset]::Parse([string]$Creation,
-        [System.Globalization.CultureInfo]::InvariantCulture,
-        [System.Globalization.DateTimeStyles]::RoundtripKind)).UtcTicks
-    }
-    return ([Math]::Abs($rowTicks - $expectedTicks) -le $ToleranceTicks)
+    $settings = New-Object System.Xml.XmlReaderSettings
+    $settings.DtdProcessing = [System.Xml.DtdProcessing]::Prohibit
+    $settings.XmlResolver = $null
+    $reader = [System.Xml.XmlReader]::Create((New-Object System.IO.StringReader($Xml)), $settings)
+    $doc = New-Object System.Xml.XmlDocument
+    $doc.XmlResolver = $null
+    $doc.Load($reader)
+    $actions = @($doc.SelectNodes('/*[local-name()="Task"]/*[local-name()="Actions"]/*'))
+    if ($actions.Count -ne 1 -or $actions[0].LocalName -ne 'Exec') { return $false }
+    $commands = @($actions[0].SelectNodes('*[local-name()="Command"]'))
+    $arguments = @($actions[0].SelectNodes('*[local-name()="Arguments"]'))
+    if ($commands.Count -ne 1 -or $arguments.Count -ne 1) { return $false }
+    $command = [string]$commands[0].InnerText
+    if (-not (ConvertTo-OwnershipPath $command)) { return $false }
+    $name = [IO.Path]::GetFileName($command).ToLowerInvariant()
+    if ($name -in @('wscript', 'cscript')) { $name += '.exe' }
+    if ($name -notin @('wscript.exe', 'cscript.exe')) { return $false }
+    $args = @(Split-OwnershipCommandLine ([string]$arguments[0].InnerText))
+    $index = 0
+    while ($index -lt $args.Count -and $args[$index] -in @('//nologo', '//b', '//i', '//u')) { $index++ }
+    if ($index -ge $args.Count -or -not (Test-OwnershipPathEquals $args[$index] (Join-Path $ScriptDir 'run.vbs'))) { return $false }
+    return (Test-IsOwnedSupervisor ([pscustomobject]@{ Name = $name; CommandLine = ('"' + $command + '" ' + $arguments[0].InnerText) }) $ScriptDir)
+  } catch { return $false }
+  finally { if ($reader) { $reader.Dispose() } }
+}
+
+function ConvertTo-OwnershipCreation {
+  param($Value)
+  if ($Value -is [datetime]) { return $Value.ToUniversalTime() }
+  return [DateTimeOffset]::Parse([string]$Value, [Globalization.CultureInfo]::InvariantCulture,
+    [Globalization.DateTimeStyles]::RoundtripKind).UtcDateTime
+}
+
+# Both stored timestamps and queried timestamps come from Win32_Process.
+# Exact tick equality; no grace interval is an identity tolerance.
+function Test-ProcessGeneration {
+  param($Process, $Creation)
+  try {
+    if ($null -eq $Process -or $null -eq $Creation) { return $false }
+    return ((ConvertTo-OwnershipCreation $Process.CreationDate).Ticks -eq (ConvertTo-OwnershipCreation $Creation).Ticks)
   } catch { return $false }
 }
 
-# pidfile 元数据(sidecar):写 windsurfapi.pid.meta。pidfile 本身保持单行数字
-# (status.ps1 等旧读者按 -Raw 读数字,不能破坏该契约)。
+# The Process object and its CIM row differ in precision: CIM exposes microseconds.
+# Use this only while publishing our own newly spawned Process; persist CIM itself.
+function Test-StartedProcessCimIdentity {
+  param($Process, $CimProcess)
+  try {
+    if ($Process.HasExited -or [int]$Process.Id -ne [int]$CimProcess.ProcessId) { return $false }
+    $format = 'yyyy-MM-ddTHH:mm:ss.ffffffZ'
+    return ($Process.StartTime.ToUniversalTime().ToString($format) -ceq
+      (ConvertTo-OwnershipCreation $CimProcess.CreationDate).ToString($format))
+  } catch { return $false }
+}
+
+function Enter-WindsurfApiPidLock {
+  param([string]$LogDir)
+  for ($attempt = 0; $attempt -lt 50; $attempt++) {
+    try { return [IO.File]::Open((Join-Path $LogDir 'windsurfapi.pid.lock'), [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::ReadWrite, [IO.FileShare]::None) }
+    catch [IO.IOException] { if ($attempt -eq 49) { throw }; [Threading.Thread]::Sleep(10) }
+  }
+}
+
+function Read-WindsurfApiPidTicket {
+  param([string]$LogDir)
+  $pidPath = Join-Path $LogDir 'windsurfapi.pid'
+  $metaPath = Join-Path $LogDir 'windsurfapi.pid.meta'
+  $pidText = if ([IO.File]::Exists($pidPath)) { [IO.File]::ReadAllText($pidPath) } else { $null }
+  $metaText = if ([IO.File]::Exists($metaPath)) { [IO.File]::ReadAllText($metaPath) } else { $null }
+  $meta = $null
+  try { if ($metaText) { $meta = ConvertFrom-Json -InputObject $metaText -ErrorAction Stop } } catch { }
+  $ownerId = 0
+  $valid = ($null -ne $pidText -and $pidText.Trim() -match '^\d+$' -and
+    [int]::TryParse($pidText.Trim(), [ref]$ownerId) -and $ownerId -gt 0)
+  return [pscustomobject]@{ Pid = $ownerId; PidText = $pidText; MetaText = $metaText; Meta = $meta; Valid = [bool]$valid }
+}
+
+function Get-WindsurfApiPidTicket {
+  param([Parameter(Mandatory = $true)][string]$LogDir)
+  if (-not [IO.Directory]::Exists($LogDir)) { return $null }
+  $lock = Enter-WindsurfApiPidLock $LogDir
+  try { return (Read-WindsurfApiPidTicket $LogDir) } finally { $lock.Dispose() }
+}
+
+# Publish both files under the same lock used by readers and conditional cleanup.
+# A unique receipt also distinguishes a replacement ticket for the same process.
 function Set-WindsurfApiPidMeta {
-  param(
-    [Parameter(Mandatory = $true)][string]$LogDir,
-    [Parameter(Mandatory = $true)][int]$ProcessId,
-    [Parameter(Mandatory = $true)]$CreationTimeUtc,
-    [Parameter(Mandatory = $true)][string]$Root,
-    [Parameter(Mandatory = $true)][string]$Mode
-  )
-  $iso = if ($CreationTimeUtc -is [datetime]) { $CreationTimeUtc.ToUniversalTime().ToString('o') }
-         else { [string]$CreationTimeUtc }
-  $record = [pscustomobject]@{ pid = $ProcessId; createdAt = $iso; root = $Root; mode = $Mode }
+  param([string]$LogDir, [int]$ProcessId, $CreationTimeUtc, [string]$Root, [string]$Mode)
+  if ($ProcessId -le 0 -or -not (ConvertTo-OwnershipPath $Root) -or $Mode -notin @('source', 'exe')) { throw 'Invalid pid ticket identity' }
+  $record = [pscustomobject]@{ pid = $ProcessId; createdAt = (ConvertTo-OwnershipCreation $CreationTimeUtc).ToString('o'); root = $Root; mode = $Mode; ticketId = [guid]::NewGuid().ToString('N') }
   $json = ConvertTo-Json -InputObject $record -Compress
-  [System.IO.File]::WriteAllText((Join-Path $LogDir 'windsurfapi.pid.meta'), $json,
-    (New-Object System.Text.UTF8Encoding($false)))
+  $lock = Enter-WindsurfApiPidLock $LogDir
+  try {
+    [IO.File]::WriteAllText((Join-Path $LogDir 'windsurfapi.pid'), [string]$ProcessId, [Text.Encoding]::ASCII)
+    [IO.File]::WriteAllText((Join-Path $LogDir 'windsurfapi.pid.meta'), $json, (New-Object Text.UTF8Encoding($false)))
+    return (Read-WindsurfApiPidTicket $LogDir)
+  } finally { $lock.Dispose() }
 }
 
 function Get-WindsurfApiPidMeta {
-  param([Parameter(Mandatory = $true)][string]$LogDir)
-  $path = Join-Path $LogDir 'windsurfapi.pid.meta'
-  if (-not (Test-Path $path)) { return $null }
+  param([string]$LogDir)
+  $ticket = Get-WindsurfApiPidTicket $LogDir
+  if ($ticket) { return $ticket.Meta }
+  return $null
+}
+
+# Never erase a newer publisher's ticket. All supplied launchers share this lock.
+function Remove-WindsurfApiPidArtifacts {
+  param([string]$LogDir, $ExpectedTicket)
+  if ($null -eq $ExpectedTicket -or -not [IO.Directory]::Exists($LogDir)) { return $false }
+  $lock = Enter-WindsurfApiPidLock $LogDir
   try {
-    $obj = Get-Content -Path $path -Raw -Encoding UTF8 | ConvertFrom-Json
-    $obj.pid = [int]$obj.pid
-    return $obj
-  } catch { return $null }
+    $current = Read-WindsurfApiPidTicket $LogDir
+    if ($current.PidText -cne $ExpectedTicket.PidText -or $current.MetaText -cne $ExpectedTicket.MetaText) { return $false }
+    [IO.File]::Delete((Join-Path $LogDir 'windsurfapi.pid'))
+    [IO.File]::Delete((Join-Path $LogDir 'windsurfapi.pid.meta'))
+    return $true
+  } finally { $lock.Dispose() }
 }
 
-function Remove-WindsurfApiPidMeta {
-  param([Parameter(Mandatory = $true)][string]$LogDir)
-  Remove-Item (Join-Path $LogDir 'windsurfapi.pid.meta') -Force -ErrorAction SilentlyContinue
-}
-
-# pidfile 数字 PID 的归属裁决(纯函数,不动进程):
-#   trusted      元数据齐全:pid 一致 + 创建时刻吻合 + root 一致(或元数据无 root)
-#   legacy-owned 旧格式无元数据:映像是 node/windsurfapi 且父进程是已验证监督者
-#   unowned      两者皆不成立 → 保守不动手
-#   absent       进程已不存在
 function Test-PidOwnership {
   param($Process, [int]$Pid, $Meta, [string]$Root, [int[]]$SupervisorPids)
   if ($null -eq $Process) { return 'absent' }
-
-  if ($null -ne $Meta -and [int]$Meta.pid -eq $Pid -and $Meta.createdAt) {
-    if (Test-ProcessGeneration -Process $Process -Creation ([string]$Meta.createdAt)) {
-      if (-not $Meta.root -or (Test-OwnershipPathEquals -A ([string]$Meta.root) -B $Root)) {
-        return 'trusted'
-      }
+  try {
+    if ($null -eq $Meta -or $Pid -le 0 -or [int]$Process.ProcessId -ne $Pid -or
+        [int]$Meta.pid -ne $Pid -or -not $Meta.createdAt -or -not $Meta.root -or
+        -not (Test-OwnershipPathEquals ([string]$Meta.root) $Root)) { return 'unowned' }
+    $image = ([string]$Process.Name).ToLowerInvariant()
+    if (($Meta.mode -eq 'source' -and $image -eq 'node.exe') -or
+        ($Meta.mode -eq 'exe' -and $image -eq 'windsurfapi.exe')) {
+      if (Test-ProcessGeneration $Process $Meta.createdAt) { return 'trusted' }
     }
-  }
-
-  $name = ''
-  try { $name = ([string]$Process.Name).ToLowerInvariant() } catch { }
-  if (($name -eq 'node.exe' -or $name -eq 'windsurfapi.exe') -and
-      ($null -ne $SupervisorPids) -and ($SupervisorPids -contains [int]$Process.ParentProcessId)) {
-    return 'legacy-owned'
-  }
+  } catch { }
+  # Parent PID alone is not a generation-bound proof; no legacy fallback.
   return 'unowned'
 }
 
 Export-ModuleMember -Function @(
-  'ConvertTo-OwnershipPath',
-  'Test-OwnershipPathEquals',
-  'Get-OwnedSupervisorScripts',
-  'Split-OwnershipCommandLine',
-  'Test-OwnershipScriptPath',
-  'Test-OwnershipInvocation',
-  'Test-IsOwnedSupervisor',
-  'Test-ProcessGeneration',
-  'Set-WindsurfApiPidMeta',
-  'Get-WindsurfApiPidMeta',
-  'Remove-WindsurfApiPidMeta',
-  'Test-PidOwnership'
+  'ConvertTo-OwnershipPath', 'Test-OwnershipPathEquals', 'Get-OwnedSupervisorScripts',
+  'Split-OwnershipCommandLine', 'Test-OwnershipScriptPath', 'Test-OwnershipInvocation',
+  'Test-IsOwnedSupervisor', 'Test-IsOwnedScheduledTask', 'Test-ProcessGeneration',
+  'Test-StartedProcessCimIdentity', 'Set-WindsurfApiPidMeta', 'Get-WindsurfApiPidMeta',
+  'Get-WindsurfApiPidTicket', 'Remove-WindsurfApiPidArtifacts', 'Test-PidOwnership'
 )

@@ -23,9 +23,9 @@ Set-Location $Root
 $LogDir = Join-Path $Root 'logs'
 if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Path $LogDir -Force | Out-Null }
 $PidFile = Join-Path $LogDir 'windsurfapi.pid'
-# 代际记录辅助模块(写 windsurfapi.pid.meta,stop.ps1 据此防 PID 复用)。
-# 模块缺失时降级为旧格式纯数字 pidfile(stop.ps1 有保守的 legacy 判定),不让监督循环挂掉。
-try { Import-Module (Join-Path $PSScriptRoot 'ownership.psm1') -Force -ErrorAction Stop } catch { }
+# Required before spawning: missing ownership support must not silently publish
+# a numeric-only ticket that cannot be safely stopped.
+Import-Module (Join-Path $PSScriptRoot 'ownership.psm1') -Force -ErrorAction Stop
 $Date = Get-Date -Format 'yyyy-MM-dd'
 $SupLog = Join-Path $LogDir "supervisor-$Date.log"
 
@@ -74,13 +74,17 @@ while ($true) {
   $proc.BeginOutputReadLine()
   $proc.BeginErrorReadLine()
 
-  Set-Content -Path $PidFile -Value $proc.Id -Encoding ASCII
-  # 同步写代际记录(pid + 创建时刻 UTC + root + mode):stop.ps1 靠它防 PID 复用。
-  try { Set-WindsurfApiPidMeta -LogDir $LogDir -ProcessId $proc.Id -CreationTimeUtc $proc.StartTime -Root $Root -Mode 'source' } catch { }
+  $pidTicket = $null
+  try {
+    $creationRow = Get-CimInstance Win32_Process -Filter "ProcessId=$($proc.Id)" -ErrorAction Stop
+    if (-not (Test-StartedProcessCimIdentity $proc $creationRow)) { throw 'Child CIM identity unavailable' }
+    $pidTicket = Set-WindsurfApiPidMeta -LogDir $LogDir -ProcessId $proc.Id -CreationTimeUtc $creationRow.CreationDate -Root $Root -Mode 'source'
+  } catch { Write-Sup "PID ticket unavailable; child remains supervised: $($_.Exception.Message)" }
   Write-Sup "node started pid=$($proc.Id)"
 
   $proc.WaitForExit()
   $code = $proc.ExitCode
+  try { [void](Remove-WindsurfApiPidArtifacts -LogDir $LogDir -ExpectedTicket $pidTicket) } catch { }
   # 注销事件订阅,防止跨循环泄漏。
   Unregister-Event -SourceIdentifier $so.Name -ErrorAction SilentlyContinue
   Unregister-Event -SourceIdentifier $se.Name -ErrorAction SilentlyContinue
@@ -122,7 +126,5 @@ while ($true) {
   }
 }
 
-# 干净退出:删 pidfile。
-if (Test-Path $PidFile) { Remove-Item $PidFile -Force -ErrorAction SilentlyContinue }
-try { Remove-WindsurfApiPidMeta -LogDir $LogDir } catch { }
+# Each exited child cleaned only its own receipt above; never delete a new run.
 Write-Sup 'supervisor stopped'

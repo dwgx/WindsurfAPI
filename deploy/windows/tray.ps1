@@ -32,9 +32,8 @@ __trace "root=$Root mode=$(if($script:ExeMode){'exe'}else{'source'})"
 $LogDir = Join-Path $Root 'logs'
 if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Path $LogDir -Force | Out-Null }
 $PidFile = Join-Path $LogDir 'windsurfapi.pid'
-# 代际记录辅助模块(写 windsurfapi.pid.meta,stop.ps1 据此防 PID 复用)。
-# 模块缺失时降级为旧格式纯数字 pidfile(stop.ps1 有保守的 legacy 判定),不让托盘挂掉。
-try { Import-Module (Join-Path $PSScriptRoot 'ownership.psm1') -Force -ErrorAction Stop } catch { }
+# Required before spawning; packaged releases include the same helper.
+Import-Module (Join-Path $PSScriptRoot 'ownership.psm1') -Force -ErrorAction Stop
 
 # 预检:源码模式需要 Node;EXE 模式自带运行时,跳过。
 if (-not $script:ExeMode -and -not (Get-Command node -ErrorAction SilentlyContinue)) {
@@ -93,6 +92,7 @@ $DashUrl = "http://127.0.0.1:$Port/dashboard"
 
 # ─── 监督状态 ───
 $script:proc = $null          # 当前 cmd /c node 子进程
+$script:pidTicket = $null
 $script:crashStreak = 0
 $script:MaxCrash = 5
 $script:stopping = $false      # 用户请求退出:退出循环不再重拉
@@ -134,9 +134,12 @@ function Start-Node {
   [void]$p.Start()
   $p.BeginOutputReadLine()
   $p.BeginErrorReadLine()
-  Set-Content -Path $PidFile -Value $p.Id -Encoding ASCII
-  # 同步写代际记录(pid + 创建时刻 UTC + root + mode):stop.ps1 靠它防 PID 复用。
-  try { Set-WindsurfApiPidMeta -LogDir $LogDir -ProcessId $p.Id -CreationTimeUtc $p.StartTime -Root $Root -Mode $(if ($script:ExeMode) { 'exe' } else { 'source' }) } catch { }
+  $script:pidTicket = $null
+  try {
+    $creationRow = Get-CimInstance Win32_Process -Filter "ProcessId=$($p.Id)" -ErrorAction Stop
+    if (-not (Test-StartedProcessCimIdentity $p $creationRow)) { throw 'Child CIM identity unavailable' }
+    $script:pidTicket = Set-WindsurfApiPidMeta -LogDir $LogDir -ProcessId $p.Id -CreationTimeUtc $creationRow.CreationDate -Root $Root -Mode $(if ($script:ExeMode) { 'exe' } else { 'source' })
+  } catch { Write-Sup "PID ticket unavailable; child remains supervised: $($_.Exception.Message)" }
   Write-Sup "$(if($script:ExeMode){'exe'}else{'node'}) started (pid=$($p.Id))"
   return $p
 }
@@ -149,18 +152,31 @@ function Clear-NodeEvents {
   $script:nodeEvents = @()
 }
 
-# 停当前 node 子进程:taskkill /T(含可能的 LS 孙进程),超时 /F 兜底。
-# K7 后 accounts.json 原子写 + dirty-flush,/F 安全(不截断、最多丢一个 flush 周期)。
+# Retain the original Process object for exit verification. Each numeric action
+# also checks its current CIM identity; a failed stop must not start a second child.
 function Stop-Node {
   if ($script:proc -and -not $script:proc.HasExited) {
-    try { & taskkill /PID $script:proc.Id /T 2>$null | Out-Null } catch {}
+    try {
+      $row = Get-CimInstance Win32_Process -Filter "ProcessId=$($script:proc.Id)" -ErrorAction Stop
+      if (-not (Test-StartedProcessCimIdentity $script:proc $row)) { return $false }
+    } catch { return $false }
+    $creation = $row.CreationDate
+    try { & taskkill /PID $script:proc.Id /T 2>$null | Out-Null } catch { }
     if (-not $script:proc.WaitForExit(3000)) {
-      try { & taskkill /F /PID $script:proc.Id /T 2>$null | Out-Null } catch {}
+      try {
+        $row = Get-CimInstance Win32_Process -Filter "ProcessId=$($script:proc.Id)" -ErrorAction Stop
+        if (-not (Test-ProcessGeneration $row $creation) -or
+            -not (Test-StartedProcessCimIdentity $script:proc $row)) { return $false }
+      } catch { return $false }
+      try { & taskkill /F /PID $script:proc.Id /T 2>$null | Out-Null } catch { }
+      if (-not $script:proc.WaitForExit(3000)) { return $false }
     }
   }
   Clear-NodeEvents
-  if (Test-Path $PidFile) { Remove-Item $PidFile -Force -EA SilentlyContinue }
-  try { Remove-WindsurfApiPidMeta -LogDir $LogDir } catch { }
+  try { [void](Remove-WindsurfApiPidArtifacts -LogDir $LogDir -ExpectedTicket $script:pidTicket) } catch { }
+  $script:pidTicket = $null
+  if ($script:proc) { $script:proc.Dispose(); $script:proc = $null }
+  return $true
 }
 
 # ─── 托盘图标 ───
@@ -223,14 +239,21 @@ $miStatus.Add_Click({
 
 $miRestart.Add_Click({
   Notify-Balloon 'WindsurfAPI' '正在重启…'
-  Stop-Node
+  if (-not (Stop-Node)) {
+    Notify-Balloon 'WindsurfAPI' '未能确认子进程退出，未启动第二个实例。'
+    return
+  }
   $script:crashStreak = 0
   $script:proc = Start-Node
 })
 
 $miExit.Add_Click({
   $script:stopping = $true
-  Stop-Node
+  if (-not (Stop-Node)) {
+    $script:stopping = $false
+    Notify-Balloon 'WindsurfAPI' '未能确认子进程退出，托盘继续监督。'
+    return
+  }
   $notify.Visible = $false
   $notify.Dispose()
   [System.Windows.Forms.Application]::Exit()
@@ -251,6 +274,10 @@ $timer.Add_Tick({
   if ($script:proc) {
     $code = $script:proc.ExitCode
     Clear-NodeEvents                  # 注销上个进程的 stdout/stderr 订阅
+    try { [void](Remove-WindsurfApiPidArtifacts -LogDir $LogDir -ExpectedTicket $script:pidTicket) } catch { }
+    $script:pidTicket = $null
+    $script:proc.Dispose()
+    $script:proc = $null
     Write-Sup "node exited code=$code"
     if ($code -eq 75 -or $code -eq 0) {
       $script:crashStreak = 0        # 面板重启/OTA(75)或优雅(0)→ 重拉
@@ -286,9 +313,7 @@ __trace 'entering message pump'
 
 # 兜底清理(Application.Exit 后)。
 $timer.Stop()
-if (-not $script:proc -or $script:proc.HasExited) { } else { Stop-Node }
-if (Test-Path $PidFile) { Remove-Item $PidFile -Force -EA SilentlyContinue }
-try { Remove-WindsurfApiPidMeta -LogDir $LogDir } catch { }
+if (-not (Stop-Node)) { Write-Sup 'Exit cleanup could not verify child exit; ticket preserved.' }
 __trace 'exited cleanly'
 } catch {
   __trace ("FATAL: " + $_.Exception.Message + " @ " + $_.InvocationInfo.ScriptLineNumber)

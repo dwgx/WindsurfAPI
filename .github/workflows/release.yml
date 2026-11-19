@@ -338,6 +338,7 @@ jobs:
           Copy-Item dist-windows\windsurfapi.exe $stage\
           Copy-Item deploy\windows\tray.vbs      $stage\
           Copy-Item deploy\windows\tray.ps1      $stage\
+          Copy-Item deploy\windows\ownership.psm1 $stage\
           Copy-Item deploy\windows\tray.bat      $stage\
           Copy-Item deploy\windows\windsurfapi.ico $stage\ -ErrorAction SilentlyContinue
           $readme = @(
@@ -369,7 +370,7 @@ jobs:
           $have = $zr.Entries.FullName
           $have | ForEach-Object { Write-Host $_ }
           $zr.Dispose()
-          $must = @('windsurfapi.exe','tray.vbs','tray.ps1','tray.bat')
+          $must = @('windsurfapi.exe','tray.vbs','tray.ps1','tray.bat','ownership.psm1')
           foreach ($m in $must) { if ($have -notcontains $m) { Write-Error "zip missing $m"; exit 1 } }
           Write-Host 'zip OK: exe + tray scripts present'
 

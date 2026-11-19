@@ -42,6 +42,13 @@ const SCENARIOS = [
   'stop-exe-mode',
   'stop-schtasks-own',
   'stop-schtasks-foreign',
+  'task-action-contract',
+  'ticket-generation-contract',
+  'ticket-replacement-cleanup',
+  'stop-force-failure',
+  'stop-query-failure',
+  'stop-concurrent-ticket',
+  'tray-stop-contract',
 ];
 
 function hermeticChildEnv() {
