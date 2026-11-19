@@ -13,6 +13,7 @@
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { handleChatCompletions } from '../src/handlers/chat.js';
+import { handleGemini } from '../src/handlers/gemini.js';
 import { handleMessages } from '../src/handlers/messages.js';
 import { handleResponses } from '../src/handlers/responses.js';
 import * as store from '../src/response-store.js';
@@ -170,6 +171,31 @@ async function runMessages(body, options) {
   return { result, client: holder.instance };
 }
 
+async function runGemini(body, options, { alt = null } = {}) {
+  newAccount();
+  const holder = { instance: null };
+  class Client extends TruncatingClient {
+    constructor(...args) {
+      super(options);
+      holder.instance = this;
+    }
+  }
+  const result = await handleGemini(body.model, body, {
+    callerKey: CALLER,
+    async handleChatCompletions(chatBody, context) {
+      return handleChatCompletions(chatBody, { ...context, ...chatDeps(Client) });
+    },
+  }, { stream: !!body.stream, alt });
+  return { result, client: holder.instance };
+}
+
+function geminiSseFrames(body) {
+  return body.split('\r\n\r\n')
+    .filter(Boolean)
+    .filter((frame) => frame.startsWith('data: '))
+    .map((frame) => JSON.parse(frame.slice(6)));
+}
+
 describe('A06 Cascade poll truncation terminal', () => {
   it('max_wait/stall_warm/idle_empty end with typed length/error and are not committed as completed', async () => {
     for (const endReason of ['max_wait', 'stall_warm']) {
@@ -245,6 +271,57 @@ describe('A06 Cascade poll truncation terminal', () => {
         `${endReason}: a truncated turn must not be reported as a natural end_turn`);
       assert.ok(/event: error/.test(messagesRes.body),
         `${endReason}: the truncation must surface as an Anthropic error event`);
+
+      // Buffered Messages: the fabricated length terminal rides the private
+      // truncation carrier, so the buffered arm must refuse the turn through
+      // the same retryable envelope (529 overloaded_error), never render the
+      // interrupted answer as a 200 max_tokens completion.
+      const { result: messagesNonStream } = await runMessages({
+        model: 'claude-sonnet-4.6',
+        stream: false,
+        max_tokens: 100,
+        messages: [{ role: 'user', content: 'write a long answer' }],
+      }, { text: 'partial answer', endReason });
+      assert.equal(messagesNonStream.status, 529,
+        `${endReason}: buffered Messages must report the interruption as 529 overloaded_error`);
+      assert.equal(messagesNonStream.body.type, 'error');
+      assert.equal(messagesNonStream.body.error.type, 'overloaded_error');
+
+      // Buffered Gemini: same refusal in Gemini vocabulary — 503 UNAVAILABLE,
+      // never a 200 candidate typed MAX_TOKENS.
+      const { result: geminiNonStream } = await runGemini({
+        model: 'gemini-2.5-flash',
+        stream: false,
+        contents: [{ role: 'user', parts: [{ text: 'write a long answer' }] }],
+      }, { text: 'partial answer', endReason });
+      assert.equal(geminiNonStream.status, 503,
+        `${endReason}: buffered Gemini must report the interruption as 503 UNAVAILABLE`);
+      assert.equal(geminiNonStream.body.error.code, 503);
+      assert.equal(geminiNonStream.body.error.status, 'UNAVAILABLE');
+
+      // Gemini streams (SSE and JSON array): the partial deltas may flow, but
+      // the terminal must be an error frame (503 UNAVAILABLE), not a STOP /
+      // MAX_TOKENS candidate.
+      for (const alt of ['sse', null]) {
+        const { result: geminiStream } = await runGemini({
+          model: 'gemini-2.5-flash',
+          stream: true,
+          contents: [{ role: 'user', parts: [{ text: 'write a long answer' }] }],
+        }, { text: 'partial answer', endReason }, { alt });
+        assert.equal(geminiStream.status, 200);
+        const geminiRes = fakeRes();
+        await geminiStream.handler(geminiRes);
+        const frames = alt === 'sse'
+          ? geminiSseFrames(geminiRes.body)
+          : JSON.parse(geminiRes.body);
+        const errorFrame = frames.find((frame) => frame.error);
+        assert.ok(errorFrame, `${endReason}: ${alt || 'array'} stream must carry an error frame`);
+        assert.equal(errorFrame.error.code, 503,
+          `${endReason}: ${alt || 'array'} stream interruption must be retryable 503`);
+        assert.equal(errorFrame.error.status, 'UNAVAILABLE');
+        assert.equal(frames.some((frame) => frame.candidates?.[0]?.finishReason),
+          false, `${endReason}: ${alt || 'array'} stream must not emit a terminal candidate`);
+      }
     }
 
     // idle_empty: no output at all is an upstream error, never a 200 empty stop.
@@ -299,6 +376,67 @@ describe('A06 Cascade poll truncation terminal', () => {
     assert.equal(responses.body.status, 'completed');
     assert.equal(store.getResponse(responses.body.id, CALLER).ok, true,
       'a clean turn must remain chainable');
+
+    // The buffered adapters must keep translating a clean turn normally — the
+    // interruption guard below keys on the private truncation carrier, not on
+    // the stop reason itself.
+    const { result: messagesClean } = await runMessages({
+      model: 'claude-sonnet-4.6',
+      stream: false,
+      max_tokens: 100,
+      messages: [{ role: 'user', content: 'hi' }],
+    }, { text: 'complete answer', endReason: 'idle_done' });
+    assert.equal(messagesClean.status, 200);
+    assert.equal(messagesClean.body.stop_reason, 'end_turn');
+
+    const { result: geminiClean } = await runGemini({
+      model: 'gemini-2.5-flash',
+      stream: false,
+      contents: [{ role: 'user', parts: [{ text: 'hi' }] }],
+    }, { text: 'complete answer', endReason: 'idle_done' });
+    assert.equal(geminiClean.status, 200);
+    assert.equal(geminiClean.body.candidates[0].finishReason, 'STOP');
+  });
+
+  it('a genuine caller output cap stays a normal token-limit completion on every adapter', async () => {
+    // A real token cap reaches the adapters as finish_reason:'length' WITHOUT
+    // the private truncation carrier (chat.js applyOutputCap), so it must keep
+    // its ordinary max_tokens / MAX_TOKENS rendering everywhere.
+    const longText = 'x'.repeat(200);
+    const { result: chatCap } = await runChat({
+      model: 'gemini-2.5-flash',
+      stream: false,
+      max_tokens: 20,
+      messages: [{ role: 'user', content: 'write a long chat answer' }],
+    }, { text: longText, endReason: 'idle_done' });
+    assert.equal(chatCap.status, 200);
+    assert.equal(chatCap.body.choices[0].finish_reason, 'length',
+      'precondition: the caller cap is enforced locally as length');
+    assert.equal(chatCap.body.choices[0]._windsurf_end_reason, undefined,
+      'precondition: a genuine cap carries no interruption marker');
+    assert.equal(chatCap.body.choices[0]._windsurf_truncated, undefined);
+    assert.ok(chatCap.body.choices[0].message.content.length <= 80,
+      'precondition: the cap actually truncated the text (20 tokens × 4 chars)');
+
+    const { result: messagesCap } = await runMessages({
+      model: 'claude-sonnet-4.6',
+      stream: false,
+      max_tokens: 20,
+      messages: [{ role: 'user', content: 'write a long messages answer' }],
+    }, { text: longText, endReason: 'idle_done' });
+    assert.equal(messagesCap.status, 200);
+    assert.equal(messagesCap.body.stop_reason, 'max_tokens',
+      'a genuine cap must stay a normal max_tokens stop');
+
+    const { result: geminiCap } = await runGemini({
+      model: 'gemini-2.5-flash',
+      stream: false,
+      generationConfig: { maxOutputTokens: 20 },
+      contents: [{ role: 'user', parts: [{ text: 'write a long gemini answer' }] }],
+    }, { text: longText, endReason: 'idle_done' });
+    assert.equal(geminiCap.status, 200);
+    assert.equal(geminiCap.body.candidates[0].finishReason, 'MAX_TOKENS',
+      'a genuine cap must stay a normal MAX_TOKENS candidate');
   });
 
 });

@@ -62,12 +62,30 @@ function mapFinishReason(openaiReason) {
 const UPSTREAM_UNTERMINATED_MESSAGE =
   'The upstream ended the turn without a completion reason (truncated response).';
 
+// A06: the buffered twin for a Cascade max_wait/stall_warm exit that DELIVERED
+// partial text — the turn was interrupted, not finished (see isCascadeInterrupted).
+const UPSTREAM_INTERRUPTED_MESSAGE =
+  'The upstream interrupted the turn before completion (partial response).';
+
 // G3: the Connect decoder's truncation terminal, on either the choice or the
 // frame (responses.js accepts both shapes, so this route must too).
 function isUnterminatedFinish(chunk) {
   return chunk?.unterminated === true
     || chunk?.choices?.[0]?.unterminated === true
     || chunk?.choices?.[0]?.finish_reason === 'error';
+}
+
+// A06 (P1): the Cascade poll loop's max_wait/stall_warm exit DELIVERED partial
+// text but never finished the turn. The producer types that as a fabricated
+// finish_reason:'length' plus a private carrier (chat.js nonStreamResponse, from
+// client.js classifyCascadeEnd) — so isUnterminatedFinish never fires and this
+// body used to render as a 200 MAX_TOKENS candidate, letting a client act on
+// text the upstream did not finish. A caller-imposed output cap also reports
+// 'length'; only the carrier distinguishes an interruption from a real cap.
+function isCascadeInterrupted(body) {
+  return body?.__windsurf_incomplete === true
+    || body?.choices?.[0]?._windsurf_truncated === true
+    || body?.choices?.[0]?._windsurf_end_reason === 'upstream_truncated';
 }
 
 // Parse a tool call's `arguments` string into Gemini's functionCall.args struct.
@@ -998,6 +1016,15 @@ export async function handleGemini(model, body, context = {}, { stream = false, 
     // the client the partial answer is final.
     if (isUnterminatedFinish(result.body)) {
       return withUpstreamHeaders(geminiError(502, 'upstream_error', UPSTREAM_UNTERMINATED_MESSAGE), result.headers);
+    }
+    // A06: the Cascade max_wait/stall_warm exit rides a fabricated 'length'
+    // terminal instead of a missing stop reason, so the guard above passes it.
+    // Gemini has no candidate status for "interrupted"; surface it through the
+    // same retryable error path (502 upstream_error → 503 UNAVAILABLE) rather
+    // than typing the partial answer as MAX_TOKENS, which a client reads as a
+    // legitimate caller-imposed cap.
+    if (isCascadeInterrupted(result.body)) {
+      return withUpstreamHeaders(geminiError(502, 'upstream_error', UPSTREAM_INTERRUPTED_MESSAGE), result.headers);
     }
     return { status: 200, body: openAIToGemini(result.body, requestedModel, toolNameMap) };
   }

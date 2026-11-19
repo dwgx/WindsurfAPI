@@ -54,6 +54,19 @@ function isUnterminatedFinish(body) {
   return body?.choices?.[0]?.finish_reason === 'error';
 }
 
+// A06 (P1): the Cascade poll loop's max_wait/stall_warm exit DELIVERED partial
+// text but never finished the turn. The producer types that as a fabricated
+// finish_reason:'length' plus a private carrier (chat.js nonStreamResponse, from
+// client.js classifyCascadeEnd) — so isUnterminatedFinish never fires and this
+// body used to render as a normal max_tokens completion, letting a caller act on
+// text the upstream did not finish. A caller-imposed output cap also reports
+// 'length'; only the carrier distinguishes an interruption from a real cap.
+function isCascadeInterrupted(body) {
+  return body?.__windsurf_incomplete === true
+    || body?.choices?.[0]?._windsurf_truncated === true
+    || body?.choices?.[0]?._windsurf_end_reason === 'upstream_truncated';
+}
+
 // Item 1 (loop break) classifier moved to the connect layer: leading think-tagged
 // CONTENT is now reclassified into the reasoning channel at the stream-event level
 // in devin-connect-openai.js (streamChatWithEmptyRetry), BEFORE the #238 rescue
@@ -2478,6 +2491,16 @@ export async function handleMessages(body, context = {}) {
     if (isUnterminatedFinish(result.body)) {
       return toAnthropicError(502, 'upstream_error',
         'Upstream ended the turn without a stop reason (truncated response)');
+    }
+    // A06: a Cascade max_wait/stall_warm exit with partial text is the SAME
+    // fault in a different costume — the producer fabricates finish_reason:
+    // 'length' and rides the truncation carrier, so the guard above passes it.
+    // Anthropic's stop_reason enum has no error value; refuse the turn through
+    // the same retryable envelope (502 upstream_error → 529 overloaded_error)
+    // instead of certifying an interrupted answer as a max_tokens cap.
+    if (isCascadeInterrupted(result.body)) {
+      return toAnthropicError(502, 'upstream_error',
+        'Upstream interrupted the turn before completion (partial response)');
     }
     return { status: 200, body: openAIToAnthropic(result.body, requestedModel, msgId, cachePolicy, body.stop_sequences, toolNameMap) };
   }
