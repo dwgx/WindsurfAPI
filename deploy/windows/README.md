@@ -39,7 +39,8 @@
 | `run-background.bat` / `run.vbs` | 一次性隐藏后台(不注册任务,不跨重启) |
 | `install-task.bat` / `install-task.ps1` | 注册开机自启计划任务(主后台方案) |
 | `uninstall-task.bat` | 移除计划任务 |
-| `stop.bat` / `stop.ps1` | 停机(优雅优先,超时 `/F` 兜底) |
+| `stop.bat` / `stop.ps1` | 停机(优雅优先,超时 `/F` 兜底)。所有权绑定:只动「命令行启动的脚本 ∈ 本目录」的监督者与代际吻合的 node,PID 复用/它装同名脚本一律不动手 |
+| `ownership.psm1` | 所有权判定辅助模块(纯函数):监督者选择、代际校验、pidfile 元数据读写,供 stop/run/tray 共用 |
 | `status.bat` / `status.ps1` | 状态(RUNNING/STOPPED + PID + 端口 + 日志尾) |
 | `restart.bat` | 重启 |
 | `update.bat` | `git pull --ff-only` 拉新码(解释执行不锁文件,无需先停) |

@@ -32,6 +32,9 @@ __trace "root=$Root mode=$(if($script:ExeMode){'exe'}else{'source'})"
 $LogDir = Join-Path $Root 'logs'
 if (-not (Test-Path $LogDir)) { New-Item -ItemType Directory -Path $LogDir -Force | Out-Null }
 $PidFile = Join-Path $LogDir 'windsurfapi.pid'
+# 代际记录辅助模块(写 windsurfapi.pid.meta,stop.ps1 据此防 PID 复用)。
+# 模块缺失时降级为旧格式纯数字 pidfile(stop.ps1 有保守的 legacy 判定),不让托盘挂掉。
+try { Import-Module (Join-Path $PSScriptRoot 'ownership.psm1') -Force -ErrorAction Stop } catch { }
 
 # 预检:源码模式需要 Node;EXE 模式自带运行时,跳过。
 if (-not $script:ExeMode -and -not (Get-Command node -ErrorAction SilentlyContinue)) {
@@ -132,6 +135,8 @@ function Start-Node {
   $p.BeginOutputReadLine()
   $p.BeginErrorReadLine()
   Set-Content -Path $PidFile -Value $p.Id -Encoding ASCII
+  # 同步写代际记录(pid + 创建时刻 UTC + root + mode):stop.ps1 靠它防 PID 复用。
+  try { Set-WindsurfApiPidMeta -LogDir $LogDir -ProcessId $p.Id -CreationTimeUtc $p.StartTime -Root $Root -Mode $(if ($script:ExeMode) { 'exe' } else { 'source' }) } catch { }
   Write-Sup "$(if($script:ExeMode){'exe'}else{'node'}) started (pid=$($p.Id))"
   return $p
 }
@@ -155,6 +160,7 @@ function Stop-Node {
   }
   Clear-NodeEvents
   if (Test-Path $PidFile) { Remove-Item $PidFile -Force -EA SilentlyContinue }
+  try { Remove-WindsurfApiPidMeta -LogDir $LogDir } catch { }
 }
 
 # ─── 托盘图标 ───
@@ -282,6 +288,7 @@ __trace 'entering message pump'
 $timer.Stop()
 if (-not $script:proc -or $script:proc.HasExited) { } else { Stop-Node }
 if (Test-Path $PidFile) { Remove-Item $PidFile -Force -EA SilentlyContinue }
+try { Remove-WindsurfApiPidMeta -LogDir $LogDir } catch { }
 __trace 'exited cleanly'
 } catch {
   __trace ("FATAL: " + $_.Exception.Message + " @ " + $_.InvocationInfo.ScriptLineNumber)
