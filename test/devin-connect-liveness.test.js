@@ -13,8 +13,10 @@ import { afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   addAccountByKey, removeAccount, probeAndRecoverConnectAccount,
-  __setReloginDeps, __resetReloginState, getAccountList,
+  __setReloginDeps, __resetReloginState, getAccountList, setAccountCredentialEmail,
 } from '../src/auth.js';
+
+const LOGIN_EMAIL = 'liveness-test@example.test';
 
 let acct;
 function setEnv(on) {
@@ -26,8 +28,8 @@ function errorCountOf(id) { return getAccountList().find(a => a.id === id)?.erro
 
 beforeEach(() => {
   __resetReloginState();
-  acct = addAccountByKey('devin-session-token$PROBE', 'liveness-test@example.com');
-  acct.email = 'liveness-test@example.com';
+  acct = addAccountByKey('devin-session-token$PROBE', 'Liveness fixture');
+  setAccountCredentialEmail(acct.id, LOGIN_EMAIL);
   acct.method = 'email';
 });
 afterEach(() => {
@@ -68,8 +70,11 @@ describe('probeAndRecoverConnectAccount — dead session_id', () => {
     __setReloginDeps({
       checkSessionLiveness: async () => ({ alive: false, code: 'UNAUTHORIZED', error: '401' }),
       isCredStoreEnabled: () => true,
-      getCredential: () => 'pw',
-      windsurfLogin: async () => { loginCalls++; return { apiKey: 'devin-session-token$REBORN' }; },
+      getCredential: email => email === LOGIN_EMAIL ? 'pw' : null,
+      windsurfLogin: async () => {
+        loginCalls++;
+        return { apiKey: 'devin-session-token$REBORN', identityEmail: LOGIN_EMAIL };
+      },
     });
     const res = await probeAndRecoverConnectAccount(acct.id);
     assert.equal(res.alive, false);
@@ -78,6 +83,27 @@ describe('probeAndRecoverConnectAccount — dead session_id', () => {
     assert.equal(loginCalls, 1);
     assert.equal(acct.apiKey, 'devin-session-token$REBORN');
     assert.equal(statusOf(acct.id), 'active', 're-login reset status');
+  });
+
+  it('keeps the account in reauth when login provides no identity proof', async () => {
+    setEnv(true);
+    let loginCalls = 0;
+    __setReloginDeps({
+      checkSessionLiveness: async () => ({ alive: false, code: 'UNAUTHORIZED', error: '401' }),
+      isCredStoreEnabled: () => true,
+      getCredential: email => email === LOGIN_EMAIL ? 'pw' : null,
+      windsurfLogin: async () => {
+        loginCalls++;
+        return { apiKey: 'devin-session-token$UNPROVEN' };
+      },
+    });
+
+    const res = await probeAndRecoverConnectAccount(acct.id);
+
+    assert.equal(loginCalls, 1);
+    assert.equal(res.recovered, false);
+    assert.equal(acct.apiKey, 'devin-session-token$PROBE');
+    assert.equal(statusOf(acct.id), 'reauth');
   });
 
   it('marks dead but does not recover when auto-relogin is off', async () => {

@@ -26,6 +26,7 @@ import {
   getAccountPublic,
   getAccountRequests,
   recordAccountSpend,
+  setAccountCredentialEmail,
   setAccountTokens,
   __setReloginDeps,
   __resetReloginState,
@@ -171,6 +172,9 @@ describe('review #3 — ledger ownership survives a mid-request key rotation', (
 
   it('a stale 401 does not trigger a re-login that would rotate the fresh key', async () => {
     const acct = seed('handler-rotate');
+    const loginEmail = 'billing-relogin@example.test';
+    // Enroll the fixture so the credential epoch determines re-login eligibility.
+    setAccountCredentialEmail(acct.id, loginEmail);
     const acquireKey = acct.apiKey;
     const rotatedKey = `${acquireKey}$ROTATED`;
     process.env.DEVIN_CONNECT_AUTO_RELOGIN = '1';
@@ -178,10 +182,13 @@ describe('review #3 — ledger ownership survives a mid-request key rotation', (
     let logins = 0;
     __setReloginDeps({
       isCredStoreEnabled: () => true,
-      getCredential: () => 'stored-password',
+      getCredential: email => email === loginEmail ? 'stored-password' : null,
       windsurfLogin: async () => {
         logins++;
-        return { apiKey: `devin-session-token$third-${Math.random().toString(36).slice(2)}` };
+        return {
+          apiKey: `devin-session-token$third-${Math.random().toString(36).slice(2)}`,
+          identityEmail: loginEmail,
+        };
       },
     });
     let calls = 0;

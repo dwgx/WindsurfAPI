@@ -1,6 +1,9 @@
 import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { addAccountByKey, getApiKey, getRpmStats, removeAccount, getAccountList, __setReloginDeps, __resetReloginState } from '../src/auth.js';
+import {
+  addAccountByKey, getApiKey, getRpmStats, removeAccount, getAccountList,
+  __setReloginDeps, __resetReloginState, setAccountCredentialEmail,
+} from '../src/auth.js';
 import { finalizeConnectAccount } from '../src/handlers/chat.js';
 import { setBreakerTunables } from '../src/runtime-config.js';
 import { getStats } from '../src/dashboard/stats.js';
@@ -122,15 +125,19 @@ describe('finalizeConnectAccount', () => {
 
   it('fires a background re-login on UNAUTHORIZED when auto-relogin is configured', async () => {
     const acct = seed('relogin-trigger');
-    acct.email = `relogin-${acct.id}@example.com`;
+    const loginEmail = `relogin-${acct.id}@example.test`;
+    setAccountCredentialEmail(acct.id, loginEmail);
     acct.method = 'email';
     process.env.DEVIN_CONNECT_AUTO_RELOGIN = '1';
     __resetReloginState();
     let loginCalls = 0;
     __setReloginDeps({
       isCredStoreEnabled: () => true,
-      getCredential: () => 'pw',
-      windsurfLogin: async () => { loginCalls++; return { apiKey: 'devin-session-token$RECOVERED' }; },
+      getCredential: email => email === loginEmail ? 'pw' : null,
+      windsurfLogin: async () => {
+        loginCalls++;
+        return { apiKey: 'devin-session-token$RECOVERED', identityEmail: loginEmail };
+      },
     });
     finalizeConnectAccount(
       { id: acct.id, apiKey: acct.apiKey },
@@ -147,14 +154,18 @@ describe('finalizeConnectAccount', () => {
 
   it('does not re-login on UNAUTHORIZED when auto-relogin is off', async () => {
     const acct = seed('relogin-off');
-    acct.email = `off-${acct.id}@example.com`;
+    const loginEmail = `off-${acct.id}@example.test`;
+    setAccountCredentialEmail(acct.id, loginEmail);
     delete process.env.DEVIN_CONNECT_AUTO_RELOGIN;
     __resetReloginState();
     let loginCalls = 0;
     __setReloginDeps({
       isCredStoreEnabled: () => true,
-      getCredential: () => 'pw',
-      windsurfLogin: async () => { loginCalls++; return { apiKey: 'x' }; },
+      getCredential: email => email === loginEmail ? 'pw' : null,
+      windsurfLogin: async () => {
+        loginCalls++;
+        return { apiKey: 'devin-session-token$OFFFIXTURE', identityEmail: loginEmail };
+      },
     });
     finalizeConnectAccount(
       { id: acct.id, apiKey: acct.apiKey },
