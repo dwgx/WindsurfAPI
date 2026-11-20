@@ -9938,7 +9938,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     // person (which is what made re-auth a manual accounts.json edit). Prefill
     // the verified login address when one is known — `email` is a renameable
     // display label and would submit the wrong identity for a renamed row.
-    this.openAddAccountModal('login', { email: a?.loginEmail || a?.email || '', accountId: id || null });
+    this.openAddAccountModal('login', { email: a?.loginEmail || '', accountId: id || null });
   },
 
   // ─── Detail drawer ────────────────────────────────────────────────────
@@ -10069,10 +10069,10 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     // only path those flows can finish on.
     if (this._addTab === 'login') this.selectLoginMethod(email || accountId ? 'email' : null);
     const emailInput = document.getElementById('wl-email');
-    if (emailInput && email) {
+    if (emailInput && (email || accountId)) {
       emailInput.value = email;
       const probe = document.getElementById('wl-probe-status');
-      if (probe) probe.textContent = I18n.t('accounts.add.reloginHint');
+      if (probe) probe.textContent = email ? I18n.t('accounts.add.reloginHint') : '';
     }
     this.renderReauthBanner();
     this.loadWindsurfLogin();

@@ -10,6 +10,7 @@ import { safeEmailRef, safeKeyRef, logHash, sliceRedactedJson } from '../log-saf
 import { createProxyTunnel } from '../proxy-connector.js';
 import { getEmailLockThreshold, getEmailLockMs, getBackendSwitch } from '../runtime-config.js';
 import { parseFields, getField, getAllFields } from '../proto.js';
+import { loginResultIdentity, normalizeLoginIdentity } from '../account/login-identity.js';
 // R-1 (RATE-RETRY audit): bounded response-body reads, shared with the
 // devin-connect readers — one ceiling, one truncation contract.
 import { createBoundedBodyAccumulator, MAX_ERROR_BODY_BYTES } from '../devin-connect.js';
@@ -1235,15 +1236,7 @@ function emailLockedError(lockMs) {
 // Upstream reports `accountId` too, but the pool rows do not carry it, so it
 // is not a comparable key here — the authenticated address is.
 
-/** Case/whitespace-insensitive identity key. '' means "no identity proof". */
-export function normalizeLoginIdentity(email) {
-  return String(email ?? '').trim().toLowerCase();
-}
-
-/** The identity a login result proves, or '' when it proves none. */
-function loginResultIdentity(result) {
-  return normalizeLoginIdentity(result?.identityEmail || result?.email);
-}
+export { normalizeLoginIdentity };
 
 /** Operator-facing masked address; never echoes the full identity. */
 function maskIdentityEmail(email) {

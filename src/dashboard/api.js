@@ -4,6 +4,8 @@
  */
 
 import { config, log } from '../config.js';
+import { accountLoginIdentity, loginResultIdentity } from '../account/login-identity.js';
+import * as credentials from '../devin-connect-credentials.js';
 import { accountRef, buildSubprocessEnv } from '../log-safety.js';
 import {
   existsSync,
@@ -22,6 +24,7 @@ import {
   countAccountList, ACCOUNT_STATE_VALUES, ACCOUNT_SORT_VALUES,
   removeAccount, setAccountStatus, resetAccountErrors, updateAccountLabel,
   markAccountReauthenticated, requestReauthCheck, setAccountCredentialEmail, setAccountIdentityEmail,
+  captureAccountCredential, isCurrentAccountCredential,
   isAuthenticated, probeAccount, ensureLsForAccount,
   refreshCredits, searchWebForAccount,
   setAccountBlockedModels, setAccountTokens, setAccountTier, setAccountSpendPolicy,
@@ -84,7 +87,7 @@ import {
   RUNTIME_SWITCH_KEYS,
 } from './devin-panel.js';
 import { listRequests, requestRingStats } from './request-ring.js';
-import { windsurfLogin, refreshFirebaseToken, reRegisterWithCodeium, probeLoginMethod, emailLoginStart, emailLoginComplete, checkEmailLocked, assertLoginIdentity, normalizeLoginIdentity } from './windsurf-login.js';
+import { windsurfLogin, refreshFirebaseToken, reRegisterWithCodeium, probeLoginMethod, emailLoginStart, emailLoginComplete, checkEmailLocked, assertLoginIdentity } from './windsurf-login.js';
 import { getModelAccessConfig, setModelAccessMode, setModelAccessList, addModelToList, removeModelFromList, setDefaultModel } from './model-access.js';
 import { checkMessageRateLimit } from '../windsurf-api.js';
 import { getNativeBridgeConfigStatus } from '../cascade-native-bridge.js';
@@ -919,6 +922,20 @@ export function credStoreGateOpen(wantStore, req) {
   return process.env.DEVIN_CONNECT_ALLOW_REMOTE_CRED_STORE === '1';
 }
 
+function captureBoundWindsurfLogin(accountId) {
+  const account = getAccountInternal(accountId);
+  if (!account) throw Object.assign(new Error('ERR_ACCOUNT_NOT_FOUND'), { code: 'ERR_ACCOUNT_NOT_FOUND', statusCode: 404 });
+  const bound = captureAccountCredential(account);
+  if (!bound.identity) {
+    throw Object.assign(new Error('ERR_ACCOUNT_IDENTITY_UNVERIFIED'), {
+      code: 'ERR_ACCOUNT_IDENTITY_UNVERIFIED',
+      statusCode: 409,
+      detail: 'This account needs a verified login address. Sign in without an account selected.',
+    });
+  }
+  return bound;
+}
+
 async function processWindsurfLogin({ email, password, loginProxy, autoAdd, storeCredential: wantStore, req, accountId = null }) {
   if (!email || !password) {
     const err = new Error('ERR_EMAIL_PASSWORD_REQUIRED');
@@ -929,25 +946,17 @@ async function processWindsurfLogin({ email, password, loginProxy, autoAdd, stor
 
   // Use provided proxy, or global proxy
   const proxy = loginProxy?.host ? loginProxy : getProxyConfig().global;
+  const bound = accountId ? captureBoundWindsurfLogin(accountId) : null;
   const result = await windsurfLogin(email, password, proxy);
-  return finalizeWindsurfLogin(result, { password, loginProxy, autoAdd, storeCredential: wantStore, req, accountId });
+  return finalizeWindsurfLogin(result, { password, loginProxy, autoAdd, storeCredential: wantStore, req, bound });
 }
 
-// Shared tail of every successful login (password, email code, pasted token):
-// add the account to the pool — or, when `accountId` is set, REPLACE that
-// account's token — persist the per-account proxy, optionally persist the
-// password for auto-relogin, and shape the response. `password` is null for the
-// email-code flow — there is nothing to store.
-//
-// `accountId` is the re-auth binding (SessionReauth): the operator proved
-// control of an existing account by logging in, so the fresh token lands on
-// that row. Adding it again would create a duplicate for the same person and
-// leave the dead one in the list.
-async function finalizeWindsurfLogin(result, { password, loginProxy, autoAdd, storeCredential: wantStore, req, accountId = null }) {
+// Keep validation and all credential writes synchronous after upstream login.
+function finalizeWindsurfLogin(result, { password, loginProxy, autoAdd, storeCredential: wantStore, req, bound = null }) {
   const email = result.email || '';
   // The address this login proved. Independent of whether a password is kept:
   // a retention:false password login and an email-code login both establish it.
-  const resultIdentity = normalizeLoginIdentity(result.identityEmail || result.email);
+  const resultIdentity = loginResultIdentity(result);
   let account = null;
   let reauthenticated = false;
   // Whether the password the caller asked to store actually landed. null = not
@@ -955,42 +964,33 @@ async function finalizeWindsurfLogin(result, { password, loginProxy, autoAdd, st
   // failed (busy store, missing key, record loss) and auto-relogin stays disarmed.
   let credentialStored = null;
 
-  if (accountId) {
-    const existing = getAccountInternal(accountId);
-    if (!existing) throw Object.assign(new Error('ERR_ACCOUNT_NOT_FOUND'), { code: 'ERR_ACCOUNT_NOT_FOUND', statusCode: 404 });
-    if (!result.apiKey) throw Object.assign(new Error('ERR_LOGIN_FAILED'), { code: 'ERR_LOGIN_FAILED', statusCode: 502 });
-    // V-24 (audit A23): a bound login REPLACES this row's credential, so the
-    // login must prove it belongs to this row's stable identity. The display
-    // label is renameable and must never be the expectation. A row that has
-    // never been verified (no identityEmail and no legacy credentialEmail) is
-    // refused instead of being bound on faith; re-verify it with a fresh
-    // unbound login first. This runs before markAccountReauthenticated() — a
-    // token for someone else must not rotate the key, clear error/ban state, or
-    // flip `reauth` back to `active`.
-    const expectedIdentity = normalizeLoginIdentity(existing.identityEmail || existing.credentialEmail);
-    if (!expectedIdentity) {
-      throw Object.assign(new Error('ERR_ACCOUNT_IDENTITY_UNVERIFIED'), {
-        code: 'ERR_ACCOUNT_IDENTITY_UNVERIFIED',
+  if (bound) {
+    if (!isCurrentAccountCredential(bound)) {
+      throw Object.assign(new Error('ERR_REAUTH_ACCOUNT_CHANGED'), {
+        code: 'ERR_REAUTH_ACCOUNT_CHANGED',
         statusCode: 409,
-        detail: 'This account has no verified login identity yet; sign in without binding it first, then retry the re-auth.',
+        detail: 'The account changed during login. Start a new login if the account still needs it.',
       });
     }
-    assertLoginIdentity(result, expectedIdentity);
+    if (!result.apiKey) throw Object.assign(new Error('ERR_LOGIN_FAILED'), { code: 'ERR_LOGIN_FAILED', statusCode: 502 });
+    assertLoginIdentity(result, bound.identity);
     // A successful login IS the proof that the new key works, so a same-key
     // re-login is legitimate (`allowSameKey`). The refusal exists for the
     // operator asserting an UNCHANGED key without logging in.
-    markAccountReauthenticated(accountId, {
+    markAccountReauthenticated(bound.account.id, {
       apiKey: result.apiKey,
       via: result.viaEmailCode ? 'email_code' : 'password',
       allowSameKey: true,
     });
-    account = existing;
+    account = bound.account;
     reauthenticated = true;
   } else if (autoAdd !== false) {
     // `result.name` is upstream-supplied: sanitize (never assert) so a hostile
     // login response cannot fail the whole login via the caller-facing label
     // boundary inside addAccountByKey.
     account = addAccountByKey(result.apiKey, sanitizeLabelText(result.name) || email);
+    const knownIdentity = accountLoginIdentity(account);
+    if (resultIdentity && knownIdentity) assertLoginIdentity(result, knownIdentity);
   }
 
   if (account) {
@@ -1021,11 +1021,10 @@ async function finalizeWindsurfLogin(result, { password, loginProxy, autoAdd, st
       // "stored" without ever calling the store (2026-09-17 review, F3).
       credentialStored = false;
       try {
-        const { storeCredential, isCredStoreEnabled } = await import('../devin-connect-credentials.js');
-        if (isCredStoreEnabled()) {
+        if (credentials.isCredStoreEnabled()) {
           // Key the record by the verified identity, not the response's
           // display-shaped `email` and never the renameable label.
-          credentialStored = storeCredential(resultIdentity, password) === true;
+          credentialStored = credentials.storeCredential(resultIdentity, password) === true;
           // Remember WHICH address the record is keyed by: the row can be
           // renamed, and re-login / removal must still find the secret.
           if (credentialStored) setAccountCredentialEmail(account.id, resultIdentity);
@@ -3670,33 +3669,19 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
     const { flowId, code, proxy: loginProxy, autoAdd } = body || {};
     if (!flowId || !code) return json(res, 400, { error: 'ERR_EMAIL_FLOW_CODE_REQUIRED' });
     try {
-      // V-24: when the caller binds the exchange to an account, the flow's own
-      // identity must match it BEFORE the single-use code is spent. finalize
-      // re-checks before any mutation; this early check keeps a mismatch from
-      // costing the operator a second email. The expectation is the stable
-      // identity (legacy credentialEmail included), never the display label; an
-      // unverified row is refused instead of being bound on faith.
-      const boundAccount = body?.accountId ? getAccountInternal(body.accountId) : null;
-      const expectedIdentity = boundAccount
-        ? normalizeLoginIdentity(boundAccount.identityEmail || boundAccount.credentialEmail)
-        : '';
-      if (boundAccount && !expectedIdentity) {
-        return json(res, 409, {
-          error: 'ERR_ACCOUNT_IDENTITY_UNVERIFIED',
-          detail: 'This account has no verified login identity yet; sign in without binding it first, then retry the re-auth.',
-        });
-      }
+      // Bind the row and its revision before spending the single-use code.
+      const bound = body?.accountId ? captureBoundWindsurfLogin(body.accountId) : null;
       const result = await emailLoginComplete(
         flowId,
         code,
         loginProxy?.host ? loginProxy : getProxyConfig().global,
-        { expectedIdentityEmail: expectedIdentity || undefined },
+        { expectedIdentityEmail: bound?.identity },
       );
       // No password exists in this flow, so there is nothing for the credential
       // store to persist — pass storeCredential:false regardless of the request.
-      return json(res, 200, await finalizeWindsurfLogin(result, {
+      return json(res, 200, finalizeWindsurfLogin(result, {
         password: null, loginProxy, autoAdd, storeCredential: false, req,
-        accountId: body?.accountId || null,
+        bound,
       }));
     } catch (err) {
       return json(res, err.statusCode || 400, {

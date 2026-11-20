@@ -12,7 +12,10 @@
 import { afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { config } from '../src/config.js';
-import { addAccountByKey, getAccountInternal, removeAccount, setAccountCredentialEmail, setAccountIdentityEmail, setAccountStatus } from '../src/auth.js';
+import {
+  addAccountByKey, captureAccountCredential, getAccountInternal, isCurrentAccountCredential, removeAccount,
+  setAccountCredentialEmail, setAccountIdentityEmail, setAccountStatus, setAccountTokens, updateAccountLabel,
+} from '../src/auth.js';
 import { handleDashboardApi } from '../src/dashboard/api.js';
 import {
   __setLoginTransportForTests,
@@ -245,6 +248,20 @@ describe('bound login identity — unverified and legacy rows', () => {
 });
 
 describe('bound login identity (email-code flow)', () => {
+  it('refuses a missing bound row before using the code flow', async () => {
+    const transport = makeTransport([START_OK, COMPLETE_OK, postauthOk(OWNER_KEY)]);
+    __setLoginTransportForTests(transport);
+    const started = await emailLoginStart(OWNER_EMAIL, null, { host: 'windsurf' });
+
+    const result = await post('/windsurf-login/email/complete', {
+      flowId: started.flowId, code: CODE, accountId: 'missing-row',
+    });
+
+    assert.equal(result.status, 404);
+    assert.equal(result.body.error, 'ERR_ACCOUNT_NOT_FOUND');
+    assert.equal(transport.seen.length, 1, 'only the code request reached the fake provider');
+  });
+
   it('rejects a code flow started for another address before the code is spent', async () => {
     const owner = seedReauthOwner();
     __setLoginTransportForTests(makeTransport([START_OK, COMPLETE_OK, postauthOk(OTHER_KEY)]));
@@ -289,4 +306,51 @@ describe('bound login identity (email-code flow)', () => {
     assert.equal(r.status, 200, JSON.stringify(r.body));
     assert.equal(getAccountInternal(owner.id).apiKey, fresh);
   });
+});
+
+describe('credential revision during relogin', () => {
+  it('ignores display edits and detects rotation back to the same key', () => {
+    const owner = seedOwner();
+    const original = captureAccountCredential(owner);
+
+    updateAccountLabel(owner.id, 'Renamed fixture');
+    assert.equal(isCurrentAccountCredential(original), true);
+
+    setAccountTokens(owner.id, { apiKey: OTHER_KEY });
+    setAccountTokens(owner.id, { apiKey: OWNER_KEY });
+    assert.equal(isCurrentAccountCredential(original), false);
+  });
+
+  for (const method of ['password', 'email code']) {
+    it(`discards a stale ${method} result after the credential revision changes`, async () => {
+      const owner = seedReauthOwner();
+      const refreshed = 'devin-session-token$IDENTITYREFRESHED';
+      const transport = makeTransport([
+        CONN_PASSWORD, PASSWORD_OK, START_OK, COMPLETE_OK, postauthOk(OWNER_KEY),
+      ]);
+      __setLoginTransportForTests(async (url, ...args) => {
+        const result = await transport(url, ...args);
+        if (url.includes('WindsurfPostAuth')) setAccountTokens(owner.id, { apiKey: refreshed });
+        return result;
+      });
+
+      let result;
+      if (method === 'password') {
+        result = await post('/windsurf-login', {
+          email: OWNER_EMAIL, password: PASSWORD, accountId: owner.id, storeCredential: true,
+        });
+      } else {
+        const started = await emailLoginStart(OWNER_EMAIL, null, { host: 'windsurf' });
+        result = await post('/windsurf-login/email/complete', {
+          flowId: started.flowId, code: CODE, accountId: owner.id,
+        });
+      }
+
+      assert.equal(result.status, 409);
+      assert.equal(result.body.error, 'ERR_REAUTH_ACCOUNT_CHANGED');
+      assert.equal(owner.apiKey, refreshed);
+      assert.equal(owner.status, 'reauth');
+      assert.equal(owner.credentialEmail || '', '');
+    });
+  }
 });

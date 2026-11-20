@@ -17,7 +17,9 @@ import { config } from '../src/config.js';
 import {
   __loadAccountsForTest,
   __resetReloginState,
+  __setEmailImportDeps,
   __setReloginDeps,
+  addAccountByEmail,
   addAccountByKey,
   configureBindHost,
   getAccountInternal,
@@ -25,6 +27,7 @@ import {
   reLoginAccount,
   removeAccount,
   setAccountCredentialEmail,
+  setAccountIdentityEmail,
   updateAccountLabel,
 } from '../src/auth.js';
 import {
@@ -145,6 +148,7 @@ beforeEach(() => {
 });
 
 afterEach(() => {
+  __setEmailImportDeps(null);
   __setLoginTransportForTests(null);
   __setReloginDeps(null);
   __resetReloginState();
@@ -246,6 +250,79 @@ describe('enroll -> rename -> reload -> re-login -> delete', () => {
     assert.equal(removeAccount(reloaded.id), true);
     created.delete(reloaded.id);
     assert.deepEqual(listCredentialEmails(), [OTHER], 'only the bound record was removed');
+  });
+});
+
+describe('legacy credential ownership', () => {
+  const priorKey = 'devin-session-token$IMPORTPRIOR';
+  const freshKey = 'devin-session-token$IMPORTFRESH';
+
+  for (const verifiedFirst of [false, true]) {
+    it(`reuses a renamed legacy binding with verified row first=${verifiedFirst}`, async () => {
+      const addVerified = () => {
+        const account = track(addAccountByKey(priorKey, RENAMED));
+        setAccountCredentialEmail(account.id, ` ${EMAIL.toUpperCase()} `);
+        return account;
+      };
+      const addOtherRows = () => {
+        track(addAccountByKey('devin-session-token$IMPORTDISPLAY', EMAIL));
+        const other = track(addAccountByKey('devin-session-token$IMPORTOTHER', EMAIL));
+        setAccountCredentialEmail(other.id, OTHER);
+        return other;
+      };
+      let verified;
+      let other;
+      if (verifiedFirst) {
+        verified = addVerified();
+        other = addOtherRows();
+      } else {
+        other = addOtherRows();
+        verified = addVerified();
+      }
+      assert.equal(getAccountList().find(row => row.id === verified.id)?.loginEmail, EMAIL);
+      __setEmailImportDeps({ windsurfLogin: async () => ({ apiKey: freshKey, email: EMAIL }) });
+
+      const imported = track(await addAccountByEmail(EMAIL, PASSWORD));
+
+      assert.equal(imported.id, verified.id);
+      assert.equal(verified.apiKey, freshKey);
+      assert.equal(verified.identityEmail, EMAIL);
+      assert.equal(other.credentialEmail, OTHER);
+    });
+  }
+
+  it('adds a new account when the only match is an editable label', async () => {
+    const historical = track(addAccountByKey(priorKey, EMAIL));
+    __setEmailImportDeps({ windsurfLogin: async () => ({ apiKey: freshKey, email: EMAIL }) });
+
+    const imported = track(await addAccountByEmail(EMAIL, PASSWORD));
+
+    assert.notEqual(imported.id, historical.id);
+    assert.equal(imported.apiKey, freshKey);
+    assert.equal(historical.apiKey, priorKey);
+  });
+
+  it('establishes identity on a historical row when the provable key matches', async () => {
+    const historical = track(addAccountByKey(priorKey, RENAMED));
+    __setEmailImportDeps({ windsurfLogin: async () => ({ apiKey: priorKey, email: EMAIL }) });
+
+    const imported = track(await addAccountByEmail(EMAIL, PASSWORD));
+
+    assert.equal(imported.id, historical.id);
+    assert.equal(historical.identityEmail, EMAIL);
+  });
+
+  it('retains a shared credential until the last verified row is removed', () => {
+    const first = track(addAccountByKey(priorKey, RENAMED));
+    const last = track(addAccountByKey(freshKey, RENAMED));
+    setAccountCredentialEmail(first.id, ` ${EMAIL.toUpperCase()} `);
+    setAccountIdentityEmail(last.id, EMAIL);
+    assert.equal(storeCredential(EMAIL, PASSWORD), true);
+
+    assert.equal(removeAccount(first.id), true);
+    assert.deepEqual(listCredentialEmails(), [EMAIL]);
+    assert.equal(removeAccount(last.id), true);
+    assert.deepEqual(listCredentialEmails(), []);
   });
 });
 
