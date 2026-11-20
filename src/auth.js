@@ -2019,7 +2019,9 @@ export async function addAccountByEmail(email, password, opts = {}) {
     ? accounts.find(a => accountLoginIdentity(a) === identity)
     : null;
   const account = existingByEmail || addAccountByKey(result.apiKey, label);
-  if (existingByEmail) {
+  if (account.status === 'reauth' && identity && accountLoginIdentity(account) === identity) {
+    markAccountReauthenticated(account.id, { apiKey: result.apiKey, via: 'password', allowSameKey: true });
+  } else if (existingByEmail) {
     const apiKeyChanged = account.apiKey !== result.apiKey;
     const previousKey = account.apiKey;
     account.apiKey = result.apiKey;

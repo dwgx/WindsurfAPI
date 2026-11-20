@@ -24,10 +24,12 @@ import {
   configureBindHost,
   getAccountInternal,
   getAccountList,
+  markNeedsReauth,
   reLoginAccount,
   removeAccount,
   setAccountCredentialEmail,
   setAccountIdentityEmail,
+  setAccountStatus,
   updateAccountLabel,
 } from '../src/auth.js';
 import {
@@ -311,6 +313,42 @@ describe('legacy credential ownership', () => {
     assert.equal(imported.id, historical.id);
     assert.equal(historical.identityEmail, EMAIL);
   });
+
+  for (const [description, key] of [['rotates', freshKey], ['reproves', priorKey]]) {
+    it(`returns a verified row to rotation when re-enrollment ${description} its key`, async () => {
+      const account = track(addAccountByKey(priorKey, RENAMED));
+      setAccountIdentityEmail(account.id, EMAIL);
+      assert.equal(markNeedsReauth(account.id), true);
+      assert.equal(getAccountList({ status: 'active' }).some(row => row.id === account.id), false);
+      __setEmailImportDeps({ windsurfLogin: async () => ({ apiKey: key, email: EMAIL }) });
+
+      const imported = track(await addAccountByEmail(EMAIL, PASSWORD));
+
+      assert.equal(imported.id, account.id);
+      assert.equal(imported.apiKey, key);
+      assert.equal(imported.status, 'active');
+      assert.equal(imported.reauth, undefined);
+      assert.equal(getAccountList({ status: 'active' }).some(row => row.id === account.id), true);
+      const persisted = diskRows().find(row => row.id === account.id);
+      assert.equal(persisted.status, 'active');
+      assert.equal(persisted.reauth, undefined);
+    });
+  }
+
+  for (const status of ['disabled', 'banned']) {
+    it(`preserves the ${status} state on verified legacy re-enrollment`, async () => {
+      const account = track(addAccountByKey(priorKey, RENAMED));
+      setAccountIdentityEmail(account.id, EMAIL);
+      setAccountStatus(account.id, status);
+      __setEmailImportDeps({ windsurfLogin: async () => ({ apiKey: freshKey, email: EMAIL }) });
+
+      const imported = track(await addAccountByEmail(EMAIL, PASSWORD));
+
+      assert.equal(imported.id, account.id);
+      assert.equal(imported.status, status);
+      assert.equal(getAccountList({ status: 'active' }).some(row => row.id === account.id), false);
+    });
+  }
 
   it('retains a shared credential until the last verified row is removed', () => {
     const first = track(addAccountByKey(priorKey, RENAMED));
