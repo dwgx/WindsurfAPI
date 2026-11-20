@@ -637,10 +637,44 @@ export function getDroughtSummary({ env = process.env } = {}) {
   };
 }
 
+function rpmReservationTime(entry) {
+  return typeof entry === 'number' ? entry : entry?.timestamp;
+}
+
+function recordRpmReservation(account, now, trackReservation) {
+  const reservationTimestamp = nextReservationToken(now);
+  if (!trackReservation) {
+    account._rpmHistory.push(reservationTimestamp);
+    return { reservationTimestamp };
+  }
+
+  // A tracked checkout owns its exact RPM entry and one slot on this account
+  // record. The key can rotate during a turn, and stale cleanup can retire
+  // an entire set of slots before a late completion arrives.
+  const entry = { timestamp: reservationTimestamp };
+  const active = account._trackedReservations ??= new Set();
+  const apiKey = account.apiKey;
+  const keyGeneration = account._keyGeneration;
+  active.add(entry);
+  account._rpmHistory.push(entry);
+  return {
+    reservationTimestamp,
+    canReportHealth() {
+      return active.has(entry) && account._keyGeneration === keyGeneration
+        && isCurrentAccount(account) && accounts.find(a => a.apiKey === apiKey) === account;
+    },
+    settleReservation(refund) {
+      if (!isCurrentAccount(account) || !active.delete(entry)) return;
+      if (refund) refundAccountReservation(account, entry);
+      _releaseAccountObj(account);
+    },
+  };
+}
+
 function pruneRpmHistory(account, now) {
   if (!account._rpmHistory) account._rpmHistory = [];
   const cutoff = now - RPM_WINDOW_MS;
-  while (account._rpmHistory.length && account._rpmHistory[0] < cutoff) {
+  while (account._rpmHistory.length && rpmReservationTime(account._rpmHistory[0]) < cutoff) {
     account._rpmHistory.shift();
   }
   return account._rpmHistory.length;
@@ -654,7 +688,7 @@ function rpmHistoryCount(account, now) {
   if (!Array.isArray(hist) || hist.length === 0) return 0;
   const cutoff = now - RPM_WINDOW_MS;
   let first = 0;
-  while (first < hist.length && hist[first] < cutoff) first++;
+  while (first < hist.length && rpmReservationTime(hist[first]) < cutoff) first++;
   return hist.length - first;
 }
 
@@ -2727,8 +2761,9 @@ export function setAccountTokens(id, { apiKey, refreshToken, idToken } = {}) {
  */
 function markKeyRotation(account, previousKey) {
   if (!account || typeof account !== 'object') return;
-  if (!previousKey || previousKey === account.apiKey) return;
-  account.keyRotatedAt = Date.now();
+  if (previousKey === account.apiKey) return;
+  account._keyGeneration = Symbol();
+  if (previousKey) account.keyRotatedAt = Date.now();
 }
 
 // Per-account re-login throttle: a dead session_id will reject EVERY in-flight
@@ -3160,7 +3195,7 @@ function pickDegradedFallback(now, excludeKeys, modelKey, connectSelector) {
  * @param {string|null} [modelKey]
  * @param {string|null} [callerKey]
  * @param {string|null} [connectSelector]
- * @param {{ pinOnly?: boolean }} [opts] `pinOnly` makes the sticky arm NON-DESTRUCTIVE:
+ * @param {{ pinOnly?: boolean, trackReservation?: boolean }} [opts] `pinOnly` makes the sticky arm NON-DESTRUCTIVE:
  *   return the pinned account if it is usable right now, otherwise return null WITHOUT
  *   clearing the binding and WITHOUT rotating to a substitute. It exists so an async
  *   caller can poll for its own pin (chat.js queue-on-pin) using the very same
@@ -3168,6 +3203,8 @@ function pickDegradedFallback(now, excludeKeys, modelKey, connectSelector) {
  *   the wait loop is how "the fix covered only some paths" keeps recurring here.
  *   It is absolute: with `pinOnly` this NEVER returns a non-pinned account, not even
  *   when no binding exists, so a poll can never be answered with a substitute.
+ *   `trackReservation` attaches a one-shot settler for early failures and normal
+ *   completion. The caller uses it instead of the key-based release and refund.
  */
 export function getApiKey(excludeKeys = [], modelKey = null, callerKey = null, connectSelector = null, opts = {}) {
   const now = Date.now();
@@ -3225,8 +3262,7 @@ export function getApiKey(excludeKeys = [], modelKey = null, callerKey = null, c
           // would report zero hits and under-state affinity by exactly the turns
           // queue-on-pin rescued — the opposite bias to counting every poll.
           if (pinOnly) getStickyBinding(callerKey, modelKey, connectSelector);
-          const reservationTimestamp = nextReservationToken(now);
-          acct._rpmHistory.push(reservationTimestamp);
+          const reservation = recordRpmReservation(acct, now, opts.trackReservation);
           acct.lastUsed = now;
           acct._inflight = (acct._inflight || 0) + 1;
           acct._inflightAt = Date.now();
@@ -3234,7 +3270,7 @@ export function getApiKey(excludeKeys = [], modelKey = null, callerKey = null, c
             id: acct.id, email: acct.email, apiKey: acct.apiKey,
             apiServerUrl: acct.apiServerUrl || '',
             proxy: getEffectiveProxy(acct.id) || null,
-            reservationTimestamp,
+            ...reservation,
             _sticky: true,
           };
         }
@@ -3312,8 +3348,7 @@ export function getApiKey(excludeKeys = [], modelKey = null, callerKey = null, c
     if (degradedServeEnabled()) {
       const fallback = pickDegradedFallback(now, excludeKeys, modelKey, connectSelector);
       if (fallback) {
-        const reservationTimestamp = nextReservationToken(now);
-        fallback._rpmHistory.push(reservationTimestamp);
+        const reservation = recordRpmReservation(fallback, now, opts.trackReservation);
         fallback.lastUsed = now;
         fallback._inflight = (fallback._inflight || 0) + 1;
         fallback._inflightAt = now;
@@ -3324,7 +3359,7 @@ export function getApiKey(excludeKeys = [], modelKey = null, callerKey = null, c
           id: fallback.id, email: fallback.email, apiKey: fallback.apiKey,
           apiServerUrl: fallback.apiServerUrl || '',
           proxy: getEffectiveProxy(fallback.id) || null,
-          reservationTimestamp,
+          ...reservation,
           _degraded: true,
         };
       }
@@ -3492,8 +3527,7 @@ export function getApiKey(excludeKeys = [], modelKey = null, callerKey = null, c
   }
 
   const { account } = candidates[0];
-  const reservationTimestamp = nextReservationToken(now);
-  account._rpmHistory.push(reservationTimestamp);
+  const reservation = recordRpmReservation(account, now, opts.trackReservation);
   account.lastUsed = now;
   account._inflight = (account._inflight || 0) + 1;
   account._inflightAt = now;
@@ -3509,7 +3543,7 @@ export function getApiKey(excludeKeys = [], modelKey = null, callerKey = null, c
     id: account.id, email: account.email, apiKey: account.apiKey,
     apiServerUrl: account.apiServerUrl || '',
     proxy: getEffectiveProxy(account.id) || null,
-    reservationTimestamp,
+    ...reservation,
   };
 }
 
@@ -3563,6 +3597,9 @@ export function releaseAccountById(id) {
 }
 
 function _releaseAccountObj(a) {
+  // A tracked slot stays counted until its owner removes the matching ticket.
+  const tracked = a._trackedReservations?.size || 0;
+  if (tracked > 0 && accountInflight(a) <= tracked) return;
   a._inflight = Math.max(0, (a._inflight || 0) - 1);
   // R2: keep _inflightAt tracking the NEWEST activity. When a request completes
   // while others are still in flight, refresh the timestamp so those survivors
@@ -3615,6 +3652,7 @@ function runInflightCleanup(now = Date.now()) {
       log.warn(`Account ${safeAccountRef(a)} inflight=${a._inflight} stale >${Math.round((now - a._inflightAt) / 1000)}s (>${Math.round(staleMs / 1000)}s cap), auto-resetting`);
       a._inflight = 0;
       a._inflightAt = 0;
+      a._trackedReservations?.clear();
       reset++;
     }
   }
@@ -3702,7 +3740,7 @@ export function getAccountAvailability(apiKey, modelKey = null) {
   if (limit <= 0) return { available: false, reason: 'tier_expired', retryAfterMs: 60_000 };
   const used = pruneRpmHistory(a, now);
   if (used >= limit) {
-    const oldest = a._rpmHistory?.[0] || now;
+    const oldest = rpmReservationTime(a._rpmHistory?.[0]) || now;
     return { available: false, reason: 'rpm_full', retryAfterMs: Math.max(1000, oldest + RPM_WINDOW_MS - now) };
   }
   if (modelKey && !isModelAllowedForAccount(a, modelKey)) {
@@ -3894,12 +3932,15 @@ export function markRateLimited(apiKey, durationMs = 5 * 60 * 1000, modelKey = n
 }
 
 export function refundReservation(apiKey, timestamp) {
-  const account = accounts.find(a => a.apiKey === apiKey);
-  if (!account) return false;
   if (!Number.isFinite(timestamp)) return false;
-  if ((account._inflight || 0) <= 0) return false;
+  const account = accounts.find(a => a.apiKey === apiKey);
+  return refundAccountReservation(account, timestamp);
+}
+
+function refundAccountReservation(account, entry) {
+  if (!account || accountInflight(account) === 0) return false;
   pruneRpmHistory(account, Date.now());
-  const idx = account._rpmHistory?.lastIndexOf(timestamp) ?? -1;
+  const idx = account._rpmHistory.lastIndexOf(entry);
   if (idx === -1) return false;
   account._rpmHistory.splice(idx, 1);
   return true;
@@ -4928,7 +4969,7 @@ export function isAllTemporarilyUnavailable(modelKey, connectSelector = null) {
 
     const used = pruneRpmHistory(a, now);
     if (used >= limit) {
-      const oldest = a._rpmHistory?.[0];
+      const oldest = rpmReservationTime(a._rpmHistory?.[0]);
       // RPM window has a precise expiry — use it directly. The 30s floor
       // only applies when no precise expiry exists (strict-reuse busy
       // without per-account rate-limit data).
