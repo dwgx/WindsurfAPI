@@ -5,9 +5,11 @@ import { join, posix } from 'node:path';
 // pkg reads these assets separately, after esbuild produces the JavaScript.
 // Include names as well as bytes so additions to an asset glob change the digest.
 export function packageAssetDigest(root) {
-  const manifest = readFileSync(join(root, 'package.json'));
-  const { assets } = JSON.parse(manifest).pkg;
-  const digest = createHash('sha256').update(manifest);
+  const manifest = JSON.parse(readFileSync(join(root, 'package.json')));
+  const { assets } = manifest.pkg;
+  // pkg converts ESM manifests to CommonJS and serializes them again.
+  if (manifest.type === 'module') manifest.type = 'commonjs';
+  const digest = createHash('sha256').update(JSON.stringify(manifest));
   for (const pattern of assets) {
     if (pattern === 'package.json') continue;
     // The package uses explicit paths and single-directory extension globs.

@@ -70,6 +70,12 @@ it('distinguishes embedded, injected and unavailable commits, and rejects stale 
     return (await import(pathToFileURL(path).href)).getVersionInfo();
   }
   const id = { commit, assets: digest };
+  const manifest = JSON.parse(readFileSync(join(root, 'package.json')));
+  manifest.type = 'commonjs';
+  writeFileSync(join(root, 'package.json'), JSON.stringify(manifest, null, 2));
+  assert.equal(packageAssetDigest(root), digest, 'pkg rewrites ESM manifests to formatted CommonJS metadata');
+  manifest.type = 'module';
+  writeFileSync(join(root, 'package.json'), JSON.stringify(manifest));
   const good = await version('good', id);
   assert.equal(good.commit, commit.slice(0, 12));
   assert.equal(good.source, 'build-git');
