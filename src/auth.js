@@ -664,7 +664,8 @@ function recordRpmReservation(account, now, trackReservation) {
         && isCurrentAccount(account) && accounts.find(a => a.apiKey === apiKey) === account;
     },
     settleReservation(refund) {
-      if (!isCurrentAccount(account) || !active.delete(entry)) return;
+      // The captured record can retire while its last turn is still finishing.
+      if (!active.delete(entry)) return;
       if (refund) refundAccountReservation(account, entry);
       _releaseAccountObj(account);
     },

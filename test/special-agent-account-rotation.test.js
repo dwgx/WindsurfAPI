@@ -198,6 +198,37 @@ test('a late streaming failure leaves the replacement account healthy', async t 
   assert.equal(getRpmStats()[original.id].used, 0);
 });
 
+test('a failed ACP turn settles its checkout after the account is removed', async t => {
+  const original = seedAccount(t);
+  const turn = await startTurn(t, { fails: true });
+  assert.equal(removeAccount(original.id), true);
+  const replacement = addAccountByKey(testKey, 'Recreated ACP fixture');
+  t.after(() => removeAccount(replacement.id));
+
+  const later = acquireAccountByKey(testKey, model);
+  assert.ok(later);
+  assert.equal(later.id, replacement.id);
+  const response = await turn.complete();
+  assert.equal(response.status, 502);
+  const rpm = getRpmStats();
+  assert.deepEqual({
+    originalInflight: original._inflight,
+    originalRpm: original._rpmHistory.length,
+    removed: rpm[original.id] === undefined,
+    replacementInflight: replacement._inflight,
+    replacementRpm: rpm[replacement.id].used,
+    replacementErrors: replacement.errorCount,
+  }, {
+    originalInflight: 0,
+    originalRpm: 0,
+    removed: true,
+    replacementInflight: 1,
+    replacementRpm: 1,
+    replacementErrors: 0,
+  });
+  releaseAccountById(later.id);
+});
+
 test('returning to a previous key leaves the earlier buffered health result stale', async t => {
   const account = seedAccount(t);
   const now = Date.now();
