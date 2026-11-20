@@ -143,9 +143,9 @@ class NoWarmClient extends WindsurfClient {
   warmupCascade() { return Promise.resolve(); }
 }
 
-async function runTurn({ port, maxWaitMs, onChunk, signal, detach, Client = NoWarmClient, clockCapMs }) {
+async function runTurn({ port, maxWaitMs, onChunk, onEnd, signal, detach, Client = NoWarmClient, clockCapMs }) {
   const client = new Client('test-api-key', port, 'csrf-token');
-  const opts = { onChunk, signal, detach };
+  const opts = { onChunk, onEnd, signal, detach };
   if (maxWaitMs !== undefined) opts.maxWaitMs = maxWaitMs;
   const realNow = Date.now;
   let clockAnchor = null;
@@ -390,30 +390,71 @@ describe('F3 the route budget covers the whole turn', () => {
     });
   });
 
-  it('the poll window is what the send phase left, not a fresh copy of the budget', async () => {
+  it('ends its first poll wait at the original turn deadline without a trajectory read', async (t) => {
+    const budgetMs = 200;
+    const remainingMs = 5;
+    const startedAt = Date.now();
+    const controller = new AbortController();
+    const pollScheduled = Promise.withResolvers();
+    const terminal = Promise.withResolvers();
+    let watchPollWait = false;
+
     await withFakeLs((method, state) => {
       if (method === 'StartCascade') return { body: writeStringField(1, `cascade-${state.starts}`) };
-      // 120 ms of a 200 ms budget is spent before polling begins.
-      if (method === 'SendUserCascadeMessage') return { delayMs: 120 };
-      // The trajectory stays ACTIVE with no text: only the window's own length
-      // decides when this turn ends.
-      if (method === 'GetCascadeTrajectorySteps') return {};
+      if (method === 'SendUserCascadeMessage') {
+        // Let the successful Send reply leave less than one poll interval.
+        t.mock.timers.setTime(startedAt + budgetMs - remainingMs);
+        watchPollWait = true;
+      }
       if (method === 'GetCascadeTrajectory') return { body: writeVarintField(2, 2) };
       return {};
     }, async (server) => {
-      const result = await runTurn({ port: server.port, maxWaitMs: 200 });
-
-      assert.ok(result.elapsed < 340,
-        `the poll loop re-ran the full budget after the send phase: ${result.elapsed}ms for a 200ms turn`);
-      assert.ok(server.state.statusReads < 15,
-        `the poll loop ran ${server.state.statusReads} status reads — a fresh 200ms window instead of the send-phase remainder`);
-      assert.ok(result.elapsed >= 180,
-        `the turn ended before its deadline: ${result.elapsed}ms`);
-      assert.equal(result.err, undefined, `a window expiry is a typed terminal, not a throw: ${result.err?.message}`);
-      assert.equal(result.chunks.endReason, 'max_wait');
-      assert.equal(result.chunks.terminal.kind, 'empty');
-      assert.equal(result.chunks.terminal.status, 504);
-      assert.equal(result.chunks.terminal.code, 'windsurf_provider_deadline');
+      t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: startedAt });
+      const schedule = globalThis.setTimeout;
+      let pollDelay;
+      t.mock.method(globalThis, 'setTimeout', (callback, delay, ...args) => {
+        const timer = schedule(callback, delay, ...args);
+        if (watchPollWait) {
+          watchPollWait = false;
+          pollDelay = delay;
+          pollScheduled.resolve(true);
+        }
+        return timer;
+      });
+      const turn = runTurn({
+        port: server.port, maxWaitMs: budgetMs, signal: controller.signal, onEnd: terminal.resolve,
+      });
+      let result;
+      try {
+        assert.equal(await Promise.race([pollScheduled.promise, turn.then(() => false)]), true,
+          'the successful Send must reach its first poll wait');
+        t.mock.timers.tick(remainingMs);
+        // The timer callback resumes polling before the next immediate, and
+        // onEnd runs before the separate generator metadata lookup.
+        const ended = await Promise.race([
+          terminal.promise,
+          new Promise(resolve => setImmediate(resolve)),
+        ]);
+        assert.equal(ended?.endReason, 'max_wait', 'the poll phase must finish at the original deadline');
+        assert.equal(server.state.stepReads, 0);
+        assert.equal(server.state.statusReads, 0);
+        assert.equal(ended.terminal.kind, 'empty');
+        assert.equal(ended.terminal.status, 504);
+        assert.equal(ended.terminal.code, 'windsurf_provider_deadline');
+        result = await turn;
+        assert.equal(result.err, undefined);
+      } finally {
+        try {
+          if (!result) {
+            controller.abort();
+            if (pollDelay !== undefined) t.mock.timers.tick(pollDelay);
+            await turn;
+          }
+        } finally {
+          // The observer wraps the fake timer. Restore both in tracker order.
+          t.mock.reset();
+        }
+      }
     });
   });
 

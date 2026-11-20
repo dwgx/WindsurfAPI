@@ -1,5 +1,5 @@
 {
-  "_scope_note": "F2/F3 (evidence/audit2/Cascade.md:254-296): the final-sweep text must count as turn output, and the route budget must cover warmup/StartCascade/Send/retry/polling/detach instead of starting at the poll loop. Both defects were reproduced at 2598299e (streamed 'answer' -> 502 EMPTY_RESPONSE; 100 ms budget -> 310 ms behind a 250 ms Send) and re-pinned here against the fixed producer. Each mutation re-introduces one half of the fix; the two expectCaught:false entries are MEASURED survivors with the reason they cannot be seen from outside.",
+  "_scope_note": "F2/F3 (evidence/audit2/Cascade.md:254-296): the final-sweep text must count as turn output, and the route budget must cover warmup/StartCascade/Send/retry/polling/detach instead of starting at the poll loop. Both defects were reproduced at 2598299e (streamed 'answer' -> 502 EMPTY_RESPONSE; 100 ms budget -> 310 ms behind a 250 ms Send) and re-pinned here against the fixed producer. The expectCaught:false entry records the measured equivalent survivor and the premise behind it.",
   "_baseline_provenance": "Measured 2026-11-19 on Windows, Node v24.19.0, base eecd3819 plus the Cascade JWT cancellation change. Four JWT lifecycle tests increase the combined suite from 19 to 23. Command: node --import ./test/setup-env.mjs --test test/cascade-final-sweep-terminal.test.js test/cascade-turn-deadline.test.js. Result: 23 passed, 0 failed, 0 skipped. The Send RPC now takes its preframed body. Its mutation still removes the remaining-time bound from that same call. Historical full sweep: 6 caught and 2 expected survivors at 19/19 on the 2026-10-26 baseline, recorded in evidence/final/DeadlineFlake.md.",
   "tests": [
     "test/cascade-final-sweep-terminal.test.js",
@@ -27,11 +27,10 @@
       "replacement": "      this.totalYielded += textDelta.length;"
     },
     {
-      "name": "SURVIVOR (masked by the deadline-bounded reads): the poll window is granted the full route budget again. Every read in the loop is itself bounded by the remaining turn time, so a spent deadline ends the loop as max_wait whether or not the window agrees; the window line is kept because it stops the loop from issuing 1 ms-timeout RPCs after the deadline, and the difference is not deterministically observable from outside (it would depend on a 1 ms read timeout not firing). The detach-deadline assertion does catch the related regression through the admission pin",
+      "name": "F3: the poll window is granted the full route budget again. With five milliseconds left after Send, the first poll wait must stop at the original deadline with a typed max_wait result and zero trajectory reads. The fake clock observes that terminal before any per-RPC timeout can mask the late wakeup",
       "file": "src/client.js",
       "anchor": "      const maxWait = Math.max(0, turnStart + turnBudgetMs - startTime);",
-      "replacement": "      const maxWait = turnBudgetMs;",
-      "expectCaught": false
+      "replacement": "      const maxWait = turnBudgetMs;"
     },
     {
       "name": "F3: a phase failure after the deadline is no longer converted to the route-budget stop — a Send/StartCascade that ran out of turn time surfaces as a transport error, which rotates accounts and retries a request that has no time left",
