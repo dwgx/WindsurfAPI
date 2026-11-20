@@ -156,6 +156,31 @@ function normalizeSchemaTypes(node, depth = 0) {
   return out;
 }
 
+// In a Gemini response Schema only properties, items and anyOf contain other
+// Schema messages. Examples and defaults are arbitrary JSON, including objects
+// with a literal "type" member. Walk schema nodes without recursing on the JS stack.
+function normalizeResponseSchema(schema) {
+  const pending = [];
+  function copyNode(node) {
+    if (!node || typeof node !== 'object' || Array.isArray(node)) return node;
+    const copy = { ...node };
+    const lower = typeof node.type === 'string' && node.type.toLowerCase();
+    if (GEMINI_SCHEMA_TYPES.has(lower)) copy.type = lower;
+    pending.push(copy);
+    return copy;
+  }
+  const root = copyNode(schema);
+  while (pending.length) {
+    const node = pending.pop();
+    if (node.properties && typeof node.properties === 'object' && !Array.isArray(node.properties)) {
+      node.properties = Object.fromEntries(Object.entries(node.properties).map(([name, sub]) => [name, copyNode(sub)]));
+    }
+    if (node.items) node.items = copyNode(node.items);
+    if (Array.isArray(node.anyOf)) node.anyOf = node.anyOf.map(copyNode);
+  }
+  return root;
+}
+
 function mapGeminiToolChoice(toolConfig) {
   const mode = toolConfig?.functionCallingConfig?.mode;
   if (!mode) return undefined;
@@ -392,7 +417,7 @@ export function geminiToOpenAI(body, modelFromPath) {
   // responseSchema / responseJsonSchema) → OpenAI response_format.
   let responseFormat = null;
   if (gc.responseMimeType === 'application/json') {
-    const schema = gc.responseSchema || gc.responseJsonSchema;
+    const schema = gc.responseSchema ? normalizeResponseSchema(gc.responseSchema) : gc.responseJsonSchema;
     if (schema) {
       responseFormat = {
         type: 'json_schema',
