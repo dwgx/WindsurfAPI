@@ -103,6 +103,17 @@ export function headerSafeValue(value, max = 256) {
   return String(value ?? '').replace(/[^\x20-\x7E]/g, '').slice(0, max);
 }
 
+// A proxy string that FAILED parseProxyUrl() cannot be turned into a
+// redactedProxyLabel(parsed) — there is no parsed object. It may still carry
+// userinfo (`scheme://user:secret@host`, or the bare `user:secret@host` form),
+// so mask every userinfo run before the rejection diagnostic reaches a log,
+// and collapse control characters so the input cannot forge its own log line.
+export function redactInvalidProxyInput(value, max = 80) {
+  const s = String(value ?? '').replace(/[\u0000-\u001F\u007F]/g, ' ').replace(/\s+/g, ' ').trim();
+  const masked = s.replace(/(\/\/|^| )[^\s/]*@/g, '$1***@');
+  return masked.slice(0, max);
+}
+
 export function readBody(req) {
   return new Promise((resolve, reject) => {
     const chunks = [];
@@ -796,7 +807,7 @@ async function route(req, res) {
         if (!proxyStr) return null;
         const parsed = parseProxyUrl(proxyStr);
         if (!parsed) {
-          log.warn(`auth/login: ignoring invalid proxy format: ${String(proxyStr).slice(0, 80)}`);
+          log.warn(`auth/login: ignoring invalid proxy format: ${redactInvalidProxyInput(proxyStr)}`);
           return null;
         }
         await validateProxyHost(parsed);

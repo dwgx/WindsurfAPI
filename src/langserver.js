@@ -653,7 +653,7 @@ async function evictLruIdleNonDefault() {
     exit: how,
     startedAt: evicted?.startedAt || null,
   });
-  log.warn(`LS pool at cap (${MAX_LS_INSTANCES}), evicted LRU instance ${lruKey} (${how}; started ${evicted?.startedAt ? new Date(evicted.startedAt).toISOString() : '?'})`);
+  log.warn(`LS pool at cap (${MAX_LS_INSTANCES}), evicted LRU instance ${publicLsKey(lruKey)} (${how}; started ${evicted?.startedAt ? new Date(evicted.startedAt).toISOString() : '?'})`);
   if (!lruKey) return null;
   return lruKey;
 }
@@ -803,6 +803,9 @@ function getLsPoolSummary(now = Date.now()) {
 }
 
 export function getLsAdmissionStatus(proxy = null) {
+  // `key` is the raw pool identity (it can embed a sticky-proxy username).
+  // Every field returned from here is a diagnostic: publish the projection
+  // and keep the raw key private to the pool.
   const key = proxyKey(proxy);
   const existing = _pool.get(key);
   const pending = _pending.has(key);
@@ -818,7 +821,7 @@ export function getLsAdmissionStatus(proxy = null) {
       wouldStart: false,
       errorType: null,
       reason: 'already_running',
-      key,
+      key: publicLsKey(key),
       poolSize: occupancy,
       effectivePoolSize: effectiveOccupancy,
       maxInstances: MAX_LS_INSTANCES,
@@ -836,7 +839,7 @@ export function getLsAdmissionStatus(proxy = null) {
       wouldStart: false,
       errorType: null,
       reason: 'start_pending',
-      key,
+      key: publicLsKey(key),
       poolSize: occupancy,
       effectivePoolSize: effectiveOccupancy,
       maxInstances: MAX_LS_INSTANCES,
@@ -850,7 +853,7 @@ export function getLsAdmissionStatus(proxy = null) {
       wouldStart: true,
       errorType: 'ls_memory_guard',
       reason: 'memory_guard',
-      key,
+      key: publicLsKey(key),
       poolSize: occupancy,
       effectivePoolSize: effectiveOccupancy,
       maxInstances: MAX_LS_INSTANCES,
@@ -864,7 +867,7 @@ export function getLsAdmissionStatus(proxy = null) {
       wouldStart: true,
       errorType: 'ls_pool_exhausted',
       reason: 'pool_full_no_idle',
-      key,
+      key: publicLsKey(key),
       poolSize: occupancy,
       effectivePoolSize: effectiveOccupancy,
       maxInstances: MAX_LS_INSTANCES,
@@ -877,7 +880,7 @@ export function getLsAdmissionStatus(proxy = null) {
     wouldStart: true,
     errorType: null,
     reason: 'can_start',
-    key,
+    key: publicLsKey(key),
     poolSize: occupancy,
     effectivePoolSize: effectiveOccupancy,
     maxInstances: MAX_LS_INSTANCES,
@@ -885,7 +888,9 @@ export function getLsAdmissionStatus(proxy = null) {
     poolFull: effectiveOccupancy >= MAX_LS_INSTANCES,
     willEvict: key !== 'default' && effectiveOccupancy >= MAX_LS_INSTANCES && !!evictionCandidate,
     idleEvictableCount: evictionCandidateCount,
-    evictionCandidateKey: key !== 'default' && effectiveOccupancy >= MAX_LS_INSTANCES ? evictionCandidate?.key || null : null,
+    evictionCandidateKey: key !== 'default' && effectiveOccupancy >= MAX_LS_INSTANCES && evictionCandidate?.key
+      ? publicLsKey(evictionCandidate.key)
+      : null,
     memoryGuard,
   };
 }
@@ -941,7 +946,7 @@ async function waitForMemoryHeadroom(key, pendingStartSeq = Infinity) {
     if (snap.availableBytes == null || snap.availableBytes >= snap.minAvailableBytes) return;
     const remaining = LS_POOL_WAIT_MS - (Date.now() - start);
     if (remaining <= 0) {
-      const err = lsPoolExhaustedError(`LS memory guard blocked new instance ${key}: available=${snap.availableBytes} min=${snap.minAvailableBytes}`);
+      const err = lsPoolExhaustedError(`LS memory guard blocked new instance ${publicLsKey(key)}: available=${snap.availableBytes} min=${snap.minAvailableBytes}`);
       err.type = 'ls_memory_guard';
       err.code = 'LS_MEMORY_GUARD';
       recordAdmissionFailure('memory_guard', key, err, { memoryGuard: snap });
@@ -950,7 +955,7 @@ async function waitForMemoryHeadroom(key, pendingStartSeq = Infinity) {
     if (!logged) {
       logged = true;
       recordAdmissionWait('memory_guard', key, { memoryGuard: snap, waitMs: LS_POOL_WAIT_MS });
-      log.info(`LS memory guard delaying ${key}: available=${snap.availableBytes} min=${snap.minAvailableBytes}`);
+      log.info(`LS memory guard delaying ${publicLsKey(key)}: available=${snap.availableBytes} min=${snap.minAvailableBytes}`);
     }
     await delay(Math.min(500, remaining));
   }
@@ -971,7 +976,7 @@ export function sweepIdleLanguageServers(now = Date.now()) {
     invalidateEntryForShutdown(entry);
     _pool.delete(key);
     stopped++;
-    log.info(`LS idle reaper stopped ${key} after ${Math.round((now - last) / 1000)}s idle`);
+    log.info(`LS idle reaper stopped ${publicLsKey(key)} after ${Math.round((now - last) / 1000)}s idle`);
   }
   return { scanned: _pool.size + stopped, stopped, ttlMs: LS_IDLE_TTL_MS };
 }
@@ -1244,6 +1249,8 @@ export async function ensureLs(proxy = null) {
         return;
       }
       entry = nowExisting || {
+        // Raw identity: `_pool`, leases, `_poolKeys()`/`getProxyByKey()` and
+        // routing all read this key. Only diagnostics project it.
         key,
         proxy,
         startedAt: Date.now(),
@@ -1297,7 +1304,9 @@ export async function ensureLs(proxy = null) {
     }
 
     const dataDir = dataDirForKey(key);
-    try { mkdirSync(`${dataDir}/db`, { recursive: true }); } catch (e) { log.warn(`mkdirSync ${dataDir}/db: ${e.message}`); }
+    // The directory name embeds the raw pool key (`…_u<username>`), so the
+    // operator-facing failure names the public projection and the errno only.
+    try { mkdirSync(`${dataDir}/db`, { recursive: true }); } catch (e) { log.warn(`mkdirSync ${publicLsKey(key)}/db failed: ${e?.code || 'unknown error'}`); }
 
     const args = [
       `--api_server_url=${_apiServerUrl}`,
@@ -1321,19 +1330,25 @@ export async function ensureLs(proxy = null) {
       );
     }
 
-    log.info(`Starting LS instance key=${key} port=${port} proxy=${redactProxyUrl(pUrl)}`);
+    log.info(`Starting LS instance key=${publicLsKey(key)} port=${port} proxy=${redactProxyUrl(pUrl)}`);
 
     const proc = spawn(_binaryPath, args, {
       stdio: ['pipe', 'pipe', 'pipe'],
       env,
     });
 
+    // The pool key is also the data-directory name, so the child itself can
+    // echo it (argv in an error, a path in a stack trace). Replace the exact
+    // raw key wherever it appears in child output; never rewrite anything else.
+    const shownKey = publicLsKey(key);
+    const redactKeyInLine = (line) => (key === shownKey ? line : line.split(key).join(shownKey));
+
     proc.stdout.on('data', (data) => {
       const lines = data.toString().trim().split('\n');
       for (const line of lines) {
         if (!line) continue;
-        if (/ERROR|error/.test(line)) log.error(`[LS:${key}] ${line}`);
-        else log.debug(`[LS:${key}] ${line}`);
+        if (/ERROR|error/.test(line)) log.error(`[LS:${shownKey}] ${redactKeyInLine(line)}`);
+        else log.debug(`[LS:${shownKey}] ${redactKeyInLine(line)}`);
       }
     });
     proc.stderr.on('data', (data) => {
@@ -1341,11 +1356,11 @@ export async function ensureLs(proxy = null) {
       for (const line of lines) {
         if (!line) continue;
         const level = classifyLanguageServerStderr(line);
-        log[level](`[LS:${key}:stderr] ${line}`);
+        log[level](`[LS:${shownKey}:stderr] ${redactKeyInLine(line)}`);
       }
     });
     proc.on('exit', (code, signal) => {
-      log.warn(`LS instance ${key} exited: code=${code} signal=${signal}`);
+      log.warn(`LS instance ${publicLsKey(key)} exited: code=${code} signal=${signal}`);
       const current = _pool.get(key);
       const ownsEntry = current?.process === proc;
       const intentionalExit = isIntentionalShutdown(proc);
@@ -1374,7 +1389,7 @@ export async function ensureLs(proxy = null) {
         _pool.delete(key);
         _maintenanceUses.delete(key);
       } else {
-        log.debug(`Ignoring stale LS exit for ${key}; pool entry belongs to a newer generation`);
+        log.debug(`Ignoring stale LS exit for ${publicLsKey(key)}; pool entry belongs to a newer generation`);
       }
       if (gonePort) {
         closeSessionForPort(gonePort);
@@ -1404,7 +1419,7 @@ export async function ensureLs(proxy = null) {
               : `Ensure the binary matches your arch: ${process.arch}`)
         );
       } else {
-        log.error(`LS instance ${key} spawn error: ${err.message}`);
+        log.error(`LS instance ${publicLsKey(key)} spawn error: ${err.message}`);
       }
       if (_pool.get(key)?.process === proc) {
         _pool.delete(key);
@@ -1432,9 +1447,9 @@ export async function ensureLs(proxy = null) {
         entry.readyAt = Date.now();
         touchEntry(entry);
         recordStartSuccess(key, { port, pid: proc.pid || null, readyMs: entry.readyAt - entry.startedAt });
-        log.info(`LS instance ${key} ready on port ${port}`);
+        log.info(`LS instance ${publicLsKey(key)} ready on port ${port}`);
       } catch (err) {
-        log.error(`LS instance ${key} failed to become ready: ${err.message}`);
+        log.error(`LS instance ${publicLsKey(key)} failed to become ready: ${err.message}`);
       try { proc.kill('SIGKILL'); } catch {}
       if (_pool.get(key)?.process === proc) {
         _pool.delete(key);
@@ -1492,7 +1507,7 @@ export async function restartLsForProxy(proxy) {
     how = await waitProcessExit(entry?.process, 500);
   }
   _stopping.delete(key);
-  log.info(`LS instance ${key} stopped for restart (${how})`);
+  log.info(`LS instance ${publicLsKey(key)} stopped for restart (${how})`);
   return ensureLs(proxy);
 }
 
@@ -1516,7 +1531,7 @@ const _restartAttempts = new Map();
 function scheduleLsRestart(key, proxy, oldPort) {
   const attempts = (_restartAttempts.get(key) || 0) + 1;
   if (attempts > AUTO_RESTART_MAX_RETRIES) {
-    log.error(`LS auto-restart: ${key} exceeded max retries (${AUTO_RESTART_MAX_RETRIES}), giving up`);
+    log.error(`LS auto-restart: ${publicLsKey(key)} exceeded max retries (${AUTO_RESTART_MAX_RETRIES}), giving up`);
     _restartAttempts.delete(key);
     return;
   }
@@ -1524,15 +1539,15 @@ function scheduleLsRestart(key, proxy, oldPort) {
   const delay = AUTO_RESTART_BASE_DELAY_MS * Math.pow(2, attempts - 1);
   _restartAttempts.set(key, attempts);
 
-  log.info(`LS auto-restart: scheduling ${key} restart #${attempts} in ${delay}ms`);
+  log.info(`LS auto-restart: scheduling ${publicLsKey(key)} restart #${attempts} in ${delay}ms`);
 
   setTimeout(async () => {
     try {
       await ensureLs(proxy);
       _restartAttempts.delete(key);
-      log.info(`LS auto-restart: ${key} restarted successfully (attempt #${attempts})`);
+      log.info(`LS auto-restart: ${publicLsKey(key)} restarted successfully (attempt #${attempts})`);
     } catch (err) {
-      log.error(`LS auto-restart: ${key} restart #${attempts} failed: ${err.message}`);
+      log.error(`LS auto-restart: ${publicLsKey(key)} restart #${attempts} failed: ${err.message}`);
       if (attempts < AUTO_RESTART_MAX_RETRIES) {
         scheduleLsRestart(key, proxy, oldPort);
       }
@@ -1543,7 +1558,7 @@ function scheduleLsRestart(key, proxy, oldPort) {
 export function getRestartStats() {
   const stats = {};
   for (const [key, attempts] of _restartAttempts) {
-    stats[key] = attempts;
+    stats[publicLsKey(key)] = attempts;
   }
   return stats;
 }
@@ -1677,7 +1692,7 @@ export function stopLanguageServer() {
     _stopping.set(key, { at: Date.now(), pid: entry?.process?.pid || null, reason: 'stop' });
     try { entry.process?.kill('SIGTERM'); } catch {}
     if (entry?.port) portsToClose.push({ port: entry.port, generation: entry.generation });
-    log.info(`LS instance ${key} stopped`);
+    log.info(`LS instance ${publicLsKey(key)} stopped`);
   }
   _pool.clear();
   _maintenanceUses.clear();
@@ -1725,7 +1740,7 @@ export async function stopLanguageServerAndWait({ perProcessTimeoutMs = 1500 } =
       if (settled) return;
       settled = true;
       _stopping.delete(key);
-      log.info(`LS instance ${key} stopped (${how})`);
+      log.info(`LS instance ${publicLsKey(key)} stopped (${how})`);
       resolve();
     };
     try { proc.once('exit', () => finish('exited')); } catch {}
@@ -1771,7 +1786,9 @@ export function getLsStatus() {
     const rss = pid ? rssByRootPid.get(pid) : null;
     const lastUsedAt = e.lastUsedAt || e.startedAt || null;
     return {
-      key, port: e.port,
+      // Display/status surface: the dashboard renders this label only; restart
+      // requests carry no key and the binary-update path uses `_poolKeys()`.
+      key: publicLsKey(key), port: e.port,
       pid,
       proxy: e.proxy ? `${e.proxy.host}:${e.proxy.port}` : null,
       startedAt: e.startedAt,
