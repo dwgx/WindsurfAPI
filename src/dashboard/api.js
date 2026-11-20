@@ -1187,7 +1187,10 @@ export function preflightDashboardRequest(method, subpath, req, res) {
  */
 function modelAccessResponse(res, result) {
   if (!result.applied) {
-    log.warn(`Dashboard model-access update was NOT applied: ${result.error?.message || 'persistence failure'}`);
+    // Diagnostics must not replace the honest failure envelope with a throw.
+    try {
+      log.warn(`Dashboard model-access update was NOT applied: ${result.error?.message || 'persistence failure'}`);
+    } catch {}
     return json(res, 500, {
       success: false,
       applied: false,

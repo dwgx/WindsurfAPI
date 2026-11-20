@@ -52,9 +52,40 @@ export function __setModelAccessFsHooksForTests(hooks) {
   _fsHooksForTests = hooks || null;
 }
 
+// Diagnostics are not part of the transaction. A logger that throws (an
+// exhausted stderr, a hostile test seam) must never turn a published write into
+// a rolled-back memory state or suppress the honest failure envelope.
+function safeLog(level, ...args) {
+  try {
+    log[level]?.(...args);
+  } catch {}
+}
+
+// The policy file is JSON by contract. Snapshot ownership uses a JSON round-trip
+// so neither a caller's request body nor a getter consumer can mutate live state
+// through an object nested inside the list. Anything non-JSON was never
+// persistable through writeJsonAtomic either; keep a shallow fallback for it.
+function cloneList(list) {
+  if (!Array.isArray(list)) return [];
+  try {
+    return JSON.parse(JSON.stringify(list));
+  } catch {
+    return [...list];
+  }
+}
+
+function jsonSame(a, b) {
+  if (a === b) return true;
+  try {
+    return JSON.stringify(a) === JSON.stringify(b);
+  } catch {
+    return false;
+  }
+}
+
 function persistSnapshot(snapshot) {
   if (_persistFailureForTests) {
-    log.error('Failed to save model-access.json:', _persistFailureForTests.message);
+    safeLog('error', 'Failed to save model-access.json:', _persistFailureForTests.message);
     return { applied: false, durability: PERSIST_NOT_APPLIED, error: _persistFailureForTests };
   }
   try {
@@ -62,10 +93,10 @@ function persistSnapshot(snapshot) {
     return { applied: true, durability: PERSIST_DURABLE };
   } catch (e) {
     if (!e?.renamePublished) {
-      log.error('Failed to save model-access.json:', e.message);
+      safeLog('error', 'Failed to save model-access.json:', e.message);
       return { applied: false, durability: PERSIST_NOT_APPLIED, error: e };
     }
-    log.error('Published model-access.json but directory sync failed:', e.message);
+    safeLog('error', 'Published model-access.json but directory sync failed:', e.message);
     return { applied: true, durability: PERSIST_UNCONFIRMED };
   }
 }
@@ -74,7 +105,7 @@ function sameSnapshot(a, b) {
   if (a.mode !== b.mode || a.defaultModel !== b.defaultModel) return false;
   if (a.list.length !== b.list.length) return false;
   for (let i = 0; i < a.list.length; i++) {
-    if (a.list[i] !== b.list[i]) return false;
+    if (!jsonSame(a.list[i], b.list[i])) return false;
   }
   return true;
 }
@@ -85,7 +116,7 @@ function sameSnapshot(a, b) {
  * change the policy the request path enforces.
  */
 export function getModelAccessConfig() {
-  return { mode: _config.mode, list: [..._config.list], defaultModel: _config.defaultModel };
+  return { mode: _config.mode, list: cloneList(_config.list), defaultModel: _config.defaultModel };
 }
 
 /**
@@ -112,14 +143,14 @@ export function updateModelAccess(patch = {}) {
   const source = (patch && typeof patch === 'object') ? patch : {};
   const candidate = {
     mode: _config.mode,
-    list: [..._config.list],
+    list: cloneList(_config.list),
     defaultModel: _config.defaultModel,
   };
   if (source.mode) {
     if (['all', 'allowlist', 'blocklist'].includes(source.mode)) candidate.mode = source.mode;
   }
   if (source.list) {
-    candidate.list = Array.isArray(source.list) ? [...source.list] : [];
+    candidate.list = Array.isArray(source.list) ? cloneList(source.list) : [];
   }
   if (source.defaultModel !== undefined) {
     candidate.defaultModel = typeof source.defaultModel === 'string' ? source.defaultModel.trim() : '';

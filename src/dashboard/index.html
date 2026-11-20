@@ -12031,6 +12031,35 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     `).join('') || `<div class="text-sm text-dim">${I18n.t('table.empty.models')}</div>`;
   },
 
+  // A receipt is the only evidence that a write was accepted. An empty 200
+  // body decoded to {}, a transport failure shape, or a self-contradictory
+  // envelope ({success:true,applied:false}) must never count as success and
+  // must never install a config the server did not vouch for.
+  modelAccessReceipt(r) {
+    const durabilities = ['durable', 'unconfirmed', 'unchanged', 'not-applied'];
+    if (!r || typeof r !== 'object' || Array.isArray(r)) return null;
+    if (typeof r.success !== 'boolean' || typeof r.applied !== 'boolean') return null;
+    if (r.success !== r.applied) return null;
+    if (!durabilities.includes(r.durability)) return null;
+    if (r.applied && r.durability === 'not-applied') return null;
+    if (!r.applied && r.durability !== 'not-applied') return null;
+    const cfg = r.config;
+    if (!cfg || typeof cfg !== 'object' || typeof cfg.mode !== 'string' || !Array.isArray(cfg.list)) return null;
+    return r;
+  },
+
+  // A real radio click changes the control BEFORE onchange runs, so a failure
+  // must put the controls back on the last accepted policy — not just leave the
+  // in-memory object alone.
+  restoreModelAccessControls() {
+    const cfg = this.modelAccessConfig || { mode: 'all', list: [], defaultModel: '' };
+    const radio = document.querySelector(`input[name="model-mode"][value="${cfg.mode}"]`);
+    if (radio) radio.checked = true;
+    const defInput = document.getElementById('model-default');
+    if (defInput) defInput.value = cfg.defaultModel || '';
+    this.updateModelListUI();
+  },
+
   // The server is authoritative for model access. Apply the snapshot it
   // returns (the still-active one after a failure) instead of keeping an
   // optimistic local edit the server rejected.
@@ -12055,15 +12084,24 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
   // could not be proven — report that as a warning, never as a plain success
   // and never as “nothing happened”.
   modelAccessOutcome(r, successKey) {
-    if (!r || r.success === false || r.applied === false) {
-      const error = typeof r?.error === 'string' ? r.error : (r?.error?.message || 'ERR_MODEL_ACCESS_NOT_APPLIED');
-      this.applyModelAccessResponse(r);
+    const receipt = this.modelAccessReceipt(r);
+    if (!receipt) {
+      this.restoreModelAccessControls();
+      const error = typeof r?.error === 'string' ? r.error : (r?.error?.message || 'ERR_MODEL_ACCESS_INVALID_RECEIPT');
       this.toast(I18n.t('toast.saveFailed', { error }), 'error');
       return false;
     }
-    this.applyModelAccessResponse(r);
-    const warnings = Array.isArray(r.warnings) ? r.warnings : [];
-    if (r.durability === 'unconfirmed' || warnings.includes('ERR_MODEL_ACCESS_DURABILITY_UNCONFIRMED')) {
+    if (!receipt.applied) {
+      // Coherent rejection: the server's authoritative unchanged snapshot
+      // replaces the optimistic request.
+      this.applyModelAccessResponse(receipt);
+      const error = typeof receipt.error === 'string' ? receipt.error : (receipt.error?.message || 'ERR_MODEL_ACCESS_NOT_APPLIED');
+      this.toast(I18n.t('toast.saveFailed', { error }), 'error');
+      return false;
+    }
+    this.applyModelAccessResponse(receipt);
+    const warnings = Array.isArray(receipt.warnings) ? receipt.warnings : [];
+    if (receipt.durability === 'unconfirmed' || warnings.includes('ERR_MODEL_ACCESS_DURABILITY_UNCONFIRMED')) {
       this.toast(I18n.locale === 'en'
         ? 'Policy updated and active, but a safe disk save could not be confirmed. Check server storage.'
         : '策略已更新并生效，但尚未确认已安全写入磁盘。请检查服务器存储。', 'error');
