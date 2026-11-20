@@ -71,6 +71,11 @@ export function deliverBackend(index, { status = 200, headers = {}, body = '' } 
   res.statusCode = status;
   res.headers = headers;
   res.body = body;
+  res.pipe = (dest) => {
+    res.on('data', (chunk) => dest.write(chunk));
+    res.on('end', () => dest.end());
+    return dest;
+  };
   record.res = res;
   record.callback(res);
   if (body) res.emit('data', Buffer.from(body));
