@@ -99,13 +99,13 @@ const REVIEWED_NOT_SINKS = [
   { line: 11718, field: 'id', expr: 'id}', why: 'B url-or-selector: model-row detail selector, not markup' },
   { line: 11878, field: 'id', expr: 'id}', why: 'B url-or-selector: reset-errors PATCH path, not markup' },
   { line: 11893, field: 'id', expr: 'id}', why: 'B url-or-selector: DELETE path, not markup' },
-  { line: 12157, field: 'id', expr: 'id}', why: 'B url-or-selector: proxy PUT path, not markup' },
-  { line: 12169, field: 'id', expr: 'id}', why: 'B url-or-selector: proxy DELETE path, not markup' },
-  { line: 13779, field: 'id', expr: 'id}', why: 'C numeric-or-http: local DOM id built from a literal settings key, not account data' },
-  { line: 13780, field: 'id', expr: 'id}', why: 'C numeric-or-http: local DOM id built from a literal settings key, not account data' },
-  { line: 13950, field: 'id', expr: 'id}', why: 'C numeric-or-http: local DOM id built from a literal settings key, not account data' },
-  { line: 13951, field: 'id', expr: 'id}', why: 'C numeric-or-http: local DOM id built from a literal settings key, not account data' },
-  { line: 14251, field: 'status', expr: 'res.status}', why: 'C numeric-or-http: HTTP status code, always a Number' },
+  { line: 12229, field: 'id', expr: 'id}', why: 'B url-or-selector: proxy PUT path, not markup' },
+  { line: 12241, field: 'id', expr: 'id}', why: 'B url-or-selector: proxy DELETE path, not markup' },
+  { line: 13851, field: 'id', expr: 'id}', why: 'C numeric-or-http: local DOM id built from a literal settings key, not account data' },
+  { line: 13852, field: 'id', expr: 'id}', why: 'C numeric-or-http: local DOM id built from a literal settings key, not account data' },
+  { line: 14022, field: 'id', expr: 'id}', why: 'C numeric-or-http: local DOM id built from a literal settings key, not account data' },
+  { line: 14023, field: 'id', expr: 'id}', why: 'C numeric-or-http: local DOM id built from a literal settings key, not account data' },
+  { line: 14323, field: 'status', expr: 'res.status}', why: 'C numeric-or-http: HTTP status code, always a Number' },
 ];
 
 function dashboardSource() {
