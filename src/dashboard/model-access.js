@@ -28,39 +28,147 @@ try {
   log.error('Failed to load model-access.json:', e.message);
 }
 
-function save() {
+// One snapshot, one atomic write. writeJsonAtomic publishes the new bytes via
+// rename(2); a failure AFTER the rename (parent-directory fsync) leaves the new
+// file visible while marking the error `renamePublished`. Memory must follow
+// that published file — rolling back would make the live process disagree with
+// disk and let the next save resurrect the old policy. Same contract as the
+// accepted runtime-config credential transaction (src/runtime-config.js).
+const PERSIST_DURABLE = 'durable';
+const PERSIST_UNCONFIRMED = 'unconfirmed';
+const PERSIST_NOT_APPLIED = 'not-applied';
+const PERSIST_UNCHANGED = 'unchanged';
+
+let _persistFailureForTests = null;
+let _fsHooksForTests = null;
+
+/** Simulate a fault BEFORE any byte is written (the historical ENOSPC seam). */
+export function __setModelAccessPersistFailureForTests(err) {
+  _persistFailureForTests = err || null;
+}
+
+/** Replace the filesystem seams (writeJsonAtomic / rename / fsyncParent). */
+export function __setModelAccessFsHooksForTests(hooks) {
+  _fsHooksForTests = hooks || null;
+}
+
+function persistSnapshot(snapshot) {
+  if (_persistFailureForTests) {
+    log.error('Failed to save model-access.json:', _persistFailureForTests.message);
+    return { applied: false, durability: PERSIST_NOT_APPLIED, error: _persistFailureForTests };
+  }
   try {
-    writeJsonAtomic(ACCESS_FILE, _config);
+    (_fsHooksForTests?.writeJsonAtomic || writeJsonAtomic)(ACCESS_FILE, snapshot);
+    return { applied: true, durability: PERSIST_DURABLE };
   } catch (e) {
-    log.error('Failed to save model-access.json:', e.message);
+    if (!e?.renamePublished) {
+      log.error('Failed to save model-access.json:', e.message);
+      return { applied: false, durability: PERSIST_NOT_APPLIED, error: e };
+    }
+    log.error('Published model-access.json but directory sync failed:', e.message);
+    return { applied: true, durability: PERSIST_UNCONFIRMED };
   }
 }
 
+function sameSnapshot(a, b) {
+  if (a.mode !== b.mode || a.defaultModel !== b.defaultModel) return false;
+  if (a.list.length !== b.list.length) return false;
+  for (let i = 0; i < a.list.length; i++) {
+    if (a.list[i] !== b.list[i]) return false;
+  }
+  return true;
+}
+
+/**
+ * Read a copy of the accepted snapshot. The list is copied too: callers use
+ * the result for rendering/filtering and an accidental in-place edit must never
+ * change the policy the request path enforces.
+ */
 export function getModelAccessConfig() {
-  return { ..._config };
+  return { mode: _config.mode, list: [..._config.list], defaultModel: _config.defaultModel };
+}
+
+/**
+ * Apply one policy patch as a single transaction.
+ *
+ * Presence/coercion rules intentionally match the historical route and
+ * setters so existing callers keep their validation:
+ *   - a truthy `mode` is applied only when it is one of the three known modes;
+ *     anything else (including a bogus string) leaves the mode untouched;
+ *   - a truthy `list` must be an array, otherwise it clears the list (the old
+ *     setModelAccessList coercion);
+ *   - `defaultModel` is trimmed; non-strings become the empty "reject" value.
+ *
+ * Returns `{ config, applied, changed, durability, error? }`:
+ *   - applied:false / durability:'not-applied' — the snapshot never reached
+ *     disk, and memory still holds the previous policy.
+ *   - applied:true / durability:'durable' — the new policy is live and durable.
+ *   - applied:true / durability:'unconfirmed' — the rename published the new
+ *     policy (live + visible on disk) but the parent-directory sync failed.
+ *   - applied:true / changed:false / durability:'unchanged' — the request
+ *     matched the accepted snapshot, so no write was attempted.
+ */
+export function updateModelAccess(patch = {}) {
+  const source = (patch && typeof patch === 'object') ? patch : {};
+  const candidate = {
+    mode: _config.mode,
+    list: [..._config.list],
+    defaultModel: _config.defaultModel,
+  };
+  if (source.mode) {
+    if (['all', 'allowlist', 'blocklist'].includes(source.mode)) candidate.mode = source.mode;
+  }
+  if (source.list) {
+    candidate.list = Array.isArray(source.list) ? [...source.list] : [];
+  }
+  if (source.defaultModel !== undefined) {
+    candidate.defaultModel = typeof source.defaultModel === 'string' ? source.defaultModel.trim() : '';
+  }
+
+  if (sameSnapshot(candidate, _config)) {
+    return { config: getModelAccessConfig(), applied: true, changed: false, durability: PERSIST_UNCHANGED };
+  }
+
+  const outcome = persistSnapshot(candidate);
+  if (!outcome.applied) {
+    // Nothing reached the file: keep the accepted snapshot (and the old file).
+    return {
+      config: getModelAccessConfig(),
+      applied: false,
+      changed: true,
+      durability: outcome.durability,
+      error: outcome.error,
+    };
+  }
+  // Either durable or published-but-unconfirmed: both mean the file holds
+  // `candidate`, so memory must agree with it.
+  _config.mode = candidate.mode;
+  _config.list = candidate.list;
+  _config.defaultModel = candidate.defaultModel;
+  return {
+    config: getModelAccessConfig(),
+    applied: true,
+    changed: true,
+    durability: outcome.durability,
+  };
 }
 
 export function setModelAccessMode(mode) {
   if (!['all', 'allowlist', 'blocklist'].includes(mode)) return;
-  _config.mode = mode;
-  save();
+  updateModelAccess({ mode });
 }
 
 export function setModelAccessList(list) {
-  _config.list = Array.isArray(list) ? list : [];
-  save();
+  updateModelAccess({ list: Array.isArray(list) ? list : [] });
 }
 
 export function addModelToList(modelId) {
-  if (!_config.list.includes(modelId)) {
-    _config.list.push(modelId);
-    save();
-  }
+  if (_config.list.includes(modelId)) return;
+  updateModelAccess({ list: [..._config.list, modelId] });
 }
 
 export function removeModelFromList(modelId) {
-  _config.list = _config.list.filter(m => m !== modelId);
-  save();
+  updateModelAccess({ list: _config.list.filter(m => m !== modelId) });
 }
 
 /**
@@ -70,8 +178,7 @@ export function removeModelFromList(modelId) {
  * string means "reject", which is the safe default.
  */
 export function setDefaultModel(modelId) {
-  _config.defaultModel = typeof modelId === 'string' ? modelId.trim() : '';
-  save();
+  updateModelAccess({ defaultModel: typeof modelId === 'string' ? modelId.trim() : '' });
 }
 
 export function getDefaultModel() {

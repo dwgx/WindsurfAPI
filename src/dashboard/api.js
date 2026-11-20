@@ -88,7 +88,7 @@ import {
 } from './devin-panel.js';
 import { listRequests, requestRingStats } from './request-ring.js';
 import { windsurfLogin, refreshFirebaseToken, reRegisterWithCodeium, probeLoginMethod, emailLoginStart, emailLoginComplete, checkEmailLocked, assertLoginIdentity } from './windsurf-login.js';
-import { getModelAccessConfig, setModelAccessMode, setModelAccessList, addModelToList, removeModelFromList, setDefaultModel } from './model-access.js';
+import { getModelAccessConfig, updateModelAccess } from './model-access.js';
 import { checkMessageRateLimit } from '../windsurf-api.js';
 import { getNativeBridgeConfigStatus } from '../cascade-native-bridge.js';
 import { getNativeBridgeStats } from '../native-bridge-stats.js';
@@ -1177,6 +1177,36 @@ export function preflightDashboardRequest(method, subpath, req, res) {
   if (!runDashboardRequestGate(method, subpath, req, res)) return false;
   if (req && typeof req === 'object') req[DASHBOARD_PREFLIGHT_PASSED] = true;
   return true;
+}
+
+/**
+ * Shape one model-access transaction outcome as the HTTP body the dashboards
+ * consume. A pre-publication failure is an honest 500; a published rename whose
+ * directory sync failed is still a success (the policy is live) carrying an
+ * explicit warning code, never an ordinary unqualified success.
+ */
+function modelAccessResponse(res, result) {
+  if (!result.applied) {
+    log.warn(`Dashboard model-access update was NOT applied: ${result.error?.message || 'persistence failure'}`);
+    return json(res, 500, {
+      success: false,
+      applied: false,
+      changed: result.changed,
+      durability: 'not-applied',
+      error: 'ERR_MODEL_ACCESS_PERSIST_FAILED',
+      config: result.config,
+    });
+  }
+  return json(res, 200, {
+    success: true,
+    applied: true,
+    changed: result.changed,
+    durability: result.durability,
+    ...(result.durability === 'unconfirmed'
+      ? { warnings: ['ERR_MODEL_ACCESS_DURABILITY_UNCONFIRMED'] }
+      : {}),
+    config: result.config,
+  });
 }
 
 /**
@@ -3584,22 +3614,21 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
   }
 
   if (subpath === '/model-access' && method === 'PUT') {
-    if (body.mode) setModelAccessMode(body.mode);
-    if (body.list) setModelAccessList(body.list);
-    if (body.defaultModel !== undefined) setDefaultModel(body.defaultModel);
-    return json(res, 200, { success: true, config: getModelAccessConfig() });
+    return modelAccessResponse(res, updateModelAccess(body));
   }
 
   if (subpath === '/model-access/add' && method === 'POST') {
-    if (!body.model) return json(res, 400, { error: 'model is required' });
-    addModelToList(body.model);
-    return json(res, 200, { success: true, config: getModelAccessConfig() });
+    if (!body?.model) return json(res, 400, { error: 'model is required' });
+    const current = getModelAccessConfig();
+    // An idempotent add of an already-listed model is a no-op, not a duplicate.
+    const list = current.list.includes(body.model) ? current.list : [...current.list, body.model];
+    return modelAccessResponse(res, updateModelAccess({ list }));
   }
 
   if (subpath === '/model-access/remove' && method === 'POST') {
-    if (!body.model) return json(res, 400, { error: 'model is required' });
-    removeModelFromList(body.model);
-    return json(res, 200, { success: true, config: getModelAccessConfig() });
+    if (!body?.model) return json(res, 400, { error: 'model is required' });
+    const current = getModelAccessConfig();
+    return modelAccessResponse(res, updateModelAccess({ list: current.list.filter(m => m !== body.model) }));
   }
 
   // ─── Windsurf Login ────────────────────────────────────

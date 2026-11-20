@@ -12031,36 +12031,68 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     `).join('') || `<div class="text-sm text-dim">${I18n.t('table.empty.models')}</div>`;
   },
 
-  async setModelMode(mode) {
-    await this.api('PUT', '/model-access', { mode });
-    this.modelAccessConfig.mode = mode;
+  // The server is authoritative for model access. Apply the snapshot it
+  // returns (the still-active one after a failure) instead of keeping an
+  // optimistic local edit the server rejected.
+  applyModelAccessResponse(r) {
+    const cfg = r?.config;
+    if (!cfg || typeof cfg !== 'object' || typeof cfg.mode !== 'string') return false;
+    this.modelAccessConfig = {
+      mode: cfg.mode,
+      list: Array.isArray(cfg.list) ? [...cfg.list] : [],
+      defaultModel: typeof cfg.defaultModel === 'string' ? cfg.defaultModel : '',
+    };
+    const radio = document.querySelector(`input[name="model-mode"][value="${cfg.mode}"]`);
+    if (radio) radio.checked = true;
+    const defInput = document.getElementById('model-default');
+    if (defInput) defInput.value = this.modelAccessConfig.defaultModel;
     this.updateModelListUI();
-    this.toast(I18n.t('toast.modeUpdated'));
+    return true;
+  },
+
+  // Publication is separate from HTTP success. `durability:'unconfirmed'`
+  // means the policy is live and visible on disk, but its directory entry
+  // could not be proven — report that as a warning, never as a plain success
+  // and never as “nothing happened”.
+  modelAccessOutcome(r, successKey) {
+    if (!r || r.success === false || r.applied === false) {
+      const error = typeof r?.error === 'string' ? r.error : (r?.error?.message || 'ERR_MODEL_ACCESS_NOT_APPLIED');
+      this.applyModelAccessResponse(r);
+      this.toast(I18n.t('toast.saveFailed', { error }), 'error');
+      return false;
+    }
+    this.applyModelAccessResponse(r);
+    const warnings = Array.isArray(r.warnings) ? r.warnings : [];
+    if (r.durability === 'unconfirmed' || warnings.includes('ERR_MODEL_ACCESS_DURABILITY_UNCONFIRMED')) {
+      this.toast(I18n.locale === 'en'
+        ? 'Policy updated and active, but a safe disk save could not be confirmed. Check server storage.'
+        : '策略已更新并生效，但尚未确认已安全写入磁盘。请检查服务器存储。', 'error');
+      return true;
+    }
+    if (successKey) this.toast(I18n.t(successKey));
+    return true;
+  },
+
+  async setModelMode(mode) {
+    const r = await this.api('PUT', '/model-access', { mode });
+    this.modelAccessOutcome(r, 'toast.modeUpdated');
   },
 
   async setDefaultModel(value) {
     const v = (value || '').trim();
-    await this.api('PUT', '/model-access', { defaultModel: v });
-    this.modelAccessConfig.defaultModel = v;
-    this.toast(I18n.t('toast.defaultModelUpdated'));
+    const r = await this.api('PUT', '/model-access', { defaultModel: v });
+    this.modelAccessOutcome(r, 'toast.defaultModelUpdated');
   },
 
   async toggleModelInList(modelId) {
-    const idx = this.modelAccessConfig.list.indexOf(modelId);
-    if (idx > -1) {
-      await this.api('POST', '/model-access/remove', { model: modelId });
-      this.modelAccessConfig.list.splice(idx, 1);
-    } else {
-      await this.api('POST', '/model-access/add', { model: modelId });
-      this.modelAccessConfig.list.push(modelId);
-    }
-    this.updateModelListUI();
+    const inList = this.modelAccessConfig.list.includes(modelId);
+    const r = await this.api('POST', inList ? '/model-access/remove' : '/model-access/add', { model: modelId });
+    this.modelAccessOutcome(r);
   },
 
   async removeModelFromList(modelId) {
-    await this.api('POST', '/model-access/remove', { model: modelId });
-    this.modelAccessConfig.list = this.modelAccessConfig.list.filter(m => m !== modelId);
-    this.updateModelListUI();
+    const r = await this.api('POST', '/model-access/remove', { model: modelId });
+    this.modelAccessOutcome(r);
   },
 
   // ─── Proxy ───────────────────────────────────
