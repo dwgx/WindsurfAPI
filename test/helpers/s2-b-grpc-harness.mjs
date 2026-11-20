@@ -43,6 +43,7 @@ export function startStream(module, options = {}) {
   http2.connect = () => session;
   try {
     module.grpcStream(port, 's2-test-csrf', '/s2/test', Buffer.alloc(0), {
+      signal: options.signal,
       onData(payload) { payloads.push(payload); events.push(['data', payload.length]); options.onData?.(payload); },
       onError(error) { events.push(['error', error.constructor.name, error.message]); },
       onEnd() { events.push(['end']); },

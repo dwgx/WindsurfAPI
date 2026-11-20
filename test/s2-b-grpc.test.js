@@ -228,6 +228,9 @@ test('S2-B gRPC stream: ending without grpc-status is an error, not an empty suc
 });
 
 const connectDataFrame = grpcFrame(connectMessage);
+const connectErrorFrame = grpcFrame(
+  Buffer.from('{"error":{"code":"unavailable","message":"temporarily unavailable"}}'), 2,
+);
 
 for (const { name, body, payloads } of [
   { name: 'after data', body: connectDataFrame, payloads: [connectMessage] },
@@ -269,14 +272,36 @@ test('S2-B Connect stream: a success envelope alone completes an empty stream', 
 test('S2-B Connect stream: an error envelope keeps the server error', async () => {
   const grpc = await loadGrpc({ connect: true });
   const stream = startStream(grpc);
-  const body = JSON.stringify({ error: { code: 'unavailable', message: 'temporarily unavailable' } });
   try {
     stream.req.emit('response', { ':status': 200, 'content-type': 'application/connect+proto' });
-    stream.req.emit('data', grpcFrame(Buffer.from(body), 2));
+    stream.req.emit('data', connectErrorFrame);
     stream.req.emit('end');
     assert.deepEqual(stream.events, [['error', 'Error', 'temporarily unavailable']]);
   } finally { stream.cleanup(); }
 });
+
+for (const callbackThrows of [false, true]) {
+  const callback = callbackThrows ? 'throws after abort' : 'aborts';
+  test(`S2-B Connect stream: a data handler that ${callback} settles once`, async () => {
+    const grpc = await loadGrpc({ connect: true });
+    const controller = new AbortController();
+    const stream = startStream(grpc, {
+      signal: controller.signal,
+      onData() {
+        controller.abort();
+        if (callbackThrows) throw new Error('consumer stopped');
+      },
+    });
+    try {
+      stream.req.emit('response', { ':status': 200, 'content-type': 'application/connect+proto' });
+      stream.req.emit('data', Buffer.concat([connectDataFrame, connectDataFrame, connectErrorFrame]));
+      stream.req.emit('end');
+      assert.deepEqual(stream.payloads, [connectMessage]);
+      assert.deepEqual(stream.events, [['data', connectMessage.length], ['error', 'Error', 'The operation was aborted']]);
+      assert.deepEqual(stream.closeCodes, [8]);
+    } finally { stream.cleanup(); }
+  });
+}
 
 test('S2-B gRPC stream: Connect HTTP 500 fails at the headers, not in the frame reader', async () => {
   const grpc = await loadGrpc({ connect: true });

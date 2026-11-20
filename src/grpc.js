@@ -514,6 +514,8 @@ export function grpcStream(port, csrfToken, path, body, opts = {}) {
       try {
         connectParser.push(chunk);
         for (const frame of connectParser.drain()) {
+          // A data callback can synchronously abort the call.
+          if (settled) return;
           if (frame.isEndStream) {
             try {
               const endStream = JSON.parse(frame.payload.toString());
@@ -542,6 +544,7 @@ export function grpcStream(port, csrfToken, path, body, opts = {}) {
           }
         }
       } catch (err) {
+        if (settled) return;
         settled = true;
         clearTimeout(timer);
         try { req.close?.(http2.constants.NGHTTP2_CANCEL); } catch {}
