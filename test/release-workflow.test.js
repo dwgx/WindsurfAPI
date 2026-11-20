@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 
 const workflow = readFileSync('.github/workflows/release.yml', 'utf8');
 const ciWorkflow = readFileSync('.github/workflows/ci.yml', 'utf8');
-const packageVersion = JSON.parse(readFileSync('package.json', 'utf8')).version;
+const { scripts: packageScripts, version: packageVersion } = JSON.parse(readFileSync('package.json', 'utf8'));
 
 function jobBlock(name) {
   const start = workflow.indexOf(`\n  ${name}:\n`);
@@ -38,10 +38,6 @@ describe('release workflow', () => {
     const winExe = jobBlock('windows-exe');
     assert.match(winExe, /\bneeds:\s*test\b/);
     assert.match(winExe, /runs-on:\s*windows-latest/);
-    // esbuild bundles the ESM graph to one CJS file, then pkg wraps it (pkg
-    // can't ingest the raw "type":"module" tree — emits CJS into ESM scope).
-    assert.match(winExe, /npm run build:bundle/);
-    assert.match(winExe, /pkg src\/_bundle\.cjs .*node22-win-x64/);
     // Must smoke-check the exe actually boots + serves the dashboard, so a
     // broken asset bundle fails the release rather than shipping a dead exe.
     assert.match(winExe, /\/health/);
@@ -62,6 +58,23 @@ describe('release workflow', () => {
     // Both the bare exe and the tray zip are attached to the release.
     assert.match(release, /dist-windows\/windsurfapi\.exe/);
     assert.match(release, /dist-windows\/windsurfapi-windows\.zip/);
+  });
+
+  it('runs the provenance-aware bundle before every native package', () => {
+    assert.equal(packageScripts['build:bundle'], 'node scripts/build-bundle.mjs');
+    const targets = [
+      ['windows-exe', 'build:exe', 'node22-win-x64'],
+      ['macos-exe-arm64', 'build:exe:macos', 'node22-macos-arm64'],
+      ['macos-exe-x64', 'build:exe:macos-x64', 'node22-macos-x64'],
+    ];
+    for (const [jobName, scriptName, target] of targets) {
+      const pkgCommand = `pkg src/_bundle.cjs --config package.json --targets ${target} `;
+      assert.ok(packageScripts[scriptName].startsWith(`npm run build:bundle && ${pkgCommand}`), scriptName);
+      const lines = jobBlock(jobName).split('\n').map((line) => line.trim());
+      const bundle = lines.indexOf('npm run build:bundle');
+      const pkg = lines.findIndex((line) => line.startsWith(pkgCommand));
+      assert.ok(bundle >= 0 && pkg > bundle, `${jobName} must bundle before invoking pkg`);
+    }
   });
 
   it('uses the bounded release test gate in CI', () => {
