@@ -143,11 +143,9 @@ export function extractGrpcFrames(buf) {
 // surfaced as an empty assistant turn and the account pool never failed over
 // (audit G4, probe G1). Presence is tracked separately from the value.
 //
-// Connect is exempt: its terminal truth is the HTTP status plus the end-stream
-// JSON frame. The HTTP-status half is decided as soon as the response headers
-// arrive (see the 'response' handlers) — a non-2xx body is an HTML/proxy page,
-// and feeding it to the frame reader reported a nonsense frame size instead of
-// the real cause (audit G2, probe C2) — so it never reaches this classifier.
+// Connect does not use grpc-status. Its HTTP status is checked on response
+// headers, before feeding the body to a frame reader (audit G2, probe C2).
+// grpcStream also requires the in-band Connect EndStreamResponse.
 
 /**
  * @returns {Error|null} the failure to surface, or null when the response is a
@@ -507,6 +505,7 @@ export function grpcStream(port, csrfToken, path, body, opts = {}) {
   }
 
   const connectParser = USE_CONNECT ? new StreamingFrameParser() : null;
+  let sawConnectEndStream = false;
 
   req.on('data', (chunk) => {
     if (settled) return;
@@ -515,15 +514,21 @@ export function grpcStream(port, csrfToken, path, body, opts = {}) {
       try {
         connectParser.push(chunk);
         for (const frame of connectParser.drain()) {
+          // A data callback can synchronously abort the call.
+          if (settled) return;
           if (frame.isEndStream) {
             try {
-              const t = JSON.parse(frame.payload.toString());
-              if (t.error) {
+              const endStream = JSON.parse(frame.payload.toString());
+              if (endStream?.error) {
                 settled = true;
                 clearTimeout(timer);
                 try { req.close?.(http2.constants.NGHTTP2_CANCEL); } catch {}
-                onError?.(new Error(t.error.message || 'connect stream error'));
+                onError?.(new Error(endStream.error.message || 'connect stream error'));
                 return;
+              }
+              if (endStream && typeof endStream === 'object'
+                  && !Array.isArray(endStream) && !Object.hasOwn(endStream, 'error')) {
+                sawConnectEndStream = true;
               }
             } catch {}
           } else {
@@ -539,6 +544,7 @@ export function grpcStream(port, csrfToken, path, body, opts = {}) {
           }
         }
       } catch (err) {
+        if (settled) return;
         settled = true;
         clearTimeout(timer);
         try { req.close?.(http2.constants.NGHTTP2_CANCEL); } catch {}
@@ -614,7 +620,9 @@ export function grpcStream(port, csrfToken, path, body, opts = {}) {
     clearTimeout(timer);
     if (settled) return;
     settled = true;
-    const failure = terminalFailure({ connect: USE_CONNECT, grpcStatus, sawGrpcStatus, grpcMessage });
+    const failure = USE_CONNECT && !sawConnectEndStream
+      ? new Error('Connect stream ended without EndStreamResponse')
+      : terminalFailure({ connect: USE_CONNECT, grpcStatus, sawGrpcStatus, grpcMessage });
     if (failure) onError?.(failure);
     else onEnd?.();
   });
