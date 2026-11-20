@@ -1471,9 +1471,11 @@ export function hasPerUserScope(callerKey) {
 // The outer key must still precede fallback/body rewrites; the inner fallback
 // key must still describe the rewritten body. The cache module's public key
 // function remains unconditional for its other callers.
-function cacheKey(body, callerKey) {
+function cacheKey(body, callerKey, keepReasoningSeparate = false) {
   if (!isCacheEnabled() || !hasPerUserScope(callerKey)) return null;
-  return computeCacheKey(body, callerKey);
+  const key = computeCacheKey(body, callerKey);
+  // Text promoted for another route must not replay as final Gemini content.
+  return keepReasoningSeparate ? `gemini:${key}` : key;
 }
 
 function isToolSensitiveOpusModel(modelKey = '') {
@@ -1575,8 +1577,8 @@ export function shouldUseCascadeReuse({ useCascade, emulateTools, modelKey, allo
 // reference to `body` into streamResponse / nonStreamResponse where it
 // wasn't in scope, ReferenceError'ing every stream finish (#93 follow-up
 // reported by zhangzhang-bit).
-export function shouldFallbackThinkingToText({ routingModelKey, wantThinking, accText, accThinking, hasToolCalls }) {
-  if (hasToolCalls) return false;
+export function shouldFallbackThinkingToText({ routingModelKey, wantThinking, accText, accThinking, hasToolCalls, keepReasoningSeparate = false }) {
+  if (keepReasoningSeparate || hasToolCalls) return false;
   if (accText && accText.length) return false;
   if (!accThinking || !accThinking.length) return false;
   if (routingModelKey && /thinking/i.test(routingModelKey)) return false;
@@ -3419,7 +3421,7 @@ export async function handleChatCompletions(body, context = {}) {
   // successful fallback writes into the cache slot the NEXT identical
   // original-model request will look up, instead of the fallback-model
   // slot that the next request will miss.
-  const originalCkey = cacheKey(body, context.callerKey || body.__callerKey || '');
+  const originalCkey = cacheKey(body, context.callerKey || body.__callerKey || '', context.keepReasoningSeparate === true);
   const result = await _handleChatCompletionsInner(body, { ...context, traceId, __originalCkey: originalCkey });
   if (traceEnabled()) traceClientResponse(traceId, { status: result?.status, stream: !!result?.stream, ms: Date.now() - traceStart, cached: !!result?.__cached });
   if (shouldAutoFallback(body, context, result)) {
@@ -3473,6 +3475,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
   // Reuse the trace id as reqId so log lines Chat[<id>] correlate 1:1 with the
   // <traceId>/ trace dir. Falls back to a random short id when untraced.
   const reqId = context.traceId || Math.random().toString(36).slice(2, 8);
+  const keepReasoningSeparate = context.keepReasoningSeparate === true;
   const {
     stream = false,
     tools,
@@ -4307,7 +4310,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
     let __sCkey = null;
     let __sHit = null;
     try {
-      __sCkey = cacheKey(body, callerKey);
+      __sCkey = cacheKey(body, callerKey, keepReasoningSeparate);
       __sHit = __sCkey ? cacheGet(__sCkey) : null;
       if (__sHit) log.info('[STREAM-CACHE-HIT] ckey=' + __sCkey);
     } catch (e) { log.info('[STREAM-CACHE-ERR] pre ' + (e && e.message)); }
@@ -4646,7 +4649,8 @@ async function _handleChatCompletionsInner(body, context = {}) {
       // exact matched stop sequence (it echoes it as the public `stop_sequence`).
       // Explicit opt-in from the route — a direct OpenAI client keeps the
       // public response shape untouched.
-      stopCarrier: context.__messagesStopCarrier === true };
+      stopCarrier: context.__messagesStopCarrier === true,
+      keepReasoningSeparate };
     // Shared failover bookkeeping for both stream + non-stream paths. triedKeys
     // accumulates every session token burned this request so getApiKey never
     // re-picks a known-dead account when we hop to the next pool member.
@@ -5867,7 +5871,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
   const reuseOriginalCkey = typeof context.__originalCkey === 'string'
     && context.__originalCkey
     && !context.__fallbackAttempt;
-  const ckey = reuseOriginalCkey ? context.__originalCkey : cacheKey(body, callerKey);
+  const ckey = reuseOriginalCkey ? context.__originalCkey : cacheKey(body, callerKey, context.keepReasoningSeparate === true);
   // SEC-W2: only share the response cache ACROSS requests when the caller has a
   // trustworthy per-user scope. A guessed `:client:` bucket (shared key behind a
   // proxy) must never serve one user's cached answer to another — treat it as
@@ -5915,6 +5919,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
       waitForAccount: waitForAccountFn,
       cachePolicy,
       wantThinking,
+      keepReasoningSeparate,
       // V-10: the JSON Schema the caller constrained this turn to, if any. The
       // stream buffers JSON content anyway, so a non-conforming payload can still
       // be reported honestly instead of closed as a clean stop.
@@ -6258,6 +6263,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
       jsonSchema,
       // V-14: the caller's completion controls (max_tokens), for the local cap.
       cascadeCompletion,
+      keepReasoningSeparate,
     );
     // Classify the entry's health BEFORE the abort branch can return: a 504 /
     // deadline verdict (or an explicit not_found) marks the cascade half-broken,
@@ -6430,7 +6436,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
   return lastErr || { status: 503, body: { error: { message: 'No active accounts available', type: 'pool_exhausted' } } };
 }
 
-async function nonStreamResponse(client, id, created, model, modelKey, messages, cascadeMessages, modelEnum, modelUid, useCascade, apiKey, ckey, poolCtx, provider, emulateTools, toolPreamble, wantJson = false, cachePolicy = null, wantThinking = false, tools = [], route = 'chat', nativeOpts = null, reqId = 'non-stream', aliasCkey = null, clineCompatActive = false, allowCascadeMetadataUnwrap = true, stopSequences = [], stopCarrier = false, signal = null, budget = null, accountId = '', jsonSchema = null, completion = null) {
+async function nonStreamResponse(client, id, created, model, modelKey, messages, cascadeMessages, modelEnum, modelUid, useCascade, apiKey, ckey, poolCtx, provider, emulateTools, toolPreamble, wantJson = false, cachePolicy = null, wantThinking = false, tools = [], route = 'chat', nativeOpts = null, reqId = 'non-stream', aliasCkey = null, clineCompatActive = false, allowCascadeMetadataUnwrap = true, stopSequences = [], stopCarrier = false, signal = null, budget = null, accountId = '', jsonSchema = null, completion = null, keepReasoningSeparate = false) {
   const startTime = Date.now();
   const nativeBridgeOn = !!nativeOpts?.enabled;
   // V-14: local enforcement of the caller's output cap. The wire field is a
@@ -6949,6 +6955,7 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
     if (shouldFallbackThinkingToText({
       routingModelKey: modelKey,
       wantThinking,
+      keepReasoningSeparate,
       accText: allText,
       accThinking: allThinking,
       hasToolCalls: toolCalls.length > 0,
@@ -8888,6 +8895,7 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
             const thinkingPromotedToText = shouldFallbackThinkingToText({
               routingModelKey: modelKey,
               wantThinking: deps.wantThinking,
+              keepReasoningSeparate: deps.keepReasoningSeparate === true,
               accText,
               accThinking,
               hasToolCalls: collectedToolCalls.length > 0,
@@ -9324,6 +9332,7 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
             accThinking = '';
             const thinkingAsText = shouldFallbackThinkingToText({
               routingModelKey: modelKey, wantThinking: !!deps.wantThinking,
+              keepReasoningSeparate: deps.keepReasoningSeparate === true,
               accText, accThinking: bufferedThinking, hasToolCalls: collectedToolCalls.length > 0,
             });
             if (thinkingAsText) {

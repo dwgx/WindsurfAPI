@@ -403,9 +403,8 @@ export function geminiToOpenAI(body, modelFromPath) {
     }
   }
 
-  // thinkingConfig → reasoning hint. Gemini 2.5 exposes thinkingBudget
-  // (token budget) and includeThoughts. The internal handler speaks the
-  // `thinking` dialect (passed through to chat.js, same as messages.js).
+  // thinkingConfig.thinkingBudget → generation hint. includeThoughts is
+  // handled by the response translator. Chat uses the `thinking` dialect.
   // TODO(unverified): exact thinkingBudget→effort mapping against this
   // backend is not calibrated; we forward a coarse enabled/disabled hint.
   let thinking = null;
@@ -493,13 +492,12 @@ function buildUsageMetadata(usage) {
 }
 
 // ─── OpenAI → Gemini non-stream response translation ────────────
-export function openAIToGemini(result, model, toolNameMap = null) {
+export function openAIToGemini(result, model, toolNameMap = null, { includeThoughts = true } = {}) {
   const choice = result?.choices?.[0];
   const msg = choice?.message || {};
   const parts = [];
 
-  // Reasoning trace → thought part (Gemini marks thinking parts with thought:true).
-  if (msg.reasoning_content) {
+  if (includeThoughts && msg.reasoning_content) {
     parts.push({ text: msg.reasoning_content, thought: true });
   }
   if (Array.isArray(msg.tool_calls) && msg.tool_calls.length) {
@@ -545,11 +543,12 @@ export function openAIToGemini(result, model, toolNameMap = null) {
 // Mode 'array' → frames streamed inside a JSON array: `[`, frame, `,frame`, `]`
 //                (the default :streamGenerateContent wire format).
 class GeminiStreamTranslator {
-  constructor(res, model, { mode = 'sse', toolNameMap = null } = {}) {
+  constructor(res, model, { mode = 'sse', toolNameMap = null, includeThoughts = true } = {}) {
     this.res = res;
     this.model = model;
     this.mode = mode;
     this.toolNameMap = toolNameMap;
+    this.includeThoughts = includeThoughts;
     this.toolCallBufs = new Map(); // index → { id, rawId, name, argsBuffered }
     // Egress id allocator: upstream may reuse one call id for two distinct
     // calls, but the client must never see the same functionCall id twice
@@ -715,7 +714,9 @@ class GeminiStreamTranslator {
     const choice = chunk.choices?.[0];
     if (choice) {
       const delta = choice.delta || {};
-      if (delta.reasoning_content) this.emitTextDelta(delta.reasoning_content, { thought: true });
+      if (this.includeThoughts && delta.reasoning_content) {
+        this.emitTextDelta(delta.reasoning_content, { thought: true });
+      }
       if (delta.content) this.emitTextDelta(delta.content);
       if (Array.isArray(delta.tool_calls)) {
         for (const tc of delta.tool_calls) this.bufferToolCall(tc);
@@ -1058,9 +1059,13 @@ export async function handleGemini(model, body, context = {}, { stream = false, 
     );
   }
   const chatHandler = context.handleChatCompletions || handleChatCompletions;
+  const includeThoughts = body?.generationConfig?.thinkingConfig?.includeThoughts === true;
+  // Keep marked parts separate even when shown, so cached or resumed turns
+  // can apply the current client's visibility preference at egress.
+  const chatContext = { ...context, keepReasoningSeparate: true };
 
   if (!stream) {
-    const result = await chatHandler({ ...openaiBody, stream: false, __route: 'gemini' }, context);
+    const result = await chatHandler({ ...openaiBody, stream: false, __route: 'gemini' }, chatContext);
     if (result.status !== 200) {
       return withUpstreamHeaders(geminiError(result.status, result.body?.error?.type, result.body?.error?.message), result.headers);
     }
@@ -1081,7 +1086,7 @@ export async function handleGemini(model, body, context = {}, { stream = false, 
     if (isCascadeInterrupted(result.body)) {
       return withUpstreamHeaders(geminiError(502, 'upstream_error', UPSTREAM_INTERRUPTED_MESSAGE), result.headers);
     }
-    return { status: 200, body: openAIToGemini(result.body, requestedModel, toolNameMap) };
+    return { status: 200, body: openAIToGemini(result.body, requestedModel, toolNameMap, { includeThoughts }) };
   }
 
   // Streaming path — ask handleChatCompletions for its streaming handler and
@@ -1096,7 +1101,7 @@ export async function handleGemini(model, body, context = {}, { stream = false, 
   // Gemini streaming response shipped with usageMetadata entirely absent.
   const streamResult = await chatHandler(
     { ...openaiBody, stream: true, __route: 'gemini', stream_options: { ...(openaiBody.stream_options || {}), include_usage: true } },
-    context,
+    chatContext,
   );
 
   if (!streamResult.stream) {
@@ -1122,7 +1127,7 @@ export async function handleGemini(model, body, context = {}, { stream = false, 
       'X-Accel-Buffering': 'no',
     },
     async handler(realRes) {
-      const translator = new GeminiStreamTranslator(realRes, requestedModel, { mode, toolNameMap });
+      const translator = new GeminiStreamTranslator(realRes, requestedModel, { mode, toolNameMap, includeThoughts });
       const captureRes = createCaptureRes(translator, realRes);
 
       // Forward client disconnect so the upstream is cancelled. Don't call

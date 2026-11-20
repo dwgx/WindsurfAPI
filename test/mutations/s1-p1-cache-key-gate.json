@@ -21,8 +21,8 @@
     {
       "name": "P1 mutation 3",
       "file": "src/handlers/chat.js",
-      "anchor": "  return computeCacheKey(body, callerKey);",
-      "replacement": "  return computeCacheKey({ ...body, model: 'wrong-model' }, callerKey);",
+      "anchor": "  const key = computeCacheKey(body, callerKey);",
+      "replacement": "  const key = computeCacheKey({ ...body, model: 'wrong-model' }, callerKey);",
       "expectCaught": true
     },
     {

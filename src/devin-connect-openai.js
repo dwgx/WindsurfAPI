@@ -620,6 +620,7 @@ function nowSeconds() {
  */
 export async function toChatCompletion(params, opts = {}) {
   const { id = newId(), created = nowSeconds(), displayModel, maxRetries = 1, retryBaseMs = 400, emulateTools = false, stop = null, clineCompat = false, stopCarrier = false, budget = null } = opts;
+  const keepReasoningSeparate = opts.keepReasoningSeparate === true;
   const model = displayModel || params.model;
 
   // Non-stream path buffers the whole answer, so a transient failure (network
@@ -766,33 +767,24 @@ export async function toChatCompletion(params, opts = {}) {
   // `<tool_call>` XML to the client as the visible answer with finish_reason='stop'.
   // The agent loop does not advance and the user sees markup, which is worse than
   // the empty turn the promotion exists to prevent.
-  let promotedReasoning = !toolCalls.length && !content && !!reasoning && !stopHit;
-  if (promotedReasoning) {
-    if (emulateTools && !stopHit) {
-      const promotedParse = parseToolCallsFromText(reasoning, {
-        modelKey: params.model, provider: null, route: 'devin_connect',
-      });
-      if (promotedParse.toolCalls.length) {
-        // M2 ToolGuard parity: only keep calls the client declared
-        const allowedCalls = filterToolCallsByAllowlist(promotedParse.toolCalls, params.tools || []);
-        // It was a tool call all along. Deliver it as one; keep any surrounding prose
-        // as content, and leave reasoning_content in place since nothing was moved
-        // out of it into the answer.
-        toolCalls = allowedCalls;
-        content = promotedParse.text;
-        finishReason = 'tool_calls';
-        promotedReasoning = false;
-      } else {
-        content = reasoning;
-      }
-    } else {
-      content = reasoning;
+  const reasoningOnly = !toolCalls.length && !content && !!reasoning && !stopHit;
+  let promotedReasoning = reasoningOnly && !keepReasoningSeparate;
+  if (reasoningOnly && emulateTools) {
+    const promotedParse = parseToolCallsFromText(reasoning, {
+      modelKey: params.model, provider: null, route: 'devin_connect',
+    });
+    if (promotedParse.toolCalls.length) {
+      // Tool recovery also applies when the caller keeps the prose marked.
+      toolCalls = filterToolCallsByAllowlist(promotedParse.toolCalls, params.tools || []);
+      if (!keepReasoningSeparate) content = promotedParse.text;
+      finishReason = 'tool_calls';
+      promotedReasoning = false;
     }
   }
 
   // Promotion creates visible prose after the first gate. Gate it at this final boundary.
   if (promotedReasoning) {
-    const stopped = applyStop(content, stop);
+    const stopped = applyStop(reasoning, stop);
     content = stopped.text;
     if (stopped.hit) { matchedStop = stopped.stop; stopHit = true; }
     if (stopHit && !toolCalls.length) finishReason = 'stop';
@@ -901,6 +893,7 @@ export async function toChatCompletion(params, opts = {}) {
  */
 export async function streamChatCompletion(params, send, opts = {}) {
   const { id = newId(), created = nowSeconds(), displayModel, emulateTools = false, includeUsage = false, stop = null, clineCompat = false, stopCarrier = false, maxRetries = 1, retryBaseMs = 400, budget = null } = opts;
+  const keepReasoningSeparate = opts.keepReasoningSeparate === true;
   const model = displayModel || params.model;
   const base = { id, object: OBJECT_CHUNK, created, model, system_fingerprint: systemFingerprint(model) };
 
@@ -1148,13 +1141,13 @@ export async function streamChatCompletion(params, send, opts = {}) {
       ? parseToolCallsFromText(reasoning, { modelKey: params.model, provider: null, route: 'devin_connect' })
       : { toolCalls: [], text: reasoning };
     if (promotedParse.toolCalls.length) {
-      if (promotedParse.text) await sendContent(promotedParse.text);
+      if (!keepReasoningSeparate && promotedParse.text) await sendContent(promotedParse.text);
       await emitToolCalls(promotedParse.toolCalls.map((tc) => ({
         id: tc.id, name: tc.name, argumentsJson: tc.argumentsJson ?? tc.arguments,
       })));
-      content = promotedParse.text;
+      if (!keepReasoningSeparate) content = promotedParse.text;
       finishReason = 'tool_calls';
-    } else {
+    } else if (!keepReasoningSeparate) {
       await sendContent(reasoning);
       content = reasoning;
     }
