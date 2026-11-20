@@ -159,6 +159,73 @@ describe('LS lease generation binding', () => {
     assert.equal(getLsMaintenanceRequests(null), 0);
   });
 
+  it('a request release leaves a genuine maintenance token usable', () => {
+    const entry = entryFor('default', 42110, 'gen-M');
+    __resetLsPoolForTests([entry]);
+    const token = beginLsMaintenanceUse(entry.port);
+
+    endLsUse(token);
+    assert.equal(getLsMaintenanceRequests(null), 1);
+    endLsMaintenanceUse(token);
+    assert.equal(getLsMaintenanceRequests(null), 0);
+  });
+
+  it('a maintenance release leaves a genuine request handle usable', () => {
+    const entry = entryFor('default', 42111, 'gen-R');
+    __resetLsPoolForTests([entry]);
+    const lease = beginLsUse(entry.port);
+
+    endLsMaintenanceUse(lease);
+    assert.equal(entry.activeRequests, 1);
+    endLsUse(lease);
+    assert.equal(entry.activeRequests, 0);
+  });
+
+  it('request release uses its issued entry after public metadata is changed', () => {
+    const first = entryFor('default', 42112, 'gen-A');
+    const second = entryFor('elsewhere', 42113, 'gen-B');
+    __resetLsPoolForTests([first, second]);
+    const firstLease = beginLsUse(first.port);
+    const secondLease = beginLsUse(second.port);
+
+    Reflect.set(firstLease, 'entry', second);
+    Reflect.set(firstLease, 'key', second.key);
+    endLsUse(firstLease);
+    assert.equal(first.activeRequests, 0);
+    assert.equal(second.activeRequests, 1);
+    endLsUse(secondLease);
+  });
+
+  it('maintenance release keeps its issued target after public metadata is changed', () => {
+    const first = entryFor('default', 42114, 'gen-A');
+    const second = entryFor('elsewhere', 42115, 'gen-B');
+    __resetLsPoolForTests([first, second]);
+    const firstToken = beginLsMaintenanceUse(first.port);
+    const secondToken = beginLsMaintenanceUse(second.port);
+
+    Reflect.set(firstToken, 'entry', second);
+    Reflect.set(firstToken, 'key', second.key);
+    Reflect.set(firstToken, 'generation', second.generation);
+    endLsMaintenanceUse(firstToken);
+    assert.equal(getLsMaintenanceRequests(null), 0);
+    assert.equal(beginLsUse(second.port), null, 'the second hold still excludes requests');
+    endLsMaintenanceUse(secondToken);
+  });
+
+  it('a stale maintenance token cannot release a different hold with the same generation', () => {
+    const first = entryFor('default', 42116, 'gen-A');
+    __resetLsPoolForTests([first]);
+    const firstToken = beginLsMaintenanceUse(first.port);
+
+    const replacement = entryFor(first.key, first.port, first.generation);
+    __resetLsPoolForTests([replacement]);
+    const replacementToken = beginLsMaintenanceUse(replacement.port);
+    endLsMaintenanceUse(firstToken);
+    assert.equal(getLsMaintenanceRequests(null), 1);
+    endLsMaintenanceUse(replacementToken);
+    assert.equal(getLsMaintenanceRequests(null), 0);
+  });
+
   it('failed acquires release none; releases are null-safe; port-keyed release is gone', () => {
     const busy = entryFor('default', 42105, 'gen-busy');
     __resetLsPoolForTests([busy]);

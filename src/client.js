@@ -1030,12 +1030,10 @@ export class WindsurfClient {
   async cascadeChat(messages, modelEnum, modelUid, opts = {}) {
     let onChunk, onEnd, onError, signal, reuseEntry, toolPreamble, displayModel, nativeEnvironment;
     let nativeMode, nativeAllowlist, additionalSteps, additionalStepsFrom, requestMaxWaitMs;
-    let resumeTurn, leaseHeld, leaseHandle, detach, accountId, modelKey, lsGeneration, completion;
-    // Lease seam. The handler owns the lease for a resumed request (it
-    // acquired it before claim and hands over the issued handle), so the
-    // producer must release exactly that handle and never take a second one.
-    // Production defaults are the module helpers; the injection exists so a
-    // test can observe the count.
+    let resumeTurn, detach, accountId, modelKey, lsGeneration, completion;
+    let leaseHandle;
+    // The handler supplies a handoff for a detached resume. A fresh Cascade
+    // turn uses the normal LS acquisition and release helpers.
     const acquireLease = opts.acquireLease || acquireLsUseOrThrow;
     const releaseLease = opts.releaseLease || endLsUse;
     // Assigned inside the poll setup. Declared here so the abort catch can
@@ -1062,7 +1060,7 @@ export class WindsurfClient {
       // Detach P1: resume a frozen turn instead of starting one, and the
       // handler-supplied admission handle the producer calls on a client-gone
       // abort. The producer never imports the registry.
-      resumeTurn, leaseHeld, leaseHandle, detach,
+      resumeTurn, detach,
       // Billing/pin identity. The producer only forwards these; the handler
       // owns the account and the registry policy.
       accountId, modelKey, lsGeneration,
@@ -1071,14 +1069,10 @@ export class WindsurfClient {
       // key this producer forwards; the handler has already rejected the rest.
       completion,
     } = opts);
-    // `leaseHeld` is set by the resume path: the handler already acquired the
-    // LS lease for this request and hands over the issued handle, so the
-    // producer releases exactly the handle it owns — acquired here, or the
-    // handler's — never a port lookup, which after a same-port replacement
-    // would spend the NEW instance's hold. Correctness then depends on one
-    // owner and one release (the finally below), not on every handler exit
-    // path remembering to end a duplicate.
-    if (!leaseHeld || !leaseHandle) leaseHandle = acquireLease(this.port);
+    // Accept the exact issued handle inside its cleanup scope, after parsing
+    // the options. A setup error before this point leaves ownership with the
+    // handler on resume and does not enter the release hook on a fresh turn.
+    leaseHandle = opts.takeLease?.() ?? acquireLease(this.port);
     const aborted = () => signal?.aborted;
     const abortError = () => Object.assign(new Error('Cascade aborted by client'), {
       name: 'AbortError', code: 'ABORT_ERR',
@@ -2408,7 +2402,7 @@ export class WindsurfClient {
       onError?.(err);
       throw err;
     } finally {
-      releaseLease(leaseHandle);
+      if (leaseHandle) releaseLease(leaseHandle);
     }
   }
 

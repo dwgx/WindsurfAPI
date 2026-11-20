@@ -138,16 +138,11 @@ const AUTO_RESTART_BASE_DELAY_MS = (() => {
 
 // Pool: key -> { process, port, csrfToken, proxy, startedAt, ready }
 const _pool = new Map();
-// key -> { generation, count } for the CURRENT generation's maintenance hold.
-// Every replacement path (crash exit, eviction, restart) deletes the record
-// with the pool entry, so a release can only ever decrement the generation it
-// was issued against — a stale token cannot spend a replacement's hold.
+// key -> the current entry's maintenance record. Replacement deletes the record
+// with the pool entry, so a stale token cannot spend the replacement's hold.
 const _maintenanceUses = new Map();
-// Issued-lease registry. Membership proves a handle came from one of the
-// acquire functions below, so copies, deep clones, and forged objects can
-// never release a hold they were not issued. The per-handle `released` state
-// makes every release single-use. WeakMap so a hold that is never released
-// can still be garbage-collected together with its entry.
+// Unreleased handles map to private ownership records. Public handle fields
+// are for callers such as detached resume; only issuance determines releases.
 const _issuedLeases = new WeakMap();
 // In-flight Promise map so two concurrent ensureLs(proxy) calls for the
 // same key share one spawn + readiness wait. Without this, both callers
@@ -347,7 +342,7 @@ export function beginLsUse(port) {
   entry.activeRequests = (entry.activeRequests || 0) + 1;
   touchEntry(entry);
   const lease = { kind: 'request', entry, key, port, generation: entry.generation ?? null };
-  _issuedLeases.set(lease, { released: false });
+  _issuedLeases.set(lease, { kind: 'request', entry, key });
   return lease;
 }
 
@@ -362,14 +357,13 @@ export function endLsUse(lease) {
     return;
   }
   const state = _issuedLeases.get(lease);
-  if (!state || state.released) return;
-  state.released = true;
-  const entry = lease.entry;
-  if (!entry) return;
+  if (state?.kind !== 'request') return;
+  _issuedLeases.delete(lease);
+  const { entry, key } = state;
   entry.activeRequests = Math.max(0, (entry.activeRequests || 0) - 1);
   // Keep TTL accounting alive only while the entry is still the pool's
   // current instance for the key; a replaced entry's lastUsedAt is its own.
-  if (_pool.get(lease.key) === entry) touchEntry(entry);
+  if (_pool.get(key) === entry) touchEntry(entry);
 }
 
 // Acquire the exclusive maintenance hold for the entry that currently owns
@@ -382,33 +376,30 @@ export function beginLsMaintenanceUse(port) {
   const key = keyByPort(port);
   if (!key) return null;
   if (maintenanceCountOf(key) > 0) return null;
-  _maintenanceUses.set(key, { generation: entry.generation ?? null, count: 1 });
+  const record = { kind: 'maintenance', entry, key, count: 1 };
+  _maintenanceUses.set(key, record);
   touchEntry(entry);
   const token = { kind: 'maintenance', entry, key, port, generation: entry.generation ?? null };
-  _issuedLeases.set(token, { released: false });
+  _issuedLeases.set(token, record);
   return token;
 }
 
-// Release exactly one previously-acquired maintenance hold. The hold binds to
-// the generation it was issued against: replacement paths delete the key's
-// record together with the entry, so a stale token released after a same-key
-// replacement finds no matching record and cannot spend the replacement's
-// hold. Single-use, and safe for failed (null) acquisitions.
+// Release exactly the maintenance record created for this token. Record
+// identity also distinguishes a later hold on the same key or generation.
 export function endLsMaintenanceUse(token) {
   if (!token || typeof token !== 'object') {
     if (token != null) log.warn('endLsMaintenanceUse called without an issued maintenance token');
     return;
   }
-  const state = _issuedLeases.get(token);
-  if (!state || state.released) return;
-  state.released = true;
-  const rec = _maintenanceUses.get(token.key);
-  if (!rec || rec.generation !== token.generation) return;
-  const n = (rec.count || 0) - 1;
-  if (n > 0) rec.count = n;
-  else _maintenanceUses.delete(token.key);
-  const entry = _pool.get(token.key);
-  if (entry === token.entry) touchEntry(entry);
+  const record = _issuedLeases.get(token);
+  if (record?.kind !== 'maintenance') return;
+  _issuedLeases.delete(token);
+  const { entry, key } = record;
+  if (_maintenanceUses.get(key) !== record) return;
+  const n = (record.count || 0) - 1;
+  if (n > 0) record.count = n;
+  else _maintenanceUses.delete(key);
+  if (_pool.get(key) === entry) touchEntry(entry);
 }
 
 function maintenanceCountOf(key) {
