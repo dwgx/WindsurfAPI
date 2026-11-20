@@ -71,7 +71,7 @@ import { acpVisionEnabled } from '../devin-acp.js';
 import { selectBackend, usesCascadeFlow } from '../backend-router.js';
 import { toChatCompletion as _toChatCompletion, streamChatCompletion as _streamChatCompletion } from '../devin-connect-openai.js';
 import { resolveConnectSelector, DROUGHT_SAFE_SELECTORS, getConnectSelectorImageCapability } from '../devin-connect-models.js';
-import { getToolDefTags, parseToolCallTagMap, isParallelToolCallsHintIgnored, getImageFieldTag, stripImageParts, findFilePartInMessages, unsupportedFilePartError } from '../devin-connect.js';
+import { getToolDefTags, parseToolCallTagMap, isParallelToolCallsHintIgnored, getImageFieldTag, stripImageParts, findFilePartInMessages, unsupportedFilePartError, messageText as connectMessageText } from '../devin-connect.js';
 import { recordRateLimitBurstEvent, RATE_LIMIT_BURST_WINDOW_MS } from '../rate-limit-burst.js';
 import { isRouterModel, assignModel as _assignModel } from '../devin-connect-catalog.js';
 import { bumpConnect } from '../devin-connect-metrics.js';
@@ -2327,6 +2327,39 @@ export function shouldLiftCallerEnv(modelKey, { emulateTools, env = process.env 
   return true;
 }
 
+// Is this a message body whose ENTIRE content is text: a string, or an array of
+// standard `{type:'text', text}` parts with no image/file/malformed entry?
+// Used by the direct Connect instruction path: only such a Chat `developer`
+// message may be promoted to the instruction channel, and only such a system
+// message may be folded to wire text before identity neutralization. Mixed
+// content keeps its existing per-part handling — a non-text block must not be
+// silently stringified into the system prompt.
+export function isPureTextMessageContent(content) {
+  if (typeof content === 'string') return true;
+  if (!Array.isArray(content)) return false;
+  return content.every((p) => p && typeof p === 'object' && p.type === 'text' && typeof p.text === 'string');
+}
+
+// OpenAI's `developer` role is the declared instruction channel (Codex and the
+// o-series send it). The direct Connect branch used to pass it through as a
+// caller-role message, so devin-connect.js encoded its text into a USER frame
+// (#3 source=1) and the instruction priority was lost. Promote pure-text
+// developer turns to `role:'system'` in the same array position: the existing
+// builder then puts them on protobuf #2, in instruction order, and keeps its
+// own collapse options (DEVIN_CONNECT_COLLAPSE_SYSTEM) in control. Returns the
+// input reference when nothing was promoted; promoted turns are shallow copies,
+// so body.messages and the caller's objects are never mutated.
+export function promoteDeveloperInstructions(messages) {
+  if (!Array.isArray(messages) || !messages.some((m) => m?.role === 'developer')) return messages;
+  let changed = false;
+  const out = messages.map((m) => {
+    if (m?.role !== 'developer' || !isPureTextMessageContent(m.content)) return m;
+    changed = true;
+    return { ...m, role: 'system' };
+  });
+  return changed ? out : messages;
+}
+
 // Inject a tool-description preamble into the system prompt of a message
 // list. DEVIN_CONNECT has no proto tool_calling_section slot, so the
 // description-only preamble (buildToolPreambleForProto with
@@ -4222,6 +4255,12 @@ async function _handleChatCompletionsInner(body, context = {}) {
     // The tools branch is unchanged: nativeStructured's normalizer already
     // repairs, and the text-emulation branch must keep its bytes (it folds
     // results into user turns, so there is no role=4 frame to order).
+    // Declared `developer` → instruction channel, BEFORE prompt composition so
+    // the preamble/normalizer see one consistent system channel. Pure-text only;
+    // mixed or non-text developer content keeps its historical USER-frame
+    // behavior (never promoted). ACP/special-agent reroutes returned above and
+    // Cascade never reaches this block.
+    messages = promoteDeveloperInstructions(messages);
     let connectMessages = emulateTools
       ? normalizeMessagesForCascade(messages, connectTools, { modelKey: reqModelName, provider: null, route: 'devin_connect', toolChoice: tool_choice, injectUserPreamble: !suppressPreamble, stripOrphans: nativeDefsOn, nativeStructured })
       : nativeFlag
@@ -4290,9 +4329,25 @@ async function _handleChatCompletionsInner(body, context = {}) {
     // devin-connect.js's wire-time messageText(), so the identity fingerprint this
     // step exists to strip reached Devin verbatim on the single most common
     // Codex path.
+    //
+    // GRANULARITY: the wire's system boundary is `messageText()` — one `\n` per
+    // part boundary, and ONE `\n` between two system messages (devin-connect.js
+    // #2). Neutralizing part by part cannot see a trigger split across parts
+    // ("… You are Claude Code, " | "Anthropic's official CLI …"), so a single
+    // PURE-TEXT system message is folded to exactly the text the wire will carry
+    // and neutralized once. Two independent system messages are NOT joined here:
+    // their boundary stays a builder decision (default join, or COLLAPSE_SYSTEM
+    // wrapping), and per-message neutralization never rewrites across it. Mixed
+    // content keeps the per-part helper contract. Unchanged text preserves the
+    // original message/array reference; the off switch returns the input as-is.
     if (Array.isArray(connectMessages)) {
       connectMessages = connectMessages.map((m) => {
         if (m?.role !== 'system') return m;
+        if (isPureTextMessageContent(m.content)) {
+          const folded = connectMessageText(m.content);
+          const neut = neutralizeClientIdentity(folded);
+          return neut === folded ? m : { ...m, content: neut };
+        }
         const neut = neutralizeMessageContent(m.content);
         return neut === m.content ? m : { ...m, content: neut };
       });
