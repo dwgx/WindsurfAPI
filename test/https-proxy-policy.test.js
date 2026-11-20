@@ -15,6 +15,8 @@ import { describe, it, after } from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire, syncBuiltinESMExports } from 'node:module';
 
+import { FakeEmitter } from './helpers/fake-emitter.mjs';
+
 const deps = await import('./helpers/fake-proxy-deps.mjs');
 
 const require = createRequire(import.meta.url);
@@ -80,7 +82,7 @@ function inboundReq({ method = 'GET', url = '/v1/models', headers = {}, remoteAd
 }
 
 function outboundRes() {
-  const res = {
+  return Object.assign(new FakeEmitter(), {
     headersSent: false,
     status: null,
     headers: null,
@@ -100,8 +102,7 @@ function outboundRes() {
       this.ended = true;
       if (body) this.body = Buffer.from(body);
     },
-  };
-  return res;
+  });
 }
 
 // One full request/response cycle against the real handler.

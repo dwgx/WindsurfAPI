@@ -92,7 +92,8 @@ const BUDGET_MS = 50;
 // bound that no regex watchdog can provide: a 10^5-entry `allOf`, an enum with
 // 10^6 candidates, or an array of 10^6 `uniqueItems` elements would otherwise
 // burn wall-clock in plain JavaScript. Steps are charged per schema node
-// visited, per enum candidate compared and per uniqueItems element serialised.
+// visited, per enum candidate or uniqueItems element, and per member of a
+// nested JSON value inspected for equality.
 // 20_000 is far above any real schema (50_000 trivial stringify steps measured
 // ~4.6 ms) and keeps the worst case to single-digit milliseconds.
 const MAX_SCHEMA_STEPS = 20_000;
@@ -230,6 +231,49 @@ function isPlainObject(v) {
   return v !== null && typeof v === 'object' && !Array.isArray(v);
 }
 
+const EQUALITY_STEP_LIMIT = Symbol('equality step limit');
+
+// Object member order is insignificant at every depth. Keep array order and
+// let the JSON encoder handle keys, escaping, primitive types and signed zero.
+function equalityKey(value, scope) {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  return JSON.stringify(value, (_key, item) => {
+    if (item === null || typeof item !== 'object') return item;
+    const keys = Array.isArray(item) ? null : Object.keys(item);
+    if (!chargeSteps(scope, keys ? keys.length : item.length)) throw EQUALITY_STEP_LIMIT;
+    return keys ? Object.fromEntries(keys.sort().map(key => [key, item[key]])) : item;
+  });
+}
+
+function checkEquality(value, keyword, constraint, scope, path) {
+  try {
+    if (keyword === 'enum') {
+      if (!chargeSteps(scope, constraint.length)) throw EQUALITY_STEP_LIMIT;
+      const target = equalityKey(value, scope);
+      if (!constraint.some(candidate => equalityKey(candidate, scope) === target)) {
+        return { ok: false, path, message: `must be one of ${JSON.stringify(constraint)}` };
+      }
+    } else if (keyword === 'const') {
+      if (equalityKey(value, scope) !== equalityKey(constraint, scope)) {
+        return { ok: false, path, message: `must equal ${JSON.stringify(constraint)}` };
+      }
+    } else if (keyword === 'uniqueItems') {
+      if (!chargeSteps(scope, value.length)) throw EQUALITY_STEP_LIMIT;
+      const seen = new Set();
+      for (const item of value) {
+        const key = equalityKey(item, scope);
+        if (seen.has(key)) return { ok: false, path, message: 'items must be unique' };
+        seen.add(key);
+      }
+    }
+    return null;
+  } catch (err) {
+    if (err === EQUALITY_STEP_LIMIT) return unableCapacity(path, `the schema exceeds ${MAX_SCHEMA_STEPS} evaluation steps`);
+    if (err instanceof RangeError) return unableCapacity(path, 'the JSON value is too deeply nested to compare');
+    throw err;
+  }
+}
+
 function typeOf(value) {
   if (value === null) return 'null';
   if (Array.isArray(value)) return 'array';
@@ -302,21 +346,12 @@ export function validateJsonSchema(value, schema, { path = '$', root = schema, d
   }
 
   if (Array.isArray(schema.enum)) {
-    // The charge comes first so an enormous enum is refused before it is
-    // walked, and the value is serialised ONCE — the old code re-serialised it
-    // per candidate, which is O(candidates × |value|) work the candidate count
-    // alone did not bound.
-    if (!chargeSteps(scope, schema.enum.length)) {
-      return unableCapacity(path, `the schema exceeds ${MAX_SCHEMA_STEPS} evaluation steps`);
-    }
-    const target = JSON.stringify(value);
-    const hit = schema.enum.some((candidate) => JSON.stringify(candidate) === target);
-    if (!hit) return { ok: false, path, message: `must be one of ${JSON.stringify(schema.enum)}` };
+    const violation = checkEquality(value, 'enum', schema.enum, scope, path);
+    if (violation) return violation;
   }
-  if (Object.prototype.hasOwnProperty.call(schema, 'const')) {
-    if (JSON.stringify(schema.const) !== JSON.stringify(value)) {
-      return { ok: false, path, message: `must equal ${JSON.stringify(schema.const)}` };
-    }
+  if (Object.hasOwn(schema, 'const')) {
+    const violation = checkEquality(value, 'const', schema.const, scope, path);
+    if (violation) return violation;
   }
 
   if (typeof value === 'number') {
@@ -361,11 +396,8 @@ export function validateJsonSchema(value, schema, { path = '$', root = schema, d
       return { ok: false, path, message: `must have at most ${schema.maxItems} items` };
     }
     if (schema.uniqueItems === true) {
-      if (!chargeSteps(scope, value.length)) {
-        return unableCapacity(path, `the schema exceeds ${MAX_SCHEMA_STEPS} evaluation steps`);
-      }
-      const seen = new Set(value.map((v) => JSON.stringify(v)));
-      if (seen.size !== value.length) return { ok: false, path, message: 'items must be unique' };
+      const violation = checkEquality(value, 'uniqueItems', true, scope, path);
+      if (violation) return violation;
     }
     const itemSchemas = Array.isArray(schema.items) ? schema.items : null;
     if (itemSchemas) {
