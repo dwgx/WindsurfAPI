@@ -15,6 +15,11 @@ const generation = { maxOutputTokens: 128, temperature: 0.25, topK: 24 };
 const expectedCall = {
   functionCall: { id: TOOL_CALL.id, name: TOOL_CALL.name, args: JSON.parse(TOOL_CALL.arguments) },
 };
+const secondCall = { ...TOOL_CALL, id: 'call_gemini_second', arguments: '{"city":"Osaka","unit":"c"}' };
+const expectedCalls = [
+  expectedCall,
+  { functionCall: { id: secondCall.id, name: secondCall.name, args: JSON.parse(secondCall.arguments) } },
+];
 const tools = [{
   functionDeclarations: [{ name: TOOL_CALL.name, parameters: { type: 'OBJECT' } }],
 }];
@@ -54,7 +59,7 @@ before(async () => {
       yield { type: 'reasoning', text: `${summary} <tool_call>{"name":"${TOOL_CALL.name}","arguments":${TOOL_CALL.arguments}}</tool_call>` };
     } else {
       yield { type: 'reasoning', text: summary };
-      if (script === 'mixed') yield { type: 'content', text: answer };
+      if (script === 'mixed' || script === 'native-mixed') yield { type: 'content', text: answer };
     }
     const usage = {
       prompt_tokens: 10,
@@ -65,6 +70,7 @@ before(async () => {
     yield {
       type: 'finish', reason: 'stop', usage,
       ...(script === 'tool' ? { toolCalls: [TOOL_CALL] } : {}),
+      ...(script === 'native-mixed' ? { toolCalls: [TOOL_CALL, secondCall] } : {}),
     };
   });
   server = startServer();
@@ -97,7 +103,7 @@ async function gemini(mode, kind, thinkingConfig, request = {}) {
   script = kind;
   const res = await post(`/v1beta/models/${TRANSPORT_MODEL}:${paths[mode]}`, {
     contents,
-    ...(kind === 'tool' || kind === 'emulated-tool' ? { tools } : {}),
+    ...(['tool', 'emulated-tool', 'native-mixed'].includes(kind) ? { tools } : {}),
     generationConfig: { ...generation, thinkingConfig },
     ...request,
   });
@@ -139,6 +145,13 @@ for (const mode of Object.keys(paths)) {
     assertOutput(await gemini(mode, 'tool', optedOut), [expectedCall], mixedUsage);
   });
 
+  for (const thinkingConfig of [optedIn, optedOut]) {
+    test(`${mode}: includeThoughts ${thinkingConfig.includeThoughts} preserves final text and ordered native calls`, async () => {
+      const frames = await gemini(mode, 'native-mixed', thinkingConfig);
+      assertOutput(frames, [...(thinkingConfig.includeThoughts ? [summaryPart] : []), { text: answer }, ...expectedCalls], mixedUsage);
+    });
+  }
+
   test(`${mode}: suppressing marked prose keeps an existing emulated tool call`, async () => {
     const frames = await gemini(mode, 'emulated-tool', optedOut);
     const callPart = frames.flatMap(frame => frame.candidates[0].content.parts).find(part => part.functionCall);
@@ -168,6 +181,19 @@ test('the visibility bit does not change the internal generation hint', () => {
   assert.deepEqual(translate(optedOut), translate(optedIn));
   assert.deepEqual(translate(optedOut).thinking, { type: 'enabled', budget_tokens: 128 });
   assert.deepEqual(translate({ ...optedIn, thinkingBudget: 0 }).thinking, { type: 'disabled' });
+});
+
+test('buffered OpenAI retains null content on a native tool turn', async () => {
+  script = 'native-mixed';
+  const res = await post('/v1/chat/completions', {
+    model: TRANSPORT_MODEL, max_tokens: 128, temperature: 0.25, top_k: 24,
+    messages: [{ role: 'user', content: contents[0].parts[0].text }],
+    tools: [{ type: 'function', function: { name: TOOL_CALL.name, parameters: { type: 'object' } } }],
+  });
+  assert.equal(res.status, 200);
+  const { message } = (await res.json()).choices[0];
+  assert.equal(message.content, null);
+  assert.equal(message.tool_calls.length, expectedCalls.length);
 });
 
 test('OpenAI fallback and cache replay cannot promote a Gemini summary', async () => {

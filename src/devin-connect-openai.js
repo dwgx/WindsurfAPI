@@ -802,9 +802,9 @@ export async function toChatCompletion(params, opts = {}) {
       type: 'function',
       function: { name: tc.name || 'unknown', arguments: compatArgs(tc.argumentsJson || tc.arguments, clineCompat) },
     }));
-    // content is null when the turn is a tool call (the inline text is usually
-    // a hallucinated preview the caller shouldn't show).
-    message.content = null;
+    // Gemini carries separately emitted text alongside native function calls.
+    // Use the null-content compatibility shape for other tool turns.
+    if (!keepReasoningSeparate || !nativeToolCalls.length || !message.content) message.content = null;
     finishReason = 'tool_calls';
   }
 
