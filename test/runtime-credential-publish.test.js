@@ -306,7 +306,7 @@ describe('runtime credential rotation after a published rename', () => {
     });
 
     const badPassword = await putCredentials({
-      apiKey: 'sk-valid-but-must-not-land',
+      apiKey: NEW_KEY,
       dashboardPassword: 'short',
     }, OLD_PASSWORD);
     assert.equal(badPassword.statusCode, 400, badPassword.body);
