@@ -1696,6 +1696,7 @@
     "toggleFailed": "切换失败：{{error}}",
     "modeUpdated": "模式已更新",
     "defaultModelUpdated": "默认模型已更新",
+    "modelAccessAppliedDurabilityWarning": "策略已更新并生效，但尚未确认已安全写入磁盘。请检查服务器存储。",
     "noTierModels": "该账号层级无可用模型",
     "loginSuccess": "{{label}} 登录成功",
     "loginFailed": "{{label}} 登录失败：{{error}}",

@@ -1696,6 +1696,7 @@
     "toggleFailed": "Toggle failed: {{error}}",
     "modeUpdated": "Mode updated",
     "defaultModelUpdated": "Default model updated",
+    "modelAccessAppliedDurabilityWarning": "Policy updated and active, but a safe disk save could not be confirmed. Check server storage.",
     "noTierModels": "No models available for this account tier",
     "loginSuccess": "{{label}} login successful",
     "loginFailed": "{{label}} login failed: {{error}}",

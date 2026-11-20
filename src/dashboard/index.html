@@ -12104,9 +12104,9 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     this.applyModelAccessResponse(receipt);
     const warnings = Array.isArray(receipt.warnings) ? receipt.warnings : [];
     if (receipt.durability === 'unconfirmed' || warnings.includes('ERR_MODEL_ACCESS_DURABILITY_UNCONFIRMED')) {
-      this.toast(I18n.locale === 'en'
-        ? 'Policy updated and active, but a safe disk save could not be confirmed. Check server storage.'
-        : '策略已更新并生效，但尚未确认已安全写入磁盘。请检查服务器存储。', 'error');
+      this.toast(
+        I18n.t('toast.modelAccessAppliedDurabilityWarning'), 'error',
+      );
       return true;
     }
     if (successKey) this.toast(I18n.t(successKey));
