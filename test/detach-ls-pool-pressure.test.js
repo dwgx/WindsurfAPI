@@ -313,7 +313,7 @@ describe('Detach gate 2 — LS pool pressure', {
       assert.equal(langserver.getLsStatus().admissionStats.poolExhausted, exhaustedBefore + 1,
         'the pool must record exactly one capacity failure');
     } finally {
-      langserver.endLsUse(entryB.port);
+      langserver.endLsUse(pin);
     }
 
     // ── Phase 4: unpin and retry — green again, same code path ───────────

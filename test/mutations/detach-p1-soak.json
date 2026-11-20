@@ -45,14 +45,14 @@
     {
       "name": "M6 lease: producer finally no longer releases (endLsUse)",
       "file": "src/client.js",
-      "anchor": "    } finally {\n      releaseLease(this.port);\n    }",
+      "anchor": "    } finally {\n      if (leaseHandle) releaseLease(leaseHandle);\n    }",
       "replacement": "    } finally {\n      /* MUTANT: endLsUse at claim/evict removed */\n    }"
     },
     {
-      "name": "M7 lease: leaseHeld ignored (double acquire)",
+      "name": "M7 lease: resumed handle ignored (double acquire)",
       "file": "src/client.js",
-      "anchor": "    if (!leaseHeld) acquireLease(this.port);",
-      "replacement": "    acquireLease(this.port);"
+      "anchor": "    leaseHandle = opts.takeLease?.() ?? acquireLease(this.port);",
+      "replacement": "    leaseHandle = acquireLease(this.port);"
     },
     {
       "name": "M8 billing: resume bills acct (no owner branch)",

@@ -138,7 +138,12 @@ const AUTO_RESTART_BASE_DELAY_MS = (() => {
 
 // Pool: key -> { process, port, csrfToken, proxy, startedAt, ready }
 const _pool = new Map();
+// key -> the current entry's maintenance record. Replacement deletes the record
+// with the pool entry, so a stale token cannot spend the replacement's hold.
 const _maintenanceUses = new Map();
+// Unreleased handles map to private ownership records. Public handle fields
+// are for callers such as detached resume; only issuance determines releases.
+const _issuedLeases = new WeakMap();
 // In-flight Promise map so two concurrent ensureLs(proxy) calls for the
 // same key share one spawn + readiness wait. Without this, both callers
 // would each spawn an LS process, race on the port, and leave an orphan.
@@ -323,47 +328,101 @@ function keyByPort(port) {
   return '';
 }
 
+// Acquire one request hold on the LS entry that currently owns `port`, or
+// null when no entry exists or that key is under maintenance. The return
+// value is an opaque handle bound to the entry and generation acquired.
+// `endLsUse` accepts ONLY this handle: releasing by port after a same-port
+// replacement spent the NEW instance's hold (the stale-release bug), so the
+// port-keyed release path is gone.
 export function beginLsUse(port) {
   const entry = getLsEntryByPort(port);
   if (!entry) return null;
   const key = keyByPort(port);
-  if (key && (_maintenanceUses.get(key) || 0) > 0) return null;
+  if (key && maintenanceCountOf(key) > 0) return null;
   entry.activeRequests = (entry.activeRequests || 0) + 1;
   touchEntry(entry);
-  return entry;
+  const lease = { kind: 'request', entry, key, port, generation: entry.generation ?? null };
+  _issuedLeases.set(lease, { kind: 'request', entry, key });
+  return lease;
 }
 
-export function endLsUse(port) {
-  const entry = getLsEntryByPort(port);
-  if (!entry) return;
+// Release exactly one previously-acquired request hold. Single-use per
+// handle: a repeated, copied, forged, or never-issued handle releases
+// nothing, and a handle whose entry was replaced decrements the OLD entry's
+// counter only — it can never touch the replacement's hold. Accepting null
+// keeps `finally` release paths safe for failed (null) acquisitions.
+export function endLsUse(lease) {
+  if (!lease || typeof lease !== 'object') {
+    if (lease != null) log.warn('endLsUse called without an issued lease handle; port-keyed release is gone');
+    return;
+  }
+  const state = _issuedLeases.get(lease);
+  if (state?.kind !== 'request') return;
+  _issuedLeases.delete(lease);
+  const { entry, key } = state;
   entry.activeRequests = Math.max(0, (entry.activeRequests || 0) - 1);
-  touchEntry(entry);
+  // Keep TTL accounting alive only while the entry is still the pool's
+  // current instance for the key; a replaced entry's lastUsedAt is its own.
+  if (_pool.get(key) === entry) touchEntry(entry);
 }
 
+// Acquire the exclusive maintenance hold for the entry that currently owns
+// `port`, or null when the entry is serving requests or its key is already
+// under maintenance. The token binds to the entry and generation acquired.
 export function beginLsMaintenanceUse(port) {
   const entry = getLsEntryByPort(port);
   if (!entry) return null;
   if ((entry.activeRequests || 0) > 0) return null;
   const key = keyByPort(port);
   if (!key) return null;
-  if ((_maintenanceUses.get(key) || 0) > 0) return null;
-  _maintenanceUses.set(key, (_maintenanceUses.get(key) || 0) + 1);
+  if (maintenanceCountOf(key) > 0) return null;
+  const record = { kind: 'maintenance', entry, key, count: 1 };
+  _maintenanceUses.set(key, record);
   touchEntry(entry);
-  return { key, port, generation: entry.generation };
+  const token = { kind: 'maintenance', entry, key, port, generation: entry.generation ?? null };
+  _issuedLeases.set(token, record);
+  return token;
 }
 
+// Release exactly the maintenance record created for this token. Record
+// identity also distinguishes a later hold on the same key or generation.
 export function endLsMaintenanceUse(token) {
-  const key = token?.key || '';
-  if (!key) return;
-  const n = (_maintenanceUses.get(key) || 0) - 1;
-  if (n > 0) _maintenanceUses.set(key, n);
+  if (!token || typeof token !== 'object') {
+    if (token != null) log.warn('endLsMaintenanceUse called without an issued maintenance token');
+    return;
+  }
+  const record = _issuedLeases.get(token);
+  if (record?.kind !== 'maintenance') return;
+  _issuedLeases.delete(token);
+  const { entry, key } = record;
+  if (_maintenanceUses.get(key) !== record) return;
+  const n = (record.count || 0) - 1;
+  if (n > 0) record.count = n;
   else _maintenanceUses.delete(key);
-  const entry = _pool.get(key);
-  if (entry) touchEntry(entry);
+  if (_pool.get(key) === entry) touchEntry(entry);
+}
+
+function maintenanceCountOf(key) {
+  const rec = _maintenanceUses.get(key);
+  return rec ? Math.max(0, rec.count || 0) : 0;
 }
 
 export function getLsMaintenanceRequests(proxy = null) {
-  return _maintenanceUses.get(proxyKey(proxy)) || 0;
+  return maintenanceCountOf(proxyKey(proxy));
+}
+
+// Test-only seam (same pattern as runtime-config's
+// __setRuntimeConfigPersistFailureForTests): reset the pool and maintenance
+// accounting to synthetic entries so lease release binding can be tested
+// against the real functions without spawning an LS process. Never call from
+// production paths.
+export function __resetLsPoolForTests(entries = []) {
+  _pool.clear();
+  _maintenanceUses.clear();
+  for (const entry of entries) {
+    if (!entry || !entry.key) continue;
+    _pool.set(entry.key, entry);
+  }
 }
 
 function invalidateEntryForShutdown(entry) {
@@ -531,7 +590,7 @@ function getIdleNonDefaultEvictionCandidates() {
     if (k === 'default') continue;
     if (!e?.ready) continue;
     if ((e.activeRequests || 0) > 0) continue;
-    if ((_maintenanceUses.get(k) || 0) > 0) continue;
+    if (maintenanceCountOf(k) > 0) continue;
     if (e.readyAt && now - e.readyAt < LS_EVICT_READY_GRACE_MS) continue;
     const at = e.lastUsedAt || e._evictAt || e.startedAt || 0;
     candidates.push({
@@ -696,7 +755,7 @@ function getLsPoolSummary(now = Date.now()) {
     activeRequests += entry?.activeRequests || 0;
   }
   let maintenanceRequests = 0;
-  for (const n of _maintenanceUses.values()) maintenanceRequests += Math.max(0, n || 0);
+  for (const rec of _maintenanceUses.values()) maintenanceRequests += Math.max(0, rec?.count || 0);
   const pendingKeys = Array.from(_pending.keys()).map(publicLsKey);
   const stoppingInstances = Array.from(_stopping.entries()).map(([key, entry]) => ({
     key: publicLsKey(key),
@@ -753,7 +812,7 @@ export function getLsAdmissionStatus(proxy = null) {
   const evictionCandidateCount = countIdleNonDefaultEvictionCandidates();
   const memoryGuard = getLsMemoryGuardStatus({ reservedStarts: activeSpawnReservationCount({ excludeKey: key }) });
   if (existing?.ready) {
-    const maintenanceRequests = _maintenanceUses.get(key) || 0;
+    const maintenanceRequests = maintenanceCountOf(key);
     return {
       ok: true,
       wouldStart: false,
@@ -904,7 +963,7 @@ export function sweepIdleLanguageServers(now = Date.now()) {
     if (key === 'default') continue;
     if (!entry?.ready) continue;
     if ((entry.activeRequests || 0) > 0) continue;
-    if ((_maintenanceUses.get(key) || 0) > 0) continue;
+    if (maintenanceCountOf(key) > 0) continue;
     const last = entry.lastUsedAt || entry.startedAt || now;
     if (now - last < LS_IDLE_TTL_MS) continue;
     markIntentionalShutdown(entry);

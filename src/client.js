@@ -44,8 +44,8 @@ const LS_SERVICE = '/exa.language_server_pb.LanguageServerService';
 const SERVER_JWT_HOST = 'server.codeium.com';
 
 export function acquireLsUseOrThrow(port) {
-  const entry = beginLsUse(port);
-  if (entry) return entry;
+  const lease = beginLsUse(port);
+  if (lease) return lease;
   if (!getLsEntryByPort(port)) return null;
   const err = new Error('Language server is busy with maintenance; try another account or retry shortly');
   err.code = 'LS_MAINTENANCE_BUSY';
@@ -860,7 +860,7 @@ export class WindsurfClient {
    * @param {object} opts - { onChunk, onEnd, onError, signal }
    */
   async rawGetChatMessage(messages, modelEnum, modelName, opts = {}) {
-    acquireLsUseOrThrow(this.port);
+    const lease = acquireLsUseOrThrow(this.port);
     try {
       const { onChunk, onEnd, onError, signal } = opts;
       // Reuse the LS-scoped session_id instead of letting buildMetadata
@@ -930,9 +930,9 @@ export class WindsurfClient {
           // with NGHTTP2_CANCEL and rejects with an AbortError.
           signal,
         });
-      }).finally(() => endLsUse(this.port));
+      }).finally(() => endLsUse(lease));
     } catch (err) {
-      endLsUse(this.port);
+      endLsUse(lease);
       throw err;
     }
   }
@@ -1030,11 +1030,10 @@ export class WindsurfClient {
   async cascadeChat(messages, modelEnum, modelUid, opts = {}) {
     let onChunk, onEnd, onError, signal, reuseEntry, toolPreamble, displayModel, nativeEnvironment;
     let nativeMode, nativeAllowlist, additionalSteps, additionalStepsFrom, requestMaxWaitMs;
-    let resumeTurn, leaseHeld, detach, accountId, modelKey, lsGeneration, completion;
-    // Lease seam. The handler owns the lease for a resumed request (it
-    // acquired it before claim), so the producer must release exactly that
-    // hold and never take a second one. Production defaults are the module
-    // helpers; the injection exists so a test can observe the count.
+    let resumeTurn, detach, accountId, modelKey, lsGeneration, completion;
+    let leaseHandle;
+    // The handler supplies a handoff for a detached resume. A fresh Cascade
+    // turn uses the normal LS acquisition and release helpers.
     const acquireLease = opts.acquireLease || acquireLsUseOrThrow;
     const releaseLease = opts.releaseLease || endLsUse;
     // Assigned inside the poll setup. Declared here so the abort catch can
@@ -1061,7 +1060,7 @@ export class WindsurfClient {
       // Detach P1: resume a frozen turn instead of starting one, and the
       // handler-supplied admission handle the producer calls on a client-gone
       // abort. The producer never imports the registry.
-      resumeTurn, leaseHeld, detach,
+      resumeTurn, detach,
       // Billing/pin identity. The producer only forwards these; the handler
       // owns the account and the registry policy.
       accountId, modelKey, lsGeneration,
@@ -1070,11 +1069,10 @@ export class WindsurfClient {
       // key this producer forwards; the handler has already rejected the rest.
       completion,
     } = opts);
-    // `leaseHeld` is set by the resume path: the handler already acquired the
-    // LS lease for this request, so the producer must not take a second hold.
-    // Correctness then depends on one owner and one release (the finally
-    // below), not on every handler exit path remembering to end a duplicate.
-    if (!leaseHeld) acquireLease(this.port);
+    // Accept the exact issued handle inside its cleanup scope, after parsing
+    // the options. A setup error before this point leaves ownership with the
+    // handler on resume and does not enter the release hook on a fresh turn.
+    leaseHandle = opts.takeLease?.() ?? acquireLease(this.port);
     const aborted = () => signal?.aborted;
     const abortError = () => Object.assign(new Error('Cascade aborted by client'), {
       name: 'AbortError', code: 'ABORT_ERR',
@@ -2404,7 +2402,7 @@ export class WindsurfClient {
       onError?.(err);
       throw err;
     } finally {
-      releaseLease(this.port);
+      if (leaseHandle) releaseLease(leaseHandle);
     }
   }
 
@@ -2426,7 +2424,7 @@ export class WindsurfClient {
   // model allowlist + credit usage + trial end time. Replaces the
   // probe-based tier inference for accounts where this call succeeds.
   async getUserStatus() {
-    acquireLsUseOrThrow(this.port);
+    const lease = acquireLsUseOrThrow(this.port);
     try {
       const proto = buildGetUserStatusRequest(this.apiKey);
       const resp = await grpcUnary(
@@ -2446,7 +2444,7 @@ export class WindsurfClient {
       });
       return parseGetUserStatusResponse(resp);
     } finally {
-      endLsUse(this.port);
+      endLsUse(lease);
     }
   }
 }

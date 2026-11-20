@@ -9,7 +9,7 @@
     {
       "name": "M6c lease: resume-deadline path leaks the request lease",
       "file": "src/handlers/chat.js",
-      "anchor": "            // The claim acquired this request's lease; no producer ran to\n            // release it.\n            endLsUseFn(ls.port);",
+      "anchor": "            // The claim acquired this request's lease; no producer ran to\n            // release it.\n            endLsUseFn(resumeLease);",
       "replacement": "            // MUTANT: the claim acquired this request's lease and nothing releases it."
     }
   ]
