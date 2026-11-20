@@ -756,13 +756,30 @@ function streamLiveAcp({ id, created, model, messages, prompt, modelKey, acct, r
   };
 }
 
-async function checkoutAccount(callerKey, modelKey = null) {
+async function checkoutAccount(callerKey, modelKey = null, trackReservation = false) {
   if (process.env.DEVIN_CLI_USE_ACCOUNT_POOL === '0') return null;
   // AP-GAP-1: thread the real modelKey so getApiKey applies the same
   // entitlement filter the Cascade path gets — without it a free account with
   // no SWE/Devin entitlement is selected, then fails late at ACP authenticate,
   // burning a process spawn + RPM slot.
-  return getApiKey([], modelKey, callerKey);
+  return getApiKey([], modelKey, callerKey, null, { trackReservation });
+}
+
+function canReportAccountHealth(acct) {
+  return Boolean(acct?.apiKey && (acct.canReportHealth?.() ?? true));
+}
+
+function settleAccountCheckout(acct, refund, deps) {
+  if (acct?.settleReservation) {
+    acct.settleReservation(refund);
+    return;
+  }
+  if (!acct?.apiKey) return;
+  try {
+    if (refund) (deps.refundReservation || refundReservation)(acct.apiKey, acct.reservationTimestamp);
+  } finally {
+    (deps.releaseAccount || releaseAccount)(acct.apiKey);
+  }
 }
 
 /**
@@ -890,6 +907,7 @@ export async function handleSpecialAgentChatCompletion(body, route, deps = {}) {
 
   let acct = null;
   let handedOff = false;
+  let refund = false;
   try {
     const mode = getBackendSwitch('devinCliMode');
     // AC1 gap-e: proactively confirm the Devin CLI is runnable BEFORE we reserve
@@ -914,8 +932,10 @@ export async function handleSpecialAgentChatCompletion(body, route, deps = {}) {
       }
     }
     if (process.env.DEVIN_CLI_USE_ACCOUNT_POOL !== '0') {
-      const checkout = deps.checkoutAccount || checkoutAccount;
-      acct = await checkout(route?.callerKey || '', modelKey);
+      const callerKey = route?.callerKey || '';
+      acct = deps.checkoutAccount
+        ? await deps.checkoutAccount(callerKey, modelKey)
+        : await checkoutAccount(callerKey, modelKey, mode === 'acp');
       if (!acct) {
         return errorResponse(503, 'pool_exhausted', 'No active account is available for Devin CLI special-agent backend.');
       }
@@ -929,23 +949,20 @@ export async function handleSpecialAgentChatCompletion(body, route, deps = {}) {
     // streamFromText path. The live streamer runs the runner itself, so it owns
     // the account release + request accounting via onDone.
     if (body?.stream && mode === 'acp') {
-      const releaser = deps.releaseAccount || releaseAccount;
       const onSuccess = deps.reportSuccess || reportSuccess;
       const stream = streamLiveAcp({
         id, created, model, messages, prompt, modelKey, acct, runner, includeUsage,
         signal: route?.signal || null,
         onDone: (ok, err) => {
-          recordRequest(model, ok, Date.now() - started, acct?.id || null);
-          // AP-GAP-2: feed pool health from the streaming path too.
-          if (acct?.apiKey) {
-            if (ok) onSuccess(acct.apiKey);
-            else {
-              reportRunFailure(acct.apiKey, err, deps);
-              // AP-RISK-3: a failed request shouldn't keep burning an RPM slot
-              // (free tier RPM=10; consecutive failures would fake-saturate).
-              (deps.refundReservation || refundReservation)(acct.apiKey, acct.reservationTimestamp);
+          try {
+            recordRequest(model, ok, Date.now() - started, acct?.id || null);
+            // AP-GAP-2: feed pool health from the streaming path too.
+            if (canReportAccountHealth(acct)) {
+              if (ok) onSuccess(acct.apiKey);
+              else reportRunFailure(acct.apiKey, err, deps);
             }
-            releaser(acct.apiKey);
+          } finally {
+            settleAccountCheckout(acct, !ok, deps);
           }
         },
       });
@@ -963,7 +980,7 @@ export async function handleSpecialAgentChatCompletion(body, route, deps = {}) {
     const reasoning = exposeReasoning() ? sanitizeText(result?.reasoning || '') : '';
     if (result?.stderr) log.debug(`special-agent devin stderr: ${String(result.stderr).slice(0, 240)}`);
     recordRequest(model, true, Date.now() - started, acct?.id || null);
-    if (acct?.apiKey) (deps.reportSuccess || reportSuccess)(acct.apiKey);
+    if (canReportAccountHealth(acct)) (deps.reportSuccess || reportSuccess)(acct.apiKey);
     // H3/H7: carry the runner's real usage + stop_reason through both shapes
     // (null on print runners → pickUsage/mapFinishReason fall back gracefully).
     const usage = result?.usage || null;
@@ -972,18 +989,14 @@ export async function handleSpecialAgentChatCompletion(body, route, deps = {}) {
     if (body?.stream) return streamFromText({ id, created, model, messages, text, reasoning, usage, stopReason, includeUsage });
     return { status: 200, body: chatCompletionBody({ id, created, model, messages, text, reasoning, usage, stopReason, toolCalls }) };
   } catch (err) {
+    refund = true;
     const status = err?.status || 502;
     const type = err?.type || 'backend_error';
     log.warn(`special-agent ${modelKey} failed: ${err.message}`);
     recordRequest(model, false, Date.now() - started, acct?.id || null);
     // AP-GAP-2: classify the failure back to the pool (rate-limit / ban /
     // internal / generic error) so a bad key stops being reselected.
-    if (acct?.apiKey) {
-      reportRunFailure(acct.apiKey, err, deps);
-      // AP-RISK-3: refund the RPM reservation so a failed request doesn't keep
-      // a free-tier slot (RPM=10) occupied and fake-saturate the account.
-      (deps.refundReservation || refundReservation)(acct.apiKey, acct.reservationTimestamp);
-    }
+    if (canReportAccountHealth(acct)) reportRunFailure(acct.apiKey, err, deps);
     // sanitizeText handles paths; redactCredentialFragments handles credentials.
     // Both are needed: err.message can carry CLI stderr, which can carry a token.
     return errorResponse(status, type, redactCredentialFragments(sanitizeText(err.message || 'Special-agent backend failed')), {
@@ -992,10 +1005,7 @@ export async function handleSpecialAgentChatCompletion(body, route, deps = {}) {
   } finally {
     // The live streamer owns the account when handedOff: it releases in onDone
     // after the stream completes. Releasing here would pull the key mid-stream.
-    if (!handedOff && acct?.apiKey) {
-      const releaser = deps.releaseAccount || releaseAccount;
-      releaser(acct.apiKey);
-    }
+    if (!handedOff) settleAccountCheckout(acct, refund, deps);
   }
 }
 
