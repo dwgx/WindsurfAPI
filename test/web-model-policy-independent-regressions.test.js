@@ -269,6 +269,25 @@ function start(page) {
 }
 
 for (const [skin, file] of [['Modern', 'index.html'], ['Sketch', 'index-sketch.html']]) {
+  for (const [reason, malformedConfig] of [
+    ['missing default model', { mode: 'blocklist', list: [] }],
+    ['unknown mode', { mode: 'unexpected', list: [], defaultModel: '' }],
+    ['non-string default model', { mode: 'blocklist', list: [], defaultModel: null }],
+  ]) {
+    test(`${skin}: an acknowledged mutation rejects a snapshot with ${reason}`, async () => {
+      const page = await dashboard(file, 'en');
+      start(page);
+      page.setResponse(() => Response.json({
+        success: true, applied: true, durability: 'durable', config: malformedConfig,
+      }));
+      await page.App.setModelMode('blocklist');
+      assert.deepEqual(plain(page.App.modelAccessConfig), accepted);
+      assert.equal(page.selectedMode(), 'all');
+      if (skin === 'Modern') assert.equal(page.node('model-default').value, accepted.defaultModel);
+      assert.notEqual(lastToast(page.toastStack).node.className, 'toast success');
+    });
+  }
+
   test(`${skin}: an empty 200 body is not success and does not move the controls`, async () => {
     const page = await dashboard(file, 'en');
     start(page);

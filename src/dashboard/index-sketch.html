@@ -3153,7 +3153,9 @@ const App = {
     if (r.applied && r.durability === 'not-applied') return null;
     if (!r.applied && r.durability !== 'not-applied') return null;
     const cfg = r.config;
-    if (!cfg || typeof cfg !== 'object' || typeof cfg.mode !== 'string' || !Array.isArray(cfg.list)) return null;
+    if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)
+        || !['all', 'allowlist', 'blocklist'].includes(cfg.mode)
+        || !Array.isArray(cfg.list) || typeof cfg.defaultModel !== 'string') return null;
     return r;
   },
   // A real radio click changes the control BEFORE onchange runs, so a failure

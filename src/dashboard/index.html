@@ -12044,7 +12044,9 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     if (r.applied && r.durability === 'not-applied') return null;
     if (!r.applied && r.durability !== 'not-applied') return null;
     const cfg = r.config;
-    if (!cfg || typeof cfg !== 'object' || typeof cfg.mode !== 'string' || !Array.isArray(cfg.list)) return null;
+    if (!cfg || typeof cfg !== 'object' || Array.isArray(cfg)
+        || !['all', 'allowlist', 'blocklist'].includes(cfg.mode)
+        || !Array.isArray(cfg.list) || typeof cfg.defaultModel !== 'string') return null;
     return r;
   },
 
