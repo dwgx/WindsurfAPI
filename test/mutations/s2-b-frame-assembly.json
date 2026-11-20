@@ -4,7 +4,7 @@
     "test/s2-b-grpc.test.js",
     "test/s2-b-grpc-limit.test.js"
   ],
-  "expectBaselinePass": 34,
+  "expectBaselinePass": 42,
   "mutations": [
     {
       "name": "B-length: accept a frame one byte past the advertised ceiling",
