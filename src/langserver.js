@@ -13,7 +13,7 @@ import { mkdirSync, readFileSync } from 'fs';
 import { existsSync } from 'fs';
 import http2 from 'http2';
 import net from 'net';
-import { randomUUID } from 'crypto';
+import { createHmac, randomUUID } from 'crypto';
 import { freemem, totalmem } from 'os';
 import { posix, resolve } from 'path';
 import { log } from './config.js';
@@ -269,10 +269,18 @@ function proxyKey(proxy) {
   return key;
 }
 
+// A process-local salt keeps diagnostic labels stable within a run without
+// exposing any part of the private key or allowing offline username guesses.
+const LS_DIAGNOSTIC_SALT = randomUUID();
+
 function publicLsKey(key) {
-  const s = String(key || '');
-  const m = s.match(/^(px_.+_[0-9]+)_u[A-Za-z0-9_]{1,32}$/);
-  return m ? `${m[1]}_u_redacted` : s;
+  const value = String(key || '');
+  if (!value || value === 'default') return value;
+  // A username suffix always adds '_u'. Only keep an ordinary proxy label
+  // when that marker is absent anywhere, without trying to split the key.
+  if (!value.includes('_u') && /^px_[a-zA-Z0-9_]+_[0-9]+$/.test(value)) return value;
+  const digest = createHmac('sha256', LS_DIAGNOSTIC_SALT).update(value).digest('hex');
+  return 'px_' + digest.slice(0, 32) + '_u_redacted';
 }
 
 export function defaultLsDataRoot(platform = process.platform, home = process.env.HOME) {
