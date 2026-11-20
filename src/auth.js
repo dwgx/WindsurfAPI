@@ -12,6 +12,7 @@
 
 import { createHash, randomUUID, randomBytes, timingSafeEqual } from 'crypto';
 import { isStickyEnabled, getStickyBinding, peekStickyBinding, setStickyBinding, clearStickyBinding, noteStickyFallback } from './account/sticky-session.js';
+import { accountLoginIdentity, loginResultIdentity, normalizeLoginIdentity } from './account/login-identity.js';
 import { isExperimentalEnabled, getDroughtThresholdPercent, getIpLockThreshold, getIpLockMs, getBackendSwitch, getBreakerTunable, getQuotaTunable } from './runtime-config.js';
 import { readFileSync, existsSync, unlinkSync, readdirSync } from 'fs';
 import { config, log } from './config.js';
@@ -47,7 +48,7 @@ import {
 } from './devin-connect-models.js';
 import { getLsAdmissionStatus, getLsMaintenanceRequests } from './langserver.js';
 import { bumpConnect } from './devin-connect-metrics.js';
-import { deleteCredential } from './devin-connect-credentials.js';
+import * as credentials from './devin-connect-credentials.js';
 import { classifyToken, unwrapPastedSecret } from './dashboard/account-text-parser.js';
 
 import { join } from 'path';
@@ -906,6 +907,10 @@ function _serializeAccounts() {
     // `status === 'reauth'` is the bit; this only explains it. Written solely by
     // markNeedsReauth and dropped the moment the account re-enters rotation.
     ...(a.status === 'reauth' && a.reauth ? { reauth: a.reauth } : {}),
+    // The address a successful login proved for this row. The display email is
+    // renameable (updateAccountLabel); this field is not, and re-login / bound
+    // identity checks use it instead of the label.
+    ...(a.identityEmail ? { identityEmail: a.identityEmail } : {}),
     // Which email the stored re-login credential is keyed by. The display email
     // is renameable (updateAccountLabel), so re-login and account removal must
     // not look the credential up by it.
@@ -1119,6 +1124,9 @@ function _deserializeAccount(a, now = Date.now()) {
     // well-formed record survives; the STATUS is the bit, so a corrupt record
     // loses the explanation but never puts the account back in rotation.
     ...(reauth ? { reauth } : {}),
+    // No migration from `email` or `credentialEmail`: a historical row without
+    // a persisted verified identity stays unverified and must re-verify.
+    identityEmail: typeof a.identityEmail === 'string' ? a.identityEmail.trim().toLowerCase() : '',
     credentialEmail: typeof a.credentialEmail === 'string' ? a.credentialEmail : '',
     lastUsed: 0, errorCount: 0,
     refreshToken: a.refreshToken || '', expiresAt: 0, refreshTimer: null,
@@ -1964,6 +1972,14 @@ export async function addAccountByToken(token, label = '') {
   return account;
 }
 
+// Test seam for the email/password import path. Production resolves the real
+// login module; tests inject a fake login (and, when they want to observe the
+// store contract, fake store functions) so no provider call or real key is
+// needed. The locality/consent decision is NOT made here — callers pass the
+// already-gated boolean, so this path cannot invent consent of its own.
+let _emailImportDeps = null;
+export function __setEmailImportDeps(deps) { _emailImportDeps = deps || null; }
+
 /**
  * Add account via email/password.
  *
@@ -1972,21 +1988,40 @@ export async function addAccountByToken(token, label = '') {
  * CheckUserLoginMethod (with /_devin-auth/connections fallback), then
  * register a Codeium api_key. Refresh token (Firebase path) is persisted
  * so the background renewal loop in checkAndRefreshTokens picks it up.
+ *
+ * `opts.storeCredential === true` is the operation's explicit consent to retain
+ * the password. Without it the login still succeeds and the verified identity
+ * is recorded, but nothing is written to the encrypted store and no lookup
+ * binding is claimed. The caller is responsible for the locality gate.
  */
-export async function addAccountByEmail(email, password) {
+export async function addAccountByEmail(email, password, opts = {}) {
   if (!email || !password) {
     throw new Error('email and password required');
   }
-  const emailKey = String(email).trim().toLowerCase();
-  const { windsurfLogin } = await import('./dashboard/windsurf-login.js');
+  const wantStore = opts?.storeCredential === true;
+  const loginMod = await import('./dashboard/windsurf-login.js');
+  const windsurfLogin = _emailImportDeps?.windsurfLogin || loginMod.windsurfLogin;
   const result = await windsurfLogin(email, password, null);
   if (!result?.apiKey) {
     throw new Error('Login succeeded but no apiKey returned');
   }
   const label = sanitizeLabelText(result.name) || sanitizeLabelText(email) || email;
-  const existingByEmail = accounts.find(a => String(a.email || '').trim().toLowerCase() === emailKey);
+  // The address this login proved. Prefer the login result's own identity over
+  // the request input, but never use the display name: that is what an operator
+  // may rename at will.
+  const identity = loginResultIdentity(result);
+  const existingByKey = accounts.find(a => a.apiKey === result.apiKey);
+  const keyIdentity = accountLoginIdentity(existingByKey);
+  if (identity && keyIdentity) loginMod.assertLoginIdentity(result, keyIdentity);
+  // Reuse an exact key or a verified address, including a legacy store
+  // binding. An editable label cannot establish ownership of an older row.
+  const existingByEmail = !existingByKey && identity
+    ? accounts.find(a => accountLoginIdentity(a) === identity)
+    : null;
   const account = existingByEmail || addAccountByKey(result.apiKey, label);
-  if (existingByEmail) {
+  if (account.status === 'reauth' && identity && accountLoginIdentity(account) === identity) {
+    markAccountReauthenticated(account.id, { apiKey: result.apiKey, via: 'password', allowSameKey: true });
+  } else if (existingByEmail) {
     const apiKeyChanged = account.apiKey !== result.apiKey;
     const previousKey = account.apiKey;
     account.apiKey = result.apiKey;
@@ -1997,6 +2032,16 @@ export async function addAccountByEmail(email, password) {
     }
     if (account.status === 'error') account.status = 'active';
     account.errorCount = 0;
+  }
+  if (identity) {
+    // Persist the proof even when no password was retained: a later bound login
+    // or auto re-login needs the stable identity, not the store record.
+    account.identityEmail = identity;
+    // A lookup key that names a different address no longer describes this
+    // row's identity. Drop the binding (the old secret is left on disk; consent
+    // changes must not delete historical records).
+    const bound = normalizeLoginIdentity(account.credentialEmail);
+    if (bound && bound !== identity) account.credentialEmail = '';
   }
   if (account.email !== label) {
     account.email = label;
@@ -2011,15 +2056,33 @@ export async function addAccountByEmail(email, password) {
       idToken: result.idToken || '',
     });
   }
-  // Persist the password (encrypted) so a dead session_id can be auto-recovered
-  // via re-login. No-op unless DEVIN_CONNECT_CRED_KEY is set. Best-effort: a
-  // store failure must not break the login that already succeeded.
-  try {
-    const { storeCredential, isCredStoreEnabled } = await import('./devin-connect-credentials.js');
-    if (isCredStoreEnabled()) storeCredential(email, password);
-  } catch (e) {
-    log.warn(`could not persist credential for re-login: ${e.message}`);
+  // Persist the password (encrypted) only when THIS operation explicitly asked
+  // for retention. Login success never implies consent: without wantStore the
+  // store is untouched, and no lookup binding is claimed. Best-effort:
+  // a disabled/failed store must not break the login that already succeeded.
+  if (wantStore) {
+    if (!identity) {
+      log.warn(`Credential NOT stored for ${safeAccountRef(account)} — the login reported no identity to bind it to`);
+    } else {
+      try {
+        const credMod = _emailImportDeps?.storeCredential ? _emailImportDeps : credentials;
+        if (credMod.isCredStoreEnabled()) {
+          if (credMod.storeCredential(identity, password) === true) {
+            // The record is keyed by the verified identity; remember it so a
+            // later rename cannot orphan the secret.
+            account.credentialEmail = identity;
+          } else {
+            log.warn(`Credential NOT stored for ${safeAccountRef(account)} — auto-relogin stays disarmed`);
+          }
+        } else {
+          log.debug(`Credential NOT stored for ${safeAccountRef(account)} — credential storage is disabled`);
+        }
+      } catch (e) {
+        log.warn(`could not persist credential for re-login: ${e.code || e.message}`);
+      }
+    }
   }
+  bumpAccountCredentialRevision(account);
   saveAccounts();
   log.info(`Account added via email: ${safeAccountRef(account)}`);
   trySyncModelCatalog();
@@ -2361,6 +2424,23 @@ function isCurrentAccount(account) {
   return Boolean(account) && accounts.find(a => a.id === account.id) === account;
 }
 
+// In-process revision for asynchronous credential writers. It also distinguishes
+// rotations that reuse a previous token or happen in the same clock tick.
+function bumpAccountCredentialRevision(account) {
+  account._credentialRevision = (account._credentialRevision || 0) + 1;
+}
+
+export function captureAccountCredential(account) {
+  return { account, apiKey: account.apiKey, revision: account._credentialRevision, identity: accountLoginIdentity(account) };
+}
+
+export function isCurrentAccountCredential({ account, apiKey, revision, identity }) {
+  return isCurrentAccount(account)
+    && account.apiKey === apiKey
+    && account._credentialRevision === revision
+    && accountLoginIdentity(account) === identity;
+}
+
 // ─── Session re-auth (`status: 'reauth'`) ───────────────────────────────────
 // A `devin-session-token$` account whose server-side session_id was retired is
 // unrecoverable without a fresh login. A bare UNAUTHORIZED on the data path is
@@ -2465,6 +2545,7 @@ export function markAccountReauthenticated(id, { apiKey = null, via = 'manual', 
   account.erroredAt = 0;
   account._errorAt = 0;
   account._reloginAt = Date.now();
+  bumpAccountCredentialRevision(account);
   delete account.reauth;
   // A real login proves the credential is fine, so a stale ban-signal streak
   // must not re-ban it on the next single hit. The ban FIELDS are only cleared
@@ -2565,6 +2646,7 @@ export function setAccountStatus(id, status, { force = false } = {}) {
   const account = accounts.find(a => a.id === id);
   if (!account) return false;
   if (account.status === 'reauth' && status === 'active' && !force) throw reauthRefusal();
+  if (account.status !== status && isOperatorTerminalStatus(status)) bumpAccountCredentialRevision(account);
   account.status = status;
   if (status === 'active') {
     account.errorCount = 0;
@@ -2599,9 +2681,10 @@ export function resetAccountErrors(id) {
  * Update account label.
  *
  * The label IS the display email (the dashboard renames a row by editing it), so
- * it moves `email` — but NOT `credentialEmail`: the encrypted password record is
- * keyed by the address it was stored under, and re-login / removal must keep
- * finding it after a rename.
+ * it moves `email` — but NOT `identityEmail` or `credentialEmail`: the verified
+ * login identity and the encrypted password record are keyed by the address a
+ * successful login proved, and re-login / removal must keep using it after a
+ * rename.
  */
 // The label is stored into `email` and rendered into dashboard rows, batch
 // results, the search corpus and log lines. The write took the string
@@ -2629,7 +2712,30 @@ export function updateAccountLabel(id, label) {
 export function setAccountCredentialEmail(id, email) {
   const account = accounts.find(a => a.id === id);
   if (!account) return false;
-  account.credentialEmail = String(email || '');
+  const next = String(email || '');
+  if (normalizeLoginIdentity(account.credentialEmail) !== normalizeLoginIdentity(next)) {
+    bumpAccountCredentialRevision(account);
+  }
+  account.credentialEmail = next;
+  saveAccounts();
+  return true;
+}
+
+/**
+ * Persist the address a successful login proved for this row.
+ *
+ * This is the stable identity used by bound login checks and auto re-login; it
+ * is deliberately separate from the renameable display email (`email`) and
+ * from the credential-store lookup key (`credentialEmail`), so a login that did
+ * not retain a password still leaves a usable identity behind.
+ */
+export function setAccountIdentityEmail(id, email) {
+  const account = accounts.find(a => a.id === id);
+  if (!account) return false;
+  const next = normalizeLoginIdentity(email);
+  if (!next) return false;
+  if (account.identityEmail !== next) bumpAccountCredentialRevision(account);
+  account.identityEmail = next;
   saveAccounts();
   return true;
 }
@@ -2706,6 +2812,9 @@ export function setAccountTokens(id, { apiKey, refreshToken, idToken } = {}) {
   if (!account) return false;
   const previousKey = account.apiKey;
   const apiKeyChanged = apiKey != null && account.apiKey !== apiKey;
+  const refreshChanged = refreshToken != null && account.refreshToken !== refreshToken;
+  const idTokenChanged = idToken != null && account.idToken !== idToken;
+  if (apiKeyChanged || refreshChanged || idTokenChanged) bumpAccountCredentialRevision(account);
   if (apiKey != null) account.apiKey = apiKey;
   if (refreshToken != null) account.refreshToken = refreshToken;
   if (idToken != null) account.idToken = idToken;
@@ -2876,10 +2985,21 @@ export async function reLoginAccount(id, { force = false, signal } = {}) {
     log.debug(`re-login ${safeAccountRef(account)} skipped: operator ${account.status}`);
     return false;
   }
-  const tokenAtStart = account.apiKey;
+  const credential = captureAccountCredential(account);
+  // Auto re-login must be driven by a proven identity, never by the renameable
+  // display label. `credentialEmail` is a legacy-but-trustworthy store binding
+  // (it was written only after a successful login); a row with neither field is
+  // ambiguous and must be re-verified explicitly.
+  const identityAtStart = credential.identity;
+  if (!identityAtStart) {
+    log.debug(`re-login ${safeAccountRef(account)} skipped: no verified identity — re-verification required`);
+    return false;
+  }
 
-  const { isCredStoreEnabled, getCredential } = _reloginDeps
-    || await import('./devin-connect-credentials.js');
+  const credDeps = (_reloginDeps?.isCredStoreEnabled && _reloginDeps?.getCredential)
+    ? _reloginDeps
+    : await import('./devin-connect-credentials.js');
+  const { isCredStoreEnabled, getCredential } = credDeps;
   if (!isCredStoreEnabled()) return false;
 
   const state = _reloginState.get(id) || { lastAttempt: 0, inflight: null };
@@ -2891,9 +3011,14 @@ export async function reLoginAccount(id, { force = false, signal } = {}) {
   }
 
   const attempt = (async () => {
+    if (!isCurrentAccountCredential(credential) || isOperatorTerminalStatus(account.status)) return false;
+    const credentialKey = accountCredentialStoreKey(account);
+    if (!credentialKey) return false;
     let password;
     try {
-      password = getCredential(account.credentialEmail || account.email);
+      // The store key is the address the record was written under. When the
+      // legacy binding is absent, the verified identity is the key.
+      password = getCredential(credentialKey);
     } catch (e) {
       // Wrong key / tampered record — credential unusable, not absent.
       log.warn(`re-login ${safeAccountRef(account)}: credential unusable (${e.message})`);
@@ -2918,23 +3043,24 @@ export async function reLoginAccount(id, { force = false, signal } = {}) {
     try {
       // Revalidate after the queued wait: the operator may have disabled,
       // banned, removed or re-keyed the row while this attempt held no slot.
-      if (!isCurrentAccount(account) || isOperatorTerminalStatus(account.status) || account.apiKey !== tokenAtStart) {
+      if (!isCurrentAccountCredential(credential) || isOperatorTerminalStatus(account.status)) {
         log.debug(`re-login ${safeAccountRef(account)} skipped: account changed while queued`);
         return false;
       }
       const proxy = getEffectiveProxy(account.id) || null;
-      const { windsurfLogin } = _reloginDeps || await import('./dashboard/windsurf-login.js');
-      const result = await windsurfLogin(account.email, password, proxy);
+      const loginMod = await import('./dashboard/windsurf-login.js');
+      const windsurfLogin = _reloginDeps?.windsurfLogin || loginMod.windsurfLogin;
+      const result = await windsurfLogin(identityAtStart, password, proxy);
       if (!result?.apiKey) throw new Error('login returned no apiKey');
+      // The result must belong to the identity this row was verified as. A
+      // missing proof is a refusal too: assertLoginIdentity does not treat an
+      // empty expectation as a wildcard.
+      loginMod.assertLoginIdentity(result, identityAtStart);
       // The login RPC is the longest await in this path. Revalidate identity,
       // operator intent and the credential epoch BEFORE committing anything: a
       // disable/ban issued while the login was in flight wins, and a removed or
       // re-added row must never receive the old attempt's token.
-      if (!isCurrentAccount(account) || isOperatorTerminalStatus(account.status)) {
-        log.warn(`re-login ${safeAccountRef(account)} result discarded: account is ${account.status} or no longer in the pool`);
-        return false;
-      }
-      if (account.apiKey !== tokenAtStart) {
+      if (!isCurrentAccountCredential(credential) || isOperatorTerminalStatus(account.status)) {
         log.warn(`re-login ${safeAccountRef(account)} result discarded: credential changed during login`);
         return false;
       }
@@ -2947,12 +3073,18 @@ export async function reLoginAccount(id, { force = false, signal } = {}) {
         bumpUserJwtEpoch();
       }
       if (result.refreshToken) account.refreshToken = result.refreshToken;
+      // A successful login re-proves the identity. Persist it (migrating a
+      // legacy credentialEmail-only row) and record the store key that actually
+      // produced the password when no explicit binding existed.
+      account.identityEmail = identityAtStart;
+      if (!account.credentialEmail) account.credentialEmail = identityAtStart;
       const wasReauth = account.status === 'reauth';
       account.status = 'active';
       account.errorCount = 0;
       account.erroredAt = 0;
       account._errorAt = 0;
       account._reloginAt = Date.now();
+      bumpAccountCredentialRevision(account);
       // A successful login proves the NEW token works, so the evidence behind a
       // previous reauth verdict is dead — dropping it is what makes the state
       // change structural rather than a second flag to remember.
@@ -3057,9 +3189,15 @@ export async function probeAndRecoverConnectAccount(id, { signal } = {}) {
   return { alive: false, code: result.code };
 }
 
-/**
- * Remove an account by ID.
- */
+// A conflicting old lookup key is insufficient to read or delete the record.
+// Identity-only rows retain their existing fallback to the verified address.
+function accountCredentialStoreKey(account) {
+  const identity = accountLoginIdentity(account);
+  const bound = normalizeLoginIdentity(account.credentialEmail);
+  return !bound || bound === identity ? identity : '';
+}
+
+/** Remove an account by ID. */
 export function removeAccount(id) {
   const idx = accounts.findIndex(a => a.id === id);
   if (idx === -1) return false;
@@ -3074,13 +3212,14 @@ export function removeAccount(id) {
   forgetCloudModelCatalog(id);
   trySyncModelCatalog();
   saveAccounts();
-  // The stored password is a live re-login credential for an account that no
-  // longer exists. Leaving it behind meant a deleted account kept a decryptable
-  // secret on disk forever (deleteCredential had zero production callers).
-  // Best-effort: a store that is disabled, locked or corrupt must not stop the
-  // removal — the account is already out of the pool.
+  // Delete a verified store record after its last account is removed.
+  // Filtered rows can still use the password from another instance.
+  const credentialKey = accountCredentialStoreKey(account);
+  const usesCredential = row => accountCredentialStoreKey(row) === credentialKey;
   try {
-    if (deleteCredential(account.credentialEmail || account.email)) log.info(`Stored credential removed for ${safeAccountRef(account)}`);
+    if (credentialKey && !accounts.some(usesCredential) && !filteredAccountRecords.some(usesCredential)) {
+      if (credentials.deleteCredential(credentialKey)) log.info(`Stored credential removed for ${safeAccountRef(account)}`);
+    }
   } catch (e) {
     log.warn(`Could not remove stored credential for ${safeAccountRef(account)}: ${e.code || e.message}`);
   }
@@ -4800,6 +4939,7 @@ export function reportBanSignal(apiKey, message, { windowMs = 30 * 60 * 1000 } =
   log.warn(`Account ${safeAccountRef(account)} emitted ban-shaped error #${account._banSignalCount}: "${account._banSignalLastMessage}"`);
   if (account._banSignalCount >= 2) {
     account.status = 'banned';
+    bumpAccountCredentialRevision(account);
     account.bannedAt = now;
     account.bannedReason = account._banSignalLastMessage;
     saveAccounts();
@@ -5081,6 +5221,7 @@ function publicAccount(a, now, { view = 'full' } = {}) {
   const base = {
     id: a.id,
     email: a.email,
+    loginEmail: accountLoginIdentity(a),
     label: a.label || '',
     method: a.method,
     status: a.status,
@@ -6463,20 +6604,24 @@ async function refreshAllFirebaseTokens({ skipBusy = false } = {}) {
         continue;
       }
     }
-    const tokenAtStart = a.apiKey;
+    let credential = captureAccountCredential(a);
     try {
       const proxy = getEffectiveProxy(a.id) || null;
       const { idToken, refreshToken: newRefresh } = await refreshFirebaseToken(a.refreshToken, proxy);
       // The refresh RPC is an await: revalidate identity, operator intent and
       // the credential epoch before committing either half of the token pair.
-      if (!isCurrentAccount(a) || a.status !== 'active' || a.apiKey !== tokenAtStart) {
+      if (!isCurrentAccountCredential(credential) || a.status !== 'active') {
         log.debug(`Firebase refresh ${a.id} result discarded: account changed during refresh`);
         continue;
       }
-      a.refreshToken = newRefresh;
+      if (a.refreshToken !== newRefresh) {
+        a.refreshToken = newRefresh;
+        bumpAccountCredentialRevision(a);
+        credential = captureAccountCredential(a);
+      }
       // Re-register to get a fresh API key (may be the same key)
       const { apiKey } = await reRegisterWithCodeium(idToken, proxy);
-      if (!isCurrentAccount(a) || a.status !== 'active' || a.apiKey !== tokenAtStart) {
+      if (!isCurrentAccountCredential(credential) || a.status !== 'active') {
         log.debug(`Firebase refresh ${a.id} key discarded: account changed during re-register`);
         continue;
       }
@@ -6484,6 +6629,7 @@ async function refreshAllFirebaseTokens({ skipBusy = false } = {}) {
         log.info(`Firebase refresh: ${safeAccountRef(a)} got new API key`);
         const previousKey = a.apiKey;
         a.apiKey = apiKey;
+        bumpAccountCredentialRevision(a);
         markKeyRotation(a, previousKey);
         invalidateModelCatalogForAccount(a.id);
         trySyncModelCatalog();
@@ -6493,7 +6639,7 @@ async function refreshAllFirebaseTokens({ skipBusy = false } = {}) {
     } catch (e) {
       // A failure that happened after the operator parked the row must not
       // accumulate a fail streak or downgrade anything — the row is terminal.
-      if (!isCurrentAccount(a) || a.status !== 'active') {
+      if (!isCurrentAccountCredential(credential) || a.status !== 'active') {
         log.debug(`Firebase refresh ${a.id} failure ignored: account changed during refresh`);
         continue;
       }

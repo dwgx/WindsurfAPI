@@ -27,6 +27,11 @@ beforeEach(() => {
   __resetReloginState();
   acct = addAccountByKey('devin-session-token$DEAD', EMAIL);
   acct.email = EMAIL;
+  // A row is auto-relogin eligible only when a successful login proved its
+  // identity (or it carries the legacy store binding). The display label is
+  // not identity.
+  acct.identityEmail = EMAIL;
+  acct.credentialEmail = EMAIL;
   acct.method = 'email';
 });
 
@@ -44,7 +49,7 @@ describe('reLoginAccount — gating', () => {
     __setReloginDeps({
       isCredStoreEnabled: () => true,
       getCredential: () => 'pw',
-      windsurfLogin: async () => { loginCalls++; return { apiKey: 'devin-session-token$NEW' }; },
+      windsurfLogin: async () => { loginCalls++; return { apiKey: 'devin-session-token$NEW', identityEmail: EMAIL }; },
     });
     const res = await reLoginAccount(acct.id);
     assert.equal(res, false);
@@ -92,7 +97,7 @@ describe('reLoginAccount — happy path', () => {
     __setReloginDeps({
       isCredStoreEnabled: () => true,
       getCredential: (e) => { emailSeen = e; return 'the-password'; },
-      windsurfLogin: async (email, pw) => { pwSeen = pw; return { apiKey: 'devin-session-token$FRESH', refreshToken: 'rt1' }; },
+      windsurfLogin: async (email, pw) => { pwSeen = pw; return { apiKey: 'devin-session-token$FRESH', refreshToken: 'rt1', identityEmail: EMAIL }; },
     });
     const res = await reLoginAccount(acct.id);
     assert.equal(res, 'devin-session-token$FRESH');
@@ -136,6 +141,98 @@ describe('reLoginAccount — happy path', () => {
   });
 });
 
+describe('reLoginAccount — verified identity', () => {
+  it('refuses a row with no verified identity instead of guessing from the label', async () => {
+    setEnv(true);
+    acct.identityEmail = '';
+    acct.credentialEmail = '';
+    let loginCalls = 0;
+    let credCalls = 0;
+    __setReloginDeps({
+      isCredStoreEnabled: () => true,
+      getCredential: () => { credCalls++; return 'pw'; },
+      windsurfLogin: async () => { loginCalls++; return { apiKey: 'x', identityEmail: EMAIL }; },
+    });
+    assert.equal(await reLoginAccount(acct.id), false);
+    assert.equal(credCalls, 0, 'the label must not be used as a store key');
+    assert.equal(loginCalls, 0, 'an unverified row must not spend a login attempt');
+    assert.equal(acct.apiKey, 'devin-session-token$DEAD');
+  });
+
+  it('uses the verified identity, not a renamed label, for lookup and login', async () => {
+    setEnv(true);
+    acct.email = 'renamed-label@example.test';
+    let credentialKey;
+    let loginEmail;
+    __setReloginDeps({
+      isCredStoreEnabled: () => true,
+      getCredential: (key) => { credentialKey = key; return 'pw'; },
+      windsurfLogin: async (email) => {
+        loginEmail = email;
+        return { apiKey: 'devin-session-token$RENAMED', identityEmail: EMAIL };
+      },
+    });
+    assert.equal(await reLoginAccount(acct.id), 'devin-session-token$RENAMED');
+    assert.equal(credentialKey, EMAIL, 'the stored record is keyed by the verified address');
+    assert.equal(loginEmail, EMAIL, 'the login must not use the renameable label');
+    assert.equal(acct.email, 'renamed-label@example.test', 'a re-login does not rewrite the display label');
+    assert.equal(acct.identityEmail, EMAIL);
+  });
+
+  it('rejects a result that proves a different identity without mutating the row', async () => {
+    setEnv(true);
+    acct.status = 'error';
+    acct.errorCount = 3;
+    __setReloginDeps({
+      isCredStoreEnabled: () => true,
+      getCredential: () => 'pw',
+      windsurfLogin: async () => ({
+        apiKey: 'devin-session-token$SOMEONEELSE',
+        identityEmail: 'someone-else@example.test',
+      }),
+    });
+    assert.equal(await reLoginAccount(acct.id), false);
+    assert.equal(acct.apiKey, 'devin-session-token$DEAD', 'a mismatched token must not be installed');
+    assert.equal(acct.status, 'error', 'a mismatched login must not clear the health state');
+    assert.equal(acct.errorCount, 3);
+    assert.equal(acct.identityEmail, EMAIL);
+    assert.equal(acct.credentialEmail, EMAIL, 'a mismatched login must not change the store binding');
+  });
+
+  it('rejects a result that proves no identity at all', async () => {
+    setEnv(true);
+    __setReloginDeps({
+      isCredStoreEnabled: () => true,
+      getCredential: () => 'pw',
+      // No identityEmail and no email: the result proves nothing about who it is.
+      windsurfLogin: async () => ({ apiKey: 'devin-session-token$ANONYMOUS' }),
+    });
+    assert.equal(await reLoginAccount(acct.id), false);
+    assert.equal(acct.apiKey, 'devin-session-token$DEAD');
+    assert.equal(acct.identityEmail, EMAIL);
+  });
+
+  it('migrates a legacy credentialEmail-only row after a successful re-login', async () => {
+    setEnv(true);
+    acct.identityEmail = '';
+    acct.credentialEmail = EMAIL;
+    acct.status = 'error';
+    let loginEmail;
+    __setReloginDeps({
+      isCredStoreEnabled: () => true,
+      getCredential: (key) => (key === EMAIL ? 'pw' : null),
+      windsurfLogin: async (email) => {
+        loginEmail = email;
+        return { apiKey: 'devin-session-token$LEGACY', identityEmail: EMAIL };
+      },
+    });
+    assert.equal(await reLoginAccount(acct.id), 'devin-session-token$LEGACY');
+    assert.equal(loginEmail, EMAIL, 'the legacy store binding is the identity to verify');
+    assert.equal(acct.identityEmail, EMAIL, 'a successful login persists the proven identity');
+    assert.equal(acct.status, 'active');
+  });
+});
+
 describe('reLoginAccount — throttle + de-dupe', () => {
   it('does not re-login twice within the cooldown', async () => {
     setEnv(true);
@@ -143,7 +240,7 @@ describe('reLoginAccount — throttle + de-dupe', () => {
     __setReloginDeps({
       isCredStoreEnabled: () => true,
       getCredential: () => 'pw',
-      windsurfLogin: async () => { loginCalls++; return { apiKey: 'devin-session-token$N' + loginCalls }; },
+      windsurfLogin: async () => { loginCalls++; return { apiKey: 'devin-session-token$N' + loginCalls, identityEmail: EMAIL }; },
     });
     await reLoginAccount(acct.id);
     await reLoginAccount(acct.id);
@@ -156,7 +253,7 @@ describe('reLoginAccount — throttle + de-dupe', () => {
     __setReloginDeps({
       isCredStoreEnabled: () => true,
       getCredential: () => 'pw',
-      windsurfLogin: async () => { loginCalls++; return { apiKey: 'devin-session-token$N' + loginCalls }; },
+      windsurfLogin: async () => { loginCalls++; return { apiKey: 'devin-session-token$N' + loginCalls, identityEmail: EMAIL }; },
     });
     await reLoginAccount(acct.id);
     await reLoginAccount(acct.id, { force: true });
@@ -172,7 +269,7 @@ describe('reLoginAccount — throttle + de-dupe', () => {
       windsurfLogin: async () => {
         loginCalls++;
         await new Promise(r => setTimeout(r, 20));
-        return { apiKey: 'devin-session-token$CONC' };
+        return { apiKey: 'devin-session-token$CONC', identityEmail: EMAIL };
       },
     });
     const [a, b, c] = await Promise.all([
@@ -198,6 +295,8 @@ describe('reLoginAccount — global concurrency gate (C4)', () => {
     for (let i = 0; i < 5; i++) {
       const a = addAccountByKey(`devin-session-token$DEAD${i}`, `gate-${i}@example.com`);
       a.email = `gate-${i}@example.com`;
+      a.identityEmail = `gate-${i}@example.com`;
+      a.credentialEmail = `gate-${i}@example.com`;
       a.method = 'email';
       ids.push(a.id);
     }
@@ -208,14 +307,14 @@ describe('reLoginAccount — global concurrency gate (C4)', () => {
     __setReloginDeps({
       isCredStoreEnabled: () => true,
       getCredential: () => 'pw',
-      windsurfLogin: async () => {
+      windsurfLogin: async (email) => {
         active++;
         peak = Math.max(peak, active);
         // Block until the test lets this login finish, so all 5 pile up against
         // the gate simultaneously and we can observe the cap.
         await new Promise(r => release.push(r));
         active--;
-        return { apiKey: 'devin-session-token$NEW' };
+        return { apiKey: 'devin-session-token$NEW', identityEmail: email };
       },
     });
 

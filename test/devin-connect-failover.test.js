@@ -22,6 +22,9 @@ const prevEnv = {};
 function seed(label) {
   const key = `devin-session-token$fo-${label}-${Math.random().toString(36).slice(2)}`;
   const acct = addAccountByKey(key, label);
+  // Re-login requires a proven identity; the label itself is display-only.
+  acct.identityEmail = `${label}@failover.example.test`;
+  acct.credentialEmail = acct.identityEmail;
   createdIds.push(acct.id);
   return acct;
 }
@@ -120,9 +123,9 @@ describe('DEVIN_CONNECT cross-account failover — non-stream', () => {
     __setReloginDeps({
       isCredStoreEnabled: () => true,
       getCredential: () => 'stored-password',
-      windsurfLogin: async () => {
+      windsurfLogin: async (email) => {
         freshToken = `devin-session-token$fresh-${Math.random().toString(36).slice(2)}`;
-        return { apiKey: freshToken, name: 'relogin-1' };
+        return { apiKey: freshToken, name: 'relogin-1', identityEmail: email };
       },
     });
 
@@ -163,7 +166,7 @@ describe('DEVIN_CONNECT cross-account failover — non-stream', () => {
     __setReloginDeps({
       isCredStoreEnabled: () => true,
       getCredential: () => 'stored-password',
-      windsurfLogin: async () => ({ apiKey: `devin-session-token$fresh-${Math.random().toString(36).slice(2)}`, name: 'paidwall-1' }),
+      windsurfLogin: async (email) => ({ apiKey: `devin-session-token$fresh-${Math.random().toString(36).slice(2)}`, name: 'paidwall-1', identityEmail: email }),
     });
     const seen = [];
     __setConnectDeps({
@@ -474,7 +477,7 @@ describe('DEVIN_CONNECT cross-account failover — stream', () => {
     __setReloginDeps({
       isCredStoreEnabled: () => true,
       getCredential: () => 'stored-password',
-      windsurfLogin: async () => ({ apiKey: `devin-session-token$fresh-${Math.random().toString(36).slice(2)}`, name: 's-paidwall-1' }),
+      windsurfLogin: async (email) => ({ apiKey: `devin-session-token$fresh-${Math.random().toString(36).slice(2)}`, name: 's-paidwall-1', identityEmail: email }),
     });
     const seen = [];
     __setConnectDeps({
@@ -530,7 +533,7 @@ describe('DEVIN_CONNECT cross-account failover — stream', () => {
     __setReloginDeps({
       isCredStoreEnabled: () => true,
       getCredential: () => 'stored-password',
-      windsurfLogin: async () => { reloginCalls++; return { apiKey: 'devin-session-token$should-never-mint', name: 's-capacity-1' }; },
+      windsurfLogin: async (email) => { reloginCalls++; return { apiKey: 'devin-session-token$should-never-mint', name: 's-capacity-1', identityEmail: email }; },
     });
     let calls = 0;
     const seen = [];
@@ -566,7 +569,7 @@ describe('DEVIN_CONNECT cross-account failover — stream', () => {
     __setReloginDeps({
       isCredStoreEnabled: () => true,
       getCredential: () => 'stored-password',
-      windsurfLogin: async () => { reloginCalls++; return { apiKey: 'devin-session-token$nope', name: 's-capacity-persist-1' }; },
+      windsurfLogin: async (email) => { reloginCalls++; return { apiKey: 'devin-session-token$nope', name: 's-capacity-persist-1', identityEmail: email }; },
     });
     let calls = 0;
     __setConnectDeps({

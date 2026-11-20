@@ -36,7 +36,7 @@ import { resolveClineCompat, stripClineNamespace } from './handlers/cline-compat
 import { resolveCcCompat, stripCcNamespace } from './handlers/cc-compat.js';
 import { isExperimentalEnabled, getBackendSwitch } from './runtime-config.js';
 import { resolveModel, getModelInfo } from './models.js';
-import { handleDashboardApi, preflightDashboardRequest, parseProxyUrl, validateProxyHost, verifyAdminRequest, validateDashboardRequestHost } from './dashboard/api.js';
+import { handleDashboardApi, preflightDashboardRequest, parseProxyUrl, validateProxyHost, verifyAdminRequest, validateDashboardRequestHost, credStoreGateOpen } from './dashboard/api.js';
 import { recordRequest, updateRequest } from './dashboard/request-ring.js';
 import { withStatsScope, finalizeStatsScope } from './dashboard/stats.js';
 import { setAccountProxy } from './dashboard/proxy-config.js';
@@ -826,7 +826,13 @@ async function route(req, res) {
             } else if (acct.token) {
               result = await addAccountByPastedSecret(acct.token, acct.label);
             } else if (acct.email && acct.password) {
-              result = await addAccountByEmail(acct.email, acct.password);
+              // Consent is per ROW: a batch-level flag must not retain every
+              // password in the file. The locality gate is the same one the
+              // dashboard login uses — a loopback bind behind a proxy is not a
+              // trusted local caller.
+              result = await addAccountByEmail(acct.email, acct.password, {
+                storeCredential: credStoreGateOpen(acct.storeCredential, req),
+              });
             } else {
               results.push({ error: 'Missing credentials' });
               continue;
@@ -848,7 +854,12 @@ async function route(req, res) {
       } else if (body.token) {
         account = await addAccountByPastedSecret(body.token, body.label);
       } else if (body.email && body.password) {
-        account = await addAccountByEmail(body.email, body.password);
+        // Login permission is not retention consent: only an explicit
+        // storeCredential:true that also passes the trusted-local / remote
+        // opt-in gate may write the password.
+        account = await addAccountByEmail(body.email, body.password, {
+          storeCredential: credStoreGateOpen(body.storeCredential, req),
+        });
       } else {
         return json(res, 400, { error: 'Provide api_key, token, or email+password' });
       }

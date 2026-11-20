@@ -39,7 +39,7 @@ describe('addAccountByEmail wiring (#follow-up)', () => {
     // first statement, the function is broken regardless of what else
     // ends up in the file.
     const stubLine = 'throw new Error(\'Direct email/password login is not supported';
-    const m = AUTH_JS.match(/export async function addAccountByEmail\(email, password\)\s*\{([\s\S]+?)\n\}/);
+    const m = AUTH_JS.match(/export async function addAccountByEmail\(email, password, opts = \{\}\)\s*\{([\s\S]+?)\n\}/);
     assert.ok(m, 'addAccountByEmail signature/body not found');
     const body = m[1];
     assert.ok(!body.trim().startsWith(stubLine),
@@ -56,6 +56,10 @@ describe('addAccountByEmail wiring (#follow-up)', () => {
       'must persist the resulting apiKey via addAccountByKey');
     assert.match(body, /setAccountTokens\(/,
       'must persist Firebase refreshToken via setAccountTokens so background renewal works');
+    assert.match(body, /opts\?\.storeCredential === true/,
+      'retention must require the explicit per-operation opt-in');
+    assert.match(body, /if \(wantStore\)/,
+      'the credential store must only run behind the consent branch');
   });
 
   test('addAccountByEmail rejects empty email or password before hitting upstream', () => {

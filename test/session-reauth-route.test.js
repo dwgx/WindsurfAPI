@@ -18,6 +18,7 @@ import {
   getAccountInternal,
   markNeedsReauth,
   removeAccount,
+  setAccountIdentityEmail,
 } from '../src/auth.js';
 import { handleDashboardApi } from '../src/dashboard/api.js';
 import { _resetRuntimeConfigForTests } from '../src/runtime-config.js';
@@ -289,6 +290,7 @@ describe('bound add/re-login paths', () => {
   it('email/complete {accountId} re-authenticates the same row', async () => {
     const account = benched('email-bind');
     account.email = EMAIL;
+    setAccountIdentityEmail(account.id, EMAIL);
     const before = getAccountCount().total;
     __setLoginTransportForTests(makeTransport([CONNECTIONS_OAUTH_ONLY, EMAIL_START_OK, EMAIL_COMPLETE_OK, POSTAUTH_OK]));
 
@@ -312,6 +314,7 @@ describe('bound add/re-login paths', () => {
   it('email/complete {accountId} refuses a banned account (409) and changes nothing', async () => {
     const account = benched('email-banned');
     account.email = EMAIL;
+    setAccountIdentityEmail(account.id, EMAIL);
     account.status = 'banned';
     account.bannedAt = Date.now();
     account.bannedReason = 'account suspended';
