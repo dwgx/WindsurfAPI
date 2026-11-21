@@ -3418,7 +3418,15 @@ async function waitForAccount(tried, signal, maxWaitMs = QUEUE_MAX_WAIT_MS, mode
 // one), trimmed + lowercased, with the `minimal` → `none` catalog spelling
 // applied. null when absent or blank.
 export function normalizeReasoningEffortValue(body) {
-  const raw = String(body?.reasoning_effort || body?.reasoning?.effort || '').toLowerCase().trim();
+  let raw;
+  try {
+    // A hostile body can carry effort spellings with no primitive coercion
+    // (Object.create(null) or throwing toString/valueOf) — keying must not
+    // throw on them; treat as no effort.
+    raw = String(body?.reasoning_effort || body?.reasoning?.effort || '').toLowerCase().trim();
+  } catch {
+    return null;
+  }
   if (!raw) return null;
   return raw === 'minimal' ? 'none' : raw;
 }
