@@ -8,17 +8,31 @@ PORT="${PORT:-3003}"
 NAME="${PM2_NAME:-windsurf-api}"
 STABLE_TAG_PATTERN='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
 REQUESTED_TAG=""
+REQUESTED_LINE="${WINDSURFAPI_UPDATE_RELEASE_LINE:-}"
+LINE_COMMIT=""
 if [ "$#" -ne 0 ]; then
   if [ "$#" -eq 1 ] && { [ "$1" = "--help" ] || [ "$1" = "-h" ]; }; then
     echo "Usage: bash update.sh [--tag vX.Y.Z]"
     echo "  --tag  Fast-forward to this signed stable release for this run only."
+    echo "  --line 3.x  Follow stable signed descendants of the v3.2.10 release."
     exit 0
   fi
-  if [ "$#" -ne 2 ] || [ "$1" != "--tag" ] || ! [[ "$2" =~ $STABLE_TAG_PATTERN ]]; then
+  if [ "$#" -eq 2 ] && [ "$1" = "--line" ] && [ -z "$REQUESTED_LINE" ]; then
+    REQUESTED_LINE="$2"
+    [ "$REQUESTED_LINE" = "3.x" ] || { echo "Expected --line 3.x" >&2; exit 2; }
+  elif [ "$#" -ne 2 ] || [ "$1" != "--tag" ] || ! [[ "$2" =~ $STABLE_TAG_PATTERN ]]; then
     echo "✗ Expected a stable release tag: bash update.sh --tag vX.Y.Z" >&2
     exit 2
+  else
+    REQUESTED_TAG="$2"
   fi
-  REQUESTED_TAG="$2"
+fi
+if [ -n "$REQUESTED_LINE" ]; then
+  if [ "$REQUESTED_LINE" != "3.x" ] || [ -n "$REQUESTED_TAG" ]; then
+    echo "Choose exactly one signed tag or the 3.x release line" >&2; exit 2
+  fi
+fi
+if [ -n "$REQUESTED_TAG$REQUESTED_LINE" ]; then
   if [ "${WINDSURFAPI_UPDATE_FORCE:-0}" = "1" ] || [ "${WINDSURFAPI_UPDATE_FORCE_RESET:-0}" = "1" ]; then
     echo "✗ --tag cannot be combined with WINDSURFAPI_UPDATE_FORCE or WINDSURFAPI_UPDATE_FORCE_RESET" >&2
     exit 2
@@ -402,13 +416,17 @@ echo "=== [1/5] Pull latest ==="
 # Fetch only the release branch here. Published-tag authority comes from
 # `ls-remote` below; importing/pruning the remote tag namespace would either keep
 # revoked local refs alive or destroy operator-owned local tags.
-if [ -n "$REQUESTED_TAG" ]; then
+if [ -n "$REQUESTED_TAG$REQUESTED_LINE" ]; then
   git fetch --quiet --no-tags origin refs/heads/master
   REMOTE_HEAD=$(git rev-parse 'FETCH_HEAD^{commit}')
   BEFORE_REF=$(git rev-parse --symbolic-full-name HEAD)
 else
   git fetch --quiet --no-tags origin master
   REMOTE_HEAD=$(git rev-parse origin/master)
+fi
+if [ -n "$REQUESTED_LINE" ]; then
+  selection=$(node scripts/select-release-line.mjs "$REQUESTED_LINE" "$REMOTE_HEAD") || exit 1
+  read -r REQUESTED_TAG LINE_COMMIT <<< "$selection"
 fi
 BEFORE=$(git rev-parse HEAD)
 DIRTY=$(git status --porcelain)
@@ -545,6 +563,9 @@ while true; do
       exit 1
     fi
     release_branch="$REMOTE_HEAD"
+  fi
+  if [ -n "$LINE_COMMIT" ] && [ "$LINE_COMMIT" != "$fetched_commit" ]; then
+    echo "    ! release line selection changed during verification"; exit 1
   fi
   if git merge-base --is-ancestor "$fetched_commit" "$release_branch"; then
     LATEST_TAG="$candidate"

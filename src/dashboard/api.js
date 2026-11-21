@@ -4,6 +4,7 @@
  */
 
 import { config, log } from '../config.js';
+import { parseRemoteStableReleaseTags, selectReleaseLine } from '../update-release-line.js';
 import { accountLoginIdentity, loginResultIdentity } from '../account/login-identity.js';
 import * as credentials from '../devin-connect-credentials.js';
 import { accountRef, buildSubprocessEnv } from '../log-safety.js';
@@ -1533,6 +1534,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
       return json(res, 200, withJournal({ ok: true, mode: 'git', ...info }));
     } catch (err) {
       if (isSelfUpdateUnavailableError(err)) {
+        if (process.env.WINDSURFAPI_UPDATE_RELEASE_LINE) return json(res, 200, { ok: false, error: 'ERR_RELEASE_LINE_REQUIRES_GIT' });
         // Git path is unavailable (most often docker). Fall back to
         // docker self-update via /var/run/docker.sock if the user
         // mounted it into the container; otherwise report the same
@@ -1845,6 +1847,10 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
     let mutationLockHandedOff = false;
     try {
       try {
+        const line = process.env.WINDSURFAPI_UPDATE_RELEASE_LINE;
+        if (line && (body?.forceUpdate || body?.forceReset)) {
+          return json(res, 200, { ok: false, error: 'ERR_RELEASE_LINE_FORCE' });
+        }
         const before = await gitStatus();
         reconcilePendingRollbackPoint(before.commitFull);
       // M1: resolve the update target before any write (including forceReset).
@@ -1874,7 +1880,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
         // accounts.json, stats.json, runtime-config.json which live in the
         // repo root but aren't checked in). If tracked files were edited,
         // surface a friendly error instead of a raw git failure.
-        const dirty = (await runGit(['status', '--porcelain', '-uno'])).trim();
+        const dirty = (await runGit(line ? ['status', '--porcelain', '--ignore-submodules=none'] : ['status', '--porcelain', '-uno'])).trim();
         let resetTarget = before.commitFull;
         if (dirty) {
           const allowForce = !!(body && body.forceReset);
@@ -1967,6 +1973,11 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
           }
         }
 
+        if (line && ((await runGit(['rev-parse', 'HEAD'])).trim() !== before.commitFull
+            || (await runGit(['rev-parse', '--abbrev-ref', 'HEAD'])).trim() !== before.branch
+            || (await runGit(['status', '--porcelain', '--ignore-submodules=none'])).trim())) {
+          return json(res, 200, { ok: false, error: 'ERR_CHECKOUT_CHANGED' });
+        }
         let protectiveStashOid = '';
         if (dirty) {
           try {
@@ -1990,7 +2001,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
           pull = dirty
             ? await runGit(['reset', '--hard', resetTarget]).then(() => 'hard-reset applied')
             : targetState.updateAvailable
-              ? await runGit(['merge', '--ff-only', targetState.targetCommit])
+              ? await runGit(['merge', '--ff-only', ...(line ? ['--no-overwrite-ignore'] : []), targetState.targetCommit])
               : `Already at latest published release ${targetState.latestTag || targetState.targetCommit.slice(0, 7)}`;
         } catch (err) {
           mutationError = err;
@@ -2164,6 +2175,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
       });
       } catch (err) {
         if (isSelfUpdateUnavailableError(err)) {
+          if (process.env.WINDSURFAPI_UPDATE_RELEASE_LINE) return json(res, 200, { ok: false, error: 'ERR_RELEASE_LINE_REQUIRES_GIT' });
         // Same fallback as /self-update/check: when git is unavailable
         // (docker), try the docker socket path. The dashboard may already
         // have called /self-update/check first and routed the user
@@ -4823,7 +4835,7 @@ export function runGit(args, opts = {}) {
   return new Promise((resolve, reject) => {
     if (!hasGitMetadata(opts.cwd)) return reject(makeSelfUpdateUnavailableError());
     getGitExecFile().then((execFile) => {
-      execFile('git', args, { timeout: 30_000, maxBuffer: 1024 * 1024, ...opts }, (err, stdout, stderr) => {
+      execFile('git', args, { timeout: 30_000, maxBuffer: 1024 * 1024, ...opts, ...(process.env.WINDSURFAPI_UPDATE_RELEASE_LINE ? { env: { ...process.env, ...opts.env, GIT_NO_REPLACE_OBJECTS: '1' } } : {}) }, (err, stdout, stderr) => {
         if (err?.code === 'ENOENT') return reject(makeSelfUpdateUnavailableError());
         if (err) {
           const failure = new Error((stderr || err.message).toString().slice(0, 500));
@@ -4839,65 +4851,6 @@ export function runGit(args, opts = {}) {
       });
     }).catch(reject);
   });
-}
-
-function stableReleaseVersion(tag) {
-  const match = String(tag || '').match(/^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/);
-  return match ? match.slice(1) : null;
-}
-
-function compareDecimalComponents(left, right) {
-  if (left.length !== right.length) return left.length > right.length ? 1 : -1;
-  if (left === right) return 0;
-  return left > right ? 1 : -1;
-}
-
-function compareStableReleaseTags(left, right) {
-  const a = stableReleaseVersion(left);
-  const b = stableReleaseVersion(right);
-  for (let i = 0; i < 3; i++) {
-    const compared = compareDecimalComponents(a[i], b[i]);
-    if (compared) return compared;
-  }
-  return 0;
-}
-
-function validRemoteTagName(tag) {
-  return !!tag
-    && !tag.startsWith('.')
-    && !tag.endsWith('.')
-    && !tag.startsWith('/')
-    && !tag.endsWith('/')
-    && !tag.includes('..')
-    && !tag.includes('//')
-    && !tag.includes('@{')
-    && !/[\x00-\x20\x7f~^:?*[\\]/.test(tag);
-}
-
-function parseRemoteStableReleaseTags(output) {
-  const byName = new Map();
-  for (const line of String(output || '').split(/\r?\n/).filter(Boolean)) {
-    const match = line.match(/^([0-9a-f]{40}|[0-9a-f]{64})\trefs\/tags\/(.+)$/i);
-    if (!match) throw new Error('remote tag enumeration returned a malformed record');
-    const oid = match[1].toLowerCase();
-    const peeled = match[2].endsWith('^{}');
-    const name = peeled ? match[2].slice(0, -3) : match[2];
-    if (!validRemoteTagName(name)) throw new Error('remote tag enumeration returned an invalid ref name');
-    if (!stableReleaseVersion(name)) continue;
-
-    const entry = byName.get(name) || { name, object: '', peeled: '' };
-    const field = peeled ? 'peeled' : 'object';
-    if (entry[field]) throw new Error(`remote tag enumeration duplicated ${name}${peeled ? '^{}' : ''}`);
-    entry[field] = oid;
-    byName.set(name, entry);
-  }
-
-  const candidates = [...byName.values()];
-  for (const candidate of candidates) {
-    if (!candidate.object) throw new Error(`remote tag ${candidate.name} has a peeled record without its tag ref`);
-  }
-  candidates.sort((left, right) => compareStableReleaseTags(right.name, left.name));
-  return candidates;
 }
 
 async function materializeRemoteReleaseTag(candidate) {
@@ -4944,7 +4897,13 @@ async function latestReleaseTag(branch) {
   try {
     const output = await runGit(['ls-remote', '--tags', 'origin', 'refs/tags/v[0-9]*']);
     const remoteRef = `origin/${branch}`;
-    for (const advertised of parseRemoteStableReleaseTags(output)) {
+    const tags = parseRemoteStableReleaseTags(output);
+    const line = process.env.WINDSURFAPI_UPDATE_RELEASE_LINE;
+    if (line) {
+      const selected = await selectReleaseLine(line, remoteRef, tags, runGit);
+      return await materializeRemoteReleaseTag(selected);
+    }
+    for (const advertised of tags) {
       const candidate = await materializeRemoteReleaseTag(advertised);
       if (await gitCommitIsAncestor(candidate.commit, remoteRef)) return candidate;
     }
@@ -4967,7 +4926,8 @@ async function latestReleaseTag(branch) {
  * updating; `required` makes missing material fatal.
  */
 async function verifySelectedReleaseAttestation(release) {
-  const mode = normalizeAttestationMode(process.env.WINDSURFAPI_UPDATE_ATTESTATION);
+  const line = process.env.WINDSURFAPI_UPDATE_RELEASE_LINE;
+  const mode = line ? 'required' : normalizeAttestationMode(process.env.WINDSURFAPI_UPDATE_ATTESTATION);
   let repository = '';
   try {
     const originUrl = (await runGit(['remote', 'get-url', 'origin'])).trim();
@@ -4989,6 +4949,12 @@ async function verifySelectedReleaseAttestation(release) {
     dir: process.env.WINDSURFAPI_ATTESTATION_DIR || '',
     repository,
   };
+  if (line) {
+    if (!repository) throw new Error('The signed source release line requires the canonical repository');
+    options.tree = (await runGit(['rev-parse', release.commit + '^{tree}'])).trim();
+    const tag = release.name.replaceAll('.', '\\.');
+    options.identity = '^https://github\\.com/dwgx/WindsurfAPI/\\.github/workflows/release\\.yml@refs/tags/' + tag + '$';
+  }
   const result = releaseAttestationVerifierForTest
     ? await releaseAttestationVerifierForTest(options)
     : await verifyReleaseAttestation(options);

@@ -11,7 +11,7 @@
   "mutations": [
     {
       "name": "dashboard stable-tag selection accepts leading-zero pseudo versions",
-      "file": "src/dashboard/api.js",
+      "file": "src/update-release-line.js",
       "anchor": "  const match = String(tag || '').match(/^v(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$/);",
       "replacement": "  const match = String(tag || '').match(/^v(\\d+)\\.(\\d+)\\.(\\d+)$/);"
     },
@@ -41,7 +41,7 @@
     },
     {
       "name": "dashboard remote-tag parser accepts records with repeated literal tabs",
-      "file": "src/dashboard/api.js",
+      "file": "src/update-release-line.js",
       "anchor": "    const match = line.match(/^([0-9a-f]{40}|[0-9a-f]{64})\\trefs\\/tags\\/(.+)$/i);",
       "replacement": "    const match = line.match(/^([0-9a-f]{40}|[0-9a-f]{64})\\t+refs\\/tags\\/(.+)$/i);"
     },
