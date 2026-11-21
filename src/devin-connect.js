@@ -45,7 +45,7 @@ import { wrapRequest, wrapEnvelope, StreamingFrameParser, connectHeaders, tryGun
 import { recordSchemaNormalized } from './handlers/cc-compat.js';
 // Observability only, same rationale as recordSchemaNormalized above: the
 // metrics module has no imports of its own, so it cannot create a cycle.
-import { bumpConnect } from './devin-connect-metrics.js';
+import { bumpConnect, CACHE_READ_UNREPORTED } from './devin-connect-metrics.js';
 // Bounded remote-image fetch (deadline, byte cap, MIME allowlist, per-hop SSRF
 // lookup hook). image.js imports only config/pdf/net-safety/vendor codecs, so this
 // cannot create a cycle back into the connect pipeline.
@@ -3070,7 +3070,7 @@ export function normalizeConnectUsage(lastUsage) {
   // a no-op here — the OpenAI identity already holds (asserted in
   // test/strict-usage-total.test.js so a future re-split has to revisit it).
   const promptTokens = fresh + cacheRead + cacheWrite;
-  return {
+  const normalized = {
     prompt_tokens: promptTokens,
     completion_tokens: completion,
     total_tokens: promptTokens + completion,
@@ -3080,6 +3080,10 @@ export function normalizeConnectUsage(lastUsage) {
       ? { cache_creation_input_tokens: cacheWrite }
       : {}),
   };
+  if (!Number.isSafeInteger(lastUsage.cache_read_tokens) || lastUsage.cache_read_tokens < 0) {
+    Object.defineProperty(normalized, CACHE_READ_UNREPORTED, { value: true });
+  }
+  return normalized;
 }
 
 export function mapFinishReason(finish, env = process.env) {

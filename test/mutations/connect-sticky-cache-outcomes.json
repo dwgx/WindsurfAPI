@@ -1,0 +1,45 @@
+{
+  "tests": [
+    "test/sticky-selector-dimension.test.js",
+    "test/connect-sticky-cache-outcomes.test.js"
+  ],
+  "expectBaselinePass": 11,
+  "mutations": [
+    {
+      "name": "account selection ignores the Connect selector",
+      "file": "src/auth.js",
+      "anchor": ": getStickyBinding(callerKey, modelKey, connectSelector);",
+      "replacement": ": getStickyBinding(callerKey, modelKey);"
+    },
+    {
+      "name": "Connect bind omits the selected model",
+      "file": "src/handlers/chat.js",
+      "anchor": "currentApiKeyForId(acct.id, acct.apiKey), selector, usage);",
+      "replacement": "currentApiKeyForId(acct.id, acct.apiKey), null, usage);"
+    },
+    {
+      "name": "stream successes lose usage",
+      "file": "src/handlers/chat.js",
+      "anchor": "r.sr?.usage ?? null);",
+      "replacement": "null);"
+    },
+    {
+      "name": "replacement account inherits the old cache history",
+      "file": "src/account/sticky-session.js",
+      "anchor": "existing?.accountId === accountId ? existing.cache : null",
+      "replacement": "existing?.cache || null"
+    },
+    {
+      "name": "zero provider reads are counted as hits",
+      "file": "src/account/sticky-session.js",
+      "anchor": "if (read > 0) cache.hits++;",
+      "replacement": "if (read >= 0) cache.hits++;"
+    },
+    {
+      "name": "unreported provider reads become artificial cache misses",
+      "file": "src/account/sticky-session.js",
+      "anchor": "usage?.[CACHE_READ_UNREPORTED] ? null : usage?.prompt_tokens_details?.cached_tokens",
+      "replacement": "usage?.prompt_tokens_details?.cached_tokens"
+    }
+  ]
+}

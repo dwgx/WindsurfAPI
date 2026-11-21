@@ -41,7 +41,7 @@ import { getStats, getRequestLog, resetStats, recordRequest, exportStats, import
 import { getConnectMetrics, resetConnectMetrics } from '../devin-connect-metrics.js';
 import { getCascadeImageMetrics, resetCascadeImageMetrics } from '../cascade-image-metrics.js';
 import { detachedRegistry, cascadeDetachEnabled } from '../detached-registry.js';
-import { getStickyStats, isStickyEnabled } from '../account/sticky-session.js';
+import { getStickyStats, getStickyCacheOutcomes, isStickyEnabled } from '../account/sticky-session.js';
 import { getResponseStoreStats } from '../response-store.js';
 import { cacheStats, cacheClear } from '../cache.js';
 import {
@@ -2779,6 +2779,11 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
     // Sticky-session affinity counters ride along so an operator can verify
     // STICKY_SESSION_ENABLED is actually binding (hits/creates > 0) instead
     // of counting log lines — the only way to check before this.
+    const params = dashboardUrl(req).searchParams;
+    if (params.get('cacheBindings') === '1') {
+      return json(res, 200, { sticky: { enabled: isStickyEnabled(),
+        cacheOutcomes: getStickyCacheOutcomes(Number(params.get('offset'))) } }, NO_STORE);
+    }
     return json(res, 200, {
       ...getConnectMetrics(),
       poolHealth: getPoolHealthWindow(),

@@ -2743,7 +2743,7 @@ async function acquireConnectFailover(triedKeys, signal, callerKey, selector = n
 // entitlement a caller alternating between a free-reachable and a paid selector
 // cleared and re-created that slot every request and got zero affinity. getApiKey
 // already receives the selector, so both sides agree.
-export function bindConnectSticky(callerKey, acct, selector = null) {
+export function bindConnectSticky(callerKey, acct, selector = null, usage = undefined) {
   if (!callerKey || !acct?.id || !isStickyEnabled()) return;
   // Same per-user-scope gate every Cascade sticky write sits behind (via
   // reuseEnabled → !sharedApiKeyNoScope, chat.js hasPerUserScope / SEC-W2):
@@ -2756,7 +2756,7 @@ export function bindConnectSticky(callerKey, acct, selector = null) {
   // cascade reuse.
   if (!hasPerUserScope(callerKey)) return;
   try {
-    setStickyBinding(callerKey, null, acct.id, currentApiKeyForId(acct.id, acct.apiKey), selector);
+    setStickyBinding(callerKey, null, acct.id, currentApiKeyForId(acct.id, acct.apiKey), selector, usage);
   } catch { /* affinity is best-effort — never fail a served request over it */ }
 }
 
@@ -5186,7 +5186,7 @@ async function _handleChatCompletionsInner(body, context, captureCacheGeneration
                   // upstream session_id stable, this keeps the ACCOUNT stable — the
                   // prompt cache lives on the account, so without both the next turn
                   // still lands elsewhere and re-writes the whole context.
-                  bindConnectSticky(callerKey, acct, selector);
+                  bindConnectSticky(callerKey, acct, selector, r.sr?.usage ?? null);
                   // Session continuity: commit the completed request→response pair
                   // from the streamed result so the next turn resolves to this same
                   // session_id via pair-chain overlap. Gate-checked + best-effort
@@ -5452,7 +5452,7 @@ async function _handleChatCompletionsInner(body, context, captureCacheGeneration
           return structuredOutputError(connectViolation);
         }
         // Same cache-affinity pin as the streaming path above.
-        bindConnectSticky(callerKey, acct, selector);
+        bindConnectSticky(callerKey, acct, selector, r.out?.body?.usage ?? null);
         // Session continuity: commit the completed request→response pair so the
         // next turn resolves to this session_id via pair-chain overlap. The
         // response tool_calls already ride the OpenAI function shape here.

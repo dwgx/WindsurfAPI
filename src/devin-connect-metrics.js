@@ -163,6 +163,9 @@ const _counters = {
 };
 let _startedAt = Date.now();
 
+// Internal provenance for normalized usage. The public OpenAI view defaults to zero.
+export const CACHE_READ_UNREPORTED = Symbol('Connect cache read not reported');
+
 /** Increment a named counter by n (default 1). Unknown names are ignored. */
 export function bumpConnect(name, n = 1) {
   if (Object.prototype.hasOwnProperty.call(_counters, name)) _counters[name] += n;

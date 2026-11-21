@@ -385,3 +385,16 @@ tag peel 出来的 commit；不一致或签名无效时**两种模式都拒绝**
 **加新开关不写文档会直接让测试变红**。注意守卫只认 5 种读取形式
 （`test/docs-consistency-guard.test.js:513-524`），对 `csvListEnv`/`csvSetEnv`、`envGateAllows`
 和 `env?.NAME` 是盲的；这 9 个名字本文已写全，但不能把守卫的绿色当成它们的证明。
+
+## Connect prompt-cache outcomes
+
+With `STICKY_SESSION_ENABLED=1`, the authenticated dashboard request
+`GET /dashboard/api/connect-metrics?cacheBindings=1&offset=0` returns up to
+50 active bindings under `sticky.cacheOutcomes`. Use `nextOffset` for the next
+page. IDs identify in-memory binding lifetimes and are retired on eviction,
+expiry or a change of account. The user-only affinity experiment combines
+selectors; ordinary Connect affinity uses a separate binding for each selector.
+
+A positive provider cache-read count is a hit, an explicit zero is a miss,
+and a missing breakdown is unknown. Token counts describe delivered upstream
+turns. A gateway response-cache hit incurs no upstream turn and adds no sample.

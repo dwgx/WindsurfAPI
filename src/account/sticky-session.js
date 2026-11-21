@@ -8,18 +8,12 @@
  *
  * Design:
  *   - (callerKey, modelKey) → accountId binding with configurable TTL
- *   - The model dimension separates bindings ON THE CASCADE PATH ONLY: there the
- *     same caller using opus and sonnet can be bound to different accounts.
- *     It does NOT hold on DEVIN_CONNECT, which is the production default —
- *     connect selection always looks up with modelKey=null (chat.js getApiKey),
- *     so the binding must be WRITTEN with null too or it would never resolve
- *     (test/connect-sticky-affinity.test.js pins that as a regression guard).
- *     Every connect selector of one caller therefore shares the single slot
- *     `callerKey\0*`, and cross-model collision is guaranteed rather than
- *     prevented: on a pool partitioned by entitlement a caller alternating
- *     between a free-reachable and a paid selector clears and re-creates the
- *     one slot on every request, so it gets zero affinity. Adding a selector
- *     dimension to both the write and the lookup is the open follow-up.
+ *   - Cascade uses the model dimension. Connect uses the selector dimension on
+ *     writes, lookups, peeks and clears. The explicit user-only experiment
+ *     collapses both dimensions.
+ *   - A delivered upstream Connect turn records cache outcomes with its binding.
+ *     An absent usage breakdown is counted as unknown. Local response-cache
+ *     hits have no upstream turn to attribute.
  *   - Binding is created when a successful response is returned
  *   - On next request, getApiKey checks the binding first
  *   - If the bound account is unavailable (rate limited, etc.),
@@ -69,6 +63,8 @@
 
 import { isExperimentalEnabled } from '../runtime-config.js';
 import { log } from '../config.js';
+import { CACHE_READ_UNREPORTED } from '../devin-connect-metrics.js';
+import { accountRef } from '../log-safety.js';
 
 const ENABLED = process.env.STICKY_SESSION_ENABLED === '1';
 
@@ -82,8 +78,9 @@ const MAX_BINDINGS = (() => {
   return Number.isFinite(n) && n > 0 ? n : 10000;
 })();
 
-// Map<bindingKey, { accountId, apiKey, createdAt, lastAccess }>
-// bindingKey = callerKey + '\0' + modelKey
+// The cache counters live on the binding so replacement, expiry and LRU eviction
+// retire the measurements with the account that generated them.
+let nextBindingId = 0;
 const _bindings = new Map();
 // Per-TENANT binding counts. The tenant is the callerKey prefix that identifies
 // the API key (`api:<hash>` / `session:<hash>` / `client:<hash>`), NOT the whole
@@ -266,7 +263,7 @@ export function peekStickyBinding(callerKey, modelKey = '', selector = null) {
  * @param {string} accountId
  * @param {string} apiKey
  */
-export function setStickyBinding(callerKey, modelKey, accountId, apiKey, selector = null) {
+export function setStickyBinding(callerKey, modelKey, accountId, apiKey, selector = null, usage = undefined) {
   if (!ENABLED || !callerKey || !accountId) return;
   ensureCleanupTimer();
 
@@ -287,12 +284,33 @@ export function setStickyBinding(callerKey, modelKey, accountId, apiKey, selecto
 
   const key = bindingKey(callerKey, modelKey, selector);
   const now = Date.now();
-  const existing = _bindings.get(key);
+  let existing = _bindings.get(key);
+  if (existing && now - existing.lastAccess > TTL_MS) {
+    dropBinding(key);
+    _stats.expires++;
+    existing = null;
+  }
+
+  let cache = existing?.accountId === accountId ? existing.cache : null;
+  if (usage !== undefined) {
+    cache ??= { id: ++nextBindingId, account: accountRef(accountId),
+      selector: isExperimentalEnabled('stickyBindByUserOnly') ? null : selector,
+      hits: 0, misses: 0, unknown: 0, readTokens: 0, writeTokens: 0 };
+    const read = usage?.[CACHE_READ_UNREPORTED] ? null : usage?.prompt_tokens_details?.cached_tokens;
+    if (Number.isSafeInteger(read) && read >= 0) {
+      if (read > 0) cache.hits++;
+      else cache.misses++;
+      cache.readTokens += read;
+    } else cache.unknown++;
+    const written = usage?.cache_creation_input_tokens;
+    if (Number.isSafeInteger(written) && written > 0) cache.writeTokens += written;
+  }
 
   if (existing) _bindings.delete(key); else trackInsert(key);
   _bindings.set(key, {
     accountId,
     apiKey,
+    cache,
     createdAt: existing?.createdAt || now,
     lastAccess: now,
   });
@@ -392,4 +410,19 @@ export function resetAllBindings() {
  */
 export function getStickyStats() {
   return { ..._stats, size: _bindings.size };
+}
+
+// Operator-only, bounded page of active Connect bindings. Reading it does not
+// refresh TTL, move entries in LRU order or count as an affinity lookup.
+export function getStickyCacheOutcomes(offset = 0) {
+  const start = Number.isSafeInteger(offset) && offset >= 0 ? offset : 0;
+  const rows = [];
+  const now = Date.now();
+  let total = 0;
+  for (const binding of _bindings.values()) {
+    if (!binding.cache || now - binding.lastAccess > TTL_MS) continue;
+    if (total >= start && rows.length < 50) rows.push({ ...binding.cache });
+    total++;
+  }
+  return { rows, total, nextOffset: start + rows.length < total ? start + rows.length : null };
 }
