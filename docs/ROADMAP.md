@@ -17,9 +17,10 @@ unsupported, missing or invalid protocol version. An inert agent selecting v1
 proceeds through authentication, session creation and the prompt.
 [ACP v1 negotiation](https://agentclientprotocol.com/protocol/v1/initialization#version-negotiation)
 
-Check both import dashboards against successful rows saved by earlier
-versions. A missing or unrecognized account outcome should keep the row's
-generic success label.
+Both private import dashboards preserve a generic success label for earlier
+servers' successful rows with a missing or unrecognized account outcome.
+When the server omits the input position, the dashboards display a dash.
+[Legacy import coverage](../test/dashboard-import-outcomes.test.js)
 
 The follow-up branch has a one-shot signed source selector and dedicated
 side-effect-free account preview routes. Its import fixtures cover mixed
