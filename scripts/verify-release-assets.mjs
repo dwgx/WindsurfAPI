@@ -2,11 +2,11 @@
 // Verify a downloaded WindsurfAPI release against its cosign keyless signatures.
 //
 // The release workflow signs five blobs — the four published binaries/zips and
-// SHA256SUMS — and publishes three artifacts per blob:
+// SHA256SUMS — and publishes one signature bundle per blob:
 //
 //   <name>.sigstore.json   Sigstore bundle (signature + Fulcio certificate +
 //                          Rekor inclusion proof), the only artifact the
-//                          release workflow publishes since v3.10.0
+//                          release workflow publishes for each signed blob
 //
 // The bundle is the durable proof. Fulcio certificates live for minutes, so a
 // detached certificate only verifies while it is still inside its validity
@@ -14,7 +14,7 @@
 // bytes years later. This helper therefore verifies bundles only.
 //
 // It never downloads anything: point it at a directory that already contains
-// the release assets. cosign must be installed (https://docs.sigstore.dev).
+// the release assets. Cosign v3 or newer must be installed (https://docs.sigstore.dev).
 //
 // Usage:
 //   node scripts/verify-release-assets.mjs [dir]
@@ -216,7 +216,7 @@ Arguments:
 
 Options:
   --dir <dir>                same as the positional argument
-  --cosign <path>            cosign binary (default: $COSIGN, then "cosign")
+  --cosign <path>            Cosign v3 or newer binary (default: $COSIGN, then "cosign")
   --identity <regexp>        certificate identity regexp
   --tag <vX.Y.Z>             pin the exact release tag (builds the identity regexp)
                              (default: ${DEFAULT_IDENTITY_REGEXP})
@@ -224,9 +224,8 @@ Options:
   -h, --help                 show this help
 
 The directory must contain ${[...RELEASE_ASSETS, MANIFEST_NAME].join(', ')}
-plus .sig, .pem and .sigstore.json for each. Only the .sigstore.json bundles
-are cryptographically verified; .sig and .pem are published for detached-
-signature consumers and expire with the Fulcio certificate. Exit codes:
+plus one .sigstore.json bundle per signed file. Verify with Cosign v3 or newer.
+Exit codes:
 0 verified, 1 verification failed, 2 usage/environment error.`;
 }
 

@@ -1,10 +1,25 @@
 # WindsurfAPI roadmap
 
-Updated 2026-11-21. WindsurfAPI connects existing clients to Windsurf and Devin
+Updated 2026-11-22. WindsurfAPI connects existing clients to Windsurf and Devin
 through OpenAI-compatible, Anthropic-compatible and Gemini-compatible HTTP
 interfaces. The next work should make those connections easier to verify and
 operate. This page tracks current evidence and the checks needed to finish each
 item.
+
+## Private follow-up to v3.2.11
+
+Offline regression coverage now includes ambiguous streamed tool names, import
+opt-out and draft retention, bounded provider reset hints, and per-binding
+Connect cache outcomes. The loopback load runner checks both sides of the first
+content frame. The optional patch diagnostic records only lengths and shapes.
+[Transport checks](../test/offline-connect-load.test.js) · [Operator metrics](ENV-SWITCHES.md)
+
+Remote Responses compaction, Responses WebSocket support and prefix warming
+await a real-account recording. For WebSocket work, the acceptance fixture
+must cover Origin policy and `previous_response_id`. Legacy Git-source updates
+continue to use numeric tag ordering. [Manual migration](RELEASE-SIGNING.md#manual-git-source-migration-from-v3141-to-v32x)
+
+## Published baseline and open observations
 
 | Work | Evidence today | Acceptance |
 |---|---|---|

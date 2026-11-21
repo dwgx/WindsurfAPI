@@ -1,0 +1,32 @@
+{
+  "tests": [
+    "test/release-migration-docs.test.js"
+  ],
+  "expectBaselinePass": 2,
+  "mutations": [
+    {
+      "name": "the operator guide incorrectly accepts Cosign 2",
+      "file": "docs/RELEASE-SIGNING.md",
+      "anchor": "**Use Cosign v3 or newer**",
+      "replacement": "**Use Cosign v2 or newer**"
+    },
+    {
+      "name": "the command help suggests legacy verification",
+      "file": "scripts/verify-release-assets.mjs",
+      "anchor": "Verify with Cosign v3 or newer.",
+      "replacement": "Verify with Cosign v2.4.1."
+    },
+    {
+      "name": "the migration instructions promise automatic target selection",
+      "file": "docs/RELEASE-SIGNING.md",
+      "anchor": "**Select the target tag manually.**",
+      "replacement": "**Use automatic target selection.**"
+    },
+    {
+      "name": "the migration guide reverses the actual updater order",
+      "file": "docs/RELEASE-SIGNING.md",
+      "anchor": "`v3.141.592661` ranks above `v3.2.11`",
+      "replacement": "`v3.2.11` ranks above `v3.141.592661`"
+    }
+  ]
+}
