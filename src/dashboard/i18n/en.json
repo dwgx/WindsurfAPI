@@ -832,7 +832,7 @@
     "responseCache": {
       "title": "Response Cache",
       "noSamples": "No samples",
-      "subtitle": "{{hits}} hits / {{total}} lookups · {{size}}/{{max}} entries"
+      "subtitle": "Hits {{hits}} / lookups {{total}} · entries {{size}}/{{max}}"
     },
     "tokens": {
       "title": "Token usage breakdown",
