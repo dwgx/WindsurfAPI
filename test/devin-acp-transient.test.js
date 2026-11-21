@@ -63,6 +63,19 @@ rl.on('line', line => {
 }
 
 describe('classifyAcpError — transient-first ordering (unit)', () => {
+  it('preserves standard RPC request errors even when the message mentions account state', () => {
+    for (const [code, message] of [
+      [-32700, 'Parse error in rate limit configuration'],
+      [-32600, 'Invalid request: token was not a string'],
+      [-32601, 'Method not found: model.capacity'],
+      [-32602, 'Invalid params: unsupported capacity setting'],
+    ]) {
+      assert.deepEqual(classifyAcpError(message, code), {
+        code: String(code), type: 'backend_protocol_error', status: 502, retryable: false,
+      });
+    }
+  });
+
   it('classifies high-demand/capacity as a retryable 429 capacity_error', () => {
     const c = classifyAcpError("We're currently facing high demand for this model. Please try again later.");
     assert.equal(c.code, 'CAPACITY');

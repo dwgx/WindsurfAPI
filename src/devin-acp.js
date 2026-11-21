@@ -194,6 +194,10 @@ function parseJsonLine(line) {
 //   - RATE_LIMITED    → status 429 → markRateLimited.
 //   - else            → 502 backend_error (unchanged legacy behaviour).
 export function classifyAcpError(message, rpcCode = null) {
+  const rpc = String(rpcCode);
+  if (ACP_REQUEST_ERROR_CODES.has(rpc)) {
+    return { code: rpc, type: 'backend_protocol_error', status: 502, retryable: false };
+  }
   const body = String(message || '').trim();
   const lc = body.toLowerCase();
 
@@ -224,8 +228,9 @@ const ACP_TRANSPORT_CODES = new Set([
   'ENOTFOUND', 'EHOSTUNREACH', 'ENETUNREACH', 'EAGAIN',
 ]);
 const ACP_UNCORRELATED_ERROR_CODES = new Set(['-32700', '-32600']);
+const ACP_REQUEST_ERROR_CODES = new Set([...ACP_UNCORRELATED_ERROR_CODES, '-32601', '-32602']);
 const ACP_TERMINAL_ERROR_CODES = new Set([
-  ...ACP_UNCORRELATED_ERROR_CODES, '-32601', '-32602', '-32000', '-32002', '-32800',
+  ...ACP_REQUEST_ERROR_CODES, '-32000', '-32002', '-32800',
 ]);
 
 function errorFromRpcResponse(resp, fallback = 'ACP request failed') {

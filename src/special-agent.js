@@ -809,9 +809,8 @@ function reportRunFailure(apiKey, err, deps = {}) {
   if (status === 499 || type === 'request_aborted') {
     return;
   }
-  // An unsupported ACP stop is a CLI protocol fault. Exclude it from
-  // the account error streak.
-  if (type === 'backend_tool_call_unmapped') {
+  // Errors in the local ACP exchange should not change the account's health.
+  if (type === 'backend_tool_call_unmapped' || type === 'backend_protocol_error') {
     return;
   }
   // Account-level ban/suspension shapes — promote to banned after 2 hits.
