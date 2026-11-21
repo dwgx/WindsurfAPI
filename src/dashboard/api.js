@@ -4976,9 +4976,15 @@ async function fetchSourceUpdateBranch(branch) {
     await runGit(['fetch', '--quiet', '--no-tags', 'origin', branch]);
     return null;
   }
-  await runGit(['fetch', '--quiet', '--no-tags', 'origin', 'refs/heads/master']);
-  const head = (await runGit(['rev-parse', 'FETCH_HEAD^{commit}'])).trim();
-  if (!validGitObjectId(head)) throw new Error('Invalid fetched release branch commit');
+  const branchRef = 'refs/heads/master';
+  const advertised = (await runGit(['ls-remote', '--heads', 'origin', branchRef])).trimEnd();
+  const [head, ref, ...extra] = advertised.split('\t');
+  if (ref !== branchRef || extra.length || !validGitObjectId(head)) throw new Error('Invalid advertised release branch');
+  await runGit(['fetch', '--quiet', '--no-tags', 'origin', branchRef]);
+  // Other dashboard checks can fetch tags concurrently and overwrite FETCH_HEAD.
+  // Compare against this request's own branch advertisement before using it.
+  const fetched = (await runGit(['rev-parse', 'FETCH_HEAD^{commit}'])).trim();
+  if (head !== fetched) throw new Error('Release branch changed during fetch; retry the update check');
   return head;
 }
 
