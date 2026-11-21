@@ -23,7 +23,10 @@ function boundary(env = {}, localBind = true) {
     trustedClientIp: req => trustedClientIp(req, env),
     getProxyConfig: () => ({ global: null }),
     windsurfLogin: async email => ({ apiKey: 'offline-key', email, name: 'fixture' }),
-    addAccountByKey: () => ({ id: 'offline-account', email: 'a@example.test', status: 'active' }),
+    addAccountByKeyWithDisposition: () => ({
+      account: { id: 'offline-account', email: 'a@example.test', status: 'active' },
+      poolDisposition: 'added',
+    }),
     setAccountTokens() {}, setAccountProxy() {}, scheduleAccountWarmup() {},
     setAccountCredentialEmail() {},
     setAccountIdentityEmail() {},
