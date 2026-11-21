@@ -2392,7 +2392,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
     try {
       const text = String(body.text || '');
       if (!text.trim()) return json(res, 400, { error: 'ERR_IMPORT_TEXT_EMPTY' }, NO_STORE);
-      const preview = subpath.endsWith('/preview');
+      const preview = subpath.endsWith('/preview') || body.autoAdd === false;
       const parsed = parseAccountText(text, { includeDiagnostics: true, preview });
       const { tokens, tokenPairs, accounts: passwordAccounts, unrecognizedLines, unrecognizedEntries = [] } = parsed;
       if (preview) {
@@ -3869,7 +3869,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
       if (!text || typeof text !== 'string') return json(res, 400, { error: 'ERR_TEXT_REQUIRED' }, NO_STORE);
       const parsed = parseBatchImportInput(text, parseProxyUrl);
       if (!parsed.items.length) return json(res, 400, { error: 'ERR_NO_VALID_LINES' }, NO_STORE);
-      if (subpath.endsWith('/preview')) {
+      if (subpath.endsWith('/preview') || autoAdd === false) {
         return json(res, 200, {
           success: true, preview: true, mode: parsed.mode,
           results: parsed.items.map(item => {

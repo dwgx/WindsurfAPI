@@ -48,10 +48,10 @@ function authedReq() {
   };
 }
 
-async function importText(text, { preview = false } = {}) {
+async function importText(text, { preview = false, autoAdd } = {}) {
   const res = fakeRes();
   const subpath = preview ? '/accounts/import-text/preview' : '/accounts/import-text';
-  await handleDashboardApi('POST', subpath, { text }, { ...authedReq(), url: '/dashboard/api' + subpath }, res);
+  await handleDashboardApi('POST', subpath, { text, autoAdd }, { ...authedReq(), url: '/dashboard/api' + subpath }, res);
   return { status: res.statusCode, body: res.json(), text: res.body, headers: res.headers };
 }
 
@@ -65,6 +65,15 @@ afterEach(() => {
 });
 
 describe('POST /accounts/import-text — email + session-token pair', () => {
+  it('treats autoAdd false as a preview on the normal endpoint', async () => {
+    config.dashboardPassword = DASH_PW;
+    const before = getAccountList().length;
+    const r = await importText(TOKEN, { autoAdd: false });
+    assert.equal(r.body.preview, true);
+    assert.equal(r.body.recognized, 1);
+    assert.equal(getAccountList().length, before);
+  });
+
   it('adds the pasted pair to the pool with the pasted email as its label', async () => {
     config.dashboardPassword = DASH_PW;
     const r = await importText(`${EMAIL}\nToken: ${TOKEN}`);

@@ -94,53 +94,57 @@ afterEach(() => {
 });
 
 describe('POST /batch-import response redaction', () => {
-  it('previews syntactic rows before login, proxy validation, and persistence', async () => {
-    config.dashboardPassword = 'batch-dash-secret';
-    const key = 'fixture-explicit-batch-key';
-    let upstreamCalls = 0;
-    __setLoginTransportForTests(async () => { upstreamCalls++; throw new Error('Preview tried to sign in'); });
-    const paths = ['accounts.json', 'proxy.json', 'runtime-config.json'];
-    const snapshot = () => paths.map(name => {
-      const path = join(process.env.DATA_DIR, name);
-      return existsSync(path) ? readFileSync(path, 'utf8') : null;
+  for (const preview of [true, false]) {
+    it(`previews without login or writes with ${preview ? 'the preview route' : 'autoAdd false'}`, async () => {
+      config.dashboardPassword = 'batch-dash-secret';
+      const key = 'fixture-explicit-batch-key';
+      let upstreamCalls = 0;
+      __setLoginTransportForTests(async () => { upstreamCalls++; throw new Error('Preview tried to sign in'); });
+      const paths = ['accounts.json', 'proxy.json', 'runtime-config.json'];
+      const snapshot = () => paths.map(name => {
+        const path = join(process.env.DATA_DIR, name);
+        return existsSync(path) ? readFileSync(path, 'utf8') : null;
+      });
+      const before = snapshot();
+      const accountCount = getAccountList().length;
+      const r = await batchImport({
+        text: JSON.stringify([
+          { apiKey: key, label: 'temporary', proxy: `http://${PROXY_USER}:${PROXY_PASS}@127.0.0.1:8080` },
+          { email: 'preview@example.test', password: ACCOUNT_PASS },
+          { token: BATCH_TOKEN },
+          'short unknown fixture line',
+        ]),
+        autoAdd: false, storeCredential: true,
+      }, { preview });
+      assert.equal(r.status, 200);
+      assert.equal(r.headers['Cache-Control'], 'no-store');
+      assert.deepEqual(r.body, {
+        success: true, preview: true, mode: 'json',
+        results: [
+          { lineNumber: 1, importKind: 'api_key' },
+          { lineNumber: 2, importKind: 'email_password' },
+          { lineNumber: 3, importKind: 'token', error: 'ERR_AUTH1_NOT_A_POOL_KEY' },
+          { lineNumber: 4, importKind: 'issue', error: 'ERR_FORMAT_INVALID' },
+        ],
+      });
+      assert.equal(upstreamCalls, 0);
+      assert.deepEqual(snapshot(), before);
+      assert.equal(getAccountList().length, accountCount);
+      assert.equal(r.text.includes(key) || r.text.includes(PROXY_USER), false);
+      assertNoSecrets(r.text);
     });
-    const before = snapshot();
-    const accountCount = getAccountList().length;
-    const r = await batchImport({
-      text: JSON.stringify([
-        { apiKey: key, label: 'temporary', proxy: `http://${PROXY_USER}:${PROXY_PASS}@127.0.0.1:8080` },
-        { email: 'preview@example.test', password: ACCOUNT_PASS },
-        { token: BATCH_TOKEN },
-        'short unknown fixture line',
-      ]),
-    }, { preview: true });
-    assert.equal(r.status, 200);
-    assert.equal(r.headers['Cache-Control'], 'no-store');
-    assert.deepEqual(r.body, {
-      success: true, preview: true, mode: 'json',
-      results: [
-        { lineNumber: 1, importKind: 'api_key' },
-        { lineNumber: 2, importKind: 'email_password' },
-        { lineNumber: 3, importKind: 'token', error: 'ERR_AUTH1_NOT_A_POOL_KEY' },
-        { lineNumber: 4, importKind: 'issue', error: 'ERR_FORMAT_INVALID' },
-      ],
-    });
-    assert.equal(upstreamCalls, 0);
-    assert.deepEqual(snapshot(), before);
-    assert.equal(getAccountList().length, accountCount);
-    assert.equal(r.text.includes(key) || r.text.includes(PROXY_USER), false);
-    assertNoSecrets(r.text);
-  });
 
-  it('reports an added API key and subsequent reuse without changing autoAdd semantics', async () => {
+  }
+
+  it('reports an added API key and subsequent reuse when adding to the pool', async () => {
     config.dashboardPassword = 'batch-dash-secret';
     const apiKey = 'fixture-explicit-persistent-key';
-    const first = await batchImport({ text: JSON.stringify([{ apiKey, label: 'original' }]), autoAdd: false });
+    const first = await batchImport({ text: JSON.stringify([{ apiKey, label: 'original' }]), autoAdd: true });
     const firstRow = first.body.results[0];
     assert.equal(firstRow.poolDisposition, 'added');
     assert.equal(firstRow.success, true);
     created.add(firstRow.account.id);
-    const second = await batchImport({ text: JSON.stringify([{ apiKey, label: 'replacement' }]), autoAdd: false });
+    const second = await batchImport({ text: JSON.stringify([{ apiKey, label: 'replacement' }]), autoAdd: true });
     const secondRow = second.body.results[0];
     assert.equal(secondRow.poolDisposition, 'existing');
     assert.deepEqual(secondRow.account, firstRow.account);

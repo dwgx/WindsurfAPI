@@ -8981,7 +8981,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     const batchText = this.windsurfBatchFile?.text || input;
     if (!batchText.trim()) return this.toast(I18n.t('batch.pasteFirst'), 'error');
 
-    const autoAdd = document.getElementById('wl-batch-auto-add').checked;
+    const previewOnly = preview || !document.getElementById('wl-batch-auto-add').checked;
     const storeCredential = document.getElementById('wl-store-cred')?.checked || false;
     const btn = document.getElementById('wl-batch-btn');
     const previewBtn = document.getElementById('wl-batch-preview-btn');
@@ -8992,14 +8992,14 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     this.showWindsurfLoginResult(`
       <div class="section-header">
         <div>
-          <div class="section-title">${I18n.t(preview ? 'batch.preview' : 'batch.importing')}</div>
+          <div class="section-title">${I18n.t(previewOnly ? 'batch.preview' : 'batch.importing')}</div>
           <div class="section-desc">${this.esc(sourceDesc)}</div>
         </div>
       </div>`);
 
     try {
-      const route = preview ? '/batch-import/preview' : '/batch-import';
-      const request = preview ? { text: batchText } : { text: batchText, autoAdd, storeCredential };
+      const route = previewOnly ? '/batch-import/preview' : '/batch-import';
+      const request = previewOnly ? { text: batchText } : { text: batchText, autoAdd: true, storeCredential };
       const r = await this.api('POST', route, request);
       if (!r.success || !Array.isArray(r.results)) {
         const errKey = r.error ? `error.${r.error}` : null;
@@ -9012,7 +9012,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
         return this.toast(translatedErr || I18n.t('batch.importFailed'), 'error');
       }
 
-      if (preview) {
+      if (previewOnly || r.preview === true) {
         this.renderBatchImportPreview(r);
         return;
       }

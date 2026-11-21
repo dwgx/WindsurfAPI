@@ -2733,21 +2733,21 @@ const App = {
   async windsurfLoginBatch(preview = false) {
     const input = document.getElementById('wl-batch-input').value;
     if (!input.trim()) return this.toast('paste accounts first', 'error');
-    const autoAdd = document.getElementById('wl-batch-auto-add').checked;
+    const previewOnly = preview || !document.getElementById('wl-batch-auto-add').checked;
     const btn = document.getElementById('wl-batch-btn');
     const previewBtn = document.getElementById('wl-batch-preview-btn');
     const english = I18n.locale === 'en';
     btn.disabled = previewBtn.disabled = true;
     try {
-      const route = preview ? '/batch-import/preview' : '/batch-import';
-      const request = preview ? { text: input } : { text: input, autoAdd };
+      const route = previewOnly ? '/batch-import/preview' : '/batch-import';
+      const request = previewOnly ? { text: input } : { text: input, autoAdd: true };
       const r = await this.api('POST', route, request);
       if (!r.success || !Array.isArray(r.results)) {
         this.toast(this.batchImportMessage(r.error), 'error');
         return;
       }
       const position = line => this.batchImportPosition(r.mode, line);
-      if (preview) {
+      if (previewOnly || r.preview === true) {
         const note = english ? 'Format check only. No sign-ins were attempted and no accounts were changed.' : '仅检查格式。未尝试登录，未改动账号。';
         this.showWLResult(`<div class="anno" style="font-size:20px">${note}</div>
           <ul class="text-sm">${r.results.map(row => `<li>${this.esc(position(row.lineNumber))} · ${this.esc(this.batchImportMessage(row.error || row.importKind))}</li>`).join('')}</ul>`);
