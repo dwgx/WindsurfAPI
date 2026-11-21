@@ -6091,7 +6091,6 @@ async function _handleChatCompletionsInner(body, context, captureCacheGeneration
       nativeOpts,
       allowCascadeMetadataUnwrap,
       context,
-      captureCacheGeneration,
       ensureLs: context.ensureLs,
       getLsFor: context.getLsFor,
       WindsurfClient: context.WindsurfClient,
@@ -6107,7 +6106,7 @@ async function _handleChatCompletionsInner(body, context, captureCacheGeneration
 
   // ── Local response cache (exact body match) ─────────────
   // SEC-W2: skip cross-request cache reads for an untrusted (guessed) scope.
-  const cacheWriteGeneration = cacheShareable ? captureCacheGeneration() : null;
+  const cacheWriteGeneration = cacheShareable && ckey ? captureCacheGeneration() : null;
   const cached = cacheShareable ? cacheGet(ckey) : null;
   if (cached) {
     log.info(`Chat: cache HIT model=${displayModel} flow=non-stream`);
@@ -7707,7 +7706,7 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
 
       // ── Cache hit: replay stored response as a fake stream ──
       // SEC-W2: skip cross-request cache reads for an untrusted (guessed) scope.
-      const cacheWriteGeneration = cacheShareable ? deps.captureCacheGeneration() : null;
+      const cacheWriteGeneration = cacheShareable && ckey ? cacheGeneration() : null;
       const cached = cacheShareable ? cacheGet(ckey) : null;
       if (cached) {
         log.info(`Chat: cache HIT model=${model} flow=stream`);
