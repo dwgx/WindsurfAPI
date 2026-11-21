@@ -2822,7 +2822,10 @@ export function classifyUpstreamError(text, code = null, status = null) {
       || /(credit|quota|balance|allowance|usage)[\s\w-]{0,40}?(exceeded|exhausted|depleted|used up)/i.test(lc)
       || /on.?demand[^.]{0,60}(exhausted|exceeded|depleted|out of|insufficient)/i.test(lc)
       || /run(?:ning)? out of (credit|quota|balance|funds|usage)/i.test(lc)) {
-    return { code: 'QUOTA_EXHAUSTED', message: body || 'DEVIN_CONNECT: account out of credit/quota' };
+    const periods = [...lc.matchAll(/\b(daily|weekly)\s+(?:usage\s+)?quota\s+(?:has\s+been\s+|is\s+)?exhausted\b/g)].map(match => match[1]);
+    const quotaPeriod = periods.includes('weekly') ? 'weekly' : periods[0];
+    return { code: 'QUOTA_EXHAUSTED', message: body || 'DEVIN_CONNECT: account out of credit/quota',
+      ...(quotaPeriod ? { quotaPeriod } : {}) };
   }
   // ── MODEL-LEVEL rejection scoped to (ACCOUNT, SELECTOR) ──────────────────
   // Measured body: "This model is no longer available for your account",
@@ -3409,6 +3412,7 @@ export async function* streamChat({
         streamError = Object.assign(new Error(classified.message), {
           code: classified.code,
           status: res.statusCode,
+          ...(classified.quotaPeriod ? { quotaPeriod: classified.quotaPeriod } : {}),
           ...(classified.resetMs != null ? { resetMs: classified.resetMs } : {}),
         });
         done = true;
@@ -3500,6 +3504,7 @@ export async function* streamChat({
                 streamError = Object.assign(new Error(classified.message), {
                   code: classified.code,
                   upstream: parsed.error,
+                  ...(classified.quotaPeriod ? { quotaPeriod: classified.quotaPeriod } : {}),
                   ...(classified.resetMs != null ? { resetMs: classified.resetMs } : {}),
                 });
               }

@@ -3022,7 +3022,15 @@ export function finalizeConnectAccount(acct, { model, selector = null, startTime
       // snapshot views of "is this account quota-dry?" consistent; a later
       // balance-recovery snapshot then clears it. 30-min cooldown default bounds
       // the re-probe rate without a hard disable (quota refills per billing cycle).
-      markQuotaExhausted(apiKey, 30 * 60 * 1000);
+      const now = Date.now();
+      const credits = live.credits;
+      const resetAt = err.quotaPeriod === 'weekly' ? credits?.weeklyResetAt
+        : err.quotaPeriod === 'daily' ? credits?.dailyResetAt : null;
+      // The credits API reports Unix seconds. Keep the existing backoff unless
+      // the account's matching quota window supplies a plausible later reset.
+      const delay = Number.isSafeInteger(resetAt) && !credits?.lastError ? resetAt * 1000 - now : 0;
+      const observedDelay = delay > 0 && delay <= 8 * 24 * 60 * 60 * 1000 ? delay : 0;
+      markQuotaExhausted(apiKey, Math.max(30 * 60 * 1000, observedDelay), now);
       bumpConnect('quota_exhausted');
     }
     else if (err.code === 'RATE_LIMITED') {

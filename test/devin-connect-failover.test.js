@@ -648,6 +648,8 @@ describe('DEVIN_CONNECT quota vs tier wall (P1 #33)', () => {
     // Before the fix the classified code was `failed_precondition`, which is in
     // TRANSPORT_FAULT_CODES → reportInternalError, and the request surfaced 502.
     const a = seed('quota-live');
+    const reset = Math.floor(Date.now() / 1000) + 7200;
+    getAccountInternal(a.id).credits = { dailyResetAt: reset, weeklyResetAt: reset + 86400 };
     process.env.DEVIN_CONNECT_FAILOVER_MAX = '0';
     const live = 'Your daily usage quota has been exhausted. Visit '
       + 'https://app.devin.ai/settings/usage to review your plan and usage. (trace ID: 6f1c9a2e)';
@@ -669,7 +671,7 @@ describe('DEVIN_CONNECT quota vs tier wall (P1 #33)', () => {
     assert.equal(internal.internalErrorStreak || 0, 0,
       'a quota-dry account is healthy; charging the internal-error breaker quarantines it '
       + 'after 2 hits and takes the only working account offline');
-    assert.ok(internal.quotaResetAt > Date.now(), 'cooled on the self-healing quota dimension');
+    assert.equal(internal.quotaResetAt, reset * 1000, 'honor this account’s daily reset');
     assert.equal(getAccountAvailability(a.apiKey, 'swe-2-medium').reason, 'quota_exhausted');
   });
 
