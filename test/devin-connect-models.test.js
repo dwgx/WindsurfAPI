@@ -218,9 +218,11 @@ describe('resolveConnectSelector', () => {
       'claude-sonnet-4-6');
   });
 
-  it('passes enum-form selectors through verbatim', () => {
+  it('enum-form selectors fail closed once the catalog drops them', () => {
+    // The 306-model catalog has no MODEL_* spellings: the existence check
+    // rejects them rather than writing a stale enum raw to upstream #21.
     assert.deepEqual(resolveConnectSelector('MODEL_CLAUDE_4_5_OPUS_THINKING'),
-      { selector: 'MODEL_CLAUDE_4_5_OPUS_THINKING', mapped: true });
+      { selector: FREE_TIER_SELECTOR, mapped: false });
   });
 
   it('degrades unknown names to the free-tier selector (mapped:false)', () => {
@@ -416,22 +418,22 @@ describe('resolveConnectSelector — live catalog (audit 2026-07-12 snapshot sta
     // map target the account cannot reach) would fail here.
     const m = await import(`../src/devin-connect-models.js?fresh=${Date.now()}-p3d`);
     m.setLiveCatalogSelectors([
-      { selector: 'grok-4-5-low', provider: 'xai' },
-      { selector: 'grok-4-5-medium', provider: 'xai' },
+      { selector: 'grok-4-6-low', provider: 'xai' },
+      { selector: 'grok-4-6-medium', provider: 'xai' },
       { selector: 'glm-5-2', provider: 'zhipu' },
       { selector: 'gpt-5-5-low', provider: 'openai' },
       { selector: 'gemini-3-5-flash-medium', provider: 'google' },
-      { selector: 'inkling-medium', provider: 'thinking_machines' },
+      { selector: 'muse-wonder-1-0-medium', provider: 'thinking_machines' },
       { selector: 'MODEL_GPT_5_2_LOW', provider: 'openai' },
     ]);
     assert.equal(m.hasLiveCatalog(), true);
     const cases = [
-      ['x-ai/grok-4-5-low', 'grok-4-5-low'],
-      ['grok-4-5', 'grok-4-5-medium'],
+      ['x-ai/grok-4-6-low', 'grok-4-6-low'],
+      ['grok-4-6', 'grok-4-6-medium'],
       ['z-ai/glm-5.1', 'glm-5-2'],
       ['gpt5.5', 'gpt-5-5-low'],
       ['gemini3.5-flash', 'gemini-3-5-flash-medium'],
-      ['inkling', 'inkling-medium'],
+      ['muse-wonder-1-0', 'muse-wonder-1-0-medium'],
       ['openai/MODEL_GPT_5_2_LOW', 'MODEL_GPT_5_2_LOW'],
     ];
     for (const [name, selector] of cases) {
