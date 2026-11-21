@@ -166,3 +166,5 @@ data/self-update-docker.json
 !scripts/secret-rules.mjs
 !scripts/history-secret-scan.mjs
 !scripts/history-secret-scan.baseline
+# GitHub Pages history projection generator
+!scripts/build-pages-history.mjs

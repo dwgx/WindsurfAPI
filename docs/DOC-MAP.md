@@ -23,7 +23,7 @@
 - `docs/DOCKER-UPDATE.md` — One-command Docker update procedure: pull/build, health gate, automatic rollback, data volumes untouched. — current
 - `docs/ENV-SWITCHES.md` — Environment-variable reference for the source-only switches (183 three-prefix switches, 90 source-only, 2026-10-26). — stale → fixed (D9 +2 switches; bare-grep undercount 59; 183 total / 124 bare)
 - `docs/GITHUB-CORPUS.md` — Method and shape of the offline GitHub PR/issue corpus (89 PRs / 183 issues, snapshot 2026-10-15). — current
-- `docs/HISTORY-LEDGER-VIZ.html` — Interactive visualization of the history ledger; frozen at v3.9.34 / 2026-09-15. — duplicate (generated; frozen historical snapshot)
+- `docs/HISTORY-LEDGER-VIZ.html` — Searchable project history and evidence, with the original v3.9.34 visual ledger preserved as a dated archive. — current
 - `docs/HISTORY-LEDGER.md` — Global history ledger; frozen at 2026-08-11 / v3.9.21 and explicitly not current state. — stale → fixed (volume glob/count wording)
 - `docs/OPENCODE-REVIEW.md` — Decision record for OpenCodeReview: not adopted as CI; blocker, trial procedure and enablement path. — current
 - `docs/QUERY-KEY-DEPRECATION.md` — Status, risk and phased removal plan for `?key=` query-parameter authentication. — current

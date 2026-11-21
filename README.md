@@ -25,7 +25,7 @@ JavaScript · MIT · ★3,107
 
 > 把 Windsurf / Devin 的 100+ AI 模型（Claude、GPT、Gemini、DeepSeek、Kimi、GLM、SWE…）变成 OpenAI Chat / Responses / Anthropic / Gemini 四套标准 API。零 npm 运行时依赖。
 
-> **历史账本** · 把 1387 次提交、196 个版本、82 个 PR、180 个 issue（账本自己的口径，**数字跟到 v3.9.34 / 2026-09-15**）摊开给你看：时间线主账 + 贡献者分析 + Git 树三形态（竖/横/环）+ 自伤与返工全记录 —— [**打开可视化账本**](https://dwgx.github.io/WindsurfAPI/HISTORY-LEDGER-VIZ.html)（纯原生渲染，零依赖）
+> **项目史与证据账本** · 检索 PR、Issue、提交、发布与 tag，查看开发里程碑、贡献与采集口径。旧可视账本保存在同页，可展开查看截至 2026-09-15 的快照。 [打开项目史](https://dwgx.github.io/WindsurfAPI/HISTORY-LEDGER-VIZ.html#history)
 
 
 <p align="center">

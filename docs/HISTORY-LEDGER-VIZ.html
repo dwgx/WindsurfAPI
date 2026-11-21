@@ -4,7 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>WindsurfAPI · 全局历史账本</title>
-<meta name="description" content="WindsurfAPI 项目 2026-04-09 → 2026-09-15 的全部历史：1387 个提交、196 个版本、82 个 PR、180 个 issue">
+<meta name="description" content="WindsurfAPI 项目史、社区记录、Git 提交、发布和公开证据索引">
+<link rel="stylesheet" href="assets/history.css">
+<script type="module" src="assets/history.js"></script>
 <script>document.documentElement.classList.remove('no-js');</script>
 <style>
 /* ============ 设计令牌（源自 src/dashboard/index.html 的设计 DNA） ============ */
@@ -436,6 +438,7 @@ body.clean-mode .esc-hint { color: var(--accent); border-color: rgba(217,119,87,
 
 <nav class="ledger-nav" id="ledgerNav" aria-label="章节导航">
   <div class="ledger-nav-inner">
+    <a class="ledger-tab" href="#history" data-history-copy="shortTitle">项目史</a>
     <a class="ledger-tab" href="#stats" data-i18n="nav_overview">总览</a>
     <a class="ledger-tab" href="#months" data-i18n="nav_rhythm">节奏</a>
     <a class="ledger-tab" href="#kinds" data-i18n="nav_components">构成</a>
@@ -456,6 +459,70 @@ body.clean-mode .esc-hint { color: var(--accent); border-color: rgba(217,119,87,
 </nav>
 
 <div class="wrap">
+  <main id="history" class="history-site">
+    <header class="history-intro">
+      <p class="history-project-label">WindsurfAPI / DevinAPI</p>
+      <h1 data-history-copy="title">项目史与证据账本</h1>
+      <p data-history-copy="lead">追踪从首个提交到当前公开快照的代码演进、社区协作与发布。每项记录可回到原始来源。</p>
+      <span class="history-meta" id="history-snapshot" aria-live="polite">2026-04-09 · GitHub / Git</span>
+      <nav class="history-jump" aria-label="History sections">
+        <a href="#history-records" data-history-copy="recordTitle">查找记录</a>
+        <a href="#history-chronology" data-history-copy="eraTitle">开发历程</a>
+        <a href="#history-contributions" data-history-copy="contribTitle">贡献</a>
+        <a href="#history-coverage" data-history-copy="coverageTitle">覆盖范围</a>
+      </nav>
+    </header>
+
+    <div class="history-metrics" id="history-metrics"></div>
+
+    <section id="history-chronology" class="history-panel" aria-labelledby="history-chronology-title">
+      <h2 id="history-chronology-title" data-history-copy="eraTitle">开发历程</h2>
+      <p data-history-copy="eraIntro">通过有出处的里程碑回看工程变化。日期以 UTC 表示。</p>
+      <ol class="history-eras" id="history-eras"></ol>
+    </section>
+
+    <section id="history-records" class="history-panel" aria-labelledby="history-records-title">
+      <h2 id="history-records-title" data-history-copy="recordTitle">查找记录</h2>
+      <p data-history-copy="recordIntro">按编号、标题、tag、SHA 或作者筛选。提交按 committer 时间排列，作者时间在详情中独立显示。</p>
+      <form id="history-filter" class="history-facets">
+        <label><span data-history-copy="search">搜索</span><input id="history-query" name="q" type="search" placeholder="#2 / v3.2.10 / SHA" maxlength="160"></label>
+        <label><span data-history-copy="view">记录类型</span><select id="history-view" name="view"></select></label>
+        <label><span data-history-copy="month">月份 · UTC</span><select id="history-month" name="month"></select></label>
+        <label><span data-history-copy="state">状态 / 动作</span><select id="history-state" name="state"></select></label>
+        <button type="reset" class="history-action" data-history-copy="reset">重置</button>
+      </form>
+      <p id="history-results-status" class="history-status" role="status"></p>
+      <ol id="history-results" class="history-results"></ol>
+      <div class="history-pages" id="history-pages" hidden>
+        <button class="history-action" id="history-prev" type="button" data-history-copy="previous">上一页</button>
+        <span id="history-page"></span>
+        <button class="history-action" id="history-next" type="button" data-history-copy="next">下一页</button>
+      </div>
+      <noscript><p class="history-note">浏览器关闭了 JavaScript。可打开 <a href="HISTORY-LEDGER.html">历史主账</a>、<a href="HISTORY-LEDGER-PRS.html">PR 账本</a>、<a href="HISTORY-LEDGER-ISSUES.html">Issue 账本</a>或 <a href="https://github.com/dwgx/WindsurfAPI">GitHub 项目</a>。</p></noscript>
+    </section>
+
+    <section id="history-contributions" class="history-panel" aria-labelledby="history-contributions-title">
+      <h2 id="history-contributions-title" data-history-copy="contribTitle">贡献</h2>
+      <p data-history-copy="contribIntro">按公开 GitHub 角色记录贡献。PR 作者、合并操作者、Issue 作者、评审分别统计。</p>
+      <button id="history-show-people" type="button" class="history-action" data-history-copy="showPeople">展开贡献索引</button>
+      <p id="history-people-status" class="history-status" role="status"></p>
+      <div id="history-people" class="history-contrib-wrap"></div>
+    </section>
+
+    <section id="history-coverage" class="history-panel" aria-labelledby="history-coverage-title">
+      <h2 id="history-coverage-title" data-history-copy="coverageTitle">覆盖范围</h2>
+      <ul class="history-provenance" id="history-coverage-list"></ul>
+      <p class="history-source-links">
+        <a href="HISTORY-LEDGER.html">History ledger</a>
+        <a href="HISTORY-LEDGER-PRS.html">PR archive</a>
+        <a href="HISTORY-LEDGER-ISSUES.html">Issue archive</a>
+        <a href="https://github.com/dwgx/WindsurfAPI/blob/master/docs/GITHUB-CORPUS.md">Corpus method</a>
+      </p>
+    </section>
+  </main>
+
+  <details class="history-archive" id="history-legacy">
+    <summary data-history-copy="legacy">旧可视账本 · 截至 2026-09-15</summary>
   <header class="hero">
     <div class="logo-badge">
       <svg viewBox="0 0 128 128" width="34" height="34" aria-hidden="true">
@@ -606,6 +673,7 @@ body.clean-mode .esc-hint { color: var(--accent); border-color: rgba(217,119,87,
     <span data-i18n="foot_1">数据源：git log 全量 1387 条（数字跟到 v3.9.34 / 2026-09-15）· 逐条账见 <code>docs/HISTORY-LEDGER-2026-*.md</code>（正文仍截在 08-11）· 总账</span> <a href="https://github.com/dwgx/WindsurfAPI/blob/master/docs/HISTORY-LEDGER.md">HISTORY-LEDGER.md</a><br>
     <span data-i18n="foot_2">零依赖纯原生 · 设计 DNA 取自仓库自带 Dashboard · 每个 hash 都可 <code>git show</code> 验证</span>
   </footer>
+  </details>
 </div>
 
 <div id="tl-tip"></div>
@@ -806,7 +874,7 @@ function setLang(l) {
 (function restoreScroll() {
   try {
     const y = localStorage.getItem('viz_scroll');
-    if (y) setTimeout(() => window.scrollTo(0, parseInt(y, 10) || 0), 50);
+    if (y && !location.hash && !location.search) setTimeout(() => window.scrollTo(0, parseInt(y, 10) || 0), 50);
   } catch (e) {}
 })();
 
