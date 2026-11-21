@@ -47,6 +47,33 @@ flowchart TD
 | Point Claude Code / Cline / Cursor at it | [Main README → 客户端接入](../README.md#claude-code--cline--cursor-怎么用) |
 | See which models are available | [Main README → 模型清单](../README.md) — the `/v1/models` endpoint is authoritative |
 
+### Use OpenCode as an ACP agent
+
+OpenCode 1.19.6 can receive a prompt over ACP and send it to WindsurfAPI's Chat Completions endpoint. Set `WINDSURFAPI_CLIENT_KEY` in the environment that launches OpenCode to the client API key accepted by your WindsurfAPI server. In your OpenCode configuration, use the server's address and a model ID returned by its authenticated `/v1/models` endpoint.
+
+```json
+{
+  "model": "windsurf/swe-1-6-slow",
+  "small_model": "windsurf/swe-1-6-slow",
+  "enabled_providers": ["windsurf"],
+  "provider": {
+    "windsurf": {
+      "npm": "@ai-sdk/openai-compatible",
+      "name": "WindsurfAPI",
+      "options": {
+        "baseURL": "http://127.0.0.1:3003/v1",
+        "apiKey": "{env:WINDSURFAPI_CLIENT_KEY}"
+      },
+      "models": {
+        "swe-1-6-slow": { "name": "swe-1-6-slow" }
+      }
+    }
+  }
+}
+```
+
+Configure your ACP client to launch `opencode acp`. A local Windows check used the OpenCode 1.19.6 executable, completed ACP initialization and session creation, and streamed a prompt through the real WindsurfAPI HTTP server with a simulated model upstream. Devin Desktop supports registering external ACP agents. This example uses OpenCode's agent runtime. [OpenCode 1.19.6 provider configuration](https://github.com/anomalyco/opencode/blob/v1.19.6/packages/web/src/content/docs/providers.mdx) · [Devin Desktop ACP registration](https://docs.devin.ai/desktop/acp-custom)
+
 ## 🔧 Operating it
 
 | Goal | Go here |
