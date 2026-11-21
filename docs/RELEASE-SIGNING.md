@@ -1,11 +1,12 @@
 # Release signing
 
-> **Status: releases are signed from v3.10.0 onward.** The release workflow signs
-> the four published binaries/zips, `SHA256SUMS`, the pushed Docker image
-> **digest**, and the source-OTA **attestation** with cosign keyless signing: the signer identity is the workflow's
-> GitHub OIDC token, exchanged for a short-lived Fulcio certificate. There is no
-> long-lived private key, no signing secret, and no key material in this
-> repository. Releases before v3.10.0 are unsigned and have no signature assets.
+Use **Cosign v3** for the commands below. Verification of the v3.2.11
+bundles succeeded with v3.0.2. Cosign v2.4.1 with the same flags failed.
+
+Binary and checksum signing began with v3.10.0 on October 24, 2026. The
+subsequently published v3.2.10 and v3.2.11 include signed bundles. Consult
+each release's asset list for its available proofs. The current workflow also
+signs the Docker digest and source-update attestation using GitHub OIDC.
 
 ## What a release publishes
 
@@ -30,7 +31,7 @@ For every row, the release also carries one file:
 The bundle is the durable proof. A Fulcio certificate lives for minutes, and
 `cosign verify-blob --certificate` checks it against the current time unless a
 signed timestamp is supplied. Verify the bundle; there is no detached `.sig` or
-`.pem` pair attached to v3.10.0+ releases.
+`.pem` pair attached to these signed releases.
 
 The `docker` job additionally publishes the image's content address:
 
@@ -92,7 +93,7 @@ done
 sha256sum -c SHA256SUMS
 ```
 
-Only the `.sigstore.json` bundle is published from v3.10.0 onward; there is no
+The signing workflow publishes only the `.sigstore.json` bundle for each blob; there is no
 detached `.sig`/`.pem` pair to verify. The bundle is the durable proof.
 
 On macOS use `shasum -a 256 -c SHA256SUMS`. On Windows, `Get-FileHash` replaces
@@ -333,7 +334,8 @@ covered by the release-asset signatures described here.
 
 ## Historical releases
 
-- v3.10.0 and later: release assets signed as described above.
+- v3.10.0 introduced signing for the four binaries and their checksum manifest.
+  v3.2.10 and v3.2.11 also publish the image digest and source attestation.
 - Docker images: signed by digest from the first release that publishes
   `image-digest.txt`; earlier images are unsigned.
 - v3.9.53–v3.9.60: `SHA256SUMS` only, unsigned. v3.9.53 recorded build-tree

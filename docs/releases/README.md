@@ -110,10 +110,10 @@ comes from the matching file in this folder.
 
 ### Release assets and verification
 
-The release job attaches four assets plus `SHA256SUMS`, and — from v3.10.0 —
+The release job attaches four assets plus `SHA256SUMS`, and, for signed releases,
 cosign keyless signature bundles for each of the five signed blobs
 (`<name>.sigstore.json` — signature, Fulcio certificate and Rekor proof in one
-file; since v3.10.0 this is the only signature artifact attached). The manifest uses the **flat asset names**
+file; this is the signature artifact for each blob). The manifest uses the **flat asset names**
 (`windsurfapi.exe`, `windsurfapi-windows.zip`, `windsurfapi-macos-arm64`,
 `windsurfapi-macos.zip`), so `sha256sum -c SHA256SUMS` works in the directory
 where the files were downloaded. Do not change it back to build-tree paths
@@ -122,7 +122,7 @@ shape, and it made the documented command fail for three of the four files.
 `test/release-workflow.test.js` pins the flat form; `test/release-signing.test.js`
 pins the signed file list and the upload globs.
 
-Releases from v3.10.0 are signed with cosign keyless (GitHub OIDC; no repository
+Binary signing began with v3.10.0. Both v3.2.10 and v3.2.11 were published afterward and are signed with cosign keyless (GitHub OIDC; no repository
 key or signing secret). Verify `SHA256SUMS.sigstore.json` first, then the hashes,
 or run `node scripts/verify-release-assets.mjs <download-dir>`. A signing failure
 fails the release job: never publish assets whose notes claim signatures but
