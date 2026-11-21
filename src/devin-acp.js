@@ -271,42 +271,37 @@ function extractAcpUpdate(params) {
   return { kind: acpUpdateKind(update), text };
 }
 
-// The assistant's user-visible reply. Only these land in the final text.
-const MESSAGE_CHUNK_KINDS = new Set([
-  'agent_message_chunk',
-  'agent_message_delta',
-  'assistant_message_chunk',
-]);
-// The agent's thinking stream (verified live 2026-06-29 with SWE-1.6 over real
-// ACP). It is intentionally kept OUT of the reply text and captured separately
-// as reasoning so callers can drop it by default or surface it explicitly.
-const THOUGHT_CHUNK_KINDS = new Set([
-  'agent_thought_chunk',
-  'agent_thought_delta',
-  'agent_reasoning_chunk',
+// Keep reasoning (observed with SWE-1.6 over ACP) separate from visible text
+// so callers can drop it by default or surface it explicitly.
+const ACP_TEXT_CHANNELS = new Map([
+  ['agent_message_chunk', 'message'],
+  ['agent_message_delta', 'message'],
+  ['assistant_message_chunk', 'message'],
+  ['agent_thought_chunk', 'thought'],
+  ['agent_thought_delta', 'thought'],
+  ['agent_reasoning_chunk', 'thought'],
 ]);
 
 // ACP tool notifications describe agent-owned activity. Only assistant reply
 // text and reasoning are projected from session/update into the HTTP result.
 const TOOL_UPDATE_KINDS = new Set(['tool_call', 'tool_call_update']);
 
-function collectAcpTextFromNotification(obj, buffers, onChunk) {
-  if (obj?.method !== 'session/update') return;
-  const { kind, text } = extractAcpUpdate(obj.params || {});
-  if (TOOL_UPDATE_KINDS.has(kind)) return;
-  if (!text) return;
-  if (MESSAGE_CHUNK_KINDS.has(kind)) {
-    buffers.message.push(text);
-    // Real-time fan-out: fire the chunk as it arrives so callers can stream it
-    // verbatim. Buffers are still filled, so getText() remains the source of
-    // truth for non-streaming callers. onChunk is optional — when absent the
-    // behaviour is identical to before (collect-then-return).
-    if (onChunk) { try { onChunk({ kind: 'message', text }); } catch { /* never let a consumer error kill the pump */ } }
-  } else if (THOUGHT_CHUNK_KINDS.has(kind)) {
-    buffers.thought.push(text);
-    if (onChunk) { try { onChunk({ kind: 'thought', text }); } catch { /* ignore consumer error */ } }
+function collectAcpUpdate(params, buffers, onChunk, blockReplay) {
+  const { kind, text } = extractAcpUpdate(params);
+  if (TOOL_UPDATE_KINDS.has(kind)) {
+    blockReplay();
+    return;
   }
-  // Other updates (plan, mode, commands, status) are ignored here.
+  const channel = ACP_TEXT_CHANNELS.get(kind);
+  if (!text || !channel) return;
+  if (!buffers) {
+    // Late content still proves this child did work before any replacement
+    // prompt, even though its closed prompt no longer owns the response.
+    blockReplay();
+    return;
+  }
+  buffers[channel].push(text);
+  try { onChunk?.({ kind: channel, text }); } catch { /* isolate consumer errors */ }
 }
 
 function permissionResponse(options, cancelled) {
@@ -388,6 +383,7 @@ function makeAcpClient({ command, args, env, signal, deadline, timeoutMs, output
   // otherwise the child is killed before it can read the cancel notification.
   let gracefulKillPending = false;
   const pending = new Map();
+  let promptId = null;
   const buffers = { message: [], thought: [] };
 
   const cleanup = () => {
@@ -439,12 +435,10 @@ function makeAcpClient({ command, args, env, signal, deadline, timeoutMs, output
       const obj = parseJsonLine(line);
       if (!obj) continue;
       if (obj.method === 'session/update') {
-        const update = obj.params?.update || obj.params?.sessionUpdate || obj.params;
-        // The agent can execute tools itself. An announcement can be followed
-        // by execution even if no later status reaches this transport.
-        if (TOOL_UPDATE_KINDS.has(acpUpdateKind(update))) blockReplay();
+        // Resolving a prompt removes its pending entry synchronously, including
+        // when its response and trailing updates arrive in the same pipe read.
+        collectAcpUpdate(obj.params || {}, pending.has(promptId) ? buffers : null, onChunk, blockReplay);
       }
-      collectAcpTextFromNotification(obj, buffers, onChunk);
       if (obj.method === 'session/request_permission') {
         blockReplay();
         if (obj.id != null) {
@@ -569,6 +563,7 @@ function makeAcpClient({ command, args, env, signal, deadline, timeoutMs, output
       timer.unref?.();
       pending.set(id, { resolve, reject, timer });
       beforeWrite(method);
+      if (method === 'session/prompt') promptId = id;
       child.stdin.write(line);
     });
   };

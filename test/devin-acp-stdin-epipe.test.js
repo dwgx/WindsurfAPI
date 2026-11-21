@@ -242,6 +242,88 @@ describe('Devin ACP — route budget at prompt issuance', () => {
   });
 });
 
+describe('Devin ACP — output belongs to the pending prompt', () => {
+  const message = text => ({ method: 'session/update', params: {
+    update: { sessionUpdate: 'agent_message_chunk', content: { text } },
+  } });
+  const thought = text => ({ method: 'session/update', params: {
+    update: { sessionUpdate: 'agent_thought_chunk', content: { text } },
+  } });
+
+  for (const mode of ['buffered', 'streaming']) {
+    const run = (budget, chunks) => runDevinAcpProcess('hi', {
+      apiKey: 'k', budget, onChunk: mode === 'streaming' ? chunk => chunks.push(chunk) : null,
+    });
+
+    for (const [label, update] of [['message', message], ['thought', thought]]) {
+      it(`uses a retired ${label} during backoff as a replay barrier only (${mode})`, async () => {
+        const budget = createRequestBudget({ upstreamTurnCap: 2 });
+        const chunks = [];
+        let wasRetired;
+        const { prompts } = budgetPeer(budget, ({ attempt, child, message: request, send }) => {
+          if (attempt === 1 && request.method === 'session/prompt') {
+            send({ id: request.id, error: reset });
+            // Deliver after the attempt has unwound but before the retry timer
+            // can fire, independent of the host's speed.
+            queueMicrotask(() => queueMicrotask(() => {
+              wasRetired = child.killed;
+              send(update('retired'));
+            }));
+            return true;
+          }
+        });
+        process.env.DEVIN_ACP_RETRY_BASE_MS = '1';
+        await assert.rejects(run(budget, chunks), { status: 502, ...reset });
+        assert.equal(wasRetired, true);
+        assert.deepEqual(prompts, [[1, 1]]);
+        assert.deepEqual(chunks, []);
+      });
+    }
+
+    it(`suppresses frames following the failed prompt response in the same pipe read (${mode})`, async () => {
+      const budget = createRequestBudget({ upstreamTurnCap: 2 });
+      const chunks = [];
+      const { prompts } = budgetPeer(budget, ({ attempt, message: request, child }) => {
+        if (attempt === 1 && request.method === 'session/prompt') {
+          const frames = [{ id: request.id, error: reset }, thought('retired'), message('retired')];
+          child.stdout.emit('data', frames.map(frame => JSON.stringify({ jsonrpc: '2.0', ...frame }) + '\n').join(''));
+          return true;
+        }
+      });
+      await assert.rejects(run(budget, chunks), { status: 502, ...reset });
+      assert.deepEqual(prompts, [[1, 1]]);
+      assert.deepEqual(chunks, []);
+    });
+
+    it(`returns only the replacement prompt's content after issuance (${mode})`, async () => {
+      const budget = createRequestBudget({ upstreamTurnCap: 2 });
+      const chunks = [];
+      let oldSend;
+      const { prompts } = budgetPeer(budget, ({ attempt, message: request, send }) => {
+        if (request.method !== 'session/prompt') return;
+        if (attempt === 1) {
+          oldSend = send;
+          send({ id: request.id, error: reset });
+          return true;
+        }
+        oldSend(thought('retired reasoning'));
+        oldSend(message('retired reply'));
+        send(thought('chosen reasoning'));
+        send(message('chosen reply'));
+        send({ id: request.id, result: { stopReason: 'end_turn' } });
+        return true;
+      });
+      const result = await run(budget, chunks);
+      assert.deepEqual(prompts, [[1, 1], [2, 2]]);
+      assert.equal(result.reasoning, 'chosen reasoning');
+      assert.equal(result.text, 'chosen reply');
+      assert.deepEqual(chunks, mode === 'buffered' ? [] : [
+        { kind: 'thought', text: 'chosen reasoning' }, { kind: 'message', text: 'chosen reply' },
+      ]);
+    });
+  }
+});
+
 describe('Devin ACP — stdin EPIPE guard (audit finding)', () => {
   it('attaches an stdin error listener as soon as the child is spawned', async () => {
     const child = makeFakeChild();
