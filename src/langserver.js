@@ -177,6 +177,12 @@ let _stopDrainDepth = 0;
 // Identity token for `_stopping` records. A cleanup path releases only the
 // record object it created; a newer same-key generation's record survives.
 let _stoppingRecordSeq = 0;
+// Automatic-restart intentions. One record per key while a restart chain is
+// live: the captured timer, the attempt count, and the `_stopEpoch` the intent
+// was created in. A stop releases every record from an older epoch; a callback
+// compares itself against this map by identity before mutating anything, so a
+// stale retry can neither spend nor clear a newer generation's budget.
+const _restartAttempts = new Map();
 const _admissionStats = {
   startAttempts: 0,
   startSuccesses: 0,
@@ -591,6 +597,10 @@ function openStopBoundary() {
   // abort at their next epoch check and their cleanup is identity-guarded.
   _pending.clear();
   _pendingStartSeq.clear();
+  // Automatic restarts scheduled before the boundary are the same kind of
+  // continuation: clear their timers and drop their attempt budgets. A callback
+  // that was already dispatched re-checks its captured epoch and does nothing.
+  cancelAutoRestartIntentions();
   return _stopEpoch;
 }
 
@@ -1588,6 +1598,10 @@ export async function ensureLs(proxy = null) {
  */
 export async function restartLsForProxy(proxy) {
   const key = proxyKey(proxy);
+  // The restart belongs to the generation it entered under. It awaits the old
+  // child's exit below, so a global stop can open a boundary mid-restart;
+  // resuming then would spawn an LS the stop already cancelled.
+  const restartEpoch = _stopEpoch;
   const entry = _pool.get(key);
   if (!entry) return ensureLs(proxy);
   markIntentionalShutdown(entry);  // prevent auto-restart
@@ -1616,6 +1630,15 @@ export async function restartLsForProxy(proxy) {
     how = await waitProcessExit(entry?.process, 500);
   }
   releaseStoppingRecord(key, stoppingRecord);
+  // A stop opened a boundary while the old child was shutting down. The
+  // restart is a pre-stop continuation: its old child is gone, but it must not
+  // spawn a replacement into the new generation. `LS_START_INVALIDATED` is the
+  // documented cancellation code (same one a pre-stop `ensureLs` rejects with),
+  // so callers treat this as "cancelled by stop", not as a start failure.
+  if (restartEpoch !== _stopEpoch) {
+    log.info(`LS instance ${publicLsKey(key)} restart (${how}) cancelled by the language-server stop`);
+    throw lsStartInvalidatedError(key);
+  }
   log.info(`LS instance ${publicLsKey(key)} stopped for restart (${how})`);
   return ensureLs(proxy);
 }
@@ -1635,39 +1658,79 @@ export function getLsFor(proxy) {
 
 // ─── Auto-restart ─────────────────────────────────────────────
 
-const _restartAttempts = new Map();
+// Drop one recorded auto-restart intent, but only if it is still the record the
+// caller created. A newer generation may own the same key by now, and it must
+// keep both its timer and its attempt budget.
+function releaseRestartRecord(key, record) {
+  if (!record || _restartAttempts.get(key) !== record) return false;
+  _restartAttempts.delete(key);
+  const timer = record.timer;
+  record.timer = null;
+  if (timer) {
+    try { clearTimeout(timer); } catch {}
+  }
+  return true;
+}
+
+// Called by the stop boundary after `_stopEpoch` advanced: every recorded
+// intention belongs to the generation the stop just closed.
+function cancelAutoRestartIntentions() {
+  for (const [key, record] of Array.from(_restartAttempts)) {
+    if (record.epoch === _stopEpoch) continue;
+    releaseRestartRecord(key, record);
+  }
+}
+
+async function runLsRestartAttempt(record) {
+  const { key, proxy, attempts, epoch } = record;
+  // A timer that outlived its generation must do nothing at all: no spawn, no
+  // retry, and no attempt-budget change. Its record was already released by the
+  // stop, so touching the map here could only hit a newer generation.
+  if (epoch !== _stopEpoch) return;
+  record.timer = null;
+  try {
+    await ensureLs(proxy);
+    releaseRestartRecord(key, record);
+    log.info(`LS auto-restart: ${publicLsKey(key)} restarted successfully (attempt #${attempts})`);
+  } catch (err) {
+    // An invalidation is a cancellation by a stop, not a restart failure: the
+    // stop owns the boundary, so a replacement retry would cross it.
+    if (epoch !== _stopEpoch || err?.code === 'LS_START_INVALIDATED') {
+      releaseRestartRecord(key, record);
+      log.info(`LS auto-restart: ${publicLsKey(key)} restart #${attempts} cancelled by the stop boundary`);
+      return;
+    }
+    log.error(`LS auto-restart: ${publicLsKey(key)} restart #${attempts} failed: ${err.message}`);
+    if (attempts < AUTO_RESTART_MAX_RETRIES) {
+      scheduleLsRestart(key, proxy, record.oldPort);
+    }
+  }
+}
 
 function scheduleLsRestart(key, proxy, oldPort) {
-  const attempts = (_restartAttempts.get(key) || 0) + 1;
+  const epoch = _stopEpoch;
+  const prev = _restartAttempts.get(key);
+  const attempts = (prev?.attempts || 0) + 1;
   if (attempts > AUTO_RESTART_MAX_RETRIES) {
     log.error(`LS auto-restart: ${publicLsKey(key)} exceeded max retries (${AUTO_RESTART_MAX_RETRIES}), giving up`);
-    _restartAttempts.delete(key);
+    releaseRestartRecord(key, prev);
     return;
   }
 
-  const delay = AUTO_RESTART_BASE_DELAY_MS * Math.pow(2, attempts - 1);
-  _restartAttempts.set(key, attempts);
+  const delayMs = AUTO_RESTART_BASE_DELAY_MS * Math.pow(2, attempts - 1);
+  const record = { key, proxy, oldPort, epoch, attempts, timer: null };
+  _restartAttempts.set(key, record);
 
-  log.info(`LS auto-restart: scheduling ${publicLsKey(key)} restart #${attempts} in ${delay}ms`);
+  log.info(`LS auto-restart: scheduling ${publicLsKey(key)} restart #${attempts} in ${delayMs}ms`);
 
-  setTimeout(async () => {
-    try {
-      await ensureLs(proxy);
-      _restartAttempts.delete(key);
-      log.info(`LS auto-restart: ${publicLsKey(key)} restarted successfully (attempt #${attempts})`);
-    } catch (err) {
-      log.error(`LS auto-restart: ${publicLsKey(key)} restart #${attempts} failed: ${err.message}`);
-      if (attempts < AUTO_RESTART_MAX_RETRIES) {
-        scheduleLsRestart(key, proxy, oldPort);
-      }
-    }
-  }, delay).unref();
+  record.timer = setTimeout(() => runLsRestartAttempt(record), delayMs);
+  try { record.timer?.unref?.(); } catch {}
 }
 
 export function getRestartStats() {
   const stats = {};
-  for (const [key, attempts] of _restartAttempts) {
-    stats[publicLsKey(key)] = attempts;
+  for (const [key, record] of _restartAttempts) {
+    stats[publicLsKey(key)] = record.attempts;
   }
   return stats;
 }

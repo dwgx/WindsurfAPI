@@ -18,9 +18,35 @@
 //     after the clear, never spawns, never publishes `ready`, and never
 //     returns a usable handle.
 //
+// Restart continuations follow the same rule (lifecycle rule, see also the
+// receipt): every automatic restart INTENT belongs to exactly one stop
+// generation, and a continuation may finish cleaning up its own old child but
+// may never spawn or reschedule into a newer one.
+//   - `scheduleLsRestart` captures the `_stopEpoch` it was created in and
+//     registers one per-key record (timer + attempt count). Both global stop
+//     entry points clear the captured timer and drop the attempt budget, so a
+//     timer that is already dispatched re-checks its epoch and does nothing:
+//     no spawn, no recursive retry, no budget change.
+//   - A restart callback that has already entered `ensureLs` and is then
+//     invalidated settles as a cancellation, not a failure: it schedules no
+//     replacement retry and releases only the record it created (identity
+//     check), so a newer generation's timer/budget survives.
+//   - `restartLsForProxy` captures the epoch at entry. It awaits the old
+//     child's exit, so a stop can open a boundary mid-restart; the restart
+//     then releases its own `_stopping` record (identity-based) and rejects
+//     with `err.code === 'LS_START_INVALIDATED'` — the documented
+//     cancellation code, deliberately reused so callers treat a stop-won race
+//     as "cancelled", not as a start failure — instead of resuming as a
+//     post-stop start. Without a stop it still creates exactly one
+//     replacement.
+//   - Preserved: normal automatic restart with backoff, normal per-proxy
+//     restart, and explicit fresh starts after a stop.
+//
 // Fakes only: child_process.spawn, net.createConnection (the port-in-use
-// probe) and http2.connect (the readiness probe) are replaced before
-// importing the module, so no LS binary, port or network is touched. Each
+// probe), http2.connect (the readiness probe) and — for the auto-restart
+// scenarios — `setTimeout`/`clearTimeout` for the product's own backoff delays
+// (every other delay falls through to the real scheduler), so no LS binary,
+// port or network is touched. Each
 // scenario imports a fresh module instance (query-string cache bust) so one
 // scenario's pool cannot leak into the next. All barriers are
 // promises/deferreds handed out by the fakes; the only polling is `waitFor`
@@ -40,6 +66,12 @@ import { tmpdir } from 'node:os';
 process.env.LS_MAX_INSTANCES = '1';
 process.env.LS_POOL_WAIT_MS = '3000';
 process.env.LS_AUTO_RESTART = '0';
+// Auto-restart scenarios flip LS_AUTO_RESTART to '1' before importing a fresh
+// module instance. The base delay is distinctive so the timer seam below
+// captures only the product's own backoff timers (delay, 2x, 4x).
+const AUTO_RESTART_TEST_DELAY_MS = 4242;
+process.env.LS_AUTO_RESTART_BASE_DELAY_MS = String(AUTO_RESTART_TEST_DELAY_MS);
+process.env.LS_AUTO_RESTART_MAX_RETRIES = '2';
 process.env.LS_MEMORY_GUARD = '0';
 process.env.LS_IDLE_TTL_MS = '0';
 process.env.LS_DATA_DIR = join(process.env.DATA_DIR || tmpdir(), 'ls-stop-generation-fixture');
@@ -121,6 +153,43 @@ http2.connect = () => {
   return channel;
 };
 
+// Timer seam for `scheduleLsRestart`. Only the product's backoff delays are
+// captured; every other delay (wait loops, per-test timeouts, the stop
+// backstops) goes to the real scheduler. `fire()` returns the value the
+// product's timer callback returned, so a scenario can await the restart
+// attempt itself instead of polling.
+const nativeSetTimeout = globalThis.setTimeout;
+const nativeClearTimeout = globalThis.clearTimeout;
+const restartTimers = [];
+const AUTO_RESTART_CAPTURED_DELAYS = new Set([
+  AUTO_RESTART_TEST_DELAY_MS,
+  AUTO_RESTART_TEST_DELAY_MS * 2,
+  AUTO_RESTART_TEST_DELAY_MS * 4,
+]);
+
+globalThis.setTimeout = (fn, ms, ...args) => {
+  if (AUTO_RESTART_CAPTURED_DELAYS.has(ms)) {
+    const token = {
+      ms,
+      active: true,
+      captured: true,
+      fire: () => fn(...args),
+      unref() { return this; },
+    };
+    restartTimers.push(token);
+    return token;
+  }
+  return nativeSetTimeout(fn, ms, ...args);
+};
+
+globalThis.clearTimeout = (token) => {
+  if (token && token.captured) {
+    token.active = false;
+    return;
+  }
+  return nativeClearTimeout(token);
+};
+
 syncBuiltinESMExports();
 
 let importSeq = 0;
@@ -159,6 +228,14 @@ function releaseExits(count = Infinity) {
   for (const fire of deliver) fire();
 }
 
+// Let a stop observe real child exits instead of its unref'd SIGKILL backstop,
+// then wait until every stopping record it created is released.
+async function stopAndSettle(ls) {
+  fake.holdExits = false;
+  await ls.stopLanguageServerAndWait({ perProcessTimeoutMs: 50 });
+  await waitFor(() => ls.getLsStatus().pool.stopping === 0, 'final stopping record released');
+}
+
 function isInvalidated(error) {
   return error instanceof Error && error.code === 'LS_START_INVALIDATED';
 }
@@ -180,6 +257,10 @@ beforeEach(() => {
   fake.probes.length = 0;
   fake.probeWaiters.length = 0;
   fake.heldExits.length = 0;
+  restartTimers.length = 0;
+  // Only the auto-restart scenarios enable the real product scheduler; each
+  // enables it right before importing a fresh module instance.
+  process.env.LS_AUTO_RESTART = '0';
 });
 
 describe('LS stop boundary: queued/reserved starts cannot survive a stop', () => {
@@ -389,5 +470,187 @@ describe('LS stop boundary: stale cleanup is generation-bound', () => {
     fake.holdExits = false;
     await ls.stopLanguageServerAndWait({ perProcessTimeoutMs: 50 });
     assert.equal(status().size, 0);
+  });
+});
+
+describe('LS stop boundary: restart continuations belong to one generation', () => {
+  for (const [stopName, stop] of STOP_VARIANTS) {
+    it(`auto: ${stopName} cancels a pre-stop scheduled automatic restart`, async () => {
+      process.env.LS_AUTO_RESTART = '1';
+      const ls = await freshLs();
+      const status = () => ls.getLsStatus().pool;
+      const entry = await ls.ensureLs(null);
+      assert.equal(entry.ready, true);
+      assert.equal(fake.spawns, 1);
+
+      // The crash handler is real product code: it schedules the product timer.
+      entry.process.emit('exit', 1, null);
+      assert.equal(restartTimers.length, 1, 'an unexpected exit schedules exactly one auto-restart');
+      assert.equal(restartTimers[0].active, true);
+      assert.deepEqual(ls.getRestartStats(), { default: 1 }, 'attempt budget of the crashed generation');
+
+      await stop(ls);
+
+      // Even a timer that was already dispatched must do nothing post-stop.
+      await restartTimers[0].fire();
+      assert.equal(fake.spawns, 1, 'a pre-stop automatic restart must not spawn after the stop');
+      assert.equal(status().size, 0, 'the stopped pool stays empty');
+      assert.equal(status().pending, 0, 'the fired callback left no pending start');
+      assert.equal(restartTimers[0].active, false, 'the stop cleared the captured product timer');
+      assert.deepEqual(ls.getRestartStats(), {}, 'the cancelled intent leaves no attempt budget');
+
+      const replacement = await ls.ensureLs(null);
+      assert.equal(replacement.ready, true);
+      assert.equal(fake.spawns, 2, 'an explicit post-stop start still spawns');
+      await stopAndSettle(ls);
+    });
+  }
+
+  it('auto: no-stop control executes exactly one captured restart', async () => {
+    process.env.LS_AUTO_RESTART = '1';
+    const ls = await freshLs();
+    const status = () => ls.getLsStatus().pool;
+    const entry = await ls.ensureLs(null);
+    entry.process.emit('exit', 1, null);
+    assert.equal(restartTimers.length, 1);
+    assert.equal(restartTimers[0].active, true);
+
+    await restartTimers[0].fire();
+
+    assert.equal(fake.spawns, 2, 'exactly one replacement child');
+    assert.equal(status().ready, 1);
+    assert.equal(status().pending, 0);
+    assert.equal(restartTimers.length, 1, 'a successful restart schedules no further timer');
+    assert.deepEqual(ls.getRestartStats(), {}, 'a successful restart clears the attempt budget');
+    await stopAndSettle(ls);
+  });
+
+  it('auto: an in-flight restart callback invalidated by a stop does not retry', async () => {
+    process.env.LS_AUTO_RESTART = '1';
+    const ls = await freshLs();
+    const status = () => ls.getLsStatus().pool;
+    const entry = await ls.ensureLs(null);
+    entry.process.emit('exit', 1, null);
+    const timer = restartTimers[0];
+
+    fake.holdPortProbes = true;
+    const attempt = timer.fire();
+    const probe = await waitForProbe(0, 'port probe of the in-flight restart attempt');
+    assert.equal(fake.spawns, 1, 'the attempt is waiting before its spawn');
+    assert.equal(status().starting, 1, 'its placeholder is reserved');
+
+    await ls.stopLanguageServerAndWait({ perProcessTimeoutMs: 50 });
+    probe.release();
+    await attempt;
+
+    assert.equal(fake.spawns, 1, 'the invalidated attempt must not spawn');
+    assert.equal(restartTimers.length, 1, 'an invalidated callback must not schedule a retry');
+    assert.deepEqual(ls.getRestartStats(), {}, 'the new generation starts with a clean attempt budget');
+    assert.deepEqual(
+      { size: status().size, pending: status().pending, stopping: status().stopping },
+      { size: 0, pending: 0, stopping: 0 },
+    );
+
+    fake.holdPortProbes = false;
+    const replacement = await ls.ensureLs(null);
+    assert.equal(replacement.ready, true);
+    assert.equal(fake.spawns, 2, 'a fresh explicit start after the stop still works');
+    await stopAndSettle(ls);
+  });
+
+  it('auto: a stale restart callback cannot clear a newer generation timer or budget', async () => {
+    process.env.LS_AUTO_RESTART = '1';
+    const ls = await freshLs();
+    const status = () => ls.getLsStatus().pool;
+    const first = await ls.ensureLs(null);
+    first.process.emit('exit', 1, null);
+    const staleTimer = restartTimers[0];
+
+    // Put the stale generation's callback inside ensureLs, parked on its probe.
+    fake.holdPortProbes = true;
+    const staleAttempt = staleTimer.fire();
+    const staleProbe = await waitForProbe(0, 'port probe of the stale restart attempt');
+
+    await ls.stopLanguageServer();
+
+    // A newer generation runs its own start and its own crash restart.
+    fake.holdPortProbes = false;
+    const replacement = await ls.ensureLs(null);
+    assert.equal(fake.spawns, 2);
+    replacement.process.emit('exit', 1, null);
+    assert.equal(restartTimers.length, 2, 'the new generation schedules its own timer');
+    const freshTimer = restartTimers[1];
+    assert.equal(freshTimer.active, true);
+
+    // The old callback settles as a cancellation and must not touch new state.
+    staleProbe.release();
+    await staleAttempt;
+    assert.equal(restartTimers.length, 2, 'the stale callback scheduled no retry');
+    assert.equal(freshTimer.active, true, 'stale cleanup must not cancel the newer timer');
+    assert.deepEqual(ls.getRestartStats(), { default: 1 }, 'the new generation owns a fresh budget');
+
+    await freshTimer.fire();
+    assert.equal(fake.spawns, 3, 'the newer generation restarts normally');
+    assert.equal(status().ready, 1);
+    await stopAndSettle(ls);
+  });
+
+  for (const [stopName, stop] of STOP_VARIANTS) {
+    it(`per-proxy restart: ${stopName} cancels a restart waiting on the old child`, async () => {
+      const ls = await freshLs();
+      const status = () => ls.getLsStatus().pool;
+      const entry = await ls.ensureLs(null);
+      assert.equal(entry.ready, true);
+      assert.equal(fake.spawns, 1);
+
+      fake.holdExits = true;
+      const restarting = ls.restartLsForProxy(null).then(
+        (value) => ({ ok: true, value }),
+        (error) => ({ ok: false, error }),
+      );
+      // The product releases the conversation session before SIGTERM, so wait
+      // for the held kill itself (the fake is the only observable event here)
+      // before opening the stop.
+      await waitFor(() => fake.heldExits.length === 1, 'the restart holds its own SIGTERM');
+      assert.equal(status().stopping, 1, 'the restart holds its own stopping record');
+      assert.equal(status().size, 0, 'the restart removed its entry before awaiting the old exit');
+
+      await stop(ls);
+      releaseExits();
+      const outcome = await restarting;
+
+      assert.equal(outcome.ok, false, 'a pre-stop per-proxy restart must not resume as a new start');
+      assert.equal(outcome.error.code, 'LS_START_INVALIDATED', 'documented cancellation code');
+      assert.equal(fake.spawns, 1, 'the cancelled restart must not spawn');
+      assert.deepEqual(
+        { size: status().size, pending: status().pending, stopping: status().stopping },
+        { size: 0, pending: 0, stopping: 0 },
+        'the restart released its own stopping record; no pool entry or spawn remains',
+      );
+
+      const replacement = await ls.ensureLs(null);
+      assert.equal(replacement.ready, true);
+      assert.equal(fake.spawns, 2, 'an explicit post-stop start still spawns');
+      await stopAndSettle(ls);
+    });
+  }
+
+  it('per-proxy restart: no-stop control creates exactly one replacement', async () => {
+    const ls = await freshLs();
+    const status = () => ls.getLsStatus().pool;
+    const entry = await ls.ensureLs(null);
+    fake.holdExits = true;
+    const restarting = ls.restartLsForProxy(null);
+    await waitFor(() => fake.heldExits.length === 1, 'the restart holds its own SIGTERM');
+    assert.equal(status().stopping, 1, 'the restart holds its own stopping record');
+    releaseExits();
+    const replacement = await restarting;
+
+    assert.notEqual(replacement, entry);
+    assert.equal(replacement.ready, true);
+    assert.equal(fake.spawns, 2, 'exactly one replacement child');
+    assert.equal(status().stopping, 0, 'the restart released its own stopping record');
+    assert.equal(status().size, 1);
+    await stopAndSettle(ls);
   });
 });
