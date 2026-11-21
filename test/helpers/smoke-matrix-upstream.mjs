@@ -16,6 +16,10 @@
  */
 
 import { setTimeout as delay } from 'node:timers/promises';
+import { createServer, request } from 'node:http';
+import { once } from 'node:events';
+import { MAX_FRAME_SIZE, tryGunzip, wrapEnvelope } from '../../src/connect.js';
+import { getAllFields, getField, parseFields, writeStringField, writeVarintField } from '../../src/proto.js';
 
 import { SMOKE_SECRETS } from './dashboard-smoke-upstream.mjs';
 
@@ -27,6 +31,92 @@ export {
   scriptedCatalogTransport,
   scriptedFetch,
 } from './dashboard-smoke-upstream.mjs';
+
+
+// A loopback HTTP peer for tests that need the real Connect encoder/decoder
+// and socket delivery order. Only fixture credentials are recognized; the
+// transport replaces their authorization header with a local slot number.
+export async function startOfflineConnectStub({ tokens, scenario, model, parallelProbe = false, latencyMs = 0 }) {
+  const attempts = [];
+  const samples = [];
+  const pair = Promise.withResolvers();
+  const responses = scriptedConnectEvents();
+  let inflight = 0;
+  let peak = 0;
+  function trailer(error) {
+    const frame = wrapEnvelope(Buffer.from(JSON.stringify(error ? { error } : {})), { compress: false });
+    frame[0] = 2;
+    return frame;
+  }
+  const server = createServer(async (req, res) => {
+    const slot = Number(req.headers['x-offline-slot']);
+    if (req.method !== 'POST' || req.url !== '/exa.api_server_pb.ApiServerService/GetChatMessage' ||
+        !Number.isInteger(slot) || slot < 0 || slot >= tokens.length) {
+      res.writeHead(400).end(); return;
+    }
+    const chunks = [];
+    let received = 0;
+    for await (const part of req) {
+      received += part.length;
+      if (received > MAX_FRAME_SIZE + 5) { res.writeHead(413).end(); return; }
+      chunks.push(part);
+    }
+    const bytes = Buffer.concat(chunks);
+    if (bytes.length < 6 || (bytes[0] & ~1) !== 0 || bytes.readUInt32BE(1) !== bytes.length - 5) {
+      res.writeHead(400).end(); return;
+    }
+    // Read the same selector and user-content fields covered by the encoder
+    // tests. Persist only the fixture's numeric turn number.
+    let prompt, sample;
+    try {
+      const payload = bytes[0] === 1 ? tryGunzip(bytes.subarray(5)) : bytes.subarray(5);
+      if (!payload) throw new Error('invalid compression');
+      const fields = parseFields(payload);
+      const selected = getField(fields, 21, 2)?.value.toString('utf8');
+      const last = getAllFields(fields, 3).at(-1);
+      prompt = getField(parseFields(last.value), 3, 2)?.value.toString('utf8');
+      const marker = /^offline sample (\d+)$/.exec(prompt);
+      if (selected !== model || !marker) throw new Error('unexpected fixture request');
+      sample = Number(marker[1]);
+    } catch { res.writeHead(400).end(); return; }
+    const turn = attempts.length;
+    attempts.push(slot);
+    samples.push(sample);
+    peak = Math.max(peak, ++inflight);
+    try {
+      if (parallelProbe && turn === 1) pair.resolve();
+      if (parallelProbe && turn === 0) await Promise.race([pair.promise, delay(2000, undefined, { ref: false })]);
+      if (latencyMs) await delay(latencyMs);
+      res.writeHead(200, { 'content-type': 'application/connect+proto' });
+      if (!turn && scenario !== 'ok') {
+        if (scenario === 'postcommit') res.write(wrapEnvelope(writeStringField(3, 'partial fixture'), { compress: false }));
+        res.end(trailer({ code: 'resource_exhausted', message: 'Message rate limit. Resets in: 30s.' }));
+        return;
+      }
+      for await (const event of responses({ model, messages: [{ role: 'user', content: prompt }] })) {
+        if (event.type === 'content') res.write(wrapEnvelope(writeStringField(3, event.text + ' #' + sample)));
+        if (event.type === 'finish') res.write(wrapEnvelope(writeVarintField(5, 2)));
+      }
+      res.end(trailer());
+    } catch { res.destroy(); }
+    finally { inflight--; }
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const port = server.address().port;
+  return {
+    attempts,
+    samples,
+    get peak() { return peak; },
+    request(options, callback) {
+      const slot = tokens.findIndex(token => options.headers.authorization === 'Basic ' + token + '-' + token);
+      if (slot < 0) throw new Error('Unexpected upstream identity in offline Connect fixture');
+      return request({ hostname: '127.0.0.1', port, path: options.path, method: options.method, signal: options.signal,
+        headers: { 'content-type': 'application/connect+proto', 'x-offline-slot': String(slot) } }, callback);
+    },
+    close() { server.closeAllConnections(); return new Promise(resolve => server.close(resolve)); },
+  };
+}
 
 /** Extra synthetic credentials this suite mints (never printed). */
 export const MATRIX = Object.freeze({

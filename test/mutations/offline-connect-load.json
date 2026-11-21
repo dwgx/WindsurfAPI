@@ -1,0 +1,26 @@
+{
+  "tests": [
+    "test/offline-connect-load.test.js"
+  ],
+  "expectBaselinePass": 4,
+  "mutations": [
+    {
+      "name": "a partially delivered answer is replayed",
+      "file": "src/handlers/chat.js",
+      "anchor": "if (isAccountFailoverError(r.err.code) && !emitted && hops < maxHops) {",
+      "replacement": "if (isAccountFailoverError(r.err.code) && hops < maxHops) {"
+    },
+    {
+      "name": "failover is skipped before any content was delivered",
+      "file": "src/handlers/chat.js",
+      "anchor": "if (isAccountFailoverError(r.err.code) && !emitted && hops < maxHops) {",
+      "replacement": "if (false && isAccountFailoverError(r.err.code) && !emitted && hops < maxHops) {"
+    },
+    {
+      "name": "offline stub counts an unrelated request as successful",
+      "file": "test/helpers/smoke-matrix-upstream.mjs",
+      "anchor": "} catch { res.writeHead(400).end(); return; }",
+      "replacement": "} catch { prompt = 'offline sample 0'; sample = 0; }"
+    }
+  ]
+}

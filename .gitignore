@@ -53,6 +53,7 @@ scripts/*
 !scripts/dashboard-cdp-check.mjs
 !scripts/dashboard-smoke.mjs
 !scripts/smoke-matrix.mjs
+!scripts/load-connect-offline.mjs
 !scripts/smoke-matrix-mutants.mjs
 !scripts/smoke-matrix/
 !scripts/smoke-matrix/*.mjs

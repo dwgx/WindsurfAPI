@@ -445,3 +445,17 @@ Reviews in the 2026-07-28..09-16 period settled into four artifacts:
 ### CI
 
 GitHub Actions runs `npm run test:release` (syntax + core regression). Run `npm test` locally for the full suite.
+
+### Offline Connect transport check
+
+Run `node scripts/load-connect-offline.mjs ok 8 2` to send eight requests
+through the real gateway with at most two in flight. The command starts a
+loopback Connect peer, creates temporary synthetic accounts, blocks external
+network access, and prints the status, number of upstream attempts, and p50/p95
+latency. It accepts up to 64 requests and eight workers. These timings measure
+the local gateway and fixture together.
+
+Use `node scripts/load-connect-offline.mjs precommit 1 1` for a refusal before
+output. Use `node scripts/load-connect-offline.mjs postcommit 1 1` for a refusal
+after the first content frame. These cases check that a client receives one
+complete response after failover or one partial response with a terminal error.
