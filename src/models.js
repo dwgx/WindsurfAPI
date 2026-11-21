@@ -1262,8 +1262,14 @@ export function mergeCloudCostTiers(configs, { accountId = null, now = Date.now(
     if (!uid) continue;
     const info = cloudCostInfo(m);
     if (info) nextCostTiers.set(uid, info);
-    const credit = Number(m?.creditMultiplier);
-    if (m?.creditMultiplier !== null && m?.creditMultiplier !== undefined
+    // Accept only a real number or a non-empty numeric string. `Number('')`,
+    // `Number(' ')` and `Number(false)` all yield 0 — treating those as a
+    // multiplier would silently bill a paid model at the free tier (M2).
+    const rawCredit = m?.creditMultiplier;
+    const credit = typeof rawCredit === 'number'
+      ? rawCredit
+      : (typeof rawCredit === 'string' && rawCredit.trim() !== '' ? Number(rawCredit.trim()) : NaN);
+    if (rawCredit !== null && rawCredit !== undefined
       && Number.isFinite(credit) && credit >= 0) {
       nextRates.set(uid, credit);
     }

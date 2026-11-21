@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { execFileSync, spawnSync } from 'node:child_process';
 import {
   rmSync, writeFileSync, mkdirSync, existsSync, readFileSync, mkdtempSync,
-  lstatSync, realpathSync, symlinkSync,
+  lstatSync, realpathSync, symlinkSync, unlinkSync,
 } from 'node:fs';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -591,7 +591,9 @@ describe('self-update version gate (tag)', () => {
             `fixture.${field} symlink escape must be rejected`,
           );
         } finally {
-          rmSync(link, { force: true });
+          // unlinkSync, not rmSync: `link` is a symlink to a directory, and
+          // rmSync on it throws ERR_FS_EISDIR on Node 24.11.1.
+          try { unlinkSync(link); } catch { rmSync(link, { force: true }); }
           rmSync(externalRoot, { recursive: true, force: true });
         }
       }

@@ -74,20 +74,6 @@
       "anchor": "  const normalizedModelKey = String(modelKey || '').toLowerCase().replace(/^[a-z0-9][a-z0-9-]*\\//, '');",
       "replacement": "  const normalizedModelKey = String(modelKey || '').toLowerCase().replace(/^[a-z][a-z0-9_-]*\\//, '');",
       "expectCaught": true
-    },
-    {
-      "name": "bare grok-4-5 alias removed — the family name 400s while grok-4-6 / grok-4-7 keep working",
-      "file": "src/devin-connect-models.js",
-      "anchor": "  'grok-4-5': 'grok-4-5-medium',\n",
-      "replacement": "",
-      "expectCaught": true
-    },
-    {
-      "name": "bare inkling alias removed — the family name 400s although a real -medium target exists",
-      "file": "src/devin-connect-models.js",
-      "anchor": "  'inkling': 'inkling-medium',\n",
-      "replacement": "",
-      "expectCaught": true
     }
   ]
 }

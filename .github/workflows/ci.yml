@@ -114,9 +114,16 @@ jobs:
   # specs when that was measured; 85 today). The check used to run only in the local gate,
   # so a wrong pin reached CI green.
   specs:
-    name: Mutation spec consistency
+    name: Mutation spec consistency (Node ${{ matrix.node }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # package.json declares Node >=22.13; running the spec checks on the
+        # declared floor keeps it honest (2 spec-baseline-check failures were
+        # found on 22.14 — a floor nobody executes is not a floor).
+        node: ['22', '24']
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
@@ -124,10 +131,10 @@ jobs:
           # here; a shallow clone would silently widen the selection to every spec.
           fetch-depth: 0
 
-      - name: Setup Node 24
+      - name: Setup Node ${{ matrix.node }}
         uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
-          node-version: '24'
+          node-version: ${{ matrix.node }}
 
       - name: Anchors unique, specs well-formed
         run: node scripts/spec-static-check.mjs

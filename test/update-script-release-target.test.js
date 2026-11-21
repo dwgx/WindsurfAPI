@@ -11,6 +11,7 @@ import {
   realpathSync,
   rmSync,
   symlinkSync,
+  unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import { isAbsolute, join, relative, resolve, sep } from 'node:path';
@@ -194,7 +195,9 @@ describe('update.sh release target', () => {
             `fixture.${field} symlink escape must be rejected`,
           );
         } finally {
-          rmSync(link, { force: true });
+          // unlinkSync, not rmSync: `link` is a symlink to a directory, and
+          // rmSync on it throws ERR_FS_EISDIR on Node 24.11.1.
+          try { unlinkSync(link); } catch { rmSync(link, { force: true }); }
           rmSync(externalRoot, { recursive: true, force: true });
         }
       }

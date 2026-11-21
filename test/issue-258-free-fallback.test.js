@@ -141,40 +141,23 @@ describe('#258 residual — the chat path', () => {
       'the caller must be told there is nothing to degrade to, not handed a quota error later');
   });
 
-  it('degrades to the live free selector, not the frozen one', async () => {
+  it('rejects even when a callable live free selector exists (no silent degrade)', async () => {
+    // The STRICT_MODEL opt-out was removed: an unmapped name now 400s outright.
+    // A live free selector keeps resolveConnectSelector returning
+    // {selector, mapped:false}, but the chat gate rejects before the request is
+    // ever routed to it.
     rowsByToken['sk-degrade'] = [{ selector: 'swe-1-7' }, { selector: 'swe-1-6-slow' }];
-    // A rate-table zero is the second live free source (#235). It keeps the case
-    // offline: no cost-tier body needed.
     seedAccount('sk-degrade', { weeklyPercent: 40, rateTable: { 'swe-1-7': 0 } });
     await syncCatalog();
     process.env.WINDSURFAPI_STRICT_MODEL = '0';
 
-    const warnings = [];
-    const realWarn = log.warn;
-    log.warn = (...args) => warnings.push(args.join(' '));
-    let result;
-    try {
-      result = await handleChatCompletions({
-        model: 'totally-made-up-model-xyz',
-        messages: [{ role: 'user', content: 'hi' }],
-      });
-    } finally {
-      log.warn = realWarn;
-    }
+    const result = await handleChatCompletions({
+      model: 'totally-made-up-model-xyz',
+      messages: [{ role: 'user', content: 'hi' }],
+    });
 
-    assert.notEqual(
-      result.status === 400 && result.body?.error?.code === 'model_not_found',
-      true,
-      'a callable free selector exists, so the opt-out must degrade rather than reject',
-    );
-    assert.ok(
-      warnings.some((line) => line.includes('degrading to swe-1-7')),
-      `the downgrade must name the selector actually used; got ${JSON.stringify(warnings)}`,
-    );
-    assert.ok(
-      !warnings.some((line) => line.includes('degrading to swe-1-6-slow')),
-      'the frozen selector is dead on this deployment and must not be chosen',
-    );
+    assert.equal(result.status, 400);
+    assert.equal(result.body.error.code, 'model_not_found');
   });
 });
 

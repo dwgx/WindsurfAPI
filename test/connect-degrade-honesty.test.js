@@ -110,16 +110,17 @@ afterEach(() => {
 });
 
 describe('degrade honesty: the echoed model must be what ran (#234)', () => {
-  it('reports the free selector, not the requested paid name, when degrading', async () => {
+  it('rejects an unmapped paid name outright — the silent degrade is gone', async () => {
+    // The STRICT_MODEL opt-out was removed: there is no degrade path to report
+    // honestly anymore. Whatever the env says, an unmapped name is 400
+    // model_not_found and nothing reaches the adapter.
     process.env.WINDSURFAPI_STRICT_MODEL = '0';
 
     const r = await chat(UNMAPPED_PAID);
 
-    assert.equal(r.status, 200, 'the opt-out still serves the request');
-    assert.equal(r.wire, FREE_SELECTOR, 'precondition: the free selector is what actually ran');
-    assert.equal(r.bodyModel, FREE_SELECTOR,
-      `the response must not claim to have run ${UNMAPPED_PAID} when ${FREE_SELECTOR} ran`);
-    assert.notEqual(r.bodyModel, UNMAPPED_PAID);
+    assert.equal(r.status, 400);
+    assert.equal(r.errCode, 'model_not_found');
+    assert.equal(r.wire, null, 'nothing reached the adapter');
   });
 
   it('still echoes the REQUESTED name for a mapped alias', async () => {
@@ -229,18 +230,11 @@ describe('degrade honesty: the echoed model must be what ran (#234)', () => {
 
     const r = await chat(UNMAPPED_PAID);
 
-    // Fingerprint first: on the degrade path the honest model name and the honest
-    // fingerprint source are the same string, so a displayModel mutation breaks both —
-    // asserting the fingerprint before the model field is what makes a failure report
-    // the fingerprint contract rather than the sibling one.
-    assert.equal(r.fingerprint, systemFingerprint(FREE_SELECTOR),
-      'the fingerprint must be keyed to the name we report, not to the requested one');
-    assert.notEqual(r.fingerprint, systemFingerprint(UNMAPPED_PAID));
-    assert.equal(r.bodyModel, FREE_SELECTOR);
-    // Precondition for the check above: the two names must hash differently, or a
-    // swapped fingerprint would be invisible to it.
-    assert.notEqual(systemFingerprint(FREE_SELECTOR), systemFingerprint(UNMAPPED_PAID),
-      'precondition: the two names produce different fingerprints');
+    // The degrade path this keyed the fingerprint to no longer exists: the
+    // request is rejected before any fingerprint is derived.
+    assert.equal(r.status, 400);
+    assert.equal(r.errCode, 'model_not_found');
+    assert.equal(r.fingerprint, null);
   });
 });
 
@@ -250,7 +244,7 @@ describe('degrade honesty reaches the Anthropic and Gemini routes too (#234)', (
   // /v1/messages request for claude-opus-4.9 ran swe-1-6-slow and reported
   // claude-opus-4.9. Both files had ZERO references to displayModel.
 
-  it('/v1/messages reports what ran, not what was asked for', async () => {
+  it('/v1/messages rejects an unmapped name too', async () => {
     process.env.WINDSURFAPI_STRICT_MODEL = '0';
     const { handleMessages } = await import('../src/handlers/messages.js');
 
@@ -259,9 +253,11 @@ describe('degrade honesty reaches the Anthropic and Gemini routes too (#234)', (
       { callerKey: 'honesty-caller' },
     );
 
-    assert.equal(seen?.wire, FREE_SELECTOR, 'precondition: the free selector ran');
-    assert.equal(res?.body?.model, FREE_SELECTOR,
-      'the Anthropic route must not report the paid name either');
+    assert.equal(seen, null, 'nothing reached the adapter');
+    assert.equal(res?.status, 400);
+    // The Anthropic route reports error.type; the chat route reports error.code.
+    // Either way the message must carry the model_not_found contract.
+    assert.match(JSON.stringify(res?.body?.error ?? {}), /model_not_found/);
   });
 
   it('/v1/messages still echoes the requested name for a mapped alias', async () => {

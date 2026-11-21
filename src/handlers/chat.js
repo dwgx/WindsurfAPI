@@ -4113,10 +4113,17 @@ async function _handleChatCompletionsInner(body, context, captureCacheGeneration
     // validator — invalid_argument, now surfaced as 400 REQUEST_REJECTED; before
     // the 2026-10-25 mapping fix it read as UPSTREAM_INTERNAL and charged the
     // account's health). Reject early with 400 instead of guessing.
-    // The whitelist ceiling is the catalog snapshot (devin-catalog-snapshot.json);
-    // set WINDSURFAPI_STRICT_MODEL=0 to restore the legacy silent-degrade if the
-    // snapshot is stale and a genuinely-live selector is being rejected.
-    if (!mapped && String(process.env.WINDSURFAPI_STRICT_MODEL || '1') !== '0') {
+    // The whitelist ceiling is the catalog snapshot (devin-catalog-snapshot.json).
+    // There is no opt-out: an unmapped selector must never silently degrade to
+    // the free tier (release-candidate owner decision). If the snapshot is
+    // stale the fix is to refresh it, not to widen this gate.
+    //
+    // One carve-out: opt-in router names (`adaptive`/`arena-*` under
+    // DEVIN_CONNECT_ASSIGN_MODEL=1) also resolve mapped:false, but they are not
+    // "unresolvable" — the AssignModel RPC assigns a concrete model_uid below.
+    // Rejecting them here would disable the router feature outright.
+    const routerCandidate = process.env.DEVIN_CONNECT_ASSIGN_MODEL === '1' && isRouterModel(reqModelName);
+    if (!mapped && !routerCandidate) {
       log.warn(`Chat[${reqId}]: DEVIN_CONNECT rejecting unmapped model "${safeLogValue(reqModelName)}" (not in catalog whitelist) — 400 model_not_found`);
       return {
         status: 400,

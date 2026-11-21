@@ -142,7 +142,8 @@ const LEDGER = {
       + 'by nlu-negation-and-arg-slot.json but not via the switch. Known gap.',
   },
   WINDSURFAPI_REASONING_DEDUP: { tested: true },
-  WINDSURFAPI_STRICT_MODEL: { tested: true },
+  // WINDSURFAPI_STRICT_MODEL was deleted (release-candidate owner decision):
+  // strict is the only behaviour — no switch left to register.
   // The six below are the runtime-config.js table-driven batch, invisible to the first four
   // discovery patterns because the switch name appears as a STRING in a declaration rather
   // than an `env.NAME` access. All six shipped default-on and unregistered.

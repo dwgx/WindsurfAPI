@@ -59,7 +59,9 @@ describe('DEVIN_CONNECT strict model whitelist (P1)', () => {
     );
   });
 
-  it('WINDSURFAPI_STRICT_MODEL=0 restores the legacy silent-degrade (no 400)', async () => {
+  it('WINDSURFAPI_STRICT_MODEL is gone: setting it to 0 still rejects (no silent degrade)', async () => {
+    // The opt-out was removed (release-candidate owner decision): an unmapped
+    // selector must never silently degrade, whatever the environment says.
     process.env.DEVIN_CONNECT = '1';
     process.env.WINDSURFAPI_STRICT_MODEL = '0';
     withAccount('strict-optout');
@@ -68,12 +70,8 @@ describe('DEVIN_CONNECT strict model whitelist (P1)', () => {
       messages: [{ role: 'user', content: 'hi' }],
     };
     const result = await handleChatCompletions(body);
-    // With the guard off, it must NOT 400-model_not_found (it degrades instead).
-    assert.notEqual(
-      result.status === 400 && result.body?.error?.code === 'model_not_found',
-      true,
-      'opt-out must not reject; it degrades to free tier as before',
-    );
+    assert.equal(result.status, 400);
+    assert.equal(result.body.error.code, 'model_not_found');
   });
 });
 

@@ -20,8 +20,8 @@
 | | |
 |---|---|
 | 发布说明 | **223** 份,v2.0.6 → v3.141.592661（生成：`node scripts/sync-changelog-counts.mjs`；口径 `ls docs/releases/RELEASE_NOTES_*.md \| wc -l`） |
-| git tag | 231 个（生成：`node scripts/sync-changelog-counts.mjs`；口径 `git tag \| wc -l` 减去 `docs/releases/UNPUBLISHED-TAGS.txt` 里本 checkout 存在的未发布 tag，再减去 `package.json` 版本的 tag——本次发布自己的 tag，创建前后都不计数，所以三种 checkout 同值） |
-| 当前 | **v3.2.11** (2026-11-21) |
+| git tag | 232 个（生成：`node scripts/sync-changelog-counts.mjs`；口径 `git tag \| wc -l` 减去 `docs/releases/UNPUBLISHED-TAGS.txt` 里本 checkout 存在的未发布 tag，再减去 `package.json` 版本的 tag——本次发布自己的 tag，创建前后都不计数，所以三种 checkout 同值） |
+| 当前 | **v4.0.0** (2026-11-22) |
 | 运行时依赖 | **0** —— 从第一个版本保持到现在 |
 
 ```mermaid
@@ -41,6 +41,10 @@ flowchart LR
 ## 最近的版本
 
 下面是 3.9.x 全系。更早的版本请直接翻 [`docs/releases/`](docs/releases/)。
+
+### [v4.0.0](docs/releases/RELEASE_NOTES_4.0.0.md) · 2026-11-22
+
+破坏兼容升主版本：未知模型报错不降级；限流不偷换变体；池级不可用返回不可重试 403；快照刷新至 306 模型；creditMultiplier 只认数字。
 
 ### [v3.2.11](docs/releases/RELEASE_NOTES_3.2.11.md) · 2026-11-21
 

@@ -145,50 +145,58 @@ afterEach(() => {
 });
 
 describe('P2-6: usage attribution follows the served model', () => {
-  it('stream: a degraded turn files usage AND the request row under the served selector', async () => {
+  it('an unmapped name is rejected and files nothing (no degrade path remains)', async () => {
+    // STRICT_MODEL is gone: unmapped never runs, so there is no served selector
+    // to attribute. Both transports 400 and leave the buckets empty.
     process.env.WINDSURFAPI_STRICT_MODEL = '0';
     const seen = stubStream();
 
-    await runStream(UNMAPPED_PAID);
+    const res = await handleChatCompletions(
+      { model: UNMAPPED_PAID, stream: true, messages: [{ role: 'user', content: 'hi' }] },
+      { callerKey: 'p2-6-caller' },
+    );
 
-    assert.equal(seen.wire, FREE_SELECTOR, 'precondition: the free selector ran upstream');
-    assert.equal(seen.display, FREE_SELECTOR, 'precondition: the served name is what the client is told');
+    assert.equal(res.status, 400);
+    assert.equal(res.body?.error?.code, 'model_not_found');
+    assert.equal(seen.wire, null, 'nothing reached the adapter');
     const b = buckets();
-    assert.deepEqual(b.usage, [FREE_SELECTOR],
-      `usage must be filed under the served selector, got [${b.usage}]`);
-    assert.equal(getStats().tokensByModel[FREE_SELECTOR].requests_with_usage, 1);
-    assert.equal(getStats().tokensByModel[FREE_SELECTOR].total, 19, 'the usage numbers land intact');
-    assert.deepEqual(b.requests, [FREE_SELECTOR],
-      `the request row must name what ran, got [${b.requests}]`);
+    assert.deepEqual(b.usage, [], 'a rejected request must file no usage rows');
+    assert.deepEqual(b.requests, [], 'and no request rows either');
   });
 
-  it('non-stream: the same degrade files the same buckets (anchor for the stream arm)', async () => {
+  it('non-stream: the same rejection files the same (empty) buckets', async () => {
     process.env.WINDSURFAPI_STRICT_MODEL = '0';
     const seen = stubNonStream();
 
     const res = await runNonStream(UNMAPPED_PAID);
 
-    assert.equal(res.status, 200);
-    assert.equal(seen.wire, FREE_SELECTOR);
+    assert.equal(res.status, 400);
+    assert.equal(res.body?.error?.code, 'model_not_found');
+    assert.equal(seen.wire, null);
     const b = buckets();
-    assert.deepEqual(b.usage, [FREE_SELECTOR]);
-    assert.deepEqual(b.requests, [FREE_SELECTOR]);
+    assert.deepEqual(b.usage, []);
+    assert.deepEqual(b.requests, []);
   });
 
-  it('stream and non-stream land in ONE bucket for the same model (the split this fixes)', async () => {
+  it('stream and non-stream reject identically for the same model', async () => {
     process.env.WINDSURFAPI_STRICT_MODEL = '0';
     stubStream();
-    await runStream(UNMAPPED_PAID);
+    const sres = await handleChatCompletions(
+      { model: UNMAPPED_PAID, stream: true, messages: [{ role: 'user', content: 'hi' }] },
+      { callerKey: 'p2-6-caller' },
+    );
     const streamBuckets = buckets();
     resetStats();
     stubNonStream();
-    await runNonStream(UNMAPPED_PAID);
+    const nres = await runNonStream(UNMAPPED_PAID);
     const nonStreamBuckets = buckets();
 
+    assert.equal(sres.status, 400);
+    assert.equal(nres.status, 400);
     assert.deepEqual(streamBuckets, nonStreamBuckets,
-      'the same request must not be split across buckets by the transport it used');
-    assert.deepEqual(streamBuckets.usage, [FREE_SELECTOR]);
-    assert.deepEqual(streamBuckets.requests, [FREE_SELECTOR]);
+      'the same rejection must look the same on both transports');
+    assert.deepEqual(streamBuckets.usage, []);
+    assert.deepEqual(streamBuckets.requests, []);
   });
 
   it('a mapped alias keeps the requested name on BOTH transports (documented alias behaviour)', async () => {
@@ -226,7 +234,7 @@ describe('P2-6: usage attribution follows the served model', () => {
   // inherit the attribution — the report lists it as the third surface, and its
   // client-visible name was already deferred to the served name. Driven through
   // the real handler (no stubbed chatHandler) to prove the inheritance.
-  it('Responses non-stream: a degraded turn files usage under the served selector', async () => {
+  it('Responses non-stream: an unmapped name is rejected and files nothing', async () => {
     process.env.WINDSURFAPI_STRICT_MODEL = '0';
     stubNonStream();
     const { handleResponses } = await import('../src/handlers/responses.js');
@@ -236,14 +244,13 @@ describe('P2-6: usage attribution follows the served model', () => {
       input: [{ role: 'user', content: [{ type: 'input_text', text: 'hi' }] }],
     }, { context: { callerKey: 'p2-6-responses' } });
 
-    assert.equal(res.status, 200);
-    assert.equal(res.body.model, FREE_SELECTOR, 'precondition: the served name is what the client is told');
+    assert.equal(res.status, 400);
     const b = buckets();
-    assert.deepEqual(b.usage, [FREE_SELECTOR], `usage buckets were [${b.usage}]`);
-    assert.deepEqual(b.requests, [FREE_SELECTOR]);
+    assert.deepEqual(b.usage, []);
+    assert.deepEqual(b.requests, []);
   });
 
-  it('Responses stream: the same degrade files the same bucket', async () => {
+  it('Responses stream: the same rejection files the same (empty) bucket', async () => {
     process.env.WINDSURFAPI_STRICT_MODEL = '0';
     stubStream();
     const { handleResponses } = await import('../src/handlers/responses.js');
@@ -253,11 +260,10 @@ describe('P2-6: usage attribution follows the served model', () => {
       stream: true,
       input: [{ role: 'user', content: [{ type: 'input_text', text: 'hi' }] }],
     }, { context: { callerKey: 'p2-6-responses' } });
-    assert.equal(res.status, 200);
-    await res.handler(fakeRes());
+    assert.equal(res.status, 400);
 
     const b = buckets();
-    assert.deepEqual(b.usage, [FREE_SELECTOR], `usage buckets were [${b.usage}]`);
-    assert.deepEqual(b.requests, [FREE_SELECTOR]);
+    assert.deepEqual(b.usage, []);
+    assert.deepEqual(b.requests, []);
   });
 });
