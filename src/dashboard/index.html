@@ -7811,6 +7811,9 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     const uptime = d.uptime ? this.fmtDuration(d.uptime) : '-';
     const ls = d.langServer || {};
     const poolCount = (ls.instances || []).length || (ls.running ? 1 : 0);
+    const cacheHits = d.cache?.hits ?? 0;
+    const cacheLookups = d.cache?.eligibleLookups ?? (cacheHits + (d.cache?.misses ?? 0));
+    const cacheRate = cacheLookups ? (100 * cacheHits / cacheLookups).toFixed(1) + '%' : I18n.t('card.responseCache.noSamples');
     const totalRss = ls.totalRssBytes ? this.fmtBytes(ls.totalRssBytes) : '-';
     // The local Language Server is retired on the DEVIN_CONNECT cloud path
     // (backend-router: DEVIN_CONNECT retires both Cascade AND the local CLI). When
@@ -7865,8 +7868,8 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
         <div class="card-header"><div class="card-title">${I18n.t('card.responseCache.title')}</div>
           <svg class="card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4 3 9 3s9-1.34 9-3"/></svg>
         </div>
-        <div class="card-value">${d.cache?.hitRate || '0.0'}%</div>
-        <div class="card-sub">${I18n.t('card.responseCache.subtitle', { hits: d.cache?.hits || 0, misses: d.cache?.misses || 0, size: d.cache?.size || 0, max: d.cache?.maxSize || 0 })}</div>
+        <div class="card-value">${cacheRate}</div>
+        <div class="card-sub">${I18n.t('card.responseCache.subtitle', { hits: cacheHits, total: cacheLookups, size: d.cache?.size || 0, max: d.cache?.maxSize || 0 })}</div>
       </div>
       ${this._tokenCacheKpiCard(s)}
     `;

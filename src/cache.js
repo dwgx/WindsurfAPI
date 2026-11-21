@@ -281,6 +281,8 @@ export function cacheStats() {
     stores: _stats.stores,
     evictions: _stats.evictions,
     skips: _stats.skips,
+    eligibleLookups: total,
+    hitRatePercent: total ? 100 * _stats.hits / total : null,
     hitRate: total > 0 ? ((_stats.hits / total) * 100).toFixed(1) : '0.0',
   };
 }

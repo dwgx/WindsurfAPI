@@ -831,7 +831,8 @@
     },
     "responseCache": {
       "title": "Response Cache",
-      "subtitle": "{{hits}} hit / {{misses}} miss · {{size}}/{{max}} entries"
+      "noSamples": "No samples",
+      "subtitle": "{{hits}} hits / {{total}} lookups · {{size}}/{{max}} entries"
     },
     "tokens": {
       "title": "Token usage breakdown",

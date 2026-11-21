@@ -831,7 +831,8 @@
     },
     "responseCache": {
       "title": "响应缓存",
-      "subtitle": "{{hits}} 命中 / {{misses}} 未命中 · {{size}}/{{max}} 条"
+      "noSamples": "暂无样本",
+      "subtitle": "{{hits}} 次命中 / {{total}} 次查询 · {{size}}/{{max}} 条"
     },
     "tokens": {
       "title": "Token 用量分布",

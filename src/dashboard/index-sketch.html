@@ -2438,6 +2438,9 @@ const App = {
     const uptime = d.uptime ? this.fmtDuration(d.uptime) : '-';
     const ls = d.langServer || {};
     const poolCount = (ls.instances || []).length || (ls.running ? 1 : 0);
+    const cacheHits = d.cache?.hits ?? 0;
+    const cacheLookups = d.cache?.eligibleLookups ?? (cacheHits + (d.cache?.misses ?? 0));
+    const cacheRate = cacheLookups ? (100 * cacheHits / cacheLookups).toFixed(1) + '%' : (I18n.locale === 'en' ? 'No samples' : '暂无样本');
     const totalAccts = d.accounts?.total || 0;
     const navAcct = document.getElementById('nav-accounts-count');
     if (navAcct) navAcct.textContent = totalAccts;
@@ -2447,7 +2450,7 @@ const App = {
       ${this.metric({ label: 'total requests', value: d.totalRequests || 0, sub: `${d.successRate || 0}% success`, kind: 'accent' })}
       ${this.metric({ label: 'uptime', value: uptime, sub: d.startedAt ? new Date(d.startedAt).toLocaleString() : '—', valueSize: 22 })}
       ${this.metric({ label: 'language server', value: ls.running ? 'running' : 'stopped', sub: `${poolCount} inst · :${ls.port || '-'}`, kind: ls.running ? 'good' : 'error', valueSize: 22 })}
-      ${this.metric({ label: 'response cache', value: (d.cache?.hitRate || '0.0') + '%', sub: `${d.cache?.hits || 0} / ${d.cache?.misses || 0} · ${d.cache?.size || 0}/${d.cache?.maxSize || 0}` })}
+      ${this.metric({ label: 'response cache', value: cacheRate, sub: `${cacheHits} / ${cacheLookups} · ${d.cache?.size || 0}/${d.cache?.maxSize || 0}` })}
     `;
     const instances = ls.instances || [];
     if (instances.length > 0) {
