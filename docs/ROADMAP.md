@@ -2,12 +2,22 @@
 
 ## Current private wave
 
-Verify an isolated authenticated turn, negotiated model, repeated-prompt
-cache behavior and a downstream client with separate receipts for usage and
-provider charges. Next, implement opt-in maintenance-line updates, make
-non-adding imports side-effect free and clarify the signed-release tooling.
-Keep provider-catalog pricing changes gated on actual catalog shapes. Evaluate
-peer features by observed client need, implementation cost and upstream cost.
+An isolated authenticated turn still needs a signed-in test account. Track
+the requested model, launch arguments, negotiated model and provider-reported
+model independently. Compare identical requests and record cache lookups,
+upstream calls, token usage and provider charges separately. The production
+deployment serves real users and stays outside this experiment.
+
+The private updater follows a signed 3.x release line on explicit selection.
+Non-adding imports use the preview path. Both dashboards distinguish empty
+cache samples from a measured zero hit rate. An explicit daily or weekly
+quota rejection can honor the matching account reset observed in provider
+metadata. [Signed updates](RELEASE-SIGNING.md) · [Cache coverage](../test/cache.test.js)
+
+Obtain an authenticated catalog sample before changing empty multiplier
+handling. A generated cache keepalive needs evidence of economic benefit.
+Responses WebSocket and remote compaction need a real client dependent on
+each path. Account selection changes need comparable account-health data.
 
 Updated 2026-11-21 after the v3.2.11 release. The annotated tag resolves to
 `3f8d88a0475c`. This release passed its hosted build and verification workflow.
