@@ -23,7 +23,7 @@
  * not verified against a live Gemini endpoint are marked TODO(unverified).
  */
 
-import { handleChatCompletions, connectErrorToHttp } from './chat.js';
+import { handleChatCompletions, clientResetFields, connectErrorToHttp } from './chat.js';
 import { log } from '../config.js';
 import { createBoundedWriter, resolveMaxDrainWaitMs } from '../stream-writer.js';
 import { SseFramer } from '../sse-framer.js';
@@ -842,7 +842,7 @@ class GeminiStreamTranslator {
         ? { ...mapped.body, error: {
           ...mapped.body.error,
           __upstream_code: err.code,
-          ...(Number.isFinite(Number(err.retry_after_ms)) ? { retry_after_ms: Number(err.retry_after_ms) } : {}),
+          ...clientResetFields(err.retry_after_ms),
         } }
         : mapped.body;
       const json = JSON.stringify(body);

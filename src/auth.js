@@ -1,3 +1,4 @@
+import { boundResetMs, MAX_QUOTA_RESET_MS } from './reset-hints.js';
 /**
  * Multi-account authentication pool for Codeium/Windsurf.
  *
@@ -946,6 +947,11 @@ export const RATE_LIMIT_PERSIST_MAX_MS = 24 * 60 * 60 * 1000;
 
 // Normalize one persisted deadline: 0 unless it is a finite timestamp in the
 // future, clamped so the remaining window can never exceed the persistence cap.
+function sanitizeQuotaDeadline(value, now) {
+  if (!Number.isFinite(value) || value <= now) return 0;
+  return Math.min(value, now + MAX_QUOTA_RESET_MS);
+}
+
 function sanitizeRateLimitDeadline(value, now) {
   if (typeof value !== 'number' || !Number.isFinite(value) || value <= now) return 0;
   return Math.min(value, now + RATE_LIMIT_PERSIST_MAX_MS);
@@ -1044,7 +1050,7 @@ function _serializeAccounts() {
     // RB2/B2: quota-exhaustion cooldown deadline (own self-healing dimension,
     // separate from transient rateLimitedUntil). Persisted so a restart mid-
     // cooldown doesn't immediately re-select a dry account and eat a 402.
-    quotaResetAt: a.quotaResetAt || 0,
+    quotaResetAt: sanitizeQuotaDeadline(a.quotaResetAt, now),
     // V-18: provenance travels WITH a live deadline, so a restart cannot turn a
     // live-402 window into one a weekly snapshot is allowed to clear.
     ...(a.quotaResetAt > now && QUOTA_RESET_SOURCES.has(a.quotaResetSource)
@@ -1260,7 +1266,7 @@ function _deserializeAccount(a, now = Date.now()) {
     userStatus: a.userStatus || null,
     userStatusLastFetched: a.userStatusLastFetched || 0,
     // RB2/B2 + B1: restore self-healing quota cooldown + backoff memory.
-    quotaResetAt: a.quotaResetAt || 0,
+    quotaResetAt: sanitizeQuotaDeadline(a.quotaResetAt, now),
     // V-18: an unrecorded provenance (older accounts.json) stays null — unknown
     // is never treated as "a snapshot wrote this", so the deadline is only
     // cleared by expiry. A source without a live deadline is meaningless.
@@ -4150,7 +4156,7 @@ export function markRateLimited(apiKey, durationMs = 5 * 60 * 1000, modelKey = n
   const account = accounts.find(a => a.apiKey === apiKey);
   if (!account) return;
   recordHealthEvent(account, healthKind);
-  const safeMs = Math.max(1000, Number(durationMs) || 0);
+  const safeMs = Math.max(1000, boundResetMs(Number(durationMs)) ?? 0);
   const until = Date.now() + safeMs;
   recordRateLimitEvent(account, { upstreamMs: durationMs, effectiveMs: safeMs, until, modelKey, healthKind });
   if (modelKey) {
@@ -4512,9 +4518,9 @@ export function markQuotaExhausted(apiKey, durationMs = null, now = Date.now()) 
   // — R6 changes only the cooldown DIMENSION, not the health weighting.
   recordHealthEvent(account, 't');
   const ms = Number.isFinite(durationMs) && durationMs >= 1000 ? durationMs : quotaCooldownMs();
-  const previous = account.quotaResetAt || 0;
+  const previous = sanitizeQuotaDeadline(account.quotaResetAt, now);
   const alreadyCooled = previous > now;
-  account.quotaResetAt = Math.max(previous, now + ms);
+  account.quotaResetAt = Math.max(previous, now + Math.min(ms, MAX_QUOTA_RESET_MS));
   // Provenance of the CURRENT deadline: this live 402 is its author only when it
   // actually extended it. A longer snapshot-armed deadline keeps its own source,
   // so a later recovery snapshot can still clear what it wrote.

@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
+import { clientResetFields } from '../src/handlers/chat.js';
 
 async function run(options = {}) {
   // Byte-exact anchors below span newlines; a Windows working copy (CRLF)
@@ -74,6 +75,7 @@ async function run(options = {}) {
     finishPartialStreamAfterError: options.helperFail ? boom : finishPartialStreamAfterError,
     finishTruncatedStream: options.helperFail ? boom : finishTruncatedStream,
     chatStreamError: (message, type, code) => ({ error: { message, type, code } }),
+    clientResetFields,
     // C2 writer gate. This harness models a writable that never reports
     // backpressure, so the gate is a no-op here: the assertions below stay about
     // failure isolation, not about draining. The real drain contract is pinned

@@ -1,3 +1,4 @@
+import { parseGoResetMs } from './reset-hints.js';
 /**
  * DEVIN_CONNECT — direct cloud GetChatMessage adapter (pure HTTP egress).
  *
@@ -2666,20 +2667,7 @@ export function decodeFrame(payload, opts = {}) {
  * can't cool an account down for days.
  */
 export function parseResetDuration(text) {
-  const m = /resets? in[:\s]+((?:\d+h)?(?:\d+m)?(?:\d+(?:\.\d+)?s)?)/i.exec(String(text || ''));
-  if (!m || !m[1]) return null;
-  const dur = m[1];
-  const h = /(\d+)h/.exec(dur);
-  const min = /(\d+)m(?!s)/.exec(dur); // m not followed by s (avoid matching "ms")
-  const s = /(\d+(?:\.\d+)?)s/.exec(dur);
-  if (!h && !min && !s) return null;
-  let ms = 0;
-  if (h) ms += Number(h[1]) * 3600_000;
-  if (min) ms += Number(min[1]) * 60_000;
-  if (s) ms += Number(s[1]) * 1000;
-  if (ms <= 0) return null;
-  // Ceiling at 6h — the observed window is 3h; guard against a garbage value.
-  return Math.min(ms, 6 * 3600_000);
+  return parseGoResetMs(text);
 }
 
 // gRPC 4xx-class statuses that mean "the REQUEST itself is invalid" — the
@@ -2822,7 +2810,10 @@ export function classifyUpstreamError(text, code = null, status = null) {
       || /(credit|quota|balance|allowance|usage)[\s\w-]{0,40}?(exceeded|exhausted|depleted|used up)/i.test(lc)
       || /on.?demand[^.]{0,60}(exhausted|exceeded|depleted|out of|insufficient)/i.test(lc)
       || /run(?:ning)? out of (credit|quota|balance|funds|usage)/i.test(lc)) {
-    return { code: 'QUOTA_EXHAUSTED', message: body || 'DEVIN_CONNECT: account out of credit/quota' };
+    const periods = [...lc.matchAll(/\b(daily|weekly)\s+(?:usage\s+)?quota\s+(?:has\s+been\s+|is\s+)?exhausted\b/g)].map(match => match[1]);
+    const quotaPeriod = periods.includes('weekly') ? 'weekly' : periods[0];
+    return { code: 'QUOTA_EXHAUSTED', message: body || 'DEVIN_CONNECT: account out of credit/quota',
+      ...(quotaPeriod ? { quotaPeriod } : {}) };
   }
   // ── MODEL-LEVEL rejection scoped to (ACCOUNT, SELECTOR) ──────────────────
   // Measured body: "This model is no longer available for your account",
@@ -3409,6 +3400,7 @@ export async function* streamChat({
         streamError = Object.assign(new Error(classified.message), {
           code: classified.code,
           status: res.statusCode,
+          ...(classified.quotaPeriod ? { quotaPeriod: classified.quotaPeriod } : {}),
           ...(classified.resetMs != null ? { resetMs: classified.resetMs } : {}),
         });
         done = true;
@@ -3500,6 +3492,7 @@ export async function* streamChat({
                 streamError = Object.assign(new Error(classified.message), {
                   code: classified.code,
                   upstream: parsed.error,
+                  ...(classified.quotaPeriod ? { quotaPeriod: classified.quotaPeriod } : {}),
                   ...(classified.resetMs != null ? { resetMs: classified.resetMs } : {}),
                 });
               }

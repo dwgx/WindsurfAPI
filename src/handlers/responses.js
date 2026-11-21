@@ -6,7 +6,7 @@
  */
 
 import { randomUUID } from 'crypto';
-import { handleChatCompletions, normalizeOpenAIErrorType, connectErrorToHttp, hasPerUserScope, DEFER_STREAM_DELIVERY } from './chat.js';
+import { handleChatCompletions, clientResetFields, normalizeOpenAIErrorType, connectErrorToHttp, hasPerUserScope, DEFER_STREAM_DELIVERY } from './chat.js';
 import { selectBackend } from '../backend-router.js';
 import { findFilePartInMessages, unsupportedFilePartError } from '../devin-connect.js';
 import { getResponse, putResponse, deleteResponse, isResponseStoreEnabled, wantsPersistence } from '../response-store.js';
@@ -1901,7 +1901,7 @@ class ResponsesStreamTranslator {
           // 就地归一化内部词到官方 OpenAI type。
           type: normalizeOpenAIErrorType(http.type, http.status),
           code: err?.code || null,
-          ...(Number.isFinite(Number(err?.retry_after_ms)) ? { retry_after_ms: Number(err.retry_after_ms) } : {}),
+          ...clientResetFields(err?.retry_after_ms),
         },
       },
     });

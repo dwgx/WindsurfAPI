@@ -1,3 +1,4 @@
+import { retryAfterHeaderMs, resetSecondsToMs } from './reset-hints.js';
 /**
  * REST/Connect-RPC client for Windsurf/Codeium cloud services.
  *
@@ -551,18 +552,6 @@ export async function registerWithFirebaseToken(firebaseToken, opts = {}) {
   throw new Error(`RegisterUser failed both endpoints: ${redactCredentialFragments(errors.join(' | '))}`);
 }
 
-// R-2: Retry-After is delta-seconds or an HTTP-date (RFC 9110) → ms, or null.
-function parseRetryAfterHeaderMs(value) {
-  if (value == null) return null;
-  const s = String(value).trim();
-  if (!s) return null;
-  const seconds = Number(s);
-  if (Number.isFinite(seconds) && seconds >= 0) return Math.round(seconds * 1000);
-  const when = Date.parse(s);
-  if (Number.isNaN(when)) return null;
-  return Math.max(0, when - Date.now());
-}
-
 /**
  * Pre-flight check: does this account still have message capacity?
  * Returns { hasCapacity, messagesRemaining, maxMessages, retryAfterMs }.
@@ -589,9 +578,7 @@ export async function checkMessageRateLimit(apiKey, proxy = null) {
           // resets_in_seconds (#5) or the Retry-After header. The limit is
           // account-scoped, so there is no point trying the other host;
           // network errors below still fail open.
-          const resetSeconds = res.data?.resetsInSeconds == null ? NaN : Number(res.data.resetsInSeconds);
-          const bodyMs = Number.isFinite(resetSeconds) ? Math.round(resetSeconds * 1000) : null;
-          const retryAfterMs = bodyMs ?? parseRetryAfterHeaderMs(res.headers?.['retry-after']) ?? null;
+          const retryAfterMs = resetSecondsToMs(res.data?.resetsInSeconds) ?? retryAfterHeaderMs(res.headers?.['retry-after']);
           log.warn(`CheckRateLimit ${host} → ${res.status}: no capacity${retryAfterMs != null ? ` (retry after ${retryAfterMs}ms)` : ''}`);
           return {
             hasCapacity: false,
@@ -606,12 +593,11 @@ export async function checkMessageRateLimit(apiKey, proxy = null) {
         }
         // The cooldown rides resets_in_seconds (#5) — int64, which may arrive as
         // a number or a proto3-JSON string; retryAfterMs is the ×1000 ms form.
-        const resetSeconds = res.data.resetsInSeconds == null ? NaN : Number(res.data.resetsInSeconds);
         return {
           hasCapacity: res.data.hasCapacity !== false,
           messagesRemaining: res.data.messagesRemaining ?? -1,
           maxMessages: res.data.maxMessages ?? -1,
-          retryAfterMs: Number.isFinite(resetSeconds) ? resetSeconds * 1000 : null,
+          retryAfterMs: resetSecondsToMs(res.data?.resetsInSeconds),
         };
       } catch (e) {
         lastErr = e;

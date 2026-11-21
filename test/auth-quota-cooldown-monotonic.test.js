@@ -148,7 +148,7 @@ describe('V-18 — quota cooldown is monotonic and source-aware', () => {
   it('a legacy deadline with no recorded source is treated as not-snapshot-clearable', () => {
     const now = 35_000_000;
     // Written by a version that did not persist provenance (or hand-edited).
-    const legacy = __deserializeAccount({ apiKey: 'v18-legacy', quotaResetAt: now + 60_000 });
+    const legacy = __deserializeAccount({ apiKey: 'v18-legacy', quotaResetAt: now + 60_000 }, now);
     assert.equal(legacy.quotaResetSource, null, 'unknown provenance is null, not guessed');
     applyQuotaSnapshot(legacy, 80, now + 1000);
     assert.equal(legacy.quotaResetAt, now + 60_000,

@@ -169,7 +169,12 @@ describe('classifyUpstreamError — 4xx-class validator rejection', () => {
   it('narrower verdicts still win: quota-dry failed_precondition stays QUOTA_EXHAUSTED', () => {
     const live = 'Your daily usage quota has been exhausted. Visit '
       + 'https://app.devin.ai/settings/usage to review your plan and usage. (trace ID: 6f1c9a2e)';
-    assert.equal(classifyUpstreamError(live, 'failed_precondition', 400).code, 'QUOTA_EXHAUSTED');
+    const failure = classifyUpstreamError(live, 'failed_precondition', 400);
+    assert.equal(failure.code, 'QUOTA_EXHAUSTED');
+    assert.equal(failure.quotaPeriod, 'daily');
+    assert.equal(classifyUpstreamError('Weekly usage quota is exhausted.', 'failed_precondition', 400).quotaPeriod, 'weekly');
+    assert.equal(classifyUpstreamError('Insufficient monthly credit', 'insufficient_quota', 402).quotaPeriod, undefined);
+    assert.equal(classifyUpstreamError('Daily quota is not exhausted. Insufficient credit.', 'insufficient_quota', 402).quotaPeriod, undefined);
   });
 
   it('narrower verdicts still win: content policy on invalid_argument stays CONTENT_BLOCKED', () => {

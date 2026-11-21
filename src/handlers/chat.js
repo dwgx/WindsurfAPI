@@ -1,3 +1,4 @@
+import { boundResetMs, MAX_RATE_RESET_MS, parseGoResetMs, quotaResetDelay } from '../reset-hints.js';
 /**
  * POST /v1/chat/completions — OpenAI-compatible chat completions.
  * Routes to RawGetChatMessage (legacy) or Cascade (premium) based on model type.
@@ -678,7 +679,8 @@ function requestLogSummary(text, limit = 220) {
 }
 
 export function chatStreamError(message, type = 'upstream_error', code = null, extra = null) {
-  return { error: { message: sanitizeText(message || 'Upstream stream error'), type, code, ...(extra || {}) } };
+  const { retry_after_ms, ...fields } = extra || {};
+  return { error: { message: sanitizeText(message || 'Upstream stream error'), type, code, ...fields, ...clientResetFields(retry_after_ms) } };
 }
 
 // O12: OpenAI chat.completion / chat.completion.chunk bodies carry
@@ -877,7 +879,7 @@ export function finishPartialStreamAfterError({ id, created, model, send, res, i
         message: message || 'Upstream stream ended before completion (response is incomplete)',
         type,
         ...(code ? { code } : {}),
-        ...(Number.isFinite(retryAfterMs) && retryAfterMs > 0 ? { retry_after_ms: retryAfterMs } : {}),
+        ...clientResetFields(retryAfterMs),
       },
     })
     : undefined;
@@ -1638,7 +1640,7 @@ function hasAnswerableUserContent(message) {
 }
 
 function strictReuseRetryMs(availability) {
-  return Math.max(1000, availability?.retryAfterMs || CASCADE_REUSE_STRICT_RETRY_MS);
+  return Math.max(1000, boundedClientResetMs(availability?.retryAfterMs) || CASCADE_REUSE_STRICT_RETRY_MS);
 }
 
 function strictReuseMessage(model, retryMs, reason = 'temporarily unavailable') {
@@ -1910,25 +1912,14 @@ export function repairToolCallArguments(tc, messages) {
 }
 
 export function parseRateLimitCooldownMs(message = '') {
-  const reset = String(message || '').match(/resets?\s+in\s*:?\s*((?:(?:\d+)\s*[hms]\s*)+)/i);
-  if (reset) {
-    let total = 0;
-    for (const part of reset[1].matchAll(/(\d+)\s*([hms])/gi)) {
-      const n = Number(part[1]);
-      const unit = part[2].toLowerCase();
-      if (unit === 'h') total += n * 60 * 60 * 1000;
-      else if (unit === 'm') total += n * 60 * 1000;
-      else total += n * 1000;
-    }
-    if (total > 0) return total;
-  }
-  const m = String(message || '').match(/(?:retry (?:after|in)|after)\s+(\d+)\s*(seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h)/i);
+  const reset = parseGoResetMs(message);
+  if (reset !== null) return reset;
+  const m = String(message || '').match(/(?:retry (?:after|in)|after)\s+(\d+(?:\.\d+)?)\s*(milliseconds?|msecs?|ms|seconds?|secs?|minutes?|mins?|hours?|hrs?|[smh])\b/i);
   if (m) {
     const n = Number(m[1]);
     const unit = m[2].toLowerCase();
-    if (unit.startsWith('h')) return n * 60 * 60 * 1000;
-    if (unit.startsWith('m')) return n * 60 * 1000;
-    return n * 1000;
+    const scale = /^(?:ms|milli)/.test(unit) ? 1 : unit.startsWith('h') ? 3600000 : unit.startsWith('m') ? 60000 : 1000;
+    return Math.min(MAX_RATE_RESET_MS, n * scale);
   }
   if (/about an hour|in an hour|try again in.*hour/i.test(message)) return 60 * 60 * 1000;
   return null;
@@ -1979,11 +1970,22 @@ export function rateLimitBurstCooldownMs({ message = '', retryAfterMs = 0, apiKe
 //   ceil  = rlClientBackoffCeilMs  (def 600000 → pure safety, only shortens absurd
 //           hints; never lengthens a normal one)
 // Returns whole seconds (the Retry-After header unit) so header + body agree.
+function boundedClientResetMs(value, env = process.env) {
+  const ms = boundResetMs(typeof value === 'string' && /^\d+(?:\.\d+)?$/.test(value.trim()) ? Number(value) : value);
+  if (!(ms > 0)) return null;
+  const ceiling = getBreakerTunable('rlClientBackoffCeilMs', env);
+  return ceiling > 0 ? Math.min(ms, ceiling) : ms;
+}
+
+export function clientResetFields(value) {
+  const ms = boundedClientResetMs(value);
+  return ms === null ? {} : { retry_after_ms: ms };
+}
+
 export function clientRetryAfterSeconds(retryAfterMs, env = process.env) {
   const floorMs = getBreakerTunable('rlClientBackoffFloorMs', env);
   const ceilMs = getBreakerTunable('rlClientBackoffCeilMs', env);
-  let ms = Number(retryAfterMs);
-  if (!Number.isFinite(ms) || ms < 0) ms = 0;
+  let ms = boundResetMs(Number(retryAfterMs)) ?? 0;
   if (floorMs > 0) ms = Math.max(ms, floorMs);
   if (ceilMs > 0) ms = Math.min(ms, ceilMs);
   return Math.max(1, Math.ceil(ms / 1000));
@@ -3022,7 +3024,9 @@ export function finalizeConnectAccount(acct, { model, selector = null, startTime
       // snapshot views of "is this account quota-dry?" consistent; a later
       // balance-recovery snapshot then clears it. 30-min cooldown default bounds
       // the re-probe rate without a hard disable (quota refills per billing cycle).
-      markQuotaExhausted(apiKey, 30 * 60 * 1000);
+      const now = Date.now();
+      const observedDelay = quotaResetDelay(live.credits, err.quotaPeriod, now);
+      markQuotaExhausted(apiKey, Math.max(1000, observedDelay ?? 30 * 60 * 1000), now);
       bumpConnect('quota_exhausted');
     }
     else if (err.code === 'RATE_LIMITED') {
@@ -6265,7 +6269,7 @@ async function _handleChatCompletionsInner(body, context, captureCacheGeneration
         return {
           status: 429,
           headers: { 'Retry-After': String(clientRetryAfterSeconds(exhausted.retryAfterMs)) },
-          body: { error: { message: `${displayModel} 账号队列耗尽: ${exhausted.reason}`, type: 'rate_limit_exceeded', retry_after_ms: exhausted.retryAfterMs } },
+          body: { error: { message: `${displayModel} 账号队列耗尽: ${exhausted.reason}`, type: 'rate_limit_exceeded', retry_after_ms: clientRetryAfterSeconds(exhausted.retryAfterMs) * 1000 } },
         };
       }
       // GAP-2: thread the request signal into the queue wait so a disconnected
@@ -6295,7 +6299,7 @@ async function _handleChatCompletionsInner(body, context, captureCacheGeneration
             // A busy (not limited) pool also frees on the queue cadence, so the
             // 503 arm carries the same hint as the 429 arm.
             headers: { 'Retry-After': String(clientRetryAfterSeconds(retryAfterMs)) },
-            body: { error: { message: `${displayModel} 账号队列超时: ${reason}`, type: (tempUnavail.allUnavailable || rateLimited.allLimited) ? 'rate_limit_exceeded' : 'pool_exhausted', retry_after_ms: retryAfterMs } },
+            body: { error: { message: `${displayModel} 账号队列超时: ${reason}`, type: (tempUnavail.allUnavailable || rateLimited.allLimited) ? 'rate_limit_exceeded' : 'pool_exhausted', retry_after_ms: clientRetryAfterSeconds(retryAfterMs) * 1000 } },
           };
           // v2.0.84 (#118 0a00) — pool-wide rate limit on a high-effort
           // variant (`-max` / `-xhigh`)? Suggest the same-base lower-
@@ -6572,7 +6576,7 @@ async function _handleChatCompletionsInner(body, context, captureCacheGeneration
   const temporaryUnavailable = isAllTemporarilyUnavailable(routingModelKey);
   if (temporaryUnavailable.allUnavailable) {
     restoreCheckedOutReuse('temporary unavailability');
-    const retryAfterSec = Math.ceil(temporaryUnavailable.retryAfterMs / 1000);
+    const retryAfterSec = clientRetryAfterSeconds(temporaryUnavailable.retryAfterMs);
     return {
       status: 429,
       headers: { 'Retry-After': String(retryAfterSec) },
@@ -6580,7 +6584,7 @@ async function _handleChatCompletionsInner(body, context, captureCacheGeneration
         error: {
           message: `${displayModel} 所有账号暂时不可用，请 ${retryAfterSec} 秒后重试`,
           type: 'rate_limit_exceeded',
-          retry_after_ms: temporaryUnavailable.retryAfterMs,
+          retry_after_ms: retryAfterSec * 1000,
         },
       },
     };
@@ -6589,8 +6593,8 @@ async function _handleChatCompletionsInner(body, context, captureCacheGeneration
     const rl = isAllRateLimited(routingModelKey);
     if (rl.allLimited) {
       restoreCheckedOutReuse('rate limit');
-      const retryAfterSec = Math.ceil(rl.retryAfterMs / 1000);
-      return { status: 429, headers: { 'Retry-After': String(retryAfterSec) }, body: { error: { message: `${displayModel} 所有账号均已达速率限制，请 ${retryAfterSec} 秒后重试`, type: 'rate_limit_exceeded', retry_after_ms: rl.retryAfterMs } } };
+      const retryAfterSec = clientRetryAfterSeconds(rl.retryAfterMs);
+      return { status: 429, headers: { 'Retry-After': String(retryAfterSec) }, body: { error: { message: `${displayModel} 所有账号均已达速率限制，请 ${retryAfterSec} 秒后重试`, type: 'rate_limit_exceeded', retry_after_ms: retryAfterSec * 1000 } } };
     }
   }
   if (!restoreCheckedOutReuse('failed request') && reuseEntryDead) {
@@ -7402,7 +7406,7 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
     // Rate limits → 429 with Retry-After; model errors → 403; others → 502
     if (isRateLimit) {
       const rl = isAllRateLimited(modelKey);
-      const retryMs = rl.retryAfterMs || 60000;
+      const retryMs = boundedClientResetMs(rl.retryAfterMs) || 60000;
       return {
         status: 429,
         headers: { 'Retry-After': String(Math.ceil(retryMs / 1000)) },
@@ -8374,7 +8378,7 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
               log.info(`Chat[${reqId}]: stream pool exhausted at admission (retry_after=${exhausted.retryAfterMs}ms) → fast-fail`);
               lastErr = Object.assign(new Error(`${model} 账号队列耗尽: ${exhausted.reason}`), {
                 type: 'rate_limit_exceeded',
-                retry_after_ms: exhausted.retryAfterMs,
+                retry_after_ms: clientRetryAfterSeconds(exhausted.retryAfterMs) * 1000,
                 status: 429,
               });
               break;
@@ -9582,7 +9586,7 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
                   message: errMsg,
                   type: errType,
                   code: errCode,
-                  ...(retryAfterMs ? { retry_after_ms: retryAfterMs } : {}),
+                  ...clientResetFields(retryAfterMs),
                 } });
             });
             await failureStage('partial-log', () => {

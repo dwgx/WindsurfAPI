@@ -1,0 +1,44 @@
+{
+  "tests": [
+    "test/upstream-reset-bounds.test.js"
+  ],
+  "expectBaselinePass": 8,
+  "mutations": [
+    {
+      "name": "unbounded transient provider hints reach the live account",
+      "file": "src/auth.js",
+      "anchor": "boundResetMs(Number(durationMs)) ?? 0",
+      "replacement": "Number(durationMs) || 0"
+    },
+    {
+      "name": "preflight seconds bypass the maximum",
+      "file": "src/reset-hints.js",
+      "anchor": "Math.min(seconds, MAX_RATE_RESET_MS / 1000) * 1000",
+      "replacement": "seconds * 1000"
+    },
+    {
+      "name": "quota cooldown uses the daily reset for a weekly failure",
+      "file": "src/reset-hints.js",
+      "anchor": "const millis = period === 'weekly' ? credits.periodEnd : credits.periodStart;",
+      "replacement": "const millis = credits.periodStart;"
+    },
+    {
+      "name": "post-commit protocol errors expose an unbounded retry window",
+      "file": "src/handlers/chat.js",
+      "anchor": "return ceiling > 0 ? Math.min(ms, ceiling) : ms;",
+      "replacement": "return ms;"
+    },
+    {
+      "name": "Go milliseconds are interpreted as minutes",
+      "file": "src/reset-hints.js",
+      "anchor": "ms: 1, us: 0.001",
+      "replacement": "ms: 60000, us: 0.001"
+    },
+    {
+      "name": "Messages forwards raw in-band reset hints",
+      "file": "src/handlers/messages.js",
+      "anchor": "...clientResetFields(err?.retry_after_ms),",
+      "replacement": "retry_after_ms: err?.retry_after_ms,"
+    }
+  ]
+}

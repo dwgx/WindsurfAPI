@@ -1,3 +1,4 @@
+import { retryAfterHeaderMs } from '../reset-hints.js';
 /**
  * Dashboard Devin read path — H0.
  *
@@ -115,10 +116,10 @@ function mapStatus(status, res) {
   if (status === 403) return new ReadError('forbidden', { status });
   if (status === 404) return new ReadError('not_found', { status });
   if (status === 429) {
-    const retryAfter = Number(headerValue(res, 'retry-after'));
+    const retryAfterMs = retryAfterHeaderMs(headerValue(res, 'retry-after'));
     return new ReadError('rate_limited', {
       status,
-      detail: Number.isFinite(retryAfter) ? { retryAfterMs: retryAfter * 1000 } : null,
+      detail: retryAfterMs !== null ? { retryAfterMs } : null,
     });
   }
   if (status >= 300 && status < 400) return new ReadError('redirect_blocked', { status });

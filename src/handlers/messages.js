@@ -12,7 +12,7 @@
  */
 
 import { createHash, randomUUID } from 'crypto';
-import { handleChatCompletions, connectErrorToHttp } from './chat.js';
+import { handleChatCompletions, clientResetFields, connectErrorToHttp } from './chat.js';
 import { log } from '../config.js';
 import { createBoundedWriter, resolveMaxDrainWaitMs } from '../stream-writer.js';
 import { SseFramer } from '../sse-framer.js';
@@ -2262,7 +2262,7 @@ class AnthropicStreamTranslator {
       error: {
         ...mapped.body.error,
         ...(err?.code ? { code: err.code } : {}),
-        ...(Number.isFinite(Number(err?.retry_after_ms)) ? { retry_after_ms: Number(err.retry_after_ms) } : {}),
+        ...clientResetFields(err?.retry_after_ms),
       },
     });
   }
