@@ -1,1065 +1,1537 @@
 {
-  "_comment": "DEVIN_CONNECT catalog whitelist. Refreshed from live GetCascadeModelConfigs 2026-07-08. Live dash-form + enum selectors; MODEL_PRIVATE_* excluded EXCEPT those referenced by SELECTOR_MAP; swe-1-6-slow free-tier fallback preserved. Extended 2026-08-11 from docs.devin.ai modelCostData (gpt-5-6-luna-*, claude-opus-5-*) — NOT yet frame-verified; selector form follows the 4-8/fable family convention. Refreshed from live catalog dump 2026-10-18: +8 added (claude-haiku-5-5 family, swe-2 lightning variants); 4 MODEL_PRIVATE_* and 1 spelling-only enum excluded; 22 aliases updated; 18 kept-not-live (single account ≠ retirement); 45 deferred for review.",
-  "_calibratedAt": "2026-10-18",
-  "_count": 233,
-  "models": [
-    {
-      "selector": "claude-opus-4-8-medium",
-      "provider": "anthropic",
-      "alias": "claude-opus-4.8"
-    },
-    {
-      "selector": "claude-5-fable-medium",
-      "provider": "anthropic",
-      "alias": "claude-5-fable"
-    },
-    {
-      "selector": "claude-sonnet-5-medium",
-      "provider": "anthropic",
-      "alias": "claude-sonnet-5"
-    },
-    {
-      "selector": "glm-5-2",
-      "provider": "zhipu",
-      "alias": "glm-5.2"
-    },
-    {
-      "selector": "gpt-5-5-low",
-      "provider": "openai",
-      "alias": "gpt-5.5"
-    },
-    {
-      "selector": "kimi-k2-7",
-      "provider": "moonshot",
-      "alias": "kimi-k2.7"
-    },
-    {
-      "selector": "swe-1-7",
-      "provider": "cognition",
-      "alias": "swe-1.7"
-    },
-    {
-      "selector": "swe-1-7-lightning",
-      "provider": "cognition",
-      "alias": "swe-1.7-lightning"
-    },
-    {
-      "selector": "swe-2-medium",
-      "provider": "cognition",
-      "alias": "swe-2"
-    },
-    {
-      "selector": "swe-2-high",
-      "provider": "cognition",
-      "alias": "swe-2"
-    },
-    {
-      "selector": "swe-2-max",
-      "provider": "cognition",
-      "alias": "swe-2"
-    },
-    {
-      "selector": "claude-opus-4-7-medium",
-      "provider": "anthropic",
-      "alias": "claude-opus-4.7"
-    },
-    {
-      "selector": "claude-opus-4-7-low",
-      "provider": "anthropic",
-      "alias": "claude-opus-4.7"
-    },
-    {
-      "selector": "claude-opus-4-7-high",
-      "provider": "anthropic",
-      "alias": "claude-opus-4.7"
-    },
-    {
-      "selector": "claude-opus-4-7-xhigh",
-      "provider": "anthropic",
-      "alias": "claude-opus-4.7"
-    },
-    {
-      "selector": "claude-opus-4-7-max",
-      "provider": "anthropic",
-      "alias": "claude-opus-4.7"
-    },
-    {
-      "selector": "claude-opus-4-7-low-fast",
-      "provider": "anthropic",
-      "alias": "claude-opus-4.7"
-    },
-    {
-      "selector": "claude-opus-4-7-medium-fast",
-      "provider": "anthropic",
-      "alias": "claude-opus-4.7"
-    },
-    {
-      "selector": "claude-opus-4-7-high-fast",
-      "provider": "anthropic",
-      "alias": "claude-opus-4.7"
-    },
-    {
-      "selector": "claude-opus-4-7-xhigh-fast",
-      "provider": "anthropic",
-      "alias": "claude-opus-4.7"
-    },
-    {
-      "selector": "claude-opus-4-7-max-fast",
-      "provider": "anthropic",
-      "alias": "claude-opus-4.7"
-    },
-    {
-      "selector": "claude-opus-4-8-low",
-      "provider": "anthropic",
-      "alias": "claude-opus-4.8"
-    },
-    {
-      "selector": "claude-opus-4-8-high",
-      "provider": "anthropic",
-      "alias": "claude-opus-4.8"
-    },
-    {
-      "selector": "claude-opus-4-8-xhigh",
-      "provider": "anthropic",
-      "alias": "claude-opus-4.8"
-    },
-    {
-      "selector": "claude-opus-4-8-max",
-      "provider": "anthropic",
-      "alias": "claude-opus-4.8"
-    },
-    {
-      "selector": "claude-opus-4-8-low-fast",
-      "provider": "anthropic",
-      "alias": "claude-opus-4.8"
-    },
-    {
-      "selector": "claude-opus-4-8-medium-fast",
-      "provider": "anthropic",
-      "alias": "claude-opus-4.8"
-    },
-    {
-      "selector": "claude-opus-4-8-high-fast",
-      "provider": "anthropic",
-      "alias": "claude-opus-4.8"
-    },
-    {
-      "selector": "claude-opus-4-8-xhigh-fast",
-      "provider": "anthropic",
-      "alias": "claude-opus-4.8"
-    },
-    {
-      "selector": "claude-opus-4-8-max-fast",
-      "provider": "anthropic",
-      "alias": "claude-opus-4.8"
-    },
-    {
-      "selector": "claude-5-fable-low",
-      "provider": "anthropic",
-      "alias": "claude-5-fable"
-    },
-    {
-      "selector": "claude-5-fable-high",
-      "provider": "anthropic",
-      "alias": "claude-5-fable"
-    },
-    {
-      "selector": "claude-5-fable-xhigh",
-      "provider": "anthropic",
-      "alias": "claude-5-fable"
-    },
-    {
-      "selector": "claude-5-fable-max",
-      "provider": "anthropic",
-      "alias": "claude-5-fable"
-    },
-    {
-      "selector": "claude-sonnet-5-low",
-      "provider": "anthropic",
-      "alias": "claude-sonnet-5"
-    },
-    {
-      "selector": "claude-sonnet-5-high",
-      "provider": "anthropic",
-      "alias": "claude-sonnet-5"
-    },
-    {
-      "selector": "claude-sonnet-5-xhigh",
-      "provider": "anthropic",
-      "alias": "claude-sonnet-5"
-    },
-    {
-      "selector": "claude-sonnet-5-max",
-      "provider": "anthropic",
-      "alias": "claude-sonnet-5"
-    },
-    {
-      "selector": "gemini-3-5-flash-minimal",
-      "provider": "google",
-      "alias": "gemini-3.5-flash"
-    },
-    {
-      "selector": "gemini-3-5-flash-low",
-      "provider": "google",
-      "alias": "gemini-3.5-flash"
-    },
-    {
-      "selector": "gemini-3-5-flash-medium",
-      "provider": "google",
-      "alias": "gemini-3.5-flash"
-    },
-    {
-      "selector": "gemini-3-5-flash-high",
-      "provider": "google",
-      "alias": "gemini-3.5-flash"
-    },
-    {
-      "selector": "glm-5-2-max",
-      "provider": "zhipu",
-      "alias": "glm-5.2"
-    },
-    {
-      "selector": "glm-5-2-1m",
-      "provider": "zhipu",
-      "alias": "glm-5.2"
-    },
-    {
-      "selector": "glm-5-2-max-1m",
-      "provider": "zhipu",
-      "alias": "glm-5.2"
-    },
-    {
-      "selector": "glm-5-2-none",
-      "provider": "zhipu",
-      "alias": "glm-5.2"
-    },
-    {
-      "selector": "glm-5-2-none-1m",
-      "provider": "zhipu",
-      "alias": "glm-5.2"
-    },
-    {
-      "selector": "claude-opus-4-6",
-      "provider": "anthropic",
-      "alias": "claude-opus-4.6"
-    },
-    {
-      "selector": "claude-opus-4-6-thinking",
-      "provider": "anthropic",
-      "alias": "claude-opus-4.6"
-    },
-    {
-      "selector": "claude-opus-4-6-1m",
-      "provider": "anthropic",
-      "alias": "claude-opus-4.6"
-    },
-    {
-      "selector": "claude-opus-4-6-thinking-1m",
-      "provider": "anthropic",
-      "alias": "claude-opus-4.6"
-    },
-    {
-      "selector": "gpt-5-4-none",
-      "provider": "openai",
-      "alias": "gpt-5.4"
-    },
-    {
-      "selector": "gpt-5-4-low",
-      "provider": "openai",
-      "alias": "gpt-5.4"
-    },
-    {
-      "selector": "gpt-5-4-medium",
-      "provider": "openai",
-      "alias": "gpt-5.4"
-    },
-    {
-      "selector": "gpt-5-4-high",
-      "provider": "openai",
-      "alias": "gpt-5.4"
-    },
-    {
-      "selector": "gpt-5-4-xhigh",
-      "provider": "openai",
-      "alias": "gpt-5.4"
-    },
-    {
-      "selector": "gpt-5-5-none",
-      "provider": "openai",
-      "alias": "gpt-5.5"
-    },
-    {
-      "selector": "gpt-5-5-medium",
-      "provider": "openai",
-      "alias": "gpt-5.5"
-    },
-    {
-      "selector": "gpt-5-5-high",
-      "provider": "openai",
-      "alias": "gpt-5.5"
-    },
-    {
-      "selector": "gpt-5-5-xhigh",
-      "provider": "openai",
-      "alias": "gpt-5.5"
-    },
-    {
-      "selector": "gpt-5-5-none-priority",
-      "provider": "openai",
-      "alias": "gpt-5.5"
-    },
-    {
-      "selector": "gpt-5-5-low-priority",
-      "provider": "openai",
-      "alias": "gpt-5.5"
-    },
-    {
-      "selector": "gpt-5-5-medium-priority",
-      "provider": "openai",
-      "alias": "gpt-5.5"
-    },
-    {
-      "selector": "gpt-5-5-high-priority",
-      "provider": "openai",
-      "alias": "gpt-5.5"
-    },
-    {
-      "selector": "gpt-5-5-xhigh-priority",
-      "provider": "openai",
-      "alias": "gpt-5.5"
-    },
-    {
-      "selector": "gpt-5-4-none-priority",
-      "provider": "openai",
-      "alias": "gpt-5.4"
-    },
-    {
-      "selector": "gpt-5-4-low-priority",
-      "provider": "openai",
-      "alias": "gpt-5.4"
-    },
-    {
-      "selector": "gpt-5-4-medium-priority",
-      "provider": "openai",
-      "alias": "gpt-5.4"
-    },
-    {
-      "selector": "gpt-5-4-high-priority",
-      "provider": "openai",
-      "alias": "gpt-5.4"
-    },
-    {
-      "selector": "gpt-5-4-xhigh-priority",
-      "provider": "openai",
-      "alias": "gpt-5.4"
-    },
-    {
-      "selector": "gpt-5-4-mini-low",
-      "provider": "openai",
-      "alias": "gpt-5.4-mini"
-    },
-    {
-      "selector": "gpt-5-4-mini-medium",
-      "provider": "openai",
-      "alias": "gpt-5.4-mini"
-    },
-    {
-      "selector": "gpt-5-4-mini-high",
-      "provider": "openai",
-      "alias": "gpt-5.4-mini"
-    },
-    {
-      "selector": "gpt-5-4-mini-xhigh",
-      "provider": "openai",
-      "alias": "gpt-5.4-mini"
-    },
-    {
-      "selector": "claude-sonnet-4-6",
-      "provider": "anthropic",
-      "alias": "claude-sonnet-4.6"
-    },
-    {
-      "selector": "claude-sonnet-4-6-thinking",
-      "provider": "anthropic",
-      "alias": "claude-sonnet-4.6"
-    },
-    {
-      "selector": "claude-sonnet-4-6-1m",
-      "provider": "anthropic",
-      "alias": "claude-sonnet-4.6"
-    },
-    {
-      "selector": "claude-sonnet-4-6-thinking-1m",
-      "provider": "anthropic",
-      "alias": "claude-sonnet-4.6"
-    },
-    {
-      "selector": "MODEL_GPT_5_2_LOW",
-      "provider": "openai",
-      "alias": "gpt-5.2"
-    },
-    {
-      "selector": "MODEL_GPT_5_2_MEDIUM",
-      "provider": "openai",
-      "alias": "gpt-5.2"
-    },
-    {
-      "selector": "MODEL_CLAUDE_4_5_OPUS",
-      "provider": "anthropic",
-      "alias": "claude-opus-4.5"
-    },
-    {
-      "selector": "MODEL_CLAUDE_4_5_OPUS_THINKING",
-      "provider": "anthropic",
-      "alias": "claude-opus-4.5"
-    },
-    {
-      "selector": "MODEL_SWE_1_5",
-      "provider": "cognition"
-    },
-    {
-      "selector": "MODEL_PRIVATE_11",
-      "provider": "anthropic"
-    },
-    {
-      "selector": "MODEL_PRIVATE_2",
-      "provider": "anthropic",
-      "alias": "claude-sonnet-4.5"
-    },
-    {
-      "selector": "MODEL_PRIVATE_3",
-      "provider": "anthropic",
-      "alias": "claude-sonnet-4.5"
-    },
-    {
-      "selector": "MODEL_GPT_5_2_NONE",
-      "provider": "openai",
-      "alias": "gpt-5.2"
-    },
-    {
-      "selector": "MODEL_GPT_5_2_HIGH",
-      "provider": "openai",
-      "alias": "gpt-5.2"
-    },
-    {
-      "selector": "MODEL_GPT_5_2_XHIGH",
-      "provider": "openai",
-      "alias": "gpt-5.2"
-    },
-    {
-      "selector": "gpt-5-3-codex-low",
-      "provider": "openai",
-      "alias": "gpt-5.3-codex"
-    },
-    {
-      "selector": "gpt-5-3-codex-medium",
-      "provider": "openai",
-      "alias": "gpt-5.3-codex"
-    },
-    {
-      "selector": "gpt-5-3-codex-high",
-      "provider": "openai",
-      "alias": "gpt-5.3-codex"
-    },
-    {
-      "selector": "gpt-5-3-codex-xhigh",
-      "provider": "openai",
-      "alias": "gpt-5.3-codex"
-    },
-    {
-      "selector": "gpt-5-3-codex-low-priority",
-      "provider": "openai",
-      "alias": "gpt-5.3-codex"
-    },
-    {
-      "selector": "gpt-5-3-codex-medium-priority",
-      "provider": "openai",
-      "alias": "gpt-5.3-codex"
-    },
-    {
-      "selector": "gpt-5-3-codex-high-priority",
-      "provider": "openai",
-      "alias": "gpt-5.3-codex"
-    },
-    {
-      "selector": "gpt-5-3-codex-xhigh-priority",
-      "provider": "openai",
-      "alias": "gpt-5.3-codex"
-    },
-    {
-      "selector": "kimi-k2-6",
-      "provider": "moonshot",
-      "alias": "kimi-k2.6"
-    },
-    {
-      "selector": "swe-1-6",
-      "provider": "cognition",
-      "alias": "swe-1.6"
-    },
-    {
-      "selector": "swe-1-6-fast",
-      "provider": "cognition",
-      "alias": "swe-1.6-fast"
-    },
-    {
-      "selector": "MODEL_SWE_1_5_SLOW",
-      "provider": "cognition"
-    },
-    {
-      "selector": "gemini-3-1-pro-low",
-      "provider": "google",
-      "alias": "gemini-3.1-pro"
-    },
-    {
-      "selector": "gemini-3-1-pro-high",
-      "provider": "google",
-      "alias": "gemini-3.1-pro"
-    },
-    {
-      "selector": "MODEL_GOOGLE_GEMINI_3_0_FLASH_MINIMAL",
-      "provider": "google",
-      "alias": "gemini-3.0-flash"
-    },
-    {
-      "selector": "MODEL_GOOGLE_GEMINI_3_0_FLASH_LOW",
-      "provider": "google",
-      "alias": "gemini-3.0-flash"
-    },
-    {
-      "selector": "MODEL_GOOGLE_GEMINI_3_0_FLASH_MEDIUM",
-      "provider": "google",
-      "alias": "gemini-3.0-flash"
-    },
-    {
-      "selector": "MODEL_GOOGLE_GEMINI_3_0_FLASH_HIGH",
-      "provider": "google",
-      "alias": "gemini-3.0-flash"
-    },
-    {
-      "selector": "deepseek-v4",
-      "provider": "6",
-      "alias": "deepseek-v4"
-    },
-    {
-      "selector": "gpt-5-6-luna-none",
-      "provider": "openai",
-      "alias": "gpt-5.6-luna"
-    },
-    {
-      "selector": "gpt-5-6-luna-low",
-      "provider": "openai",
-      "alias": "gpt-5.6-luna"
-    },
-    {
-      "selector": "gpt-5-6-luna-medium",
-      "provider": "openai",
-      "alias": "gpt-5.6-luna"
-    },
-    {
-      "selector": "gpt-5-6-luna-high",
-      "provider": "openai",
-      "alias": "gpt-5.6-luna"
-    },
-    {
-      "selector": "gpt-5-6-luna-xhigh",
-      "provider": "openai",
-      "alias": "gpt-5.6-luna"
-    },
-    {
-      "selector": "claude-opus-5-low",
-      "provider": "anthropic",
-      "alias": "claude-opus-5"
-    },
-    {
-      "selector": "claude-opus-5-medium",
-      "provider": "anthropic",
-      "alias": "claude-opus-5"
-    },
-    {
-      "selector": "claude-opus-5-high",
-      "provider": "anthropic",
-      "alias": "claude-opus-5"
-    },
-    {
-      "selector": "claude-opus-5-xhigh",
-      "provider": "anthropic",
-      "alias": "claude-opus-5"
-    },
-    {
-      "selector": "claude-opus-5-max",
-      "provider": "anthropic",
-      "alias": "claude-opus-5"
-    },
-    {
-      "selector": "claude-opus-5-low-fast",
-      "provider": "anthropic",
-      "alias": "claude-opus-5"
-    },
-    {
-      "selector": "claude-opus-5-medium-fast",
-      "provider": "anthropic",
-      "alias": "claude-opus-5"
-    },
-    {
-      "selector": "claude-opus-5-high-fast",
-      "provider": "anthropic",
-      "alias": "claude-opus-5"
-    },
-    {
-      "selector": "claude-opus-5-xhigh-fast",
-      "provider": "anthropic",
-      "alias": "claude-opus-5"
-    },
-    {
-      "selector": "claude-opus-5-max-fast",
-      "provider": "anthropic",
-      "alias": "claude-opus-5"
-    },
-    {
-      "selector": "claude-fable-5-1-low",
-      "provider": "anthropic"
-    },
-    {
-      "selector": "claude-fable-5-1-medium",
-      "provider": "anthropic"
-    },
-    {
-      "selector": "claude-fable-5-1-high",
-      "provider": "anthropic"
-    },
-    {
-      "selector": "claude-fable-5-1-xhigh",
-      "provider": "anthropic"
-    },
-    {
-      "selector": "claude-fable-5-1-max",
-      "provider": "anthropic"
-    },
-    {
-      "selector": "claude-opus-5-5-low",
-      "provider": "anthropic"
-    },
-    {
-      "selector": "claude-opus-5-5-medium",
-      "provider": "anthropic"
-    },
-    {
-      "selector": "claude-opus-5-5-high",
-      "provider": "anthropic"
-    },
-    {
-      "selector": "claude-opus-5-5-xhigh",
-      "provider": "anthropic"
-    },
-    {
-      "selector": "claude-opus-5-5-max",
-      "provider": "anthropic"
-    },
-    {
-      "selector": "claude-sonnet-5-5-low",
-      "provider": "anthropic"
-    },
-    {
-      "selector": "claude-sonnet-5-5-medium",
-      "provider": "anthropic"
-    },
-    {
-      "selector": "claude-sonnet-5-5-high",
-      "provider": "anthropic"
-    },
-    {
-      "selector": "claude-sonnet-5-5-xhigh",
-      "provider": "anthropic"
-    },
-    {
-      "selector": "claude-sonnet-5-5-max",
-      "provider": "anthropic"
-    },
-    {
-      "selector": "gpt-5-6-luna-max",
-      "provider": "openai",
-      "alias": "gpt-5.6-luna"
-    },
-    {
-      "selector": "gpt-5-6-sol-none",
-      "provider": "openai"
-    },
-    {
-      "selector": "gpt-5-6-sol-low",
-      "provider": "openai"
-    },
-    {
-      "selector": "gpt-5-6-sol-medium",
-      "provider": "openai"
-    },
-    {
-      "selector": "gpt-5-6-sol-high",
-      "provider": "openai"
-    },
-    {
-      "selector": "gpt-5-6-sol-xhigh",
-      "provider": "openai"
-    },
-    {
-      "selector": "gpt-5-6-sol-max",
-      "provider": "openai"
-    },
-    {
-      "selector": "gpt-5-6-terra-none",
-      "provider": "openai"
-    },
-    {
-      "selector": "gpt-5-6-terra-low",
-      "provider": "openai"
-    },
-    {
-      "selector": "gpt-5-6-terra-medium",
-      "provider": "openai"
-    },
-    {
-      "selector": "gpt-5-6-terra-high",
-      "provider": "openai"
-    },
-    {
-      "selector": "gpt-5-6-terra-xhigh",
-      "provider": "openai"
-    },
-    {
-      "selector": "gpt-5-6-terra-max",
-      "provider": "openai"
-    },
-    {
-      "selector": "gpt-6-1-sol-low",
-      "provider": "openai"
-    },
-    {
-      "selector": "gpt-6-1-sol-medium",
-      "provider": "openai"
-    },
-    {
-      "selector": "gpt-6-1-sol-high",
-      "provider": "openai"
-    },
-    {
-      "selector": "gpt-6-1-sol-xhigh",
-      "provider": "openai"
-    },
-    {
-      "selector": "gpt-6-1-sol-max",
-      "provider": "openai"
-    },
-    {
-      "selector": "gpt-6-astra-low",
-      "provider": "openai"
-    },
-    {
-      "selector": "gpt-6-astra-medium",
-      "provider": "openai"
-    },
-    {
-      "selector": "gpt-6-astra-high",
-      "provider": "openai"
-    },
-    {
-      "selector": "gpt-6-astra-xhigh",
-      "provider": "openai"
-    },
-    {
-      "selector": "gpt-6-astra-max",
-      "provider": "openai"
-    },
-    {
-      "selector": "gpt-6-luna-none",
-      "provider": "openai"
-    },
-    {
-      "selector": "gpt-6-luna-low",
-      "provider": "openai"
-    },
-    {
-      "selector": "gpt-6-luna-medium",
-      "provider": "openai"
-    },
-    {
-      "selector": "gpt-6-luna-high",
-      "provider": "openai"
-    },
-    {
-      "selector": "gpt-6-luna-xhigh",
-      "provider": "openai"
-    },
-    {
-      "selector": "gpt-6-luna-max",
-      "provider": "openai"
-    },
-    {
-      "selector": "gpt-6-sol-none",
-      "provider": "openai"
-    },
-    {
-      "selector": "gpt-6-sol-low",
-      "provider": "openai"
-    },
-    {
-      "selector": "gpt-6-sol-medium",
-      "provider": "openai"
-    },
-    {
-      "selector": "gpt-6-sol-high",
-      "provider": "openai"
-    },
-    {
-      "selector": "gpt-6-sol-xhigh",
-      "provider": "openai"
-    },
-    {
-      "selector": "gpt-6-sol-max",
-      "provider": "openai"
-    },
-    {
-      "selector": "gemini-3-6-flash-minimal",
-      "provider": "google"
-    },
-    {
-      "selector": "gemini-3-6-flash-low",
-      "provider": "google"
-    },
-    {
-      "selector": "gemini-3-6-flash-medium",
-      "provider": "google"
-    },
-    {
-      "selector": "gemini-3-6-flash-high",
-      "provider": "google"
-    },
-    {
-      "selector": "gemini-3-7-flash-low",
-      "provider": "google"
-    },
-    {
-      "selector": "gemini-3-7-flash-medium",
-      "provider": "google"
-    },
-    {
-      "selector": "gemini-3-7-flash-high",
-      "provider": "google"
-    },
-    {
-      "selector": "gemini-3-8-flash-low",
-      "provider": "google"
-    },
-    {
-      "selector": "gemini-3-8-flash-medium",
-      "provider": "google"
-    },
-    {
-      "selector": "gemini-3-8-flash-high",
-      "provider": "google"
-    },
-    {
-      "selector": "gemini-4-argon-low",
-      "provider": "google"
-    },
-    {
-      "selector": "gemini-4-argon-medium",
-      "provider": "google"
-    },
-    {
-      "selector": "gemini-4-argon-high",
-      "provider": "google"
-    },
-    {
-      "selector": "deepseek-v4-flash-low",
-      "provider": "6"
-    },
-    {
-      "selector": "deepseek-v4-flash-high",
-      "provider": "6"
-    },
-    {
-      "selector": "deepseek-v4-flash-max",
-      "provider": "6"
-    },
-    {
-      "selector": "deepseek-v4-pro-low",
-      "provider": "6"
-    },
-    {
-      "selector": "deepseek-v4-pro-high",
-      "provider": "6"
-    },
-    {
-      "selector": "deepseek-v4-pro-max",
-      "provider": "6"
-    },
-    {
-      "selector": "deepseek-v4-1-flash-high",
-      "provider": "6"
-    },
-    {
-      "selector": "deepseek-v4-1-flash-max",
-      "provider": "6"
-    },
-    {
-      "selector": "glm-5-3-flash-low",
-      "provider": "zhipu"
-    },
-    {
-      "selector": "glm-5-3-flash-high",
-      "provider": "zhipu"
-    },
-    {
-      "selector": "glm-5-3-flash-max",
-      "provider": "zhipu"
-    },
-    {
-      "selector": "glm-5-3-low",
-      "provider": "zhipu"
-    },
-    {
-      "selector": "glm-5-3-high",
-      "provider": "zhipu"
-    },
-    {
-      "selector": "glm-5-3-max",
-      "provider": "zhipu"
-    },
-    {
-      "selector": "grok-4-5-low",
-      "provider": "xai"
-    },
-    {
-      "selector": "grok-4-5-medium",
-      "provider": "xai"
-    },
-    {
-      "selector": "grok-4-5-high",
-      "provider": "xai"
-    },
-    {
-      "selector": "grok-4-6-low",
-      "provider": "xai"
-    },
-    {
-      "selector": "grok-4-6-medium",
-      "provider": "xai"
-    },
-    {
-      "selector": "grok-4-6-high",
-      "provider": "xai"
-    },
-    {
-      "selector": "grok-4-6-xhigh",
-      "provider": "xai"
-    },
-    {
-      "selector": "grok-4-7-low",
-      "provider": "xai"
-    },
-    {
-      "selector": "grok-4-7-medium",
-      "provider": "xai"
-    },
-    {
-      "selector": "grok-4-7-high",
-      "provider": "xai"
-    },
-    {
-      "selector": "grok-4-7-xhigh",
-      "provider": "xai"
-    },
-    {
-      "selector": "kimi-k3-low",
-      "provider": "moonshot"
-    },
-    {
-      "selector": "kimi-k3-high",
-      "provider": "moonshot"
-    },
-    {
-      "selector": "kimi-k3-max",
-      "provider": "moonshot"
-    },
-    {
-      "selector": "inkling-none",
-      "provider": "thinking_machines"
-    },
-    {
-      "selector": "inkling-low",
-      "provider": "thinking_machines"
-    },
-    {
-      "selector": "inkling-medium",
-      "provider": "thinking_machines"
-    },
-    {
-      "selector": "inkling-high",
-      "provider": "thinking_machines"
-    },
-    {
-      "selector": "inkling-xhigh",
-      "provider": "thinking_machines"
-    },
-    {
-      "selector": "inkling-max",
-      "provider": "thinking_machines"
-    },
-    {
-      "selector": "nemotron-3-ultra-none",
-      "provider": "nvidia"
-    },
-    {
-      "selector": "nemotron-3-ultra-medium",
-      "provider": "nvidia"
-    },
-    {
-      "selector": "nemotron-3-ultra-high",
-      "provider": "nvidia"
-    },
-    {
-      "selector": "swe-1-7-lightning-medium",
-      "provider": "windsurf",
-      "alias": "swe-1.7-lightning"
-    },
-    {
-      "selector": "swe-1-7-medium",
-      "provider": "windsurf",
-      "alias": "swe-1.7"
-    },
-    {
-      "selector": "claude-haiku-5-5-high",
-      "provider": "anthropic"
-    },
-    {
-      "selector": "claude-haiku-5-5-low",
-      "provider": "anthropic"
-    },
-    {
-      "selector": "claude-haiku-5-5-max",
-      "provider": "anthropic"
-    },
-    {
-      "selector": "claude-haiku-5-5-medium",
-      "provider": "anthropic"
-    },
-    {
-      "selector": "claude-haiku-5-5-xhigh",
-      "provider": "anthropic"
-    },
-    {
-      "selector": "swe-2-high-lightning",
-      "provider": "cognition",
-      "alias": "swe-2"
-    },
-    {
-      "selector": "swe-2-max-lightning",
-      "provider": "cognition",
-      "alias": "swe-2"
-    },
-    {
-      "selector": "swe-2-medium-lightning",
-      "provider": "cognition",
-      "alias": "swe-2"
-    }
-  ]
+ "_comment": "DEVIN_CONNECT catalog whitelist. Refreshed from live GetCascadeModelConfigs 2026-07-08. Live dash-form + enum selectors; MODEL_PRIVATE_* excluded EXCEPT those referenced by SELECTOR_MAP; swe-1-6-slow free-tier fallback preserved. Extended 2026-08-11 from docs.devin.ai modelCostData (gpt-5-6-luna-*, claude-opus-5-*) — NOT yet frame-verified; selector form follows the 4-8/fable family convention. Refreshed from live catalog dump 2026-10-18: +8 added (claude-haiku-5-5 family, swe-2 lightning variants); 4 MODEL_PRIVATE_* and 1 spelling-only enum excluded; 22 aliases updated; 18 kept-not-live (single account ≠ retirement); 45 deferred for review.",
+ "_calibratedAt": "2026-11-21T22:11:06.361Z",
+ "_count": 306,
+ "models": [
+  {
+   "selector": "claude-5-fable-high",
+   "provider": "anthropic",
+   "alias": "claude-5-fable"
+  },
+  {
+   "selector": "claude-5-fable-low",
+   "provider": "anthropic",
+   "alias": "claude-5-fable"
+  },
+  {
+   "selector": "claude-5-fable-max",
+   "provider": "anthropic",
+   "alias": "claude-5-fable"
+  },
+  {
+   "selector": "claude-5-fable-medium",
+   "provider": "anthropic",
+   "alias": "claude-5-fable"
+  },
+  {
+   "selector": "claude-5-fable-xhigh",
+   "provider": "anthropic",
+   "alias": "claude-5-fable"
+  },
+  {
+   "selector": "claude-fable-5-1-high",
+   "provider": "anthropic",
+   "alias": "claude-fable-5-1"
+  },
+  {
+   "selector": "claude-fable-5-1-low",
+   "provider": "anthropic",
+   "alias": "claude-fable-5-1"
+  },
+  {
+   "selector": "claude-fable-5-1-max",
+   "provider": "anthropic",
+   "alias": "claude-fable-5-1"
+  },
+  {
+   "selector": "claude-fable-5-1-medium",
+   "provider": "anthropic",
+   "alias": "claude-fable-5-1"
+  },
+  {
+   "selector": "claude-fable-5-1-xhigh",
+   "provider": "anthropic",
+   "alias": "claude-fable-5-1"
+  },
+  {
+   "selector": "claude-fable-5-2-high",
+   "provider": "anthropic",
+   "alias": "claude-fable-5-2"
+  },
+  {
+   "selector": "claude-fable-5-2-high-fast",
+   "provider": "anthropic",
+   "alias": "claude-fable-5-2"
+  },
+  {
+   "selector": "claude-fable-5-2-low",
+   "provider": "anthropic",
+   "alias": "claude-fable-5-2"
+  },
+  {
+   "selector": "claude-fable-5-2-low-fast",
+   "provider": "anthropic",
+   "alias": "claude-fable-5-2"
+  },
+  {
+   "selector": "claude-fable-5-2-max",
+   "provider": "anthropic",
+   "alias": "claude-fable-5-2"
+  },
+  {
+   "selector": "claude-fable-5-2-max-fast",
+   "provider": "anthropic",
+   "alias": "claude-fable-5-2"
+  },
+  {
+   "selector": "claude-fable-5-2-medium",
+   "provider": "anthropic",
+   "alias": "claude-fable-5-2"
+  },
+  {
+   "selector": "claude-fable-5-2-medium-fast",
+   "provider": "anthropic",
+   "alias": "claude-fable-5-2"
+  },
+  {
+   "selector": "claude-fable-5-2-xhigh",
+   "provider": "anthropic",
+   "alias": "claude-fable-5-2"
+  },
+  {
+   "selector": "claude-fable-5-2-xhigh-fast",
+   "provider": "anthropic",
+   "alias": "claude-fable-5-2"
+  },
+  {
+   "selector": "claude-haiku-5-5-high",
+   "provider": "anthropic",
+   "alias": "claude-haiku-5-5"
+  },
+  {
+   "selector": "claude-haiku-5-5-low",
+   "provider": "anthropic",
+   "alias": "claude-haiku-5-5"
+  },
+  {
+   "selector": "claude-haiku-5-5-max",
+   "provider": "anthropic",
+   "alias": "claude-haiku-5-5"
+  },
+  {
+   "selector": "claude-haiku-5-5-medium",
+   "provider": "anthropic",
+   "alias": "claude-haiku-5-5"
+  },
+  {
+   "selector": "claude-haiku-5-5-xhigh",
+   "provider": "anthropic",
+   "alias": "claude-haiku-5-5"
+  },
+  {
+   "selector": "claude-opus-4-6",
+   "provider": "anthropic",
+   "alias": "claude-opus-4.6"
+  },
+  {
+   "selector": "claude-opus-4-6-1m",
+   "provider": "anthropic",
+   "alias": "claude-opus-4.6"
+  },
+  {
+   "selector": "claude-opus-4-6-thinking",
+   "provider": "anthropic",
+   "alias": "claude-opus-4.6"
+  },
+  {
+   "selector": "claude-opus-4-6-thinking-1m",
+   "provider": "anthropic",
+   "alias": "claude-opus-4.6"
+  },
+  {
+   "selector": "claude-opus-4-7-high",
+   "provider": "anthropic",
+   "alias": "claude-opus-4.7"
+  },
+  {
+   "selector": "claude-opus-4-7-low",
+   "provider": "anthropic",
+   "alias": "claude-opus-4.7"
+  },
+  {
+   "selector": "claude-opus-4-7-max",
+   "provider": "anthropic",
+   "alias": "claude-opus-4.7"
+  },
+  {
+   "selector": "claude-opus-4-7-medium",
+   "provider": "anthropic",
+   "alias": "claude-opus-4.7"
+  },
+  {
+   "selector": "claude-opus-4-7-xhigh",
+   "provider": "anthropic",
+   "alias": "claude-opus-4.7"
+  },
+  {
+   "selector": "claude-opus-4-8-high",
+   "provider": "anthropic",
+   "alias": "claude-opus-4.8"
+  },
+  {
+   "selector": "claude-opus-4-8-high-fast",
+   "provider": "anthropic",
+   "alias": "claude-opus-4.8"
+  },
+  {
+   "selector": "claude-opus-4-8-low",
+   "provider": "anthropic",
+   "alias": "claude-opus-4.8"
+  },
+  {
+   "selector": "claude-opus-4-8-low-fast",
+   "provider": "anthropic",
+   "alias": "claude-opus-4.8"
+  },
+  {
+   "selector": "claude-opus-4-8-max",
+   "provider": "anthropic",
+   "alias": "claude-opus-4.8"
+  },
+  {
+   "selector": "claude-opus-4-8-max-fast",
+   "provider": "anthropic",
+   "alias": "claude-opus-4.8"
+  },
+  {
+   "selector": "claude-opus-4-8-medium",
+   "provider": "anthropic",
+   "alias": "claude-opus-4.8"
+  },
+  {
+   "selector": "claude-opus-4-8-medium-fast",
+   "provider": "anthropic",
+   "alias": "claude-opus-4.8"
+  },
+  {
+   "selector": "claude-opus-4-8-xhigh",
+   "provider": "anthropic",
+   "alias": "claude-opus-4.8"
+  },
+  {
+   "selector": "claude-opus-4-8-xhigh-fast",
+   "provider": "anthropic",
+   "alias": "claude-opus-4.8"
+  },
+  {
+   "selector": "claude-opus-5-5-high",
+   "provider": "anthropic",
+   "alias": "claude-opus-5-5"
+  },
+  {
+   "selector": "claude-opus-5-5-high-fast",
+   "provider": "anthropic",
+   "alias": "claude-opus-5-5"
+  },
+  {
+   "selector": "claude-opus-5-5-low",
+   "provider": "anthropic",
+   "alias": "claude-opus-5-5"
+  },
+  {
+   "selector": "claude-opus-5-5-low-fast",
+   "provider": "anthropic",
+   "alias": "claude-opus-5-5"
+  },
+  {
+   "selector": "claude-opus-5-5-max",
+   "provider": "anthropic",
+   "alias": "claude-opus-5-5"
+  },
+  {
+   "selector": "claude-opus-5-5-max-fast",
+   "provider": "anthropic",
+   "alias": "claude-opus-5-5"
+  },
+  {
+   "selector": "claude-opus-5-5-medium",
+   "provider": "anthropic",
+   "alias": "claude-opus-5-5"
+  },
+  {
+   "selector": "claude-opus-5-5-medium-fast",
+   "provider": "anthropic",
+   "alias": "claude-opus-5-5"
+  },
+  {
+   "selector": "claude-opus-5-5-xhigh",
+   "provider": "anthropic",
+   "alias": "claude-opus-5-5"
+  },
+  {
+   "selector": "claude-opus-5-5-xhigh-fast",
+   "provider": "anthropic",
+   "alias": "claude-opus-5-5"
+  },
+  {
+   "selector": "claude-opus-5-high",
+   "provider": "anthropic",
+   "alias": "claude-opus-5"
+  },
+  {
+   "selector": "claude-opus-5-high-fast",
+   "provider": "anthropic",
+   "alias": "claude-opus-5"
+  },
+  {
+   "selector": "claude-opus-5-low",
+   "provider": "anthropic",
+   "alias": "claude-opus-5"
+  },
+  {
+   "selector": "claude-opus-5-low-fast",
+   "provider": "anthropic",
+   "alias": "claude-opus-5"
+  },
+  {
+   "selector": "claude-opus-5-max",
+   "provider": "anthropic",
+   "alias": "claude-opus-5"
+  },
+  {
+   "selector": "claude-opus-5-max-fast",
+   "provider": "anthropic",
+   "alias": "claude-opus-5"
+  },
+  {
+   "selector": "claude-opus-5-medium",
+   "provider": "anthropic",
+   "alias": "claude-opus-5"
+  },
+  {
+   "selector": "claude-opus-5-medium-fast",
+   "provider": "anthropic",
+   "alias": "claude-opus-5"
+  },
+  {
+   "selector": "claude-opus-5-xhigh",
+   "provider": "anthropic",
+   "alias": "claude-opus-5"
+  },
+  {
+   "selector": "claude-opus-5-xhigh-fast",
+   "provider": "anthropic",
+   "alias": "claude-opus-5"
+  },
+  {
+   "selector": "claude-sonnet-4-6",
+   "provider": "anthropic",
+   "alias": "claude-sonnet-4.6"
+  },
+  {
+   "selector": "claude-sonnet-4-6-1m",
+   "provider": "anthropic",
+   "alias": "claude-sonnet-4.6"
+  },
+  {
+   "selector": "claude-sonnet-4-6-thinking",
+   "provider": "anthropic",
+   "alias": "claude-sonnet-4.6"
+  },
+  {
+   "selector": "claude-sonnet-4-6-thinking-1m",
+   "provider": "anthropic",
+   "alias": "claude-sonnet-4.6"
+  },
+  {
+   "selector": "claude-sonnet-5-5-high",
+   "provider": "anthropic",
+   "alias": "claude-sonnet-5-5"
+  },
+  {
+   "selector": "claude-sonnet-5-5-low",
+   "provider": "anthropic",
+   "alias": "claude-sonnet-5-5"
+  },
+  {
+   "selector": "claude-sonnet-5-5-max",
+   "provider": "anthropic",
+   "alias": "claude-sonnet-5-5"
+  },
+  {
+   "selector": "claude-sonnet-5-5-medium",
+   "provider": "anthropic",
+   "alias": "claude-sonnet-5-5"
+  },
+  {
+   "selector": "claude-sonnet-5-5-xhigh",
+   "provider": "anthropic",
+   "alias": "claude-sonnet-5-5"
+  },
+  {
+   "selector": "claude-sonnet-5-high",
+   "provider": "anthropic",
+   "alias": "claude-sonnet-5"
+  },
+  {
+   "selector": "claude-sonnet-5-low",
+   "provider": "anthropic",
+   "alias": "claude-sonnet-5"
+  },
+  {
+   "selector": "claude-sonnet-5-max",
+   "provider": "anthropic",
+   "alias": "claude-sonnet-5"
+  },
+  {
+   "selector": "claude-sonnet-5-medium",
+   "provider": "anthropic",
+   "alias": "claude-sonnet-5"
+  },
+  {
+   "selector": "claude-sonnet-5-xhigh",
+   "provider": "anthropic",
+   "alias": "claude-sonnet-5"
+  },
+  {
+   "selector": "deepseek-v4-1-flash-1017-high",
+   "provider": "6",
+   "alias": "deepseek-v4-1-flash-1017"
+  },
+  {
+   "selector": "deepseek-v4-1-flash-1017-low",
+   "provider": "6",
+   "alias": "deepseek-v4-1-flash-1017"
+  },
+  {
+   "selector": "deepseek-v4-1-flash-1017-max",
+   "provider": "6",
+   "alias": "deepseek-v4-1-flash-1017"
+  },
+  {
+   "selector": "deepseek-v4-1-flash-1017-none",
+   "provider": "6",
+   "alias": "deepseek-v4-1-flash-1017"
+  },
+  {
+   "selector": "deepseek-v4-flash-high",
+   "provider": "6",
+   "alias": "deepseek-v4-flash"
+  },
+  {
+   "selector": "deepseek-v4-flash-max",
+   "provider": "6",
+   "alias": "deepseek-v4-flash"
+  },
+  {
+   "selector": "deepseek-v4-pro-high",
+   "provider": "6",
+   "alias": "deepseek-v4-pro"
+  },
+  {
+   "selector": "deepseek-v4-pro-max",
+   "provider": "6",
+   "alias": "deepseek-v4-pro"
+  },
+  {
+   "selector": "gemini-3-5-flash-high",
+   "provider": "google",
+   "alias": "gemini-3.5-flash"
+  },
+  {
+   "selector": "gemini-3-5-flash-low",
+   "provider": "google",
+   "alias": "gemini-3.5-flash"
+  },
+  {
+   "selector": "gemini-3-5-flash-medium",
+   "provider": "google",
+   "alias": "gemini-3.5-flash"
+  },
+  {
+   "selector": "gemini-3-5-flash-minimal",
+   "provider": "google",
+   "alias": "gemini-3.5-flash"
+  },
+  {
+   "selector": "gemini-3-6-flash-high",
+   "provider": "google",
+   "alias": "gemini-3.6-flash"
+  },
+  {
+   "selector": "gemini-3-6-flash-low",
+   "provider": "google",
+   "alias": "gemini-3.6-flash"
+  },
+  {
+   "selector": "gemini-3-6-flash-medium",
+   "provider": "google",
+   "alias": "gemini-3.6-flash"
+  },
+  {
+   "selector": "gemini-3-6-flash-minimal",
+   "provider": "google",
+   "alias": "gemini-3.6-flash"
+  },
+  {
+   "selector": "gemini-3-7-flash-high",
+   "provider": "google",
+   "alias": "gemini-3-7-flash"
+  },
+  {
+   "selector": "gemini-3-7-flash-low",
+   "provider": "google",
+   "alias": "gemini-3-7-flash"
+  },
+  {
+   "selector": "gemini-3-7-flash-medium",
+   "provider": "google",
+   "alias": "gemini-3-7-flash"
+  },
+  {
+   "selector": "gemini-3-8-flash-high",
+   "provider": "google",
+   "alias": "gemini-3-8-flash"
+  },
+  {
+   "selector": "gemini-3-8-flash-low",
+   "provider": "google",
+   "alias": "gemini-3-8-flash"
+  },
+  {
+   "selector": "gemini-3-8-flash-medium",
+   "provider": "google",
+   "alias": "gemini-3-8-flash"
+  },
+  {
+   "selector": "gemini-4-argon-high",
+   "provider": "google",
+   "alias": "gemini-4-argon"
+  },
+  {
+   "selector": "gemini-4-argon-low",
+   "provider": "google",
+   "alias": "gemini-4-argon"
+  },
+  {
+   "selector": "gemini-4-argon-medium",
+   "provider": "google",
+   "alias": "gemini-4-argon"
+  },
+  {
+   "selector": "gemini-4-carbon-high",
+   "provider": "google",
+   "alias": "gemini-4-carbon"
+  },
+  {
+   "selector": "gemini-4-carbon-low",
+   "provider": "google",
+   "alias": "gemini-4-carbon"
+  },
+  {
+   "selector": "gemini-4-carbon-medium",
+   "provider": "google",
+   "alias": "gemini-4-carbon"
+  },
+  {
+   "selector": "gemini-4-hydrogen-high",
+   "provider": "google",
+   "alias": "gemini-4-hydrogen"
+  },
+  {
+   "selector": "gemini-4-hydrogen-low",
+   "provider": "google",
+   "alias": "gemini-4-hydrogen"
+  },
+  {
+   "selector": "gemini-4-hydrogen-medium",
+   "provider": "google",
+   "alias": "gemini-4-hydrogen"
+  },
+  {
+   "selector": "gemini-4-hydrogen-xhigh",
+   "provider": "google",
+   "alias": "gemini-4-hydrogen"
+  },
+  {
+   "selector": "gemini-4-neon-high",
+   "provider": "google",
+   "alias": "gemini-4-neon"
+  },
+  {
+   "selector": "gemini-4-neon-low",
+   "provider": "google",
+   "alias": "gemini-4-neon"
+  },
+  {
+   "selector": "gemini-4-neon-medium",
+   "provider": "google",
+   "alias": "gemini-4-neon"
+  },
+  {
+   "selector": "gemini-4-neon-xhigh",
+   "provider": "google",
+   "alias": "gemini-4-neon"
+  },
+  {
+   "selector": "glm-5-2",
+   "provider": "zhipu",
+   "alias": "glm-5.2"
+  },
+  {
+   "selector": "glm-5-2-1m",
+   "provider": "zhipu",
+   "alias": "glm-5.2"
+  },
+  {
+   "selector": "glm-5-2-max",
+   "provider": "zhipu",
+   "alias": "glm-5.2"
+  },
+  {
+   "selector": "glm-5-2-max-1m",
+   "provider": "zhipu",
+   "alias": "glm-5.2"
+  },
+  {
+   "selector": "glm-5-2-none",
+   "provider": "zhipu",
+   "alias": "glm-5.2"
+  },
+  {
+   "selector": "glm-5-2-none-1m",
+   "provider": "zhipu",
+   "alias": "glm-5.2"
+  },
+  {
+   "selector": "glm-5-3-flash-high",
+   "provider": "zhipu",
+   "alias": "glm-5-3-flash"
+  },
+  {
+   "selector": "glm-5-3-flash-low",
+   "provider": "zhipu",
+   "alias": "glm-5-3-flash"
+  },
+  {
+   "selector": "glm-5-3-flash-max",
+   "provider": "zhipu",
+   "alias": "glm-5-3-flash"
+  },
+  {
+   "selector": "glm-5-3-high",
+   "provider": "zhipu",
+   "alias": "glm-5-3"
+  },
+  {
+   "selector": "glm-5-3-low",
+   "provider": "zhipu",
+   "alias": "glm-5-3"
+  },
+  {
+   "selector": "glm-5-3-max",
+   "provider": "zhipu",
+   "alias": "glm-5-3"
+  },
+  {
+   "selector": "gpt-5-4-high",
+   "provider": "openai",
+   "alias": "gpt-5.4"
+  },
+  {
+   "selector": "gpt-5-4-high-priority",
+   "provider": "openai",
+   "alias": "gpt-5.4"
+  },
+  {
+   "selector": "gpt-5-4-low",
+   "provider": "openai",
+   "alias": "gpt-5.4"
+  },
+  {
+   "selector": "gpt-5-4-low-priority",
+   "provider": "openai",
+   "alias": "gpt-5.4"
+  },
+  {
+   "selector": "gpt-5-4-medium",
+   "provider": "openai",
+   "alias": "gpt-5.4"
+  },
+  {
+   "selector": "gpt-5-4-medium-priority",
+   "provider": "openai",
+   "alias": "gpt-5.4"
+  },
+  {
+   "selector": "gpt-5-4-mini-high",
+   "provider": "openai",
+   "alias": "gpt-5.4-mini"
+  },
+  {
+   "selector": "gpt-5-4-mini-low",
+   "provider": "openai",
+   "alias": "gpt-5.4-mini"
+  },
+  {
+   "selector": "gpt-5-4-mini-medium",
+   "provider": "openai",
+   "alias": "gpt-5.4-mini"
+  },
+  {
+   "selector": "gpt-5-4-mini-xhigh",
+   "provider": "openai",
+   "alias": "gpt-5.4-mini"
+  },
+  {
+   "selector": "gpt-5-4-none",
+   "provider": "openai",
+   "alias": "gpt-5.4"
+  },
+  {
+   "selector": "gpt-5-4-none-priority",
+   "provider": "openai",
+   "alias": "gpt-5.4"
+  },
+  {
+   "selector": "gpt-5-4-xhigh",
+   "provider": "openai",
+   "alias": "gpt-5.4"
+  },
+  {
+   "selector": "gpt-5-4-xhigh-priority",
+   "provider": "openai",
+   "alias": "gpt-5.4"
+  },
+  {
+   "selector": "gpt-5-5-high",
+   "provider": "openai",
+   "alias": "gpt-5.5"
+  },
+  {
+   "selector": "gpt-5-5-high-priority",
+   "provider": "openai",
+   "alias": "gpt-5.5"
+  },
+  {
+   "selector": "gpt-5-5-low",
+   "provider": "openai",
+   "alias": "gpt-5.5"
+  },
+  {
+   "selector": "gpt-5-5-low-priority",
+   "provider": "openai",
+   "alias": "gpt-5.5"
+  },
+  {
+   "selector": "gpt-5-5-medium",
+   "provider": "openai",
+   "alias": "gpt-5.5"
+  },
+  {
+   "selector": "gpt-5-5-medium-priority",
+   "provider": "openai",
+   "alias": "gpt-5.5"
+  },
+  {
+   "selector": "gpt-5-5-none",
+   "provider": "openai",
+   "alias": "gpt-5.5"
+  },
+  {
+   "selector": "gpt-5-5-none-priority",
+   "provider": "openai",
+   "alias": "gpt-5.5"
+  },
+  {
+   "selector": "gpt-5-5-xhigh",
+   "provider": "openai",
+   "alias": "gpt-5.5"
+  },
+  {
+   "selector": "gpt-5-5-xhigh-priority",
+   "provider": "openai",
+   "alias": "gpt-5.5"
+  },
+  {
+   "selector": "gpt-5-6-luna-high",
+   "provider": "openai",
+   "alias": "gpt-5.6-luna"
+  },
+  {
+   "selector": "gpt-5-6-luna-high-priority",
+   "provider": "openai",
+   "alias": "gpt-5.6-luna"
+  },
+  {
+   "selector": "gpt-5-6-luna-low",
+   "provider": "openai",
+   "alias": "gpt-5.6-luna"
+  },
+  {
+   "selector": "gpt-5-6-luna-low-priority",
+   "provider": "openai",
+   "alias": "gpt-5.6-luna"
+  },
+  {
+   "selector": "gpt-5-6-luna-max",
+   "provider": "openai",
+   "alias": "gpt-5.6-luna"
+  },
+  {
+   "selector": "gpt-5-6-luna-max-priority",
+   "provider": "openai",
+   "alias": "gpt-5.6-luna"
+  },
+  {
+   "selector": "gpt-5-6-luna-medium",
+   "provider": "openai",
+   "alias": "gpt-5.6-luna"
+  },
+  {
+   "selector": "gpt-5-6-luna-medium-priority",
+   "provider": "openai",
+   "alias": "gpt-5.6-luna"
+  },
+  {
+   "selector": "gpt-5-6-luna-none",
+   "provider": "openai",
+   "alias": "gpt-5.6-luna"
+  },
+  {
+   "selector": "gpt-5-6-luna-none-priority",
+   "provider": "openai",
+   "alias": "gpt-5.6-luna"
+  },
+  {
+   "selector": "gpt-5-6-luna-xhigh",
+   "provider": "openai",
+   "alias": "gpt-5.6-luna"
+  },
+  {
+   "selector": "gpt-5-6-luna-xhigh-priority",
+   "provider": "openai",
+   "alias": "gpt-5.6-luna"
+  },
+  {
+   "selector": "gpt-5-6-sol-high",
+   "provider": "openai",
+   "alias": "gpt-5.6-sol"
+  },
+  {
+   "selector": "gpt-5-6-sol-high-priority",
+   "provider": "openai",
+   "alias": "gpt-5.6-sol"
+  },
+  {
+   "selector": "gpt-5-6-sol-low",
+   "provider": "openai",
+   "alias": "gpt-5.6-sol"
+  },
+  {
+   "selector": "gpt-5-6-sol-low-priority",
+   "provider": "openai",
+   "alias": "gpt-5.6-sol"
+  },
+  {
+   "selector": "gpt-5-6-sol-max",
+   "provider": "openai",
+   "alias": "gpt-5.6-sol"
+  },
+  {
+   "selector": "gpt-5-6-sol-max-priority",
+   "provider": "openai",
+   "alias": "gpt-5.6-sol"
+  },
+  {
+   "selector": "gpt-5-6-sol-medium",
+   "provider": "openai",
+   "alias": "gpt-5.6-sol"
+  },
+  {
+   "selector": "gpt-5-6-sol-medium-priority",
+   "provider": "openai",
+   "alias": "gpt-5.6-sol"
+  },
+  {
+   "selector": "gpt-5-6-sol-none",
+   "provider": "openai",
+   "alias": "gpt-5.6-sol"
+  },
+  {
+   "selector": "gpt-5-6-sol-none-priority",
+   "provider": "openai",
+   "alias": "gpt-5.6-sol"
+  },
+  {
+   "selector": "gpt-5-6-sol-xhigh",
+   "provider": "openai",
+   "alias": "gpt-5.6-sol"
+  },
+  {
+   "selector": "gpt-5-6-sol-xhigh-priority",
+   "provider": "openai",
+   "alias": "gpt-5.6-sol"
+  },
+  {
+   "selector": "gpt-5-6-terra-high",
+   "provider": "openai",
+   "alias": "gpt-5.6-terra"
+  },
+  {
+   "selector": "gpt-5-6-terra-high-priority",
+   "provider": "openai",
+   "alias": "gpt-5.6-terra"
+  },
+  {
+   "selector": "gpt-5-6-terra-low",
+   "provider": "openai",
+   "alias": "gpt-5.6-terra"
+  },
+  {
+   "selector": "gpt-5-6-terra-low-priority",
+   "provider": "openai",
+   "alias": "gpt-5.6-terra"
+  },
+  {
+   "selector": "gpt-5-6-terra-max",
+   "provider": "openai",
+   "alias": "gpt-5.6-terra"
+  },
+  {
+   "selector": "gpt-5-6-terra-max-priority",
+   "provider": "openai",
+   "alias": "gpt-5.6-terra"
+  },
+  {
+   "selector": "gpt-5-6-terra-medium",
+   "provider": "openai",
+   "alias": "gpt-5.6-terra"
+  },
+  {
+   "selector": "gpt-5-6-terra-medium-priority",
+   "provider": "openai",
+   "alias": "gpt-5.6-terra"
+  },
+  {
+   "selector": "gpt-5-6-terra-none",
+   "provider": "openai",
+   "alias": "gpt-5.6-terra"
+  },
+  {
+   "selector": "gpt-5-6-terra-none-priority",
+   "provider": "openai",
+   "alias": "gpt-5.6-terra"
+  },
+  {
+   "selector": "gpt-5-6-terra-xhigh",
+   "provider": "openai",
+   "alias": "gpt-5.6-terra"
+  },
+  {
+   "selector": "gpt-5-6-terra-xhigh-priority",
+   "provider": "openai",
+   "alias": "gpt-5.6-terra"
+  },
+  {
+   "selector": "gpt-6-1-sol-high",
+   "provider": "openai",
+   "alias": "gpt-6-1-sol"
+  },
+  {
+   "selector": "gpt-6-1-sol-high-priority",
+   "provider": "openai",
+   "alias": "gpt-6-1-sol"
+  },
+  {
+   "selector": "gpt-6-1-sol-low",
+   "provider": "openai",
+   "alias": "gpt-6-1-sol"
+  },
+  {
+   "selector": "gpt-6-1-sol-low-priority",
+   "provider": "openai",
+   "alias": "gpt-6-1-sol"
+  },
+  {
+   "selector": "gpt-6-1-sol-max",
+   "provider": "openai",
+   "alias": "gpt-6-1-sol"
+  },
+  {
+   "selector": "gpt-6-1-sol-max-priority",
+   "provider": "openai",
+   "alias": "gpt-6-1-sol"
+  },
+  {
+   "selector": "gpt-6-1-sol-medium",
+   "provider": "openai",
+   "alias": "gpt-6-1-sol"
+  },
+  {
+   "selector": "gpt-6-1-sol-medium-priority",
+   "provider": "openai",
+   "alias": "gpt-6-1-sol"
+  },
+  {
+   "selector": "gpt-6-1-sol-xhigh",
+   "provider": "openai",
+   "alias": "gpt-6-1-sol"
+  },
+  {
+   "selector": "gpt-6-1-sol-xhigh-priority",
+   "provider": "openai",
+   "alias": "gpt-6-1-sol"
+  },
+  {
+   "selector": "gpt-6-1-terra-high",
+   "provider": "openai",
+   "alias": "gpt-6-1-terra"
+  },
+  {
+   "selector": "gpt-6-1-terra-high-priority",
+   "provider": "openai",
+   "alias": "gpt-6-1-terra"
+  },
+  {
+   "selector": "gpt-6-1-terra-low",
+   "provider": "openai",
+   "alias": "gpt-6-1-terra"
+  },
+  {
+   "selector": "gpt-6-1-terra-low-priority",
+   "provider": "openai",
+   "alias": "gpt-6-1-terra"
+  },
+  {
+   "selector": "gpt-6-1-terra-max",
+   "provider": "openai",
+   "alias": "gpt-6-1-terra"
+  },
+  {
+   "selector": "gpt-6-1-terra-max-priority",
+   "provider": "openai",
+   "alias": "gpt-6-1-terra"
+  },
+  {
+   "selector": "gpt-6-1-terra-medium",
+   "provider": "openai",
+   "alias": "gpt-6-1-terra"
+  },
+  {
+   "selector": "gpt-6-1-terra-medium-priority",
+   "provider": "openai",
+   "alias": "gpt-6-1-terra"
+  },
+  {
+   "selector": "gpt-6-1-terra-xhigh",
+   "provider": "openai",
+   "alias": "gpt-6-1-terra"
+  },
+  {
+   "selector": "gpt-6-1-terra-xhigh-priority",
+   "provider": "openai",
+   "alias": "gpt-6-1-terra"
+  },
+  {
+   "selector": "gpt-6-2-astra-high",
+   "provider": "openai",
+   "alias": "gpt-6-2-astra"
+  },
+  {
+   "selector": "gpt-6-2-astra-high-priority",
+   "provider": "openai",
+   "alias": "gpt-6-2-astra"
+  },
+  {
+   "selector": "gpt-6-2-astra-low",
+   "provider": "openai",
+   "alias": "gpt-6-2-astra"
+  },
+  {
+   "selector": "gpt-6-2-astra-low-priority",
+   "provider": "openai",
+   "alias": "gpt-6-2-astra"
+  },
+  {
+   "selector": "gpt-6-2-astra-max",
+   "provider": "openai",
+   "alias": "gpt-6-2-astra"
+  },
+  {
+   "selector": "gpt-6-2-astra-max-priority",
+   "provider": "openai",
+   "alias": "gpt-6-2-astra"
+  },
+  {
+   "selector": "gpt-6-2-astra-medium",
+   "provider": "openai",
+   "alias": "gpt-6-2-astra"
+  },
+  {
+   "selector": "gpt-6-2-astra-medium-priority",
+   "provider": "openai",
+   "alias": "gpt-6-2-astra"
+  },
+  {
+   "selector": "gpt-6-2-astra-xhigh",
+   "provider": "openai",
+   "alias": "gpt-6-2-astra"
+  },
+  {
+   "selector": "gpt-6-2-astra-xhigh-priority",
+   "provider": "openai",
+   "alias": "gpt-6-2-astra"
+  },
+  {
+   "selector": "gpt-6-2-sol-high",
+   "provider": "openai",
+   "alias": "gpt-6-2-sol"
+  },
+  {
+   "selector": "gpt-6-2-sol-high-priority",
+   "provider": "openai",
+   "alias": "gpt-6-2-sol"
+  },
+  {
+   "selector": "gpt-6-2-sol-low",
+   "provider": "openai",
+   "alias": "gpt-6-2-sol"
+  },
+  {
+   "selector": "gpt-6-2-sol-low-priority",
+   "provider": "openai",
+   "alias": "gpt-6-2-sol"
+  },
+  {
+   "selector": "gpt-6-2-sol-max",
+   "provider": "openai",
+   "alias": "gpt-6-2-sol"
+  },
+  {
+   "selector": "gpt-6-2-sol-max-priority",
+   "provider": "openai",
+   "alias": "gpt-6-2-sol"
+  },
+  {
+   "selector": "gpt-6-2-sol-medium",
+   "provider": "openai",
+   "alias": "gpt-6-2-sol"
+  },
+  {
+   "selector": "gpt-6-2-sol-medium-priority",
+   "provider": "openai",
+   "alias": "gpt-6-2-sol"
+  },
+  {
+   "selector": "gpt-6-2-sol-xhigh",
+   "provider": "openai",
+   "alias": "gpt-6-2-sol"
+  },
+  {
+   "selector": "gpt-6-2-sol-xhigh-priority",
+   "provider": "openai",
+   "alias": "gpt-6-2-sol"
+  },
+  {
+   "selector": "gpt-6-astra-high",
+   "provider": "openai",
+   "alias": "gpt-6-astra"
+  },
+  {
+   "selector": "gpt-6-astra-high-priority",
+   "provider": "openai",
+   "alias": "gpt-6-astra"
+  },
+  {
+   "selector": "gpt-6-astra-low",
+   "provider": "openai",
+   "alias": "gpt-6-astra"
+  },
+  {
+   "selector": "gpt-6-astra-low-priority",
+   "provider": "openai",
+   "alias": "gpt-6-astra"
+  },
+  {
+   "selector": "gpt-6-astra-max",
+   "provider": "openai",
+   "alias": "gpt-6-astra"
+  },
+  {
+   "selector": "gpt-6-astra-max-priority",
+   "provider": "openai",
+   "alias": "gpt-6-astra"
+  },
+  {
+   "selector": "gpt-6-astra-medium",
+   "provider": "openai",
+   "alias": "gpt-6-astra"
+  },
+  {
+   "selector": "gpt-6-astra-medium-priority",
+   "provider": "openai",
+   "alias": "gpt-6-astra"
+  },
+  {
+   "selector": "gpt-6-astra-xhigh",
+   "provider": "openai",
+   "alias": "gpt-6-astra"
+  },
+  {
+   "selector": "gpt-6-astra-xhigh-priority",
+   "provider": "openai",
+   "alias": "gpt-6-astra"
+  },
+  {
+   "selector": "gpt-6-luna-high",
+   "provider": "openai",
+   "alias": "gpt-6-luna"
+  },
+  {
+   "selector": "gpt-6-luna-high-priority",
+   "provider": "openai",
+   "alias": "gpt-6-luna"
+  },
+  {
+   "selector": "gpt-6-luna-low",
+   "provider": "openai",
+   "alias": "gpt-6-luna"
+  },
+  {
+   "selector": "gpt-6-luna-low-priority",
+   "provider": "openai",
+   "alias": "gpt-6-luna"
+  },
+  {
+   "selector": "gpt-6-luna-max",
+   "provider": "openai",
+   "alias": "gpt-6-luna"
+  },
+  {
+   "selector": "gpt-6-luna-max-priority",
+   "provider": "openai",
+   "alias": "gpt-6-luna"
+  },
+  {
+   "selector": "gpt-6-luna-medium",
+   "provider": "openai",
+   "alias": "gpt-6-luna"
+  },
+  {
+   "selector": "gpt-6-luna-medium-priority",
+   "provider": "openai",
+   "alias": "gpt-6-luna"
+  },
+  {
+   "selector": "gpt-6-luna-none",
+   "provider": "openai",
+   "alias": "gpt-6-luna"
+  },
+  {
+   "selector": "gpt-6-luna-none-priority",
+   "provider": "openai",
+   "alias": "gpt-6-luna"
+  },
+  {
+   "selector": "gpt-6-luna-xhigh",
+   "provider": "openai",
+   "alias": "gpt-6-luna"
+  },
+  {
+   "selector": "gpt-6-luna-xhigh-priority",
+   "provider": "openai",
+   "alias": "gpt-6-luna"
+  },
+  {
+   "selector": "gpt-6-sol-high",
+   "provider": "openai",
+   "alias": "gpt-6-sol"
+  },
+  {
+   "selector": "gpt-6-sol-high-priority",
+   "provider": "openai",
+   "alias": "gpt-6-sol"
+  },
+  {
+   "selector": "gpt-6-sol-low",
+   "provider": "openai",
+   "alias": "gpt-6-sol"
+  },
+  {
+   "selector": "gpt-6-sol-low-priority",
+   "provider": "openai",
+   "alias": "gpt-6-sol"
+  },
+  {
+   "selector": "gpt-6-sol-max",
+   "provider": "openai",
+   "alias": "gpt-6-sol"
+  },
+  {
+   "selector": "gpt-6-sol-max-priority",
+   "provider": "openai",
+   "alias": "gpt-6-sol"
+  },
+  {
+   "selector": "gpt-6-sol-medium",
+   "provider": "openai",
+   "alias": "gpt-6-sol"
+  },
+  {
+   "selector": "gpt-6-sol-medium-priority",
+   "provider": "openai",
+   "alias": "gpt-6-sol"
+  },
+  {
+   "selector": "gpt-6-sol-none",
+   "provider": "openai",
+   "alias": "gpt-6-sol"
+  },
+  {
+   "selector": "gpt-6-sol-none-priority",
+   "provider": "openai",
+   "alias": "gpt-6-sol"
+  },
+  {
+   "selector": "gpt-6-sol-xhigh",
+   "provider": "openai",
+   "alias": "gpt-6-sol"
+  },
+  {
+   "selector": "gpt-6-sol-xhigh-priority",
+   "provider": "openai",
+   "alias": "gpt-6-sol"
+  },
+  {
+   "selector": "grok-4-6-high",
+   "provider": "5",
+   "alias": "grok-4-6"
+  },
+  {
+   "selector": "grok-4-6-low",
+   "provider": "5",
+   "alias": "grok-4-6"
+  },
+  {
+   "selector": "grok-4-6-medium",
+   "provider": "5",
+   "alias": "grok-4-6"
+  },
+  {
+   "selector": "grok-4-6-xhigh",
+   "provider": "5",
+   "alias": "grok-4-6"
+  },
+  {
+   "selector": "grok-4-7-high",
+   "provider": "5",
+   "alias": "grok-4-7"
+  },
+  {
+   "selector": "grok-4-7-low",
+   "provider": "5",
+   "alias": "grok-4-7"
+  },
+  {
+   "selector": "grok-4-7-medium",
+   "provider": "5",
+   "alias": "grok-4-7"
+  },
+  {
+   "selector": "grok-4-7-xhigh",
+   "provider": "5",
+   "alias": "grok-4-7"
+  },
+  {
+   "selector": "kimi-k2-6",
+   "provider": "moonshot",
+   "alias": "kimi-k2.6"
+  },
+  {
+   "selector": "kimi-k2-7",
+   "provider": "moonshot",
+   "alias": "kimi-k2.7"
+  },
+  {
+   "selector": "kimi-k3-1-pro-high",
+   "provider": "moonshot",
+   "alias": "kimi-k3-1-pro"
+  },
+  {
+   "selector": "kimi-k3-1-pro-low",
+   "provider": "moonshot",
+   "alias": "kimi-k3-1-pro"
+  },
+  {
+   "selector": "kimi-k3-1-pro-max",
+   "provider": "moonshot",
+   "alias": "kimi-k3-1-pro"
+  },
+  {
+   "selector": "kimi-k3-1-pro-medium",
+   "provider": "moonshot",
+   "alias": "kimi-k3-1-pro"
+  },
+  {
+   "selector": "kimi-k3-high",
+   "provider": "moonshot",
+   "alias": "kimi-k3"
+  },
+  {
+   "selector": "kimi-k3-low",
+   "provider": "moonshot",
+   "alias": "kimi-k3"
+  },
+  {
+   "selector": "kimi-k3-max",
+   "provider": "moonshot",
+   "alias": "kimi-k3"
+  },
+  {
+   "selector": "muse-wonder-1-0-high",
+   "provider": "13",
+   "alias": "muse-wonder-1-0"
+  },
+  {
+   "selector": "muse-wonder-1-0-low",
+   "provider": "13",
+   "alias": "muse-wonder-1-0"
+  },
+  {
+   "selector": "muse-wonder-1-0-max",
+   "provider": "13",
+   "alias": "muse-wonder-1-0"
+  },
+  {
+   "selector": "muse-wonder-1-0-medium",
+   "provider": "13",
+   "alias": "muse-wonder-1-0"
+  },
+  {
+   "selector": "muse-wonder-1-0-minimal",
+   "provider": "13",
+   "alias": "muse-wonder-1-0"
+  },
+  {
+   "selector": "muse-wonder-1-0-xhigh",
+   "provider": "13",
+   "alias": "muse-wonder-1-0"
+  },
+  {
+   "selector": "nemotron-3-5-lightning-high",
+   "provider": "11",
+   "alias": "nemotron-3-5-lightning"
+  },
+  {
+   "selector": "nemotron-3-5-lightning-none",
+   "provider": "11",
+   "alias": "nemotron-3-5-lightning"
+  },
+  {
+   "selector": "nemotron-3-5-super-high",
+   "provider": "11",
+   "alias": "nemotron-3-5-super"
+  },
+  {
+   "selector": "nemotron-3-5-super-medium",
+   "provider": "11",
+   "alias": "nemotron-3-5-super"
+  },
+  {
+   "selector": "nemotron-3-5-super-none",
+   "provider": "11",
+   "alias": "nemotron-3-5-super"
+  },
+  {
+   "selector": "nemotron-3-ultra-high",
+   "provider": "11",
+   "alias": "nemotron-3-ultra"
+  },
+  {
+   "selector": "nemotron-3-ultra-medium",
+   "provider": "11",
+   "alias": "nemotron-3-ultra"
+  },
+  {
+   "selector": "nemotron-3-ultra-none",
+   "provider": "11",
+   "alias": "nemotron-3-ultra"
+  },
+  {
+   "selector": "swe-1-6",
+   "provider": "cognition",
+   "alias": "swe-1.6"
+  },
+  {
+   "selector": "swe-1-7",
+   "provider": "cognition",
+   "alias": "swe-1.7"
+  },
+  {
+   "selector": "swe-1-7-medium",
+   "provider": "cognition",
+   "alias": "swe-1.7"
+  },
+  {
+   "selector": "swe-2-flash-high",
+   "provider": "cognition",
+   "alias": "swe-2-flash"
+  },
+  {
+   "selector": "swe-2-flash-high-lightning",
+   "provider": "cognition",
+   "alias": "swe-2-flash"
+  },
+  {
+   "selector": "swe-2-flash-max",
+   "provider": "cognition",
+   "alias": "swe-2-flash"
+  },
+  {
+   "selector": "swe-2-flash-max-lightning",
+   "provider": "cognition",
+   "alias": "swe-2-flash"
+  },
+  {
+   "selector": "swe-2-flash-medium",
+   "provider": "cognition",
+   "alias": "swe-2-flash"
+  },
+  {
+   "selector": "swe-2-flash-medium-lightning",
+   "provider": "cognition",
+   "alias": "swe-2-flash"
+  },
+  {
+   "selector": "swe-2-high",
+   "provider": "cognition",
+   "alias": "swe-2"
+  },
+  {
+   "selector": "swe-2-high-lightning",
+   "provider": "cognition",
+   "alias": "swe-2"
+  },
+  {
+   "selector": "swe-2-max",
+   "provider": "cognition",
+   "alias": "swe-2"
+  },
+  {
+   "selector": "swe-2-max-lightning",
+   "provider": "cognition",
+   "alias": "swe-2"
+  },
+  {
+   "selector": "swe-2-medium",
+   "provider": "cognition",
+   "alias": "swe-2"
+  },
+  {
+   "selector": "swe-2-medium-lightning",
+   "provider": "cognition",
+   "alias": "swe-2"
+  }
+ ]
 }

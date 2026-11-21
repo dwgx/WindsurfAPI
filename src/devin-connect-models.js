@@ -209,6 +209,26 @@ const SELECTOR_MAP = new Map(Object.entries({
   'inkling': 'inkling-medium',
   'kimi-k3': 'kimi-k3-high',
   'nemotron-3-ultra': 'nemotron-3-ultra-medium',
+
+  // ── Family-level aliases advertised by the live catalog (2026-11 sync) ──
+  // The upstream catalog lists these bare family names as aliases; without a
+  // map row they degraded to the free selector. Point each at its medium tier
+  // (the family's callable default; -high/-none where the catalog has no
+  // -medium spelling).
+  'claude-fable-5-2': 'claude-fable-5-2-medium',
+  'claude-fable-5.2': 'claude-fable-5-2-medium',
+  'deepseek-v4-1-flash-1017': 'deepseek-v4-1-flash-1017-high',
+  'gemini-4-carbon': 'gemini-4-carbon-medium',
+  'gemini-4-hydrogen': 'gemini-4-hydrogen-medium',
+  'gemini-4-neon': 'gemini-4-neon-medium',
+  'gpt-6-1-terra': 'gpt-6-1-terra-medium',
+  'gpt-6-2-astra': 'gpt-6-2-astra-medium',
+  'gpt-6-2-sol': 'gpt-6-2-sol-medium',
+  'kimi-k3-1-pro': 'kimi-k3-1-pro-medium',
+  'muse-wonder-1-0': 'muse-wonder-1-0-medium',
+  'nemotron-3-5-lightning': 'nemotron-3-5-lightning-none',
+  'nemotron-3-5-super': 'nemotron-3-5-super-none',
+  'swe-2-flash': 'swe-2-flash-medium',
 }));
 
 // The set of selectors the live catalog actually exposes (committed snapshot,
