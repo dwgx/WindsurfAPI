@@ -7,6 +7,8 @@ import { MODELS, resolveModel } from './models.js';
 import { buildSubprocessEnv, buildMinimalSubprocessEnv } from './log-safety.js';
 import { budgetExceededError } from './request-budget.js';
 
+const ACP_PROTOCOL_VERSION = 1;
+
 // Spawn seam: `spawn` is captured behind an indirection so a test can inject a
 // fake child (EventEmitter stdio) to exercise the stdin 'error'/EPIPE guard
 // without a real Devin CLI or network. Production always uses the real spawn.
@@ -823,7 +825,7 @@ async function runDevinAcpAttempt(prompt, {
   let hasHint = false;
   try {
     const init = await client.request('initialize', {
-      protocolVersion: 1,
+      protocolVersion: ACP_PROTOCOL_VERSION,
       clientCapabilities: {
         fs: { readTextFile: false, writeTextFile: false },
         terminal: false,
@@ -831,6 +833,13 @@ async function runDevinAcpAttempt(prompt, {
       clientInfo: { name: process.env.DEVIN_ACP_CLIENT_NAME || 'WindsurfAPI', version: VERSION },
     }, 30_000);
     if (init.error) throw errorFromRpcResponse(init, 'Devin ACP initialize failed');
+    const selectedVersion = init.result?.protocolVersion;
+    if (selectedVersion !== ACP_PROTOCOL_VERSION) {
+      const received = Number.isSafeInteger(selectedVersion) ? selectedVersion : 'missing or invalid';
+      throw Object.assign(new Error(`Devin ACP protocol version mismatch: expected ${ACP_PROTOCOL_VERSION}, received ${received}`), {
+        status: 502, type: 'backend_protocol_error', code: 'ACP_PROTOCOL_VERSION', retryable: false,
+      });
+    }
 
     const authMeta = {
       api_key: apiKey,
