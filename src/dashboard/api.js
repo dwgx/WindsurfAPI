@@ -2392,18 +2392,20 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
     try {
       const text = String(body.text || '');
       if (!text.trim()) return json(res, 400, { error: 'ERR_IMPORT_TEXT_EMPTY' }, NO_STORE);
-      const parsed = parseAccountText(text, { includeDiagnostics: true });
-      const { tokens, tokenPairs, accounts: passwordAccounts, unrecognizedLines } = parsed;
-      if (subpath.endsWith('/preview')) {
+      const preview = subpath.endsWith('/preview');
+      const parsed = parseAccountText(text, { includeDiagnostics: true, preview });
+      const { tokens, tokenPairs, accounts: passwordAccounts, unrecognizedLines, unrecognizedEntries = [] } = parsed;
+      if (preview) {
         return json(res, 200, {
           success: true, preview: true,
           recognized: tokens.length + tokenPairs.length + passwordAccounts.length,
-          unrecognizedLines,
+          unrecognizedLines, ...(unrecognizedEntries.length ? { unrecognizedEntries } : {}),
         }, NO_STORE);
       }
       // The legacy added array means the account is present after import.
       // poolDisposition distinguishes a newly created row from an existing one.
-      const results = { added: [], skipped: [], failed: [], unrecognizedLines };
+      const results = { added: [], skipped: [], failed: [], unrecognizedLines,
+        ...(unrecognizedEntries.length ? { unrecognizedEntries } : {}) };
       // A devin-session-token$ is itself the apiKey (addAccountByKey); other
       // token shapes run RegisterUser (addAccountByToken). Route by classified
       // kind so a pasted session token doesn't fail against the Firebase-only

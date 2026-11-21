@@ -11606,7 +11606,10 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
       const r = await fetch(route, opts);
       const data = await r.json().catch(() => ({}));
       if (!r.ok) { out.innerHTML = `<div class="text-sm" style="color: var(--error-text)">${this.esc(this.batchImportError(data.error))}</div>`; return; }
-      const lines = (data.unrecognizedLines || []).map(line => this.batchImportPosition('text', line)).join(', ');
+      const lines = [
+        ...(data.unrecognizedLines || []).map(line => this.batchImportPosition('text', line)),
+        ...(data.unrecognizedEntries || []).map(index => this.batchImportPosition('json', index)),
+      ].join(', ');
       const issues = lines ? `<div class="text-sm">${this.esc(I18n.t('section.smartImport.unrecognized', { lines }))}</div>` : '';
       if (preview) {
         out.innerHTML = `<div class="text-sm">${I18n.t('section.smartImport.recognized', { count: data.recognized })} · ${I18n.t('batch.previewOnly')}</div>${issues}`;

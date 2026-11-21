@@ -154,12 +154,17 @@ function parseSingleLine(arg1) {
 }
 const RE_LABEL_EMAIL = /^\s*(?:邮箱|邮件|账号|账户|帐号|帐户|用户名|用户名称|用户|登录名|登陆名|登录账号|登陆账号|登录账户|卡号|号码|账户名|e[\-\s]?mail|email|account|user(?:name)?|login|mail|id|number|num)\s*\d*\s*[:：=＝]\s*/i;
 const RE_LABEL_PASS = /^\s*(?:密码|登录密码|登陆密码|口令|秘钥|密钥|卡密|令牌|password|pass(?:word|wd)?|pwd|secret|key|token|access(?:[\-_]?token)?)\s*\d*\s*[:：=＝]\s*/i;
-function parseAccountText(content, { includeDiagnostics = false } = {}) {
+function parseAccountText(content, { includeDiagnostics = false, preview = false } = {}) {
   const arr = [];
   const arr2 = [];
   const arr3 = [];
   const arr4 = [];
   const unrecognizedLines = [];
+  const unrecognizedEntries = [];
+  function invalidPreviewToken(value) {
+    if (!preview || !ABSOLUTE_URL_RE.test(value)) return false;
+    try { return !unwrapPastedSecret(value); } catch { return true; }
+  }
   if (!content || typeof content !== "string") {
     return {
       accounts: arr,
@@ -179,7 +184,7 @@ function parseAccountText(content, { includeDiagnostics = false } = {}) {
         const arr7 = [];
         const arr8 = [];
         const arr9 = [];
-        for (const v13 of parseResult) {
+        for (const [index, v13] of parseResult.entries()) {
           if (!v13 || typeof v13 !== "object") {
             v12 = false;
             break;
@@ -188,6 +193,7 @@ function parseAccountText(content, { includeDiagnostics = false } = {}) {
           const v22 = v13.password || v13.pass || v13.pwd;
           const v32 = v13.totp_secret || v13.totp || v13.totpSecret;
           if (v14 && v22 && v32) {
+            if (includeDiagnostics) unrecognizedEntries.push(index + 1);
             arr9.push({
               username: String(v14).trim(),
               password: String(v22).trim(),
@@ -203,6 +209,8 @@ function parseAccountText(content, { includeDiagnostics = false } = {}) {
               email: String(v4).trim(),
               password: String(v5).trim()
             });
+          } else if (v6 && invalidPreviewToken(String(v6).trim())) {
+            unrecognizedEntries.push(index + 1);
           } else if (v6 && v4 && isValidEmail(String(v4).trim())) {
             arr8.push({
               email: String(v4).trim(),
@@ -215,13 +223,13 @@ function parseAccountText(content, { includeDiagnostics = false } = {}) {
             break;
           }
         }
-        if (v12 && (arr6.length > 0 || arr7.length > 0 || arr8.length > 0 || arr9.length > 0)) {
+        if (v12 && (arr6.length || arr7.length || arr8.length || arr9.length || unrecognizedEntries.length)) {
           return {
             accounts: arr6,
             tokens: arr7,
             tokenPairs: arr8,
             githubAccounts: arr9,
-            ...(includeDiagnostics ? { unrecognizedLines } : {})
+            ...(includeDiagnostics ? { unrecognizedLines, unrecognizedEntries } : {})
           };
         }
       }
@@ -230,7 +238,13 @@ function parseAccountText(content, { includeDiagnostics = false } = {}) {
   const arr5 = [];
   for (const [index, v12] of content.split(/\r?\n/).entries()) {
     const lineNumber = index + 1;
-    const addLine = fields => arr5.push({ lineNumber, ...fields });
+    const addLine = fields => {
+      if (fields.type === "token" && invalidPreviewToken(fields.raw)) {
+        unrecognizedLines.push(lineNumber);
+        return;
+      }
+      arr5.push({ lineNumber, ...fields });
+    };
     let trimResult2 = v12.trim();
     if (!trimResult2 || trimResult2.startsWith("#") || trimResult2.startsWith("//")) {
       continue;
@@ -245,6 +259,7 @@ function parseAccountText(content, { includeDiagnostics = false } = {}) {
     if (/----/.test(trimResult2)) {
       const mapResult = trimResult2.split(/----+/).map(arg1 => arg1.trim());
       if (mapResult.length === 3 && mapResult[0] && mapResult[1] && mapResult[2]) {
+        if (includeDiagnostics) unrecognizedLines.push(lineNumber);
         arr4.push({
           username: mapResult[0],
           password: mapResult[1],

@@ -149,6 +149,33 @@ describe('POST /accounts/import-text — email + session-token pair', () => {
     assert.deepEqual(run.body.unrecognizedLines, [5, 6]);
   });
 
+  it('reports unsupported text and array positions without echoing the input', async () => {
+    config.dashboardPassword = DASH_PW;
+    const unsupported = 'example-user----example-pass----example-factor';
+    for (const preview of [true, false]) {
+      const text = await importText('# comment\n' + unsupported + '\n\nunknown line', { preview });
+      assert.deepEqual(text.body.unrecognizedLines, [2, 4]);
+      assert.equal(text.text.includes('example-factor'), false);
+      const array = await importText(JSON.stringify([{ username: 'example-user', password: 'example-pass', totp: 'example-factor' }]), { preview });
+      assert.deepEqual(array.body.unrecognizedEntries, [1]);
+      assert.equal(array.text.includes('example-pass'), false);
+    }
+  });
+
+  it('excludes a callback without a token from recognized preview entries', async () => {
+    config.dashboardPassword = DASH_PW;
+    const url = 'https://example.test/show-auth-token';
+    const preview = await importText('# comment\n' + url, { preview: true });
+    assert.equal(preview.body.recognized, 0);
+    assert.deepEqual(preview.body.unrecognizedLines, [2]);
+    const array = await importText(JSON.stringify([{ token: url }]), { preview: true });
+    assert.equal(array.body.recognized, 0);
+    assert.deepEqual(array.body.unrecognizedEntries, [1]);
+    const applied = await importText(url);
+    assert.equal(applied.body.failed[0].error, 'ERR_NO_TOKEN_IN_INPUT');
+    assert.equal(getAccountList().length, 0);
+  });
+
   it('leaks neither the session token nor the auth1 value in any failure text', async () => {
     config.dashboardPassword = DASH_PW;
     // The pair path plus a bare token path in one submission: both are
