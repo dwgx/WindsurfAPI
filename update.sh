@@ -797,6 +797,29 @@ else
 fi
 
 echo ""
+check_signed_rollback_state() {
+  [ -n "$REQUESTED_TAG" ] || return 0
+  local rollback_changes
+  if [ "$(git rev-parse HEAD)" != "$TARGET" ] || [ "$(git rev-parse --symbolic-full-name HEAD)" != "$BEFORE_REF" ]; then
+    echo "✗ Automatic rollback refused: the checkout moved after the signed update."
+    return 1
+  fi
+  if ! rollback_changes=$(git status --porcelain --ignore-submodules=none --untracked-files=all) || [ -n "$rollback_changes" ]; then
+    echo "✗ Automatic rollback refused: local changes need to be preserved."
+    return 1
+  fi
+}
+
+# The previous process is still running until phase 3. Restore its checkout
+# if the elected release cannot prepare its language server.
+restore_signed_checkout_before_stop() {
+  [ -n "$REQUESTED_TAG" ] && [ "$AFTER" != "$BEFORE" ] || return 0
+  check_signed_rollback_state || return 1
+  check_ignored_target_conflicts "$BEFORE" || return 1
+  git reset --keep "$BEFORE" || return 1
+  [ "$(git rev-parse HEAD)" = "$BEFORE" ] && [ "$(git rev-parse --symbolic-full-name HEAD)" = "$BEFORE_REF" ]
+}
+
 echo "=== [2/5] Update LS binary ==="
 LS_PATH="${LS_BINARY_PATH:-/opt/windsurf/language_server_linux_x64}"
 if [ -f .env ]; then
@@ -819,6 +842,7 @@ if [ -f .env ]; then
 fi
 if [ ! -f install-ls.sh ]; then
   echo "    ! install-ls.sh not found; cannot update LS binary"
+  restore_signed_checkout_before_stop || exit 1
   exit 1
 fi
 echo "    Updating via install-ls.sh -> $LS_PATH"
@@ -830,6 +854,7 @@ else
     echo "    ! LS binary update failed (exit $_ls_rc); keeping existing binary at $LS_PATH"
   else
     echo "    ! LS binary update failed and no existing binary exists at $LS_PATH"
+    restore_signed_checkout_before_stop || exit 1
     exit "$_ls_rc"
   fi
 fi
@@ -912,18 +937,6 @@ if [ "$HEALTH_OK" = 1 ]; then
 else
   echo ""
   echo "✗ Health check failed after update. Auto-rolling back to $BEFORE ..."
-  check_signed_rollback_state() {
-    [ -n "$REQUESTED_TAG" ] || return 0
-    local rollback_changes
-    if [ "$(git rev-parse HEAD)" != "$TARGET" ] || [ "$(git rev-parse --symbolic-full-name HEAD)" != "$BEFORE_REF" ]; then
-      echo "✗ Automatic rollback refused: the checkout moved after the signed update."
-      return 1
-    fi
-    if ! rollback_changes=$(git status --porcelain --ignore-submodules=none --untracked-files=all) || [ -n "$rollback_changes" ]; then
-      echo "✗ Automatic rollback refused: local changes need to be preserved."
-      return 1
-    fi
-  }
   check_signed_rollback_state || exit 1
   # Stop/delete the failed target before changing the checkout.  A bare
   # `pm2 start --name` retry is not a rollback: real PM2 can reject a duplicate

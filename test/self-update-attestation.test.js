@@ -406,7 +406,7 @@ function makeUpdateFixture({ initialTag = 'v3.9.21', releaseTag = 'v3.9.22', ann
     join(seed, 'scripts', 'verify-release-attestation.mjs'));
   copyFileSync(join(SOURCE_ROOT, 'src', 'release-attestation.js'),
     join(seed, 'src', 'release-attestation.js'));
-  writeExecutable(join(seed, 'install-ls.sh'), '#!/usr/bin/env bash\nexit 0\n');
+  writeExecutable(join(seed, 'install-ls.sh'), '#!/usr/bin/env bash\nexit "${FIXTURE_INSTALL_STATUS:-0}"\n');
   writeFileSync(join(seed, 'src', 'index.js'), '// service fixture\n', 'utf8');
   writeFileSync(join(seed, 'release-marker.txt'), 'v3.9.21\n', 'utf8');
   realGit(seed, ['add', '.']);
@@ -701,6 +701,15 @@ describe('update.sh explicit signed release selection', () => {
     assert.match(output, /rollback refused.*local changes/i);
     assert.equal(realGit(fixture.deployment, ['rev-parse', 'HEAD']), fixture.releaseCommit);
     assert.equal(readFileSync(join(fixture.deployment, 'release-marker.txt'), 'utf8'), 'new operator data\n');
+  });
+
+  shellIt('restores the previous checkout when the elected installer fails before service stop', () => {
+    const fixture = migrationFixture();
+    const result = select(fixture, stageAttestation(fixture), { FIXTURE_INSTALL_STATUS: '19' });
+    const output = result.stdout + result.stderr;
+    assert.equal(result.status, 19, output);
+    assert.doesNotMatch(output, /\[3\/5\]/);
+    assert.equal(realGit(fixture.deployment, ['rev-parse', 'HEAD']), fixture.initialCommit);
   });
 
   shellIt('preserves ignored operator state when a signed target would overwrite it', () => {
