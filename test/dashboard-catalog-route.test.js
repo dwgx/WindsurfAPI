@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { config } from '../src/config.js';
 import { handleDashboardApi } from '../src/dashboard/api.js';
-import { clearLiveCatalogSelectors, setLiveCatalogSelectors } from '../src/devin-connect-models.js';
+import { clearLiveCatalogSelectors, getSnapshotSelectors, setLiveCatalogSelectors } from '../src/devin-connect-models.js';
 
 const PASSWORD = randomUUID();
 
@@ -40,7 +40,7 @@ describe('dashboard catalog diff route', () => {
     assert.equal(status, 200);
     assert.equal(json.synced, true);
     assert.equal(json.liveCount, 2);
-    assert.equal(json.snapshotCount, 233);
+    assert.equal(json.snapshotCount, getSnapshotSelectors().length);
     assert.ok(json.added.includes('MODEL_LIVE_ALPHA'));
     assert.ok(json.added.includes('MODEL_LIVE_BETA'));
     assert.equal(json.aliasCount, 1);

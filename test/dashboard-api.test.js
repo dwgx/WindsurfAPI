@@ -7,6 +7,7 @@ import {
   recordNativeBridgeDecision,
   resetNativeBridgeStats,
 } from '../src/native-bridge-stats.js';
+import { getSnapshotSelectors } from '../src/devin-connect-models.js';
 import { _resetRuntimeConfigForTests } from '../src/runtime-config.js';
 import { detachedRegistry } from '../src/detached-registry.js';
 import { __resetReadCache, __setFetchImplForTest, __setNowForTest } from '../src/dashboard/devin-read.js';
@@ -645,7 +646,7 @@ describe('dashboard P0 read cards', () => {
     assert.equal(res.body.includes('keyPrefix'), false);
   });
 
-  it('serves model reconciliation with the 233-row snapshot and no teamId', async () => {
+  it('serves model reconciliation with the committed snapshot and no teamId', async () => {
     config.dashboardPassword = 'card-secret';
     config.apiKey = '';
     configureBindHost('0.0.0.0');
@@ -657,7 +658,7 @@ describe('dashboard P0 read cards', () => {
     assert.equal(res.statusCode, 200);
     const body = res.json();
     assert.equal(body.ok, true);
-    assert.equal(body.snapshotCount, 233);
+    assert.equal(body.snapshotCount, getSnapshotSelectors().length);
     assert.equal(body.synced, false);
     assert.deepEqual(body.added, []);
     assert.deepEqual(body.missing, []);

@@ -126,13 +126,13 @@ describe('mapToggleableVersion', () => {
 });
 
 describe('buildModelReconciliation', () => {
-  it('reports the real 233-row snapshot and an unsynced live catalog', () => {
+  it('reports the committed snapshot row count and an unsynced live catalog', () => {
     const out = buildModelReconciliation(base());
-    assert.equal(out.snapshotCount, 233);
+    assert.equal(out.snapshotCount, getSnapshotSelectors().length);
     assert.equal(out.liveCount, 0);
     assert.equal(out.synced, false);
     assert.deepEqual(out.added, []);
-    assert.deepEqual(out.missing, [], 'an unsynced account must not report 233 missing rows');
+    assert.deepEqual(out.missing, [], 'an unsynced account must not report snapshot missing rows');
     assert.equal(out.upstreamCatalog.empty, true);
     assert.equal(out.upstreamCatalog.groupCount, 0);
     assert.equal(out.fedModels.present, false);
@@ -223,7 +223,7 @@ describe('buildModelReconciliation', () => {
     }));
     assert.equal(out.partial, true);
     assert.deepEqual(out.degraded.map((d) => [d.source, d.kind]), [['catalog', 'forbidden'], ['toggleable', 'timeout']]);
-    assert.equal(out.snapshotCount, 233);
+    assert.equal(out.snapshotCount, getSnapshotSelectors().length);
   });
 
   it('caps toggleable rows at 50 while counting all of them', () => {

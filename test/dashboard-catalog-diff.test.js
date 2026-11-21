@@ -58,7 +58,7 @@ describe('dashboard catalog diff', () => {
     assert.equal(diff.unmappedCount, 0);
   });
 
-  it('reconciles against the committed 233-selector snapshot', () => {
+  it('reconciles against the committed selector snapshot', () => {
     const out = buildModelReconciliation({
       local: [],
       live: [],
@@ -69,7 +69,7 @@ describe('dashboard catalog diff', () => {
       upstreamCatalog: null,
       sources: {},
     });
-    assert.equal(out.snapshotCount, 233);
+    assert.equal(out.snapshotCount, getSnapshotSelectors().length);
     assert.equal(out.synced, false);
     assert.deepEqual(out.missing, []);
   });
