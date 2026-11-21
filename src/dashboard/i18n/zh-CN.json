@@ -1876,6 +1876,7 @@
     "ERR_NO_VALID_LINES": "没有有效行",
     "ERR_FORMAT_INVALID": "格式错误 需要 [proxy] email password",
     "ERR_UNSUPPORTED_IMPORT_ITEM": "该项无法识别为邮箱密码、Token 或 API Key",
+    "ERR_AUTO_ADD_DISABLED": "未启用加入账号池，已跳过此项。",
     "ERR_JSON_INVALID": "JSON 格式无效",
     "ERR_JSON_FILE_REQUIRED": "请选择 .json 文件",
     "ERR_IDTOKEN_REQUIRED": "缺少 idToken",

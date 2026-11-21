@@ -3848,6 +3848,12 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
       const results = [];
       let skippedCount = 0;
       for (const item of parsed.items) {
+        if (autoAdd === false && (item.kind === 'token' || item.kind === 'api_key')) {
+          skippedCount++;
+          results.push({ success: false, skipped: true, lineNumber: item.lineNumber,
+            importKind: item.kind, error: 'ERR_AUTO_ADD_DISABLED' });
+          continue;
+        }
         if (item.kind === 'issue') {
           skippedCount++;
           results.push({

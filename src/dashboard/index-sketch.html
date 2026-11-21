@@ -2708,11 +2708,15 @@ const App = {
           <thead><tr><th>email</th><th>status</th><th>note</th></tr></thead>
           <tbody>${r.results.map(x => `<tr><td>${this.esc(x.email || '-')}</td>
             <td><span class="badge ${x.success ? 'active' : (x.skipped ? 'warn' : 'error')}">${x.success ? 'ok' : (x.skipped ? 'skipped' : 'fail')}</span></td>
-            <td class="text-sm">${x.success ? `<code class="break-all">${this.esc(x.apiKey_masked || x.apiKey?.slice(0,16) + '…' || '-')}</code>` : `<span style="color:var(--${x.skipped ? 'warn' : 'error'})">${this.esc(x.error || 'unknown')}</span>`}</td></tr>`).join('')}</tbody>
+            <td class="text-sm">${x.success ? `<code class="break-all">${this.esc(x.apiKey_masked || x.apiKey?.slice(0,16) + '…' || '-')}</code>` : `<span style="color:var(--${x.skipped ? 'warn' : 'error'})">${this.esc(x.error === 'ERR_AUTO_ADD_DISABLED' ? (I18n.locale === 'en' ? 'Adding to the pool is off' : '未启用加入账号池') : x.error || 'unknown')}</span>`}</td></tr>`).join('')}</tbody>
         </table></div>`);
       this.pushLoginHistoryEntries(r.results.map(x => ({ time: new Date().toISOString(), email: x.email, proxy: 'batch', status: x.success ? 'success' : 'error: ' + (x.error || 'unknown'), apiKey: x.success ? x.apiKey_masked : undefined })));
       this.toast(`batch · ${r.successCount || 0} ok / ${r.skippedCount || 0} skipped / ${r.failCount || 0} fail`);
-      if ((r.successCount || 0) > 0) { this.loadAccounts(); document.getElementById('wl-batch-input').value = ''; }
+      if ((r.successCount || 0) > 0) {
+        this.loadAccounts();
+        const field = document.getElementById('wl-batch-input');
+        if (r.results.every(item => item.success) && field.value === input) field.value = '';
+      }
     } catch (err) { this.toast(err.message, 'error'); }
     finally { btn.disabled = false; btn.textContent = '批量导入'; }
   },

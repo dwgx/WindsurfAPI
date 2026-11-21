@@ -1,0 +1,26 @@
+{
+  "tests": [
+    "test/batch-import-opt-out.test.js"
+  ],
+  "expectBaselinePass": 3,
+  "mutations": [
+    {
+      "name": "tokens and keys ignore non-adding mode",
+      "file": "src/dashboard/api.js",
+      "anchor": "autoAdd === false && (item.kind === 'token' || item.kind === 'api_key')",
+      "replacement": "false && (item.kind === 'token' || item.kind === 'api_key')"
+    },
+    {
+      "name": "modern dashboard erases partly processed input",
+      "file": "src/dashboard/index.html",
+      "anchor": "const complete = r.results.every(item => item.success);",
+      "replacement": "const complete = true;"
+    },
+    {
+      "name": "sketch dashboard erases partly processed input",
+      "file": "src/dashboard/index-sketch.html",
+      "anchor": "if (r.results.every(item => item.success) && field.value === input) field.value = '';",
+      "replacement": "if (field.value === input) field.value = '';"
+    }
+  ]
+}

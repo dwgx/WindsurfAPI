@@ -1876,6 +1876,7 @@
     "ERR_NO_VALID_LINES": "No valid lines found",
     "ERR_FORMAT_INVALID": "Invalid format. Expected: [proxy] email password",
     "ERR_UNSUPPORTED_IMPORT_ITEM": "Item could not be recognized as email/password, token, or API key",
+    "ERR_AUTO_ADD_DISABLED": "Skipped because adding accounts to the pool is turned off.",
     "ERR_JSON_INVALID": "Invalid JSON format",
     "ERR_JSON_FILE_REQUIRED": "Please choose a .json file",
     "ERR_IDTOKEN_REQUIRED": "ID token is required",

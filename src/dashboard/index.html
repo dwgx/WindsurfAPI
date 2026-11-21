@@ -8941,9 +8941,9 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
 
   async windsurfLoginBatch() {
     const input = document.getElementById('wl-batch-input').value;
+    const pasted = !this.windsurfBatchFile;
     const batchText = this.windsurfBatchFile?.text || input;
     if (!batchText.trim()) return this.toast(I18n.t('batch.pasteFirst'), 'error');
-
     const autoAdd = document.getElementById('wl-auto-add').checked;
     const storeCredential = document.getElementById('wl-store-cred')?.checked || false;
     const btn = document.getElementById('wl-batch-btn');
@@ -8985,11 +8985,11 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
         I18n.t('batch.importComplete', {success: r.successCount || 0, fail: r.failCount || 0, skipped: r.skippedCount || 0}),
         (r.failCount || 0) ? 'info' : 'success'
       );
-      if ((r.successCount || 0) > 0 && !this.windsurfBatchFile) {
+      if ((r.successCount || 0) > 0) {
         this.loadAccounts();
-        document.getElementById('wl-batch-input').value = '';
-      } else if ((r.successCount || 0) > 0) {
-        this.loadAccounts();
+        const field = document.getElementById('wl-batch-input');
+        const complete = r.results.every(item => item.success);
+        if (pasted && !this.windsurfBatchFile && complete && field.value === input) field.value = '';
       }
     } catch (err) {
       const errKey = err.message ? `error.${err.message}` : null;
