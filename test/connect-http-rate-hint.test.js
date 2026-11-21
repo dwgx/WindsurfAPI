@@ -206,6 +206,16 @@ describe('pre-content stream 429 default JSON matches its Retry-After', () => {
     assert.equal(body.error.retry_after_ms, undefined);
   });
 
+  it('preserves the existing JSON error shape for a capacity response', () => {
+    const real = fakeRes();
+    const response = createDeferredSseResponse(real);
+    response.write(frame({ error: { message: 'busy', code: 'CAPACITY', retry_after_ms: 42000 } }));
+    response.end();
+    assert.equal(real.statusCode, 503);
+    assert.equal(real.headers['retry-after'], '42');
+    assert.equal(Object.hasOwn(JSON.parse(real.body).error, 'retry_after_ms'), false);
+  });
+
   it('leaves a custom errorBody shape untouched', () => {
     const real = fakeRes();
     const res = createDeferredSseResponse(real, {

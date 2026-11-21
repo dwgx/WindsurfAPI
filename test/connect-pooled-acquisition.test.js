@@ -94,8 +94,6 @@ afterEach(async () => {
     if (value === undefined) delete process.env[name];
     else process.env[name] = value;
   }
-  delete process.env.DEVIN_CONNECT_TOKEN;
-  delete process.env.WINDSURF_API_KEY;
 });
 
 describe('DEVIN_CONNECT pooled acquisition contract', () => {

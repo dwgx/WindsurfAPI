@@ -272,7 +272,7 @@ export function createDeferredSseResponse(realRes, {
           // same advertised delay in the default JSON body so a client reading
           // only `error.retry_after_ms` cannot see a different (or missing)
           // wait. Custom `errorBody` builders keep their own shape.
-          ...(retry ? { retry_after_ms: retry * 1000 } : {}),
+          ...(mapped === 429 && retry ? { retry_after_ms: retry * 1000 } : {}),
         },
         ...(requestId ? { request_id: requestId } : {}),
       };
