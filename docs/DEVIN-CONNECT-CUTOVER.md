@@ -68,22 +68,15 @@ A selector absent from a non-empty live catalog is reported as
 `not_in_catalog` rather than reachable+free.
 
 A model name the catalog does not know is **rejected with `400 model_not_found`**,
-not degraded. This sentence used to say the opposite ("any other model name
-degrades to that free selector"), which stopped being true when the strict-model
-guard shipped with default `WINDSURFAPI_STRICT_MODEL=1`: silently substituting the
-free selector changes both the output and the billing semantics of an explicitly
-requested paid model, so it fails loudly instead. Setting
-`WINDSURFAPI_STRICT_MODEL=0` restores the legacy silent degrade — see the env
-reference for why that is a footgun rather than a workaround.
-
-That opt-out degrades **only to a selector that is callable**: the live free
-selectors above, restricted to what the account's catalog actually exposes. It
-used to target the frozen `swe-1-6-slow` unconditionally, which on a live-catalog
-deployment is absent and answers with "Your daily usage quota has been
-exhausted" — so a typo came back as a quota error that looked like an account
-fault. When no live free selector qualifies, the request is answered
-`400 model_not_found` even with the opt-out set; the static `swe-1-6-slow` floor
-now applies only while no live catalog has arrived (cold start).
+not degraded. There is no opt-out: silently substituting the free selector
+changes both the output and the billing semantics of an explicitly requested
+paid model, so it fails loudly instead. The `STRICT_MODEL` opt-out switch
+was removed — strict is the only behavior. The old opt-out degraded **only to
+a selector that was callable**: the live free selectors above, restricted to
+what the account's catalog actually exposed. It used to target the frozen
+`swe-1-6-slow` unconditionally, which on a live-catalog deployment is absent
+and answers with "Your daily usage quota has been exhausted" — so a typo came
+back as a quota error that looked like an account fault.
 
 ## 2. Recommended hardening adds (optional, all default-off)
 

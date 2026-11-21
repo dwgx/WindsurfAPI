@@ -390,7 +390,7 @@ In your client's settings for **Custom OpenAI Compatible**:
 | `CODEIUM_EMAIL` | empty | Email for Windsurf account authentication. |
 | `CODEIUM_PASSWORD` | empty | Password for Windsurf account authentication. |
 | `CODEIUM_API_URL` | `https://server.self-serve.windsurf.com` | Windsurf cloud API endpoint. |
-| `DEFAULT_MODEL` | `claude-sonnet-4.6` | The model to use if `model` is not specified. Must be a name the active backend can resolve. Unmapped Connect names return 400 `model_not_found` unless `WINDSURFAPI_STRICT_MODEL=0`, which degrades to a free selector the live catalog **actually exposes** — and still returns 400 when there is none, instead of falling back to `swe-1-6-slow`, which the catalog no longer carries. |
+| `DEFAULT_MODEL` | `claude-sonnet-4.6` | The model to use if `model` is not specified. Must be a name the active backend can resolve. Unmapped Connect names return 400 `model_not_found`; there is no silent degrade to a free selector. |
 | `MAX_TOKENS` | `8192` | Default maximum number of response tokens. |
 | `LOG_LEVEL` | `info` | Console level: debug / info / warn / error. JSONL files and Dashboard still receive all levels. |
 | `LOG_RETENTION_DAYS` | `0` (off) | Application JSONL retention in UTC calendar days including today; e.g. `14`. Cleanup at startup and hourly. Restart after changes. |
