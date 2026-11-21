@@ -2409,7 +2409,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
           continue;
         }
         try {
-          const acc = await addByKind(pair.token, pair.email || '');
+          const acc = await addAccountByPastedSecret(pair.token, pair.email || '');
           results.added.push({ id: acc.id, email: acc.email || pair.email, kind: pairKind });
         } catch (e) { results.failed.push({ email: pair.email, error: e.message }); }
       }
