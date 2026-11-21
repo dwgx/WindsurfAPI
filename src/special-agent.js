@@ -272,11 +272,9 @@ function pickUsage(rawUsage, messages, completionText) {
 // cline-01: never report finish_reason:'tool_calls' unless tool_calls were
 // actually emitted. Cline's @ai-sdk client treats a 'tool_calls' finish with no
 // tool_calls array as a broken response and retries to death (cline#9622). The
-// print runner is TEXT-ONLY, so a tool-ish stop_reason from it must degrade to
-// 'stop', not lie about a tool call that was never sent. The ACP runner now
-// forwards captured tool_call/tool_call_update notifications and refuses a
-// tool-ish stop with no mappable call (backend_tool_call_unmapped), so its
-// call sites pass hasToolCalls=true exactly when tool_calls are present.
+// print runner is text-only, so a tool-ish stop from it maps to 'stop'. The
+// built-in ACP runner rejects tool-ish stops as backend_tool_call_unmapped.
+// An injected runner can return explicit caller-owned calls.
 // The content_filter test is deliberately NARROW. A bare `includes('content')`
 // classified any reason with the substring "content" as a refusal, and the words
 // upstreams actually use for a NORMAL completion contain it: `content_complete`,
@@ -536,17 +534,10 @@ export async function runDevinPrint(prompt, { modelKey = '', apiKey = '', signal
   }
 }
 
-// Project the ACP runner's protocol-neutral tool calls into OpenAI's
-// assistant.tool_calls shape. The runner already refused a tool-ish stop that
-// has no mappable call, so every entry here has an id and a name. `input` is
-// the agent's rawInput; {} means the agent announced no arguments (never a
-// synthesized result — the tool's output stays out of the egress).
+// Project a runner's caller-owned tool requests into OpenAI assistant.tool_calls.
 function openAiToolCalls(toolCalls) {
   if (!Array.isArray(toolCalls) || !toolCalls.length) return null;
   return toolCalls.map((tc, index) => ({
-    // ACP's toolCallId is the CLI's own dialect (the raw id still keys the
-    // tool_call/tool_call_update notifications inside the pump). The client
-    // only ever sees the OpenAI `call_<opaque>` shape.
     id: toClientToolCallId(tc.id, `call_${index}_${Date.now().toString(36)}`),
     type: 'function',
     function: {
@@ -718,11 +709,8 @@ function streamLiveAcp({ id, created, model, messages, prompt, modelKey, acct, r
           send({ id, object: 'chat.completion.chunk', created, model,
             choices: [{ index: 0, delta: { content: safe }, finish_reason: null }] });
         }
-        // Forward the turn's tool calls before the terminal chunk. They are
-        // emitted as one complete delta per call (id/name/arguments together):
-        // ACP's tool_call_update can replace rawInput, so buffering to the end
-        // is the only lossless framing. No tool result is emitted — the client
-        // never produced one.
+        // Emit explicit caller-owned requests from a runner as complete
+        // deltas before the terminal chunk.
         const calls = openAiToolCalls(result?.toolCalls);
         if (calls) {
           send({ id, object: 'chat.completion.chunk', created, model,
@@ -821,10 +809,8 @@ function reportRunFailure(apiKey, err, deps = {}) {
   if (status === 499 || type === 'request_aborted') {
     return;
   }
-  // An ACP turn whose tool_use stop has no forwardable tool call is a
-  // protocol/CLI-shape fault (the agent contradicted its own notification
-  // stream), not an account fault. Feeding the error streak would disable a
-  // healthy credential over a CLI-version mismatch.
+  // An unsupported ACP stop is a CLI protocol fault. Exclude it from
+  // the account error streak.
   if (type === 'backend_tool_call_unmapped') {
     return;
   }
@@ -877,7 +863,7 @@ export async function handleSpecialAgentChatCompletion(body, route, deps = {}) {
     return errorResponse(
       400,
       'unsupported_tool_boundary',
-      'Devin CLI print backend does not safely expose caller-local tools yet. Use a normal Cascade model, or wait for ACP tool bridging.',
+      'Caller-local tool declarations are disabled for the Devin CLI backend. Use a Cascade model for caller-local tool execution.',
       { backend: 'devin-cli', tool_count: tools.length },
     );
   }

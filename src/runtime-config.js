@@ -101,7 +101,7 @@ const DEFAULTS = {
     devinConnect: null,       // DEVIN_CONNECT — pure-HTTP cloud egress kill-switch
     devinOnly: null,          // DEVIN_ONLY — Cascade retired, force Devin CLI
     devinCliMode: null,       // DEVIN_CLI_MODE — 'acp' | 'print' sub-mode
-    allowClientTools: null,   // DEVIN_CLI_ALLOW_CLIENT_TOOLS — expose caller tools
+    allowClientTools: null,   // DEVIN_CLI_ALLOW_CLIENT_TOOLS — admit caller tool declarations
     loginHostFallback: null,  // DEVIN_CONNECT_LOGIN_HOST_FALLBACK — devin.ai auth1 fallback
     autoRelogin: null,        // DEVIN_CONNECT_AUTO_RELOGIN — dead-token recovery
   },

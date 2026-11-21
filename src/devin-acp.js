@@ -2,7 +2,6 @@ import { spawn } from 'child_process';
 import { setTimeout as delay } from 'node:timers/promises';
 import { VERSION } from './version.js';
 import { log } from './config.js';
-import { sanitizeToolName } from './tool-names.js';
 import { MODELS, resolveModel } from './models.js';
 import { buildSubprocessEnv, buildMinimalSubprocessEnv } from './log-safety.js';
 
@@ -280,63 +279,14 @@ const THOUGHT_CHUNK_KINDS = new Set([
   'agent_reasoning_chunk',
 ]);
 
-// ── Tool-call notifications (GFHarness P1) ──────────────────────────────────
-// ACP reports the agent's tool use as `session/update` notifications:
-//   tool_call        {toolCallId, title, kind, status, rawInput?, content?}
-//   tool_call_update {toolCallId, status?, rawInput?, content?, rawOutput?}
-// They used to be dropped: the text pump only knew message/thought kinds, so a
-// turn that ended in a tool call surfaced as plain text with finish_reason
-// "stop" and the caller never learned a tool ran. Collect them keyed by
-// toolCallId and expose them as protocol tool-call events. A `tool_call_update`
-// carries the tool's output in `content`/`rawOutput`; that is deliberately NOT
-// emitted as a tool result — the API client never produced that result, and
-// synthesizing one would fabricate a conversation turn.
+// ACP tool notifications describe agent-owned activity. Only assistant reply
+// text and reasoning are projected from session/update into the HTTP result.
 const TOOL_UPDATE_KINDS = new Set(['tool_call', 'tool_call_update']);
-
-function normalizeAcpToolInput(rawInput) {
-  if (rawInput == null) return {};
-  if (typeof rawInput !== 'string') return rawInput;
-  // rawInput is ACP `unknown`: it may already be JSON text. Parse it so the
-  // egress serializes exactly once; a non-JSON string stays a plain value.
-  try { return JSON.parse(rawInput); } catch { return rawInput; }
-}
-
-function applyAcpToolUpdate(buffers, update, updateKind) {
-  const id = update?.toolCallId || update?.tool_call_id;
-  if (!id) return;
-  let call = buffers.toolCalls.get(id);
-  if (!call) {
-    if (updateKind !== 'tool_call') {
-      // ACP requires tool_call before its updates. An update for an unknown id
-      // carries no tool identity to forward; keep the turn alive and log it.
-      log.warn(`Devin ACP ${updateKind} for unknown toolCallId ${String(id)} ignored`);
-      return;
-    }
-    call = { id, title: '', kind: '', status: '', rawInput: undefined, hasRawInput: false };
-    buffers.toolCalls.set(id, call);
-  }
-  if (typeof update.title === 'string' && update.title) call.title = update.title;
-  if (typeof update.kind === 'string' && update.kind) call.kind = update.kind;
-  if (typeof update.status === 'string' && update.status) call.status = update.status;
-  // rawInput is authoritative when present; a status-only update must not
-  // erase the arguments announced by the original tool_call.
-  if (Object.prototype.hasOwnProperty.call(update, 'rawInput')) {
-    call.rawInput = update.rawInput;
-    call.hasRawInput = true;
-  } else if (Object.prototype.hasOwnProperty.call(update, 'raw_input')) {
-    call.rawInput = update.raw_input;
-    call.hasRawInput = true;
-  }
-}
 
 function collectAcpTextFromNotification(obj, buffers, onChunk) {
   if (obj?.method !== 'session/update') return;
   const { kind, text } = extractAcpUpdate(obj.params || {});
-  if (TOOL_UPDATE_KINDS.has(kind)) {
-    const update = obj.params?.update || obj.params || {};
-    applyAcpToolUpdate(buffers, update, kind);
-    return;
-  }
+  if (TOOL_UPDATE_KINDS.has(kind)) return;
   if (!text) return;
   if (MESSAGE_CHUNK_KINDS.has(kind)) {
     buffers.message.push(text);
@@ -349,8 +299,7 @@ function collectAcpTextFromNotification(obj, buffers, onChunk) {
     buffers.thought.push(text);
     if (onChunk) { try { onChunk({ kind: 'thought', text }); } catch { /* ignore consumer error */ } }
   }
-  // Remaining update kinds (plan, mode, commands, status) are not part of the
-  // text/reasoning/tool-call split and are ignored here on purpose.
+  // Other updates (plan, mode, commands, status) are ignored here.
 }
 
 function permissionResponse(options, cancelled) {
@@ -415,7 +364,7 @@ function makeAcpClient({ command, args, env, signal, deadline, timeoutMs, output
   // otherwise the child is killed before it can read the cancel notification.
   let gracefulKillPending = false;
   const pending = new Map();
-  const buffers = { message: [], thought: [], toolCalls: new Map() };
+  const buffers = { message: [], thought: [] };
 
   const cleanup = () => {
     for (const { timer } of pending.values()) clearTimeout(timer);
@@ -604,17 +553,6 @@ function makeAcpClient({ command, args, env, signal, deadline, timeoutMs, output
     setSessionId: (id) => { activeSessionId = id || null; },
     getText: () => buffers.message.join('').trim(),
     getReasoning: () => buffers.thought.join('').trim(),
-    // Protocol-neutral view of the turn's tool calls. `input` is the parsed
-    // rawInput ({} when the agent announced none); `name` is null when ACP gave
-    // neither a title nor a kind, which the caller must treat as unmappable.
-    getToolCalls: () => Array.from(buffers.toolCalls.values(), (call) => ({
-      id: call.id,
-      name: sanitizeToolName(call.title) || sanitizeToolName(call.kind) || null,
-      kind: call.kind || null,
-      title: call.title || null,
-      status: call.status || null,
-      input: normalizeAcpToolInput(call.hasRawInput ? call.rawInput : null),
-    })),
     getStderr: () => stderr.trim(),
   };
 }
@@ -890,23 +828,12 @@ async function runDevinAcpAttempt(prompt, {
     if (result.error) throw errorFromRpcResponse(result, 'Devin ACP session/prompt failed');
 
     const stopReason = result?.result?.stopReason || result?.result?.stop_reason || null;
-    const toolCalls = client.getToolCalls();
-    // A tool-ish stop is only representable as tool_calls/tool_use when the ACP
-    // pump actually captured the call. Degrading to finish_reason:"stop" here
-    // would tell the client a turn that stopped to use a tool was a normal
-    // answer (GFHarness probe D). No call (or a call without the title/kind
-    // needed for a protocol tool name) is an unmappable turn: fail explicitly.
+    // ACP v1 has no tool stop reason. An extension would need an explicit
+    // delegation path to the HTTP caller before it can end a turn this way.
     if (/tool/i.test(String(stopReason || ''))) {
-      const unnamed = toolCalls.filter(tc => !tc.name);
-      if (!toolCalls.length || unnamed.length) {
-        throw Object.assign(new Error(
-          `Devin ACP stopped with stopReason "${stopReason}" but ` +
-          (toolCalls.length
-            ? `${unnamed.length} tool call(s) had no title/kind to map to a tool name`
-            : 'no tool_call update was received') +
-          '; refusing to report a clean completion',
-        ), { status: 502, type: 'backend_tool_call_unmapped' });
-      }
+      throw Object.assign(new Error(
+        `Devin ACP stopped with stopReason "${stopReason}" without a supported caller tool handoff`,
+      ), { status: 502, type: 'backend_tool_call_unmapped' });
     }
     return {
       text: client.getText(),
@@ -914,13 +841,6 @@ async function runDevinAcpAttempt(prompt, {
       stderr: client.getStderr(),
       usage: result?.result?.usage || null,
       stopReason,
-      // Only named calls can become protocol tool-call events. A non-tool stop
-      // may carry metadata-only calls; they are dropped with a trace.
-      toolCalls: toolCalls.filter(tc => {
-        if (tc.name) return true;
-        log.warn(`Devin ACP tool_call ${String(tc.id)} has no title/kind; not forwarded`);
-        return false;
-      }),
     };
   } finally {
     client.close();
