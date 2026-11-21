@@ -21,6 +21,7 @@ import { randomUUID } from 'node:crypto';
 import { dirname, join, resolve } from 'node:path';
 import {
   getAccountList, getAccountCount, getAccountListStats, getAccountPublic, addAccountByKey, addAccountByPastedSecret,
+  addAccountByKeyWithDisposition, addAccountByPastedSecretWithDisposition,
   countAccountList, ACCOUNT_STATE_VALUES, ACCOUNT_SORT_VALUES,
   removeAccount, setAccountStatus, resetAccountErrors, updateAccountLabel,
   markAccountReauthenticated, requestReauthCheck, setAccountCredentialEmail, setAccountIdentityEmail,
@@ -257,6 +258,14 @@ function describeImportItem(item) {
   const kind = IMPORT_KIND_LABELS[item?.kind] || IMPORT_KIND_LABELS.issue;
   const proxy = redactedProxyLabel(item?.proxy);
   return proxy ? `${kind} · proxy ${proxy}` : kind;
+}
+
+function importErrorCode(error) {
+  for (const value of [error?.code, error?.message]) {
+    const match = typeof value === 'string' && /^(ERR_[A-Z0-9_]{1,64})(?::|$)/.exec(value);
+    if (match) return match[1];
+  }
+  return 'ERR_IMPORT_ITEM_FAILED';
 }
 
 // AUTH-1 CORS hardening: the dashboard used to answer every request (and
@@ -936,7 +945,7 @@ function captureBoundWindsurfLogin(accountId) {
   return bound;
 }
 
-async function processWindsurfLogin({ email, password, loginProxy, autoAdd, storeCredential: wantStore, req, accountId = null }) {
+async function processWindsurfLogin({ email, password, loginProxy, autoAdd, storeCredential: wantStore, req, accountId = null, reportPoolDisposition = false }) {
   if (!email || !password) {
     const err = new Error('ERR_EMAIL_PASSWORD_REQUIRED');
     err.statusCode = 400;
@@ -948,16 +957,17 @@ async function processWindsurfLogin({ email, password, loginProxy, autoAdd, stor
   const proxy = loginProxy?.host ? loginProxy : getProxyConfig().global;
   const bound = accountId ? captureBoundWindsurfLogin(accountId) : null;
   const result = await windsurfLogin(email, password, proxy);
-  return finalizeWindsurfLogin(result, { password, loginProxy, autoAdd, storeCredential: wantStore, req, bound });
+  return finalizeWindsurfLogin(result, { password, loginProxy, autoAdd, storeCredential: wantStore, req, bound, reportPoolDisposition });
 }
 
 // Keep validation and all credential writes synchronous after upstream login.
-function finalizeWindsurfLogin(result, { password, loginProxy, autoAdd, storeCredential: wantStore, req, bound = null }) {
+function finalizeWindsurfLogin(result, { password, loginProxy, autoAdd, storeCredential: wantStore, req, bound = null, reportPoolDisposition = false }) {
   const email = result.email || '';
   // The address this login proved. Independent of whether a password is kept:
   // a retention:false password login and an email-code login both establish it.
   const resultIdentity = loginResultIdentity(result);
   let account = null;
+  let poolDisposition = 'login_only';
   let reauthenticated = false;
   // Whether the password the caller asked to store actually landed. null = not
   // asked / store unavailable, true = encrypted and persisted, false = the save
@@ -988,7 +998,7 @@ function finalizeWindsurfLogin(result, { password, loginProxy, autoAdd, storeCre
     // `result.name` is upstream-supplied: sanitize (never assert) so a hostile
     // login response cannot fail the whole login via the caller-facing label
     // boundary inside addAccountByKey.
-    account = addAccountByKey(result.apiKey, sanitizeLabelText(result.name) || email);
+    ({ account, poolDisposition } = addAccountByKeyWithDisposition(result.apiKey, sanitizeLabelText(result.name) || email));
     const knownIdentity = accountLoginIdentity(account);
     if (resultIdentity && knownIdentity) assertLoginIdentity(result, knownIdentity);
   }
@@ -1058,6 +1068,7 @@ function finalizeWindsurfLogin(result, { password, loginProxy, autoAdd, storeCre
     email: result.email,
     apiServerUrl: result.apiServerUrl,
     account: account ? { id: account.id, email: account.email, status: account.status } : null,
+    ...(reportPoolDisposition ? { poolDisposition } : {}),
     // How the session was obtained, so the UI can show it instead of making
     // the operator guess which path ran.
     method: result.viaEmailCode ? 'email_code' : 'password',
@@ -2377,17 +2388,27 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
   // classifies each and adds via addAccountByPastedSecret. auth1_ is skipped
   // (PostAuth intermediate, not a pool key). SECURITY: never logs the pasted
   // text or any token; results carry only id/email/kind, never raw token.
-  if (subpath === '/accounts/import-text' && method === 'POST') {
+  if (method === 'POST' && (subpath === '/accounts/import-text' || subpath === '/accounts/import-text/preview')) {
     try {
       const text = String(body.text || '');
-      if (!text.trim()) return json(res, 400, { error: 'ERR_IMPORT_TEXT_EMPTY' });
-      const parsed = parseAccountText(text);
-      const results = { added: [], skipped: [], failed: [] };
+      if (!text.trim()) return json(res, 400, { error: 'ERR_IMPORT_TEXT_EMPTY' }, NO_STORE);
+      const parsed = parseAccountText(text, { includeDiagnostics: true });
+      const { tokens, tokenPairs, accounts: passwordAccounts, unrecognizedLines } = parsed;
+      if (subpath.endsWith('/preview')) {
+        return json(res, 200, {
+          success: true, preview: true,
+          recognized: tokens.length + tokenPairs.length + passwordAccounts.length,
+          unrecognizedLines,
+        }, NO_STORE);
+      }
+      // The legacy added array means the account is present after import.
+      // poolDisposition distinguishes a newly created row from an existing one.
+      const results = { added: [], skipped: [], failed: [], unrecognizedLines };
       // A devin-session-token$ is itself the apiKey (addAccountByKey); other
       // token shapes run RegisterUser (addAccountByToken). Route by classified
       // kind so a pasted session token doesn't fail against the Firebase-only
       // RegisterUser path.
-      for (const raw of (parsed.tokens || [])) {
+      for (const raw of tokens) {
         const kind = classifyToken(raw);
         // auth1_ is a PostAuth intermediate, not a pool key.
         if (kind === 'auth1') { results.skipped.push({ kind, reason: 'auth1_not_a_pool_key' }); continue; }
@@ -2398,28 +2419,28 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
         // routes a session token to the pool key and everything else through
         // RegisterUser, and reports a rejection per token instead of hiding it.
         try {
-          const acc = await addAccountByPastedSecret(raw, '');
-          results.added.push({ id: acc.id, email: acc.email, kind });
-        } catch (e) { results.failed.push({ kind, error: e.message }); }
+          const { account, poolDisposition } = await addAccountByPastedSecretWithDisposition(raw, '');
+          results.added.push({ id: account.id, email: account.email, kind, poolDisposition });
+        } catch (e) { results.failed.push({ kind, error: importErrorCode(e) }); }
       }
-      for (const pair of (parsed.tokenPairs || [])) {
+      for (const pair of tokenPairs) {
         const pairKind = classifyToken(pair.token);
         if (pairKind === 'auth1') {
           results.skipped.push({ kind: pairKind, email: pair.email, reason: 'auth1_not_a_pool_key' });
           continue;
         }
         try {
-          const acc = await addAccountByPastedSecret(pair.token, pair.email || '');
-          results.added.push({ id: acc.id, email: acc.email || pair.email, kind: pairKind });
-        } catch (e) { results.failed.push({ email: pair.email, error: e.message }); }
+          const { account, poolDisposition } = await addAccountByPastedSecretWithDisposition(pair.token, pair.email || '');
+          results.added.push({ id: account.id, email: account.email || pair.email, kind: pairKind, poolDisposition });
+        } catch (e) { results.failed.push({ email: pair.email, error: importErrorCode(e) }); }
       }
       // Email/password accounts need the login flow (batch 2+); record as skipped.
-      for (const a of (parsed.accounts || [])) {
+      for (const a of passwordAccounts) {
         results.skipped.push({ kind: 'email_password', email: a.email, reason: 'use_login_flow' });
       }
-      return json(res, 200, { success: true, ...results, ...getAccountCount() });
+      return json(res, 200, { success: true, ...results, ...getAccountCount() }, NO_STORE);
     } catch (err) {
-      return json(res, 400, { error: err.message });
+      return json(res, 400, { error: importErrorCode(err) }, NO_STORE);
     }
   }
 
@@ -3838,13 +3859,23 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
   }
 
   // ─── Batch proxy + account import ─────────────────────
-  // POST /batch-import — each line: "proxy email password" or "email password"
-  if (subpath === '/batch-import' && method === 'POST') {
+  // POST /batch-import/preview reports parsed formats without attempting
+  // logins, validating proxy reachability, or writing any account or proxy.
+  if (method === 'POST' && (subpath === '/batch-import' || subpath === '/batch-import/preview')) {
     try {
       const { text, autoAdd = true, storeCredential } = body || {};
-      if (!text || typeof text !== 'string') return json(res, 400, { error: 'ERR_TEXT_REQUIRED' });
+      if (!text || typeof text !== 'string') return json(res, 400, { error: 'ERR_TEXT_REQUIRED' }, NO_STORE);
       const parsed = parseBatchImportInput(text, parseProxyUrl);
-      if (!parsed.items.length) return json(res, 400, { error: 'ERR_NO_VALID_LINES' });
+      if (!parsed.items.length) return json(res, 400, { error: 'ERR_NO_VALID_LINES' }, NO_STORE);
+      if (subpath.endsWith('/preview')) {
+        return json(res, 200, {
+          success: true, preview: true, mode: parsed.mode,
+          results: parsed.items.map(item => {
+            const error = item.error || (classifyToken(item.token || item.apiKey) === 'auth1' ? 'ERR_AUTH1_NOT_A_POOL_KEY' : undefined);
+            return { lineNumber: item.lineNumber, importKind: item.kind, error };
+          }),
+        }, NO_STORE);
+      }
       const results = [];
       let skippedCount = 0;
       for (const item of parsed.items) {
@@ -3876,6 +3907,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
               autoAdd,
               storeCredential,
               req,
+              reportPoolDisposition: true,
             });
             const binding = buildBatchProxyBinding(result, item.proxy);
             if (binding) {
@@ -3883,25 +3915,27 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
               scheduleAccountWarmup(binding.accountId);
             }
           } else if (item.kind === 'token') {
-            const account = await addAccountByPastedSecret(item.token, item.label);
+            const { account, poolDisposition } = await addAccountByPastedSecretWithDisposition(item.token, item.label);
             if (item.proxy) {
               setAccountProxy(account.id, item.proxy);
               scheduleAccountWarmup(account.id);
             }
             result = {
               success: true,
+              poolDisposition,
               email: account.email,
               apiKey_masked: maskApiKey(account.apiKey),
               account: { id: account.id, email: account.email, status: account.status },
             };
           } else if (item.kind === 'api_key') {
-            const account = await addAccountByPastedSecret(item.apiKey, item.label, item.apiServerUrl || '', { unknownAsKey: true });
+            const { account, poolDisposition } = await addAccountByPastedSecretWithDisposition(item.apiKey, item.label, item.apiServerUrl || '', { unknownAsKey: true });
             if (item.proxy) {
               setAccountProxy(account.id, item.proxy);
               scheduleAccountWarmup(account.id);
             }
             result = {
               success: true,
+              poolDisposition,
               email: account.email,
               apiKey_masked: maskApiKey(account.apiKey),
               account: { id: account.id, email: account.email, status: account.status },
@@ -3913,6 +3947,8 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
           // and is what the dashboard shows / stores in login history.
           results.push({
             ...publicBatchLoginResult(result),
+            poolDisposition: result.poolDisposition,
+            lineNumber: item.lineNumber,
             proxy: redactedProxyLabel(item.proxy),
             importKind: item.kind,
           });
@@ -3921,9 +3957,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
             success: false,
             skipped: false,
             email: item.email || item.label || '',
-            // Prefer the stable code; a bare Error message can carry upstream
-            // prose, so it is bounded as a last resort.
-            error: err.code || String(err.message || 'ERR_IMPORT_ITEM_FAILED').slice(0, 200),
+            error: importErrorCode(err),
             lineNumber: item.lineNumber,
             proxy: redactedProxyLabel(item.proxy),
             importKind: item.kind,
@@ -3944,9 +3978,9 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
       }, NO_STORE);
     } catch (err) {
       if (err instanceof BatchImportParseError) {
-        return json(res, 400, { error: err.code });
+        return json(res, 400, { error: err.code }, NO_STORE);
       }
-      return json(res, 400, { error: err.message });
+      return json(res, 400, { error: importErrorCode(err) }, NO_STORE);
     }
   }
 

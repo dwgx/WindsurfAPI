@@ -1966,13 +1966,17 @@ export function sanitizeLabelText(value) {
  * Add account via API key.
  */
 export function addAccountByKey(apiKey, label = '', apiServerUrl = '') {
+  return addAccountByKeyWithDisposition(apiKey, label, apiServerUrl).account;
+}
+
+export function addAccountByKeyWithDisposition(apiKey, label = '', apiServerUrl = '') {
   const existing = accounts.find(a => a.apiKey === apiKey);
   if (existing) {
     if (apiServerUrl && !existing.apiServerUrl) {
       existing.apiServerUrl = apiServerUrl;
       saveAccounts();
     }
-    return existing;
+    return { account: existing, poolDisposition: 'existing' };
   }
 
   if (label != null && typeof label !== 'string') assertAccountLabel('');
@@ -2002,7 +2006,7 @@ export function addAccountByKey(apiKey, label = '', apiServerUrl = '') {
   saveAccounts();
   log.info(`Account added: ${safeAccountRef(account)} [api_key]`);
   trySyncModelCatalog();
-  return account;
+  return { account, poolDisposition: 'added' };
 }
 
 /**
@@ -2012,6 +2016,10 @@ export function addAccountByKey(apiKey, label = '', apiServerUrl = '') {
  * there (#257). The OAuth callback already classified; POST /accounts did not.
  */
 export async function addAccountByPastedSecret(secret, label = '', apiServerUrl = '', opts = {}) {
+  return (await addAccountByPastedSecretWithDisposition(secret, label, apiServerUrl, opts)).account;
+}
+
+export async function addAccountByPastedSecretWithDisposition(secret, label = '', apiServerUrl = '', opts = {}) {
   const value = unwrapPastedSecret(secret);
   if (!value) {
     const err = new Error('ERR_NO_TOKEN_IN_INPUT');
@@ -2030,25 +2038,29 @@ export async function addAccountByPastedSecret(secret, label = '', apiServerUrl 
     throw err;
   }
   if (kind === 'session' || value.startsWith('sk-')) {
-    return addAccountByKey(value, label, apiServerUrl);
+    return addAccountByKeyWithDisposition(value, label, apiServerUrl);
   }
   // The dashboard Type=API Key field (and batch-import kind=api_key) still
   // means "this is a pool key" for unclassified strings. Without this, a
   // short real apiKey would hit RegisterUser. auth1_ / JWT / session are
   // classified above and must not take this branch.
   if (opts && opts.unknownAsKey === true && kind === 'unknown') {
-    return addAccountByKey(value, label, apiServerUrl);
+    return addAccountByKeyWithDisposition(value, label, apiServerUrl);
   }
-  return addAccountByToken(value, label);
+  return addAccountByTokenWithDisposition(value, label);
 }
 
 /**
  * Add account via auth token.
  */
 export async function addAccountByToken(token, label = '') {
+  return (await addAccountByTokenWithDisposition(token, label)).account;
+}
+
+async function addAccountByTokenWithDisposition(token, label) {
   const reg = await registerWithCodeium(token);
   const existing = accounts.find(a => a.apiKey === reg.apiKey);
-  if (existing) return existing;
+  if (existing) return { account: existing, poolDisposition: 'existing' };
 
   if (label != null && typeof label !== 'string') assertAccountLabel('');
   const callerLabel = typeof label === 'string' ? label.trim() : '';
@@ -2077,7 +2089,7 @@ export async function addAccountByToken(token, label = '') {
   saveAccounts();
   log.info(`Account added: ${safeAccountRef(account)} [token] server=${account.apiServerUrl}`);
   trySyncModelCatalog();
-  return account;
+  return { account, poolDisposition: 'added' };
 }
 
 // Test seam for the email/password import path. Production resolves the real

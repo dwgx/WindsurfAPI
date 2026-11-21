@@ -154,17 +154,19 @@ function parseSingleLine(arg1) {
 }
 const RE_LABEL_EMAIL = /^\s*(?:邮箱|邮件|账号|账户|帐号|帐户|用户名|用户名称|用户|登录名|登陆名|登录账号|登陆账号|登录账户|卡号|号码|账户名|e[\-\s]?mail|email|account|user(?:name)?|login|mail|id|number|num)\s*\d*\s*[:：=＝]\s*/i;
 const RE_LABEL_PASS = /^\s*(?:密码|登录密码|登陆密码|口令|秘钥|密钥|卡密|令牌|password|pass(?:word|wd)?|pwd|secret|key|token|access(?:[\-_]?token)?)\s*\d*\s*[:：=＝]\s*/i;
-function parseAccountText(content) {
+function parseAccountText(content, { includeDiagnostics = false } = {}) {
   const arr = [];
   const arr2 = [];
   const arr3 = [];
   const arr4 = [];
+  const unrecognizedLines = [];
   if (!content || typeof content !== "string") {
     return {
       accounts: arr,
       tokens: arr2,
       tokenPairs: arr3,
-      githubAccounts: arr4
+      githubAccounts: arr4,
+      ...(includeDiagnostics ? { unrecognizedLines } : {})
     };
   }
   const trimResult = content.trim();
@@ -218,14 +220,17 @@ function parseAccountText(content) {
             accounts: arr6,
             tokens: arr7,
             tokenPairs: arr8,
-            githubAccounts: arr9
+            githubAccounts: arr9,
+            ...(includeDiagnostics ? { unrecognizedLines } : {})
           };
         }
       }
     } catch (err) {}
   }
   const arr5 = [];
-  for (const v12 of content.split(/\r?\n/)) {
+  for (const [index, v12] of content.split(/\r?\n/).entries()) {
+    const lineNumber = index + 1;
+    const addLine = fields => arr5.push({ lineNumber, ...fields });
     let trimResult2 = v12.trim();
     if (!trimResult2 || trimResult2.startsWith("#") || trimResult2.startsWith("//")) {
       continue;
@@ -251,14 +256,14 @@ function parseAccountText(content) {
     if (ABSOLUTE_URL_RE.test(trimResult2)) {
       try {
         const inner = unwrapPastedSecret(trimResult2);
-        arr5.push({
+        addLine({
           type: "token",
           raw: inner
         });
       } catch {
         // Keep the URL so import-text reports failed (ERR_NO_TOKEN_IN_INPUT)
         // instead of added=0 skipped=0 failed=0.
-        arr5.push({
+        addLine({
           type: "token",
           raw: trimResult2
         });
@@ -266,7 +271,7 @@ function parseAccountText(content) {
       continue;
     }
     if (looksLikeToken(trimResult2)) {
-      arr5.push({
+      addLine({
         type: "token",
         raw: trimResult2
       });
@@ -278,7 +283,7 @@ function parseAccountText(content) {
         const v13 = parseResult.email || parseResult.username || parseResult.account || parseResult.user || parseResult.mail || parseResult.login;
         const v22 = parseResult.password || parseResult.pass || parseResult.pwd || parseResult.passwd || parseResult.secret;
         if (v13 && v22 && isValidEmail(String(v13).trim())) {
-          arr5.push({
+          addLine({
             type: "pair",
             email: String(v13).trim(),
             password: String(v22).trim()
@@ -287,7 +292,7 @@ function parseAccountText(content) {
         }
         const v32 = parseResult.token || parseResult.sessionToken || parseResult.session_token || parseResult.authToken || parseResult.access_token;
         if (v32) {
-          arr5.push({
+          addLine({
             type: "token",
             raw: String(v32).trim()
           });
@@ -301,36 +306,37 @@ function parseAccountText(content) {
       if (trimResult3) {
         if (ABSOLUTE_URL_RE.test(trimResult3)) {
           try {
-            arr5.push({
+            addLine({
               type: "token",
               raw: unwrapPastedSecret(trimResult3)
             });
           } catch {
-            arr5.push({
+            addLine({
               type: "token",
               raw: trimResult3
             });
           }
         } else if (looksLikeToken(trimResult3)) {
-          arr5.push({
+          addLine({
             type: "token",
             raw: trimResult3
           });
         } else {
-          arr5.push({
+          addLine({
             type: "pass",
             password: trimResult3
           });
         }
         continue;
       }
+      unrecognizedLines.push(lineNumber);
       continue;
     }
     const matchResult2 = trimResult2.match(RE_LABEL_EMAIL);
     if (matchResult2) {
       const trimResult3 = trimResult2.substring(matchResult2[0].length).trim();
       if (isValidEmail(trimResult3)) {
-        arr5.push({
+        addLine({
           type: "email",
           email: trimResult3
         });
@@ -340,7 +346,7 @@ function parseAccountText(content) {
     }
     const parsesinglelineResult = parseSingleLine(trimResult2);
     if (parsesinglelineResult) {
-      arr5.push({
+      addLine({
         type: "pair",
         email: parsesinglelineResult.email,
         password: parsesinglelineResult.password
@@ -348,86 +354,96 @@ function parseAccountText(content) {
       continue;
     }
     if (isValidEmail(trimResult2)) {
-      arr5.push({
+      addLine({
         type: "email",
         email: trimResult2
       });
       continue;
     }
     if (trimResult2.length >= 40 && /^[A-Za-z0-9_\-\.\$\/+=]+$/.test(trimResult2) && !trimResult2.includes("@")) {
-      arr5.push({
+      addLine({
         type: "token",
         raw: trimResult2
       });
       continue;
     }
+    unrecognizedLines.push(lineNumber);
   }
-  let v1 = null;
-  let v2 = null;
-  let v3 = null;
-  for (const v12 of arr5) {
-    if (v12.type === "pair") {
-      if (v12.email && v12.password && isValidEmail(v12.email)) {
+  let pendingEmail = null;
+  let pendingPassword = null;
+  let pendingToken = null;
+  const recordUnpaired = item => { if (item) unrecognizedLines.push(item.lineNumber); };
+  for (const item of arr5) {
+    if (item.type === "pair") {
+      if (item.email && item.password && isValidEmail(item.email)) {
         arr.push({
-          email: v12.email,
-          password: v12.password
+          email: item.email,
+          password: item.password
         });
       }
-      v1 = null;
-      v2 = null;
-    } else if (v12.type === "email") {
-      if (v3) {
+      recordUnpaired(pendingEmail);
+      recordUnpaired(pendingPassword);
+      pendingEmail = null;
+      pendingPassword = null;
+    } else if (item.type === "email") {
+      recordUnpaired(pendingEmail);
+      if (pendingToken) {
         arr3.push({
-          email: v12.email,
-          token: v3
+          email: item.email,
+          token: pendingToken.raw
         });
-        v3 = null;
-        v1 = null;
-      } else if (v2) {
+        pendingToken = null;
+        pendingEmail = null;
+      } else if (pendingPassword) {
         arr.push({
-          email: v12.email,
-          password: v2
+          email: item.email,
+          password: pendingPassword.password
         });
-        v2 = null;
-        v1 = null;
+        pendingPassword = null;
+        pendingEmail = null;
       } else {
-        v1 = v12.email;
+        pendingEmail = item;
       }
-    } else if (v12.type === "pass") {
-      if (v1) {
+    } else if (item.type === "pass") {
+      if (pendingEmail) {
         arr.push({
-          email: v1,
-          password: v12.password
+          email: pendingEmail.email,
+          password: item.password
         });
-        v1 = null;
+        pendingEmail = null;
       } else {
-        v2 = v12.password;
+        recordUnpaired(pendingPassword);
+        pendingPassword = item;
       }
-    } else if (v12.type === "token") {
-      if (v12.raw) {
-        if (v1) {
+    } else if (item.type === "token") {
+      if (item.raw) {
+        if (pendingEmail) {
           arr3.push({
-            email: v1,
-            token: v12.raw
+            email: pendingEmail.email,
+            token: item.raw
           });
-          v1 = null;
+          pendingEmail = null;
         } else {
-          if (v3) {
-            arr2.push(v3);
+          if (pendingToken) {
+            arr2.push(pendingToken.raw);
           }
-          v3 = v12.raw;
+          pendingToken = item;
         }
       }
     }
   }
-  if (v3) {
-    arr2.push(v3);
+  if (pendingToken) {
+    arr2.push(pendingToken.raw);
   }
+  recordUnpaired(pendingEmail);
+  recordUnpaired(pendingPassword);
+  unrecognizedLines.sort((a, b) => a - b);
   return {
     accounts: arr,
     tokens: arr2,
     tokenPairs: arr3,
-    githubAccounts: arr4
+    githubAccounts: arr4,
+    ...(includeDiagnostics ? { unrecognizedLines } : {})
   };
 }
 // Pull a token out of a show-auth-token / OAuth redirect URL. Bare strings

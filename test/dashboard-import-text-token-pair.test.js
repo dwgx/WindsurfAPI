@@ -48,10 +48,11 @@ function authedReq() {
   };
 }
 
-async function importText(text) {
+async function importText(text, { preview = false } = {}) {
   const res = fakeRes();
-  await handleDashboardApi('POST', '/accounts/import-text', { text }, authedReq(), res);
-  return { status: res.statusCode, body: res.json(), text: res.body };
+  const subpath = preview ? '/accounts/import-text/preview' : '/accounts/import-text';
+  await handleDashboardApi('POST', subpath, { text }, { ...authedReq(), url: '/dashboard/api' + subpath }, res);
+  return { status: res.statusCode, body: res.json(), text: res.body, headers: res.headers };
 }
 
 afterEach(() => {
@@ -111,6 +112,7 @@ describe('POST /accounts/import-text — email + session-token pair', () => {
     const first = await importText(text);
     assert.equal(first.body.added.length, 1, JSON.stringify(first.body));
     const id = first.body.added[0].id;
+    assert.equal(first.body.added[0].poolDisposition, 'added');
     created.add(id);
     const before = getAccountInternal(id);
     const poolSize = getAccountList().length;
@@ -120,6 +122,7 @@ describe('POST /accounts/import-text — email + session-token pair', () => {
     assert.deepEqual(again.body.failed, []);
     assert.equal(again.body.added.length, 1, 'duplicate re-import is still reported added');
     assert.equal(again.body.added[0].id, id, 'the same account row is reused');
+    assert.equal(again.body.added[0].poolDisposition, 'existing');
     assert.equal(getAccountList().length, poolSize, 'no new pool row');
 
     const after = getAccountInternal(id);
@@ -128,6 +131,22 @@ describe('POST /accounts/import-text — email + session-token pair', () => {
     assert.equal(after.apiKey, before.apiKey);
     assert.equal(after.addedAt, before.addedAt);
     assert.equal(again.text.includes(TOKEN), false);
+  });
+
+  it('previews formats and ignored line numbers without adding the paired token', async () => {
+    config.dashboardPassword = DASH_PW;
+    const pasted = 'unrecognized fixture line';
+    const text = `# note\r\n${EMAIL}\r\nToken: ${TOKEN}\r\n\r\n${pasted}\r\ndangling@example.test`;
+    const r = await importText(text, { preview: true });
+    assert.equal(r.status, 200);
+    assert.equal(r.headers['Cache-Control'], 'no-store');
+    assert.deepEqual(r.body, { success: true, preview: true, recognized: 1, unrecognizedLines: [5, 6] });
+    assert.equal(getAccountList().length, 0);
+    assert.equal(r.text.includes(TOKEN) || r.text.includes(pasted), false);
+
+    const run = await importText(text);
+    assert.equal(run.body.added.length, 1);
+    assert.deepEqual(run.body.unrecognizedLines, [5, 6]);
   });
 
   it('leaks neither the session token nor the auth1 value in any failure text', async () => {
