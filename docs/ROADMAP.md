@@ -6,6 +6,13 @@ interfaces. The next work should make those connections easier to verify and
 operate. This page tracks current evidence and the checks needed to finish each
 item.
 
+### Evidence from the v3.2.11 release cycle
+
+- Codex CLI 0.169.0 completed a streamed Responses request, invoked one local MCP echo tool, reused conversation history on a second turn, and cancelled a streaming turn. Six loopback HTTP requests reached six simulated upstream calls. The client used fallback model metadata for the selected fixture. The next integration question is whether the Homeworking Toolkit adds a different request or cancellation path.
+- Source inspection found complete tool names at all three current production emitters. The compatibility queue retains the shared-prefix, split-name case until a production emitter or a sanitized real observation demonstrates that shape. The maintained Responses fixture covers the observed namespaced tool name and its matching result ID.
+- The public history page serves all four data files from the published source. The operating view should report the cache hit numerator and denominator and display “no samples” when there have been zero eligible lookups. Billing-state freshness and account availability need independent indicators. A charge attributed to one turn still requires provider-side evidence for that turn.
+- The Enterprise Cascade report remains open. One failing current-version turn with its reuse outcome, tier mapping, tool counts and terminal event would distinguish the outstanding hypotheses. The existing test for a zero raw teams tier mapped to `free` establishes how the diagnostic behaves. [Issue #245](https://github.com/dwgx/WindsurfAPI/issues/245)
+
 | Work | Evidence today | Acceptance |
 |---|---|---|
 | Signed upgrades | The legacy Git-source updater sorts reachable stable tags by numeric SemVer. `v3.141.592661` takes precedence over `v3.2.11`. The 3.2 line uses explicit selection of a signed tag under the existing trust policy. | Verify the selected tag and running build on the staged install, preserve operator state, and exercise rollback. Any future automatic selection rule needs its own upgrade tests. [Upgrade instructions](releases/RELEASE_NOTES_3.2.11.md) |
