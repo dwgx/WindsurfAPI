@@ -18,7 +18,7 @@ import { recordRequest, recordTokenUsage, recordPolicyBlocked, recordRateLimited
 import { extractIntentFromNarrative, detectToolIntentInNarrative, maskNonActionableRegions } from './intent-extractor.js';
 import { isModelAllowed } from '../dashboard/model-access.js';
 import { cacheKey as computeCacheKey, cacheGet, cacheSet, isCacheEnabled } from '../cache.js';
-import { resolveReasoningEffort } from '../cache.js';
+import { cacheGeneration, resolveReasoningEffort } from '../cache.js';
 import { isExperimentalEnabled, getBreakerTunable, strictUsageTotal } from '../runtime-config.js';
 import { budgetExceededError, isBudgetExceededError } from '../request-budget.js';
 import { checkOutboundHistory, historyBudgetErrorMessage, HISTORY_BUDGET_ERROR_CODE } from '../history-budget.js';
@@ -3475,7 +3475,11 @@ export async function handleChatCompletions(body, context = {}) {
   // original-model request will look up, instead of the fallback-model
   // slot that the next request will miss.
   const originalCkey = cacheKey(body, context.callerKey || body.__callerKey || '', context.keepReasoningSeparate === true);
-  const result = await _handleChatCompletionsInner(body, { ...context, traceId, __originalCkey: originalCkey });
+  // A model fallback is another attempt of the same request. Keep the
+  // generation from its first cache lookup across both attempts.
+  let requestCacheGeneration;
+  const captureCacheGeneration = () => (requestCacheGeneration ??= cacheGeneration());
+  const result = await _handleChatCompletionsInner(body, { ...context, traceId, __originalCkey: originalCkey }, captureCacheGeneration);
   if (traceEnabled()) traceClientResponse(traceId, { status: result?.status, stream: !!result?.stream, ms: Date.now() - traceStart, cached: !!result?.__cached });
   if (shouldAutoFallback(body, context, result)) {
     // v2.0.88 (audit H-1) — `body.model` is the RAW request string; the
@@ -3499,6 +3503,7 @@ export async function handleChatCompletions(body, context = {}) {
       // will actually look up. __originalCkey threads through so
       // cacheSet writes also go to the original-model cache slot.
       { ...context, __fallbackAttempt: true, __aliasModelKey: originalRoutingKey, __originalCkey: originalCkey },
+      captureCacheGeneration,
     );
     // Restore original model id in the response body so client code
     // matching on `response.model === requested model` still works.
@@ -3524,7 +3529,7 @@ export async function handleChatCompletions(body, context = {}) {
   return result;
 }
 
-async function _handleChatCompletionsInner(body, context = {}) {
+async function _handleChatCompletionsInner(body, context, captureCacheGeneration) {
   // Reuse the trace id as reqId so log lines Chat[<id>] correlate 1:1 with the
   // <traceId>/ trace dir. Falls back to a random short id when untraced.
   const reqId = context.traceId || Math.random().toString(36).slice(2, 8);
@@ -4393,9 +4398,13 @@ async function _handleChatCompletionsInner(body, context = {}) {
     // uncacheable, so no cross-user sharing).
     let __sCkey = null;
     let __sHit = null;
+    let cacheWriteGeneration = null;
     try {
       __sCkey = cacheKey(body, callerKey, keepReasoningSeparate);
-      __sHit = __sCkey ? cacheGet(__sCkey) : null;
+      if (__sCkey) {
+        cacheWriteGeneration = captureCacheGeneration();
+        __sHit = cacheGet(__sCkey);
+      }
       if (__sHit) log.info('[STREAM-CACHE-HIT] ckey=' + __sCkey);
     } catch (e) { log.info('[STREAM-CACHE-ERR] pre ' + (e && e.message)); }
 
@@ -5194,8 +5203,8 @@ async function _handleChatCompletionsInner(body, context = {}) {
                     const _sTc = r.sr?.toolCalls;
                     if (__sCkey && _sTxt && !(_sTc && _sTc.length)) {
                       const _sSt = applyStop(_sTxt, normalizeStop(body.stop));
-                      cacheSet(__sCkey, { text: _sSt.hit ? _sSt.text : _sTxt, thinking: r.sr?.reasoning || '', stop: _sSt.hit ? _sSt.stop : (r.sr?.stop || null), finishReason: r.sr?.finish_reason || null, displayModel: connectDisplayModel, usage: r.sr?.usage || null });
-                      log.info('[STREAM-CACHE-STORE] ckey=' + __sCkey);
+                      cacheSet(__sCkey, { text: _sSt.hit ? _sSt.text : _sTxt, thinking: r.sr?.reasoning || '', stop: _sSt.hit ? _sSt.stop : (r.sr?.stop || null), finishReason: r.sr?.finish_reason || null, displayModel: connectDisplayModel, usage: r.sr?.usage || null }, cacheWriteGeneration);
+                      log.info('[STREAM-CACHE-STORE] attempted ckey=' + __sCkey);
                     }
                   } catch (e) { log.info('[STREAM-CACHE-ERR] store ' + (e && e.message)); }
                   });
@@ -5456,8 +5465,8 @@ async function _handleChatCompletionsInner(body, context = {}) {
           const _nTxt = _nMsg?.content;
           if (__sCkey && typeof _nTxt === 'string' && _nTxt && !(_nMsg?.tool_calls?.length)) {
             const _nSt = applyStop(_nTxt, normalizeStop(body.stop));
-            cacheSet(__sCkey, { text: _nSt.hit ? _nSt.text : _nTxt, thinking: _nMsg?.reasoning_content || '', stop: _nSt.hit ? _nSt.stop : (r.out?.stop || null), finishReason: r.out?.body?.choices?.[0]?.finish_reason || null, displayModel: connectDisplayModel, usage: r.out?.body?.usage || null });
-            log.info('[STREAM-CACHE-STORE] ckey=' + __sCkey);
+            cacheSet(__sCkey, { text: _nSt.hit ? _nSt.text : _nTxt, thinking: _nMsg?.reasoning_content || '', stop: _nSt.hit ? _nSt.stop : (r.out?.stop || null), finishReason: r.out?.body?.choices?.[0]?.finish_reason || null, displayModel: connectDisplayModel, usage: r.out?.body?.usage || null }, cacheWriteGeneration);
+            log.info('[STREAM-CACHE-STORE] attempted ckey=' + __sCkey);
           }
         } catch (e) { log.info('[STREAM-CACHE-ERR] store ' + (e && e.message)); }
         // G1 client leg: everything above (pair-chain, cache, billing) has already
@@ -6082,6 +6091,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
       nativeOpts,
       allowCascadeMetadataUnwrap,
       context,
+      captureCacheGeneration,
       ensureLs: context.ensureLs,
       getLsFor: context.getLsFor,
       WindsurfClient: context.WindsurfClient,
@@ -6097,6 +6107,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
 
   // ── Local response cache (exact body match) ─────────────
   // SEC-W2: skip cross-request cache reads for an untrusted (guessed) scope.
+  const cacheWriteGeneration = cacheShareable ? captureCacheGeneration() : null;
   const cached = cacheShareable ? cacheGet(ckey) : null;
   if (cached) {
     log.info(`Chat: cache HIT model=${displayModel} flow=non-stream`);
@@ -6362,7 +6373,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
       // nonStreamResponse neither reads nor writes the shared response cache
       // (its cacheSet is gated on ckey truthiness). Guessed `:client:` buckets
       // stay cache-private → no cross-tenant answer leak behind a shared proxy.
-      useCascade, acct.apiKey, cacheShareable ? ckey : null,
+      useCascade, acct.apiKey, cacheShareable ? ckey : null, cacheWriteGeneration,
       // v2.0.87 (#129) — aliasModelKey is set by the outer wrapper
       // when this handler is the second pass of an auto-fallback
       // retry; it carries the ORIGINAL model name the client asked
@@ -6575,7 +6586,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
   return lastErr || { status: 503, body: { error: { message: 'No active accounts available', type: 'pool_exhausted' } } };
 }
 
-async function nonStreamResponse(client, id, created, model, modelKey, messages, cascadeMessages, modelEnum, modelUid, useCascade, apiKey, ckey, poolCtx, provider, emulateTools, toolPreamble, wantJson = false, cachePolicy = null, wantThinking = false, tools = [], route = 'chat', nativeOpts = null, reqId = 'non-stream', aliasCkey = null, clineCompatActive = false, allowCascadeMetadataUnwrap = true, stopSequences = [], stopCarrier = false, signal = null, budget = null, accountId = '', jsonSchema = null, completion = null, keepReasoningSeparate = false) {
+async function nonStreamResponse(client, id, created, model, modelKey, messages, cascadeMessages, modelEnum, modelUid, useCascade, apiKey, ckey, cacheWriteGeneration, poolCtx, provider, emulateTools, toolPreamble, wantJson = false, cachePolicy = null, wantThinking = false, tools = [], route = 'chat', nativeOpts = null, reqId = 'non-stream', aliasCkey = null, clineCompatActive = false, allowCascadeMetadataUnwrap = true, stopSequences = [], stopCarrier = false, signal = null, budget = null, accountId = '', jsonSchema = null, completion = null, keepReasoningSeparate = false) {
   const startTime = Date.now();
   const nativeBridgeOn = !!nativeOpts?.enabled;
   // V-14: local enforcement of the caller's output cap. The wire field is a
@@ -7225,9 +7236,9 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
       // SEED-C3b: cache the VISIBLE (post-stop) text together with the local stop
       // cause, so a replay reproduces both the truncated answer and the
       // `stop_sequence` metadata the Messages route derives from it.
-      cacheSet(ckey, { text: allText, thinking: allThinking, stop: localStop });
+      cacheSet(ckey, { text: allText, thinking: allThinking, stop: localStop }, cacheWriteGeneration);
       if (aliasCkey && aliasCkey !== ckey) {
-        cacheSet(aliasCkey, { text: allText, thinking: allThinking, stop: localStop });
+        cacheSet(aliasCkey, { text: allText, thinking: allThinking, stop: localStop }, cacheWriteGeneration);
       }
     }
 
@@ -7696,6 +7707,7 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
 
       // ── Cache hit: replay stored response as a fake stream ──
       // SEC-W2: skip cross-request cache reads for an untrusted (guessed) scope.
+      const cacheWriteGeneration = cacheShareable ? deps.captureCacheGeneration() : null;
       const cached = cacheShareable ? cacheGet(ckey) : null;
       if (cached) {
         log.info(`Chat: cache HIT model=${model} flow=stream`);
@@ -9143,7 +9155,7 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
               // one: replaying bytes the client never received would change the
               // answer between the first and second identical request.
               const completedCacheEntry = { text: (stopMatched || outputCapReached) ? visibleText : accText, thinking: accThinking, stop: stopMatched };
-              publishStreamDelivery(deps.context, () => cacheSet(ckey, completedCacheEntry));
+              publishStreamDelivery(deps.context, () => cacheSet(ckey, completedCacheEntry, cacheWriteGeneration));
             }
             return;
           } catch (err) {

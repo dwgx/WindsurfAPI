@@ -25,6 +25,7 @@ export function isCacheEnabled() {
 const _store = new Map();
 const _stats = { hits: 0, misses: 0, stores: 0, evictions: 0, skips: 0 };
 let _bytes = 0;
+let _generation = Symbol('response cache generation');
 
 function bytesEnv(names, fallback) {
   for (const name of names) {
@@ -236,12 +237,20 @@ export function cacheGet(key) {
   return entry.value;
 }
 
-export function cacheSet(key, value) {
+// Capture this before an asynchronous miss is dispatched.
+export function cacheGeneration() {
+  return _generation;
+}
+
+export function cacheSet(key, value, generation = _generation) {
   if (!isCacheEnabled()) return;
   // Don't cache empty or partial results
   if (!value || (!value.text && !(value.chunks && value.chunks.length))) return;
   const bytes = valueBytes(value);
   const limit = maxBytes();
+  // A clear invalidates earlier misses, even when their response is delivered
+  // successfully. Check here before deleting or accounting for any entry.
+  if (generation !== _generation) return;
   deleteEntry(key);
   if (!Number.isFinite(bytes) || bytes > limit) {
     _stats.skips++;
@@ -277,6 +286,7 @@ export function cacheStats() {
 }
 
 export function cacheClear() {
+  _generation = Symbol('response cache generation');
   _store.clear();
   _bytes = 0;
   _stats.hits = 0; _stats.misses = 0; _stats.stores = 0; _stats.evictions = 0; _stats.skips = 0;
