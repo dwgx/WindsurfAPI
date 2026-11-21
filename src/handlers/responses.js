@@ -14,6 +14,7 @@ import { safeLogValue } from '../log-safety.js';
 import { log } from '../config.js';
 import { SseFramer } from '../sse-framer.js';
 import { createBoundedWriter, resolveMaxDrainWaitMs } from '../stream-writer.js';
+import { ToolNamePrefixBuffer } from '../stream-tool-names.js';
 import { buildToolNameMap, restoreToolName } from '../tool-names.js';
 import { createToolIdAllocator, normalizeToolIdsInMessages, sanitizeToolId, toolHygieneEnabled } from '../tool-ids.js';
 import { normalizeHistoryTail } from '../history-normalize.js';
@@ -1106,6 +1107,10 @@ class ResponsesStreamTranslator {
     this.includeReasoningEncrypted = !!options.includeReasoningEncrypted;
     this.requestedTools = Array.isArray(requestedTools) ? requestedTools : [];
     this.toolNameMap = toolNameMap;
+    this.prefixBuffer = new ToolNamePrefixBuffer([
+      ...(toolNameMap?.toClient.keys() || []),
+      ...this.requestedTools.map(t => t?.function?.name || t?.name).filter(Boolean),
+    ], chunk => chunk.error ? this.error(chunk.error) : this.processChunk(chunk));
     this.createdAt = Math.floor(Date.now() / 1000);
     this.msgId = genMessageId();
     this.sseFramer = new SseFramer({ onFrame: (frame) => this.handleSseFrame(frame) });
@@ -1796,6 +1801,7 @@ class ResponsesStreamTranslator {
   finish() {
     if (this.finished) return;
     this.sseFramer.end();
+    this.prefixBuffer.finish();
     if (this.finished) return;
     this.finished = true;
     // The seal calls below run before the failed-turn check, so the verdict has
@@ -1925,7 +1931,7 @@ class ResponsesStreamTranslator {
       if (parsed.error) {
         this.error(parsed.error);
       } else {
-        this.processChunk(parsed);
+        this.prefixBuffer.write(parsed, Buffer.byteLength(data));
       }
     } catch (e) {
       log.warn(`Responses SSE parse error: ${e.message}`);

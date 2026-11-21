@@ -756,12 +756,15 @@ describe('docs: version claims match the repository', () => {
     // Ancestry is necessary but not sufficient: §0 sat ten commits and six src/ files behind
     // HEAD (seven after the wave-5 merge) while the check above passed. Docs-only lag is
     // allowed; a src/ change is not.
-    const srcLag = masterSrcLag(masterSha);
-    assert.equal(
-      srcLag.problem,
-      null,
-      srcLag.problem && `${srcLag.problem}\n  ${srcLag.changed.join('\n  ')}`,
-    );
+    const candidate = block.match(/^candidate src tree\s+`([0-9a-f]{40})`$/m);
+    if (candidate) {
+      // A private patch can pin its own source tree in the same commit.
+      // The published master above remains an independently checked ancestor.
+      assert.equal(candidate[1], git(['rev-parse', 'HEAD:src']), 'candidate source tree must match HEAD:src');
+    } else {
+      const srcLag = masterSrcLag(masterSha);
+      assert.equal(srcLag.problem, null, srcLag.problem && `${srcLag.problem}\n  ${srcLag.changed.join('\n  ')}`);
+    }
 
     const claims = [
       ...versionClaims(block).map((c) => ({ ...c, where: `${rel(join(DOCS, liveHead))} §0` })),

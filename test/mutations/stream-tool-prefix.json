@@ -1,0 +1,32 @@
+{
+  "tests": [
+    "test/stream-split-tool-name.test.js"
+  ],
+  "expectBaselinePass": 13,
+  "mutations": [
+    {
+      "name": "Messages publishes the shorter declared prefix immediately",
+      "file": "src/handlers/messages.js",
+      "anchor": "this.prefixBuffer.write(JSON.parse(data), Buffer.byteLength(data));",
+      "replacement": "this.processChunk(JSON.parse(data));"
+    },
+    {
+      "name": "Responses publishes an ambiguous declared prefix on arrival",
+      "file": "src/handlers/responses.js",
+      "anchor": "this.prefixBuffer.write(parsed, Buffer.byteLength(data));",
+      "replacement": "this.processChunk(parsed);"
+    },
+    {
+      "name": "held text passes its unresolved tool in wire order",
+      "file": "src/stream-tool-names.js",
+      "anchor": "if (!this.frames.length && !frame.waiting) return this.emit(chunk);",
+      "replacement": "if (!frame.waiting) return this.emit(chunk);"
+    },
+    {
+      "name": "Responses discards a terminal buffer error",
+      "file": "src/handlers/responses.js",
+      "anchor": "chunk => chunk.error ? this.error(chunk.error) : this.processChunk(chunk)",
+      "replacement": "chunk => this.processChunk(chunk)"
+    }
+  ]
+}

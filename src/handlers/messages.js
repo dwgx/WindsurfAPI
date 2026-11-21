@@ -16,6 +16,7 @@ import { handleChatCompletions, connectErrorToHttp } from './chat.js';
 import { log } from '../config.js';
 import { createBoundedWriter, resolveMaxDrainWaitMs } from '../stream-writer.js';
 import { SseFramer } from '../sse-framer.js';
+import { ToolNamePrefixBuffer } from '../stream-tool-names.js';
 import { buildToolNameMap, restoreToolName } from '../tool-names.js';
 import { createToolIdAllocator, normalizeToolIdsInMessages, toolHygieneEnabled } from '../tool-ids.js';
 import { normalizeHistoryTail } from '../history-normalize.js';
@@ -1569,7 +1570,7 @@ function buildAnthropicUsage(usage, cachePolicy = null) {
 // ─── Streaming translator: intercepts OpenAI SSE, emits Anthropic SSE ──
 
 class AnthropicStreamTranslator {
-  constructor(res, msgId, model, cachePolicy = null, inputEstimate = 0, stopSequences = null, reqId = null, conversationId = null, toolNameMap = null) {
+  constructor(res, msgId, model, cachePolicy = null, inputEstimate = 0, stopSequences = null, reqId = null, conversationId = null, toolNameMap = null, requestedTools = []) {
     this.res = res;
     this.msgId = msgId;
     this.model = model;
@@ -1578,6 +1579,10 @@ class AnthropicStreamTranslator {
     this.reqId = reqId;
     this.conversationId = conversationId;
     this.toolNameMap = toolNameMap;
+    this.prefixBuffer = new ToolNamePrefixBuffer([
+      ...(toolNameMap?.toClient.keys() || []),
+      ...requestedTools.map(t => t?.function?.name).filter(Boolean),
+    ], chunk => this.processChunk(chunk));
     // Local cache-prefix estimate from extractCachePolicy; used by finish() to
     // fill cache_creation_input_tokens when upstream reports none (see
     // buildAnthropicUsage). null when the request had no cache_control markers.
@@ -1948,7 +1953,7 @@ class AnthropicStreamTranslator {
     // first fragment: wait for a chunk that carries arguments, a name-less
     // follow-up (the name is settled), a mapped name, or finish(). Opening early
     // publishes a truncated name that cannot be corrected in Anthropic's stream.
-    const nameSettled = nameKnown && (
+    const nameSettled = this.prefixBuffer.resolved.has(toolCall) || nameKnown && (
       !!(this.toolNameMap && this.toolNameMap.toClient.has(buf.wireName))
       || !rawName
     );
@@ -2090,6 +2095,7 @@ class AnthropicStreamTranslator {
   finish() {
     if (this.messageStopped) return;
     this.sseFramer.end();
+    this.prefixBuffer.finish();
     if (this.messageStopped) return;
     // BUG1: An abnormally cut-off stream (network drop, upstream abort, hung-
     // stream deadline) reaches finish() with NO terminal signal — no
@@ -2284,7 +2290,7 @@ class AnthropicStreamTranslator {
       return;
     }
     try {
-      this.processChunk(JSON.parse(data));
+      this.prefixBuffer.write(JSON.parse(data), Buffer.byteLength(data));
     } catch (e) {
       log.warn(`Messages SSE parse error: ${e.message}`);
     }
@@ -2537,7 +2543,7 @@ export async function handleMessages(body, context = {}) {
       'X-Accel-Buffering': 'no',
     },
     async handler(realRes) {
-      const translator = new AnthropicStreamTranslator(realRes, msgId, requestedModel, cachePolicy, inputEstimate, body.stop_sequences, context.reqId, context.conversation_id, toolNameMap);
+      const translator = new AnthropicStreamTranslator(realRes, msgId, requestedModel, cachePolicy, inputEstimate, body.stop_sequences, context.reqId, context.conversation_id, toolNameMap, openaiBody.tools);
       const captureRes = createCaptureRes(translator, realRes);
 
       // Forward client disconnect so the upstream cascade is cancelled.
