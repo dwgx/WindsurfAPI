@@ -410,7 +410,7 @@ In your client's settings for **Custom OpenAI Compatible**:
 | `WINDSURFAPI_NATIVE_TOOL_BRIDGE_OFF` | empty | Set to `1` to force native bridge off. |
 | `WINDSURFAPI_SPECIAL_AGENT_BACKEND` | empty | Optional lab-only special-agent backend. Set `devin-cli` to test `swe-1.6`, `swe-1.6-fast`, `adaptive`, and `arena-*` through Devin CLI instead of direct Cascade. This is not a normal catalog-model fix. |
 | `DEVIN_CLI_PATH` | `devin` | Devin CLI executable path. Docker/macOS deployments must install or mount it themselves. |
-| `DEVIN_CLI_MODE` | `print` | `print` uses conservative `devin -p`; `acp` is an experimental ACP stdio backend using upstream Windsurf account-pool apiKeys. |
+| `DEVIN_CLI_MODE` | `print` | `print` uses `devin -p`. `acp` selects the experimental ACP stdio backend using upstream Windsurf account-pool API keys. To check model selection, filter the operator API logs for `Devin ACP model selection` and the internal `Chat[<id>]` request ID. The record distinguishes the launch argument, the session setting submitted, and the value the peer acknowledged. `backend_confirmed_model: null` means the serving model is unknown. |
 | `DEVIN_MAX_PROCS` | `1` | Maximum concurrent Devin CLI processes. |
 | `DASHBOARD_PASSWORD` | empty | Dashboard password. Empty is fail-closed even on localhost. Local open panel requires `DASHBOARD_ALLOW_NO_AUTH=1`. |
 | `ALLOW_PRIVATE_PROXY_HOSTS` | empty | Set to `1` to allow private/internal IPs (e.g., `192.168.x.x`, `10.x.x.x`) in proxy tests and login. Leave empty to only allow public addresses (default). |
