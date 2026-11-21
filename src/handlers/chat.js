@@ -3272,14 +3272,14 @@ export function finalizeConnectAccount(acct, { model, selector = null, startTime
  * MUST run before the first getApiKey below, because that call is what clears the pin —
  * once it returns, there is nothing left to wait for.
  *
- * @returns {Promise<{acct: object|null, aborted: boolean}>} `acct` is the pinned account
- *   when the wait succeeded. `aborted` is true only when the caller disconnected DURING a
- *   wait this function actually performed — see the note at its use site for why that has
- *   to be distinguishable from an ordinary give-up.
+ * @returns {Promise<{acct: object|null, aborted: boolean, waited?: boolean}>}
+ *   `acct` is the pinned account after a successful wait. `aborted` indicates
+ *   cancellation of the pin wait. `waited` marks a completed wait without a checkout.
  */
-async function waitForOwnPin(tried, signal, modelKey, callerKey, connectSelector, opts = {}) {
+async function waitForOwnPin(tried, signal, modelKey, callerKey, connectSelector, opts = {}, queueDeadline = Infinity) {
   const NO_WAIT = { acct: null, aborted: false };
-  const budgetMs = getBreakerTunable('stickyQueueOnPinMs');
+  const started = Date.now();
+  const budgetMs = Math.min(getBreakerTunable('stickyQueueOnPinMs'), queueDeadline - started);
   if (!budgetMs || budgetMs <= 0) return NO_WAIT;
   if (!callerKey || !isStickyEnabled()) return NO_WAIT;
 
@@ -3307,12 +3307,14 @@ async function waitForOwnPin(tried, signal, modelKey, callerKey, connectSelector
   // Compare the account's OWN stated recovery against the budget.
   if (!Number.isFinite(avail.retryAfterMs) || avail.retryAfterMs > budgetMs) return NO_WAIT;
 
-  const deadline = Date.now() + budgetMs;
-  const started = Date.now();
+  const deadline = started + budgetMs;
+  let waited = false;
   while (Date.now() < deadline) {
     if (signal?.aborted) return { acct: null, aborted: true };
-    await new Promise(r => setTimeout(r, Math.min(QUEUE_RETRY_MS, Math.max(50, deadline - Date.now()))));
+    await new Promise(r => setTimeout(r, Math.min(QUEUE_RETRY_MS, Math.max(1, deadline - Date.now()))));
+    waited = true;
     if (signal?.aborted) return { acct: null, aborted: true };
+    if (Date.now() >= deadline) break;
     // pinOnly: reuses the real usability test, and cannot answer with a substitute or
     // clear the pin on a miss.
     const acct = getApiKey(tried, modelKey, callerKey, connectSelector, { ...opts, pinOnly: true });
@@ -3322,30 +3324,28 @@ async function waitForOwnPin(tried, signal, modelKey, callerKey, connectSelector
     }
   }
   log.info(`[sticky] QUEUE-ON-PIN gave up after ${Date.now() - started}ms (reason ${avail.reason}) — rotating`);
-  return NO_WAIT;
+  return waited ? { ...NO_WAIT, waited } : NO_WAIT;
 }
 
 async function waitForAccount(tried, signal, maxWaitMs = QUEUE_MAX_WAIT_MS, modelKey = null, callerKey = null, connectSelector = null, opts = {}) {
   const deadline = Date.now() + maxWaitMs;
-  const pinWait = await waitForOwnPin(tried, signal, modelKey, callerKey, connectSelector, opts);
+  const pinWait = await waitForOwnPin(tried, signal, modelKey, callerKey, connectSelector, opts, deadline);
   if (pinWait.acct) return pinWait.acct;
-  // Aborted DURING a wait we chose to perform. The pre-existing contract below is "if an
-  // account is free, serve it even if the signal is aborted" — the abort check sits inside
-  // the retry loop, so a first-try success is handed back regardless. That is fine when
-  // the call is instantaneous, but queue-on-pin deliberately spent up to a second first,
-  // so continuing here would acquire an account — pushing an RPM reservation and an
-  // in-flight count — for a caller we now KNOW has gone. Bail instead, which is also what
-  // the loop below would do on its next iteration.
+  // A completed pin wait consumes the queue budget. The first immediate lookup
+  // remains available with a zero budget or a pre-aborted signal.
   if (pinWait.aborted) return null;
+  if (pinWait.waited && (signal?.aborted || Date.now() >= deadline)) return null;
   let acct = getApiKey(tried, modelKey, callerKey, connectSelector, opts);
   while (!acct) {
     if (signal?.aborted) return null;
-    if (Date.now() >= deadline) return null;
+    const remaining = deadline - Date.now();
+    if (remaining <= 0) return null;
     if (callerKey && isStickyEnabled() && isExperimentalEnabled('stickyNoFallback')) {
       log.info('[sticky] NO-FALLBACK waitForAccount — bound account unavailable, failing immediately');
       return null;
     }
-    await new Promise(r => setTimeout(r, QUEUE_RETRY_MS));
+    await new Promise(r => setTimeout(r, Math.min(QUEUE_RETRY_MS, remaining)));
+    if (signal?.aborted || Date.now() >= deadline) return null;
     acct = getApiKey(tried, modelKey, callerKey, connectSelector, opts);
   }
   return acct;
