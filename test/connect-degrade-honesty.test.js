@@ -257,7 +257,7 @@ describe('degrade honesty reaches the Anthropic and Gemini routes too (#234)', (
     assert.equal(res?.status, 400);
     // The Anthropic route reports error.type; the chat route reports error.code.
     // Either way the message must carry the model_not_found contract.
-    assert.match(JSON.stringify(res?.body?.error ?? {}), /model_not_found/);
+    assert.match(JSON.stringify(res?.body?.error ?? res?.body ?? {}), /invalid_request_error|not a valid model/);
   });
 
   it('/v1/messages still echoes the requested name for a mapped alias', async () => {

@@ -2,7 +2,7 @@
 
 <p align="center">
   <a href="#最近的版本">最近的版本</a> ·
-  <a href="docs/releases/">全部 223 份发布说明</a> ·
+  <a href="docs/releases/">全部 224 份发布说明</a> ·
   <a href="README.md">← 主 README</a>
 </p>
 
@@ -19,7 +19,7 @@
 
 | | |
 |---|---|
-| 发布说明 | **223** 份,v2.0.6 → v3.141.592661（生成：`node scripts/sync-changelog-counts.mjs`；口径 `ls docs/releases/RELEASE_NOTES_*.md \| wc -l`） |
+| 发布说明 | **224** 份,v2.0.6 → v4.0.0（生成：`node scripts/sync-changelog-counts.mjs`；口径 `ls docs/releases/RELEASE_NOTES_*.md \| wc -l`） |
 | git tag | 232 个（生成：`node scripts/sync-changelog-counts.mjs`；口径 `git tag \| wc -l` 减去 `docs/releases/UNPUBLISHED-TAGS.txt` 里本 checkout 存在的未发布 tag，再减去 `package.json` 版本的 tag——本次发布自己的 tag，创建前后都不计数，所以三种 checkout 同值） |
 | 当前 | **v4.0.0** (2026-11-22) |
 | 运行时依赖 | **0** —— 从第一个版本保持到现在 |

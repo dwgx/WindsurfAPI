@@ -46,8 +46,11 @@ describe('streaming split function.name is settled before egress', () => {
     buffer.write({ choices: [{ delta: { tool_calls: [{ index: 0, function: { name: 'inspect' } }] } }] }, 10);
     buffer.write({ choices: [{ delta: { content: 'later text' } }] }, 10);
     buffer.finish();
-    assert.equal(output.length, 1);
-    assert.match(output[0].error.message, /buffer limit/);
+    // L5: determined frames flush in order before the error; only the still-held
+    // name frame is dropped (its split name can never resolve now).
+    assert.equal(output.length, 2);
+    assert.equal(output[0].choices[0].delta.content, 'later text');
+    assert.match(output[1].error.message, /buffer limit/);
   });
 
   for (const api of ['messages', 'responses']) {

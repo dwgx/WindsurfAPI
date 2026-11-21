@@ -22,7 +22,9 @@ export class ToolNamePrefixBuffer {
       // clear()-then-emit used to drop any text deltas already queued (L5).
       const queued = this.frames;
       this.clear();
-      for (const f of queued) this.emit(f.chunk);
+      // Determined frames (waiting === 0) are flushed in wire order; frames still
+      // waiting on a split name can never resolve now and would egress nameless.
+      for (const f of queued) if (!f.waiting) this.emit(f.chunk);
       return this.emit(chunk);
     }
     const frame = { chunk, size, waiting: 0 };
@@ -62,7 +64,7 @@ export class ToolNamePrefixBuffer {
       // Same rule as the error arm: never drop already-queued frames silently.
       const queued = this.frames;
       this.clear();
-      for (const f of queued) this.emit(f.chunk);
+      for (const f of queued) if (!f.waiting) this.emit(f.chunk);
       return this.emit({ error: { type: 'upstream_error', message: 'Pending streamed tool names exceeded the buffer limit' } });
     }
     if (choices.some(choice => choice?.finish_reason)) return this.finish();

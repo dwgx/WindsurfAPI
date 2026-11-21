@@ -23,3 +23,5 @@
 ## 自更新
 
 - 版本线跳到 4.x 一次性压过历史遗留 tag `v3.141.592661`，OTA 版本比较不再被三位数版本压住。
+
+[Open verification register](https://github.com/dwgx/WindsurfAPI/blob/v4.0.0/docs/UNVERIFIED.md) · [Roadmap](https://github.com/dwgx/WindsurfAPI/blob/v4.0.0/docs/ROADMAP.md)
