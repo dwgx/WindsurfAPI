@@ -2,6 +2,7 @@ import { after, before, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { config } from '../src/config.js';
 import { startServer } from '../src/server.js';
+import { __setStreamChatForTest, streamChatCompletion } from '../src/devin-connect-openai.js';
 import { __resetConnectDeps, __setConnectDeps } from '../src/handlers/chat.js';
 import { __resetRequestRingForTest, listRequests } from '../src/dashboard/request-ring.js';
 
@@ -102,8 +103,9 @@ before(async () => {
         }],
       }, 'tool_calls');
     },
-    streamChatCompletion: async (params, send) => {
+    streamChatCompletion: async (params, send, opts) => {
       lastStreamParams = params;
+      if (streamBehavior === 'connect-encoder') return streamChatCompletion(params, send, opts);
       if (streamBehavior === 'nonce') {
         const echoed = nonceFromToolResult(params);
         if (echoed) {
@@ -727,6 +729,88 @@ describe('startServer harness-shaped success paths', () => {
       assert.equal(secondFrames.at(-1).json.response.status, 'completed');
       assertUpstreamSawToolResult(args.nonce);
     } finally {
+      streamBehavior = 'text';
+    }
+  });
+
+  it('replays a namespaced Responses call produced by the Connect encoder with its tool output', async () => {
+    const namespace = 'mcp__fixture';
+    const toolName = 'mcp__fixture__echo';
+    const callId = 'call_fixture_echo';
+    const args = { text: 'fixture query' };
+    const callUsage = { prompt_tokens: 24, completion_tokens: 6, total_tokens: 30 };
+    const answerUsage = { prompt_tokens: 32, completion_tokens: 8, total_tokens: 40 };
+    const tools = [{
+      type: 'namespace',
+      name: namespace,
+      tools: [{ type: 'function', name: 'echo', parameters: { type: 'object', properties: { text: { type: 'string' } } } }],
+    }];
+    const input = [{ type: 'message', role: 'user', content: [{ type: 'input_text', text: 'Use the echo tool.' }] }];
+    const body = { model: 'swe-1-6-slow', stream: true, store: false, tool_choice: 'auto', tools };
+    const expectedOutput = 'fixture tool returned a value';
+    const calls = [];
+
+    streamBehavior = 'connect-encoder';
+    __setStreamChatForTest(async function* (params) {
+      calls.push(params);
+      const result = params.messages.find((message) => message.role === 'tool');
+      if (result) {
+        yield { type: 'content', text: result.content };
+        yield { type: 'finish', reason: 'stop', usage: answerUsage };
+        return;
+      }
+      yield {
+        type: 'finish',
+        reason: 'stop',
+        usage: callUsage,
+        toolCalls: [{ id: callId, name: toolName, arguments: JSON.stringify(args) }],
+      };
+    });
+
+    async function stream(inputItems, expectedUsage) {
+      const response = await post('/v1/responses', { ...body, input: inputItems });
+      const wire = await response.text();
+      assert.equal(response.status, 200, wire);
+      const events = protocolFrames(wire);
+      const completed = events.at(-1);
+      assert.equal(completed.event, 'response.completed', wire);
+      assert.equal(completed.json.response.status, 'completed');
+      assert.equal(sseFrames(wire).at(-1).data, '[DONE]');
+      const { input_tokens, output_tokens, total_tokens } = completed.json.response.usage;
+      assert.deepEqual([input_tokens, output_tokens, total_tokens],
+        [expectedUsage.prompt_tokens, expectedUsage.completion_tokens, expectedUsage.total_tokens]);
+      return events;
+    }
+
+    try {
+      const first = await stream(input, callUsage);
+      const adds = first.filter((frame) => frame.event === 'response.output_item.added');
+      assert.deepEqual(adds.map(({ json: { item } }) => [item.type, item.name, item.namespace, item.call_id]),
+        [['function_call', 'echo', namespace, callId]]);
+      const call = first.find((frame) => frame.event === 'response.output_item.done').json.item;
+      assert.equal(call.call_id, callId);
+      assert.ok(call.id);
+      assert.equal(call.status, 'completed');
+      assert.deepEqual(JSON.parse(call.arguments), args);
+      // Codex CLI 0.169.0 replays the completed call alongside its result with store:false.
+      const second = await stream([
+        ...input,
+        call,
+        { type: 'function_call_output', call_id: call.call_id, output: expectedOutput },
+      ], answerUsage);
+      const finalText = second.filter((frame) => frame.event === 'response.output_text.delta')
+        .map((frame) => frame.json.delta).join('');
+      assert.equal(finalText, expectedOutput);
+      assert.equal(calls.length, 2);
+      assert.equal(calls[0].toolChoice, 'auto');
+      assert.deepEqual(calls[0].tools.map((tool) => tool.function.name), [toolName]);
+      const history = calls[1].messages.find((message) => message.role === 'assistant' && message.tool_calls);
+      assert.deepEqual(history.tool_calls, [
+        { id: callId, type: 'function', function: { name: toolName, arguments: JSON.stringify(args) } },
+      ]);
+      assert.equal(calls[1].messages.find((message) => message.role === 'tool').tool_call_id, callId);
+    } finally {
+      __setStreamChatForTest(null);
       streamBehavior = 'text';
     }
   });
