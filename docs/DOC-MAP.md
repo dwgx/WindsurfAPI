@@ -28,11 +28,12 @@
 - `docs/OPENCODE-REVIEW.md` — Decision record for OpenCodeReview: not adopted as CI; blocker, trial procedure and enablement path. — current
 - `docs/QUERY-KEY-DEPRECATION.md` — Status, risk and phased removal plan for `?key=` query-parameter authentication. — current
 - `docs/README.md` — Documentation index: user, operator, internals, takeover, history and release entry points. — stale → fixed (183/124 switch counts, 97-spec corpus, D9 evidence and HANDOFF-SUMMARY entries)
+- `docs/ROADMAP.md` — Rolling priorities, verified baselines and acceptance criteria. — current
 - `docs/RELEASE-SIGNING.md` — Release signing and verification: cosign keyless, Sigstore bundles, trust boundary and OTA caveats. — stale → fixed (three signature artifacts→one .sigstore.json bundle; D9 adds image-digest and release-attestation verification)
 - `docs/REQUEST-TAIL-CONTRACT.md` — Decided policy for the two local request-tail 400s, per-surface differences and the machine-checkable guard. — current
 - `docs/UNVERIFIED.md` — Generated cross-release register of every 「尚未验证」 bullet with 已复核 / 仍缺 / 已修 status. — current (generated)
 - `docs/dashboard-i18n.md` — Dashboard internationalization guide: locale bundles, helper and regression checks. — current
-- `docs/index.html` — GitHub Pages static output: landing page and generated model catalog (source: src/models.js). — duplicate (generated; badge v3.141.592661, 283 models)
+- `docs/index.html` — GitHub Pages static output: landing page and generated model catalog (source: src/models.js). — duplicate (generated; badge v3.2.11, 283 models)
 - `docs/login-flows.md` — Dashboard account login flows: probe-first rules and click paths for password, email-code, OAuth and token accounts. — current
 - `docs/reasoning-dedup.md` — Design of reasoning/content duplicate suppression in the DEVIN_CONNECT stream path. — current
 - `docs/review.html` — Public architecture review page: startup → routes → protocol bridge → pools → dashboard → security → tests. — stale → fixed (283 models, 114→593 test files in the 2026-10-26 sweep; the 2026-11-11 tree carries 627 `test/*.test.js`; prose still dated 2026-06-17)

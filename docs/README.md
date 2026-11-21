@@ -17,7 +17,8 @@
 > current / stale / duplicate status.
 
 Project-level entry points: [CONTRIBUTING.md](../CONTRIBUTING.md) (merge bar, review rules and
-testing) · [CHANGELOG.md](../CHANGELOG.md) (version index) · [README.en.md](../README.en.md)
+testing) · [CHANGELOG.md](../CHANGELOG.md) (version index) · [ROADMAP.md](ROADMAP.md)
+(current priorities and acceptance) · [README.en.md](../README.en.md)
 (English README).
 
 ```mermaid
@@ -86,7 +87,7 @@ Configure your ACP client to launch `opencode acp`. A local Windows check used t
 | Localise the dashboard | [dashboard-i18n.md](dashboard-i18n.md) |
 | Verify a release download / understand the OTA trust boundary | [RELEASE-SIGNING.md](RELEASE-SIGNING.md) — cosign keyless signatures (GitHub OIDC, no key material in the repo), the exact `verify-blob` commands, what the signature does and does not prove, and the D9 controls for Docker digest signing and source-OTA attestation |
 | Audit the D9 supply-chain controls | [D9-GATE.md](../evidence/final/D9-GATE.md) (single-Owner trust assessment) with [BannerLock.md](../evidence/final/BannerLock.md), [DockerSign.md](../evidence/final/DockerSign.md) and [SourceAttest.md](../evidence/final/SourceAttest.md) — what is implemented, what stays `[UNVERIFIED]`, and the residual Owner-channel risk |
-| See what changed in a version | [releases/](releases/) — one file per version, v2.0.6 → present (221 release notes, 2026-11-11) |
+| Review changes and select a signed upgrade | [v3.2.11 release notes](releases/RELEASE_NOTES_3.2.11.md) · [Release archive](releases/) |
 
 ## 🔬 Understand the internals
 
@@ -104,7 +105,7 @@ Configure your ACP client to launch `opencode acp`. A local Windows check used t
 
 | # | File | Why |
 |---|---|---|
-| 1 | **[HANDOFF-2026-10-15.md](HANDOFF-2026-10-15.md)** | Current state (its §0 names the live product tag and SHA), the inbound queue (every open PR/issue with a verdict and its evidence), what is frozen or owner-gated, the local-only assets that never reach git, and the gap register. Read §1 first (operational traps), then §3 (what is deliberately not done). OTA follows the latest annotated tag, not later untagged SHAs. |
+| 1 | **[HANDOFF-2026-10-15.md](HANDOFF-2026-10-15.md)** | Current state (its §0 names the live product tag and SHA), the inbound queue (every open PR/issue with a verdict and its evidence), what is frozen or owner-gated, the local-only assets that never reach git, and the gap register. Read §1 for operational traps and §3 for deferred work. Git-source OTA selects the highest reachable numeric stable tag. [Signed upgrade](releases/RELEASE_NOTES_3.2.11.md) |
 | 2 | **[AUDIT-LEDGER.md](AUDIT-LEDGER.md)** | Which subsystems were *actually probed*, the conclusion, and where the guard lives. Start with its "怎么读这份文件" section: the file is appended to per round and is **not** organised by topic, so that section is the only reliable entry point. It states its own round count and line-scale — **this row deliberately states neither**, because both belong to a file that grows every round, and the version of this row that did cite a round count went stale twice. |
 | 3 | **[DEVIN-CONNECT-CUTOVER.md](DEVIN-CONNECT-CUTOVER.md)** | Production cutover runbook. `DEVIN_CONNECT` is what production actually runs (the code default is OFF; the deployment sets it), so this is not optional. Paid wire-calibration procedure in §8. |
 
@@ -210,8 +211,8 @@ silently stopped guarding. These are the tools that close that gap:
 
 ## Release history
 
-- [releases/](releases/): one file per version, v2.0.6 → present — 221 release notes as of
-  2026-11-11. Append-only published history; each file is a GitHub Release body.
+- [releases/](releases/) contains 223 release notes as of 2026-11-21. Each file supplies
+  the GitHub Release body.
 - [ACCEPTANCE_3.141.592661.md](releases/ACCEPTANCE_3.141.592661.md) — this release's
   acceptance appendix: the tag-count invariance and history-scan baseline fixes, the gates
   re-measured on this tree, and the mutation sweep still outstanding.

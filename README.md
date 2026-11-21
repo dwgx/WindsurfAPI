@@ -28,6 +28,8 @@ JavaScript · MIT · ★3,107
 > **项目史与证据账本** · 检索 PR、Issue、提交、发布与 tag，查看开发里程碑、贡献与采集口径。旧可视账本保存在同页，可展开查看截至 2026-09-15 的快照。 [打开项目史](https://dwgx.github.io/WindsurfAPI/HISTORY-LEDGER-VIZ.html#history)
 
 
+[项目路线图](docs/ROADMAP.md) · [v3.2.11 发行说明与签名升级](docs/releases/RELEASE_NOTES_3.2.11.md)
+
 <p align="center">
   <a href="https://github.com/dwgx/WindsurfAPI/stargazers"><img src="https://img.shields.io/github/stars/dwgx/WindsurfAPI?style=for-the-badge&logo=github&color=f5c518" alt="Stars"></a>&nbsp;
   <a href="https://github.com/dwgx/WindsurfAPI/blob/master/LICENSE"><img src="https://img.shields.io/github/license/dwgx/WindsurfAPI?style=for-the-badge&color=2da44e" alt="License"></a>&nbsp;
@@ -822,8 +824,8 @@ MIT License. See [LICENSE](LICENSE).
 
 ## 发布与密钥边界
 
-发布流程会自动推 Docker 镜像和 GitHub Release。本版发布 **v3.141.592661**，发布说明 221 份；
-CHANGELOG 里的 **229** 是「发布命名空间」计数——`git tag | wc -l` 减去本 checkout 里存在的
+发布流程会自动推 Docker 镜像和 GitHub Release。本版发布 **v3.2.11**，发布说明 223 份。
+CHANGELOG 里的 **231** 是「发布命名空间」计数——`git tag | wc -l` 减去本 checkout 里存在的
 未发布 tag（`docs/releases/UNPUBLISHED-TAGS.txt`）再减去本版自己的 tag，所以它**不是**远端
 tag 总数，实际数量以 `git ls-remote --tags origin` 为准（annotated tag 会额外列出 `^{}` 行，
 不要直接数行）。`v3.141.592660` 是公开 tag，但它的 Release/CI 因 tag 计数 230-vs-229 失败、

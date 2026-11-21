@@ -13,13 +13,13 @@
 
 | 项 | 值 |
 |---|---|
-| 扫描 | `docs/releases/*.md` 共 222 个文件 |
-| 命中 | 31 个文件 / 31 个小节 |
-| bullet | 213 条 |
+| 扫描 | `docs/releases/*.md` 共 223 个文件 |
+| 命中 | 32 个文件 / 32 个小节 |
+| bullet | 215 条 |
 | 已复核 | 22 |
-| 仍缺 | 183 |
+| 仍缺 | 185 |
 | 已修 | 8 |
-| 无 marker | 58 |
+| 无 marker | 60 |
 
 ## 按 release
 
@@ -56,6 +56,7 @@
 | [3.9.41](releases/RELEASE_NOTES_3.9.41.md) | 1 | 6 | 0 | 6 | 0 | 0 |
 | [3.9.40](releases/RELEASE_NOTES_3.9.40.md) | 1 | 3 | 0 | 3 | 0 | 0 |
 | [3.9.39](releases/RELEASE_NOTES_3.9.39.md) | 1 | 3 | 0 | 3 | 0 | 0 |
+| [3.2.11](releases/RELEASE_NOTES_3.2.11.md) | 1 | 2 | 0 | 2 | 0 | 2 |
 
 ## 3.141.592661 — `docs/releases/RELEASE_NOTES_3.141.592661.md`
 
@@ -548,3 +549,14 @@
 | 1 | `RELEASE_NOTES_3.9.39.md:76` | **无 live-account 验收**：本轮每个宿主上 `accounts.json` 都是 2 字节的空池。 | `[UNVERIFIED]` | 仍缺 |
 | 2 | `RELEASE_NOTES_3.9.39.md:77` | **四个仪器仍未运行**：`WINDSURFAPI_LEAK_TRACE=1`、`DEVIN_CONNECT_DEBUG_META=1`、 `calibrate:devin`、`cascade-survival-probe.mjs`。 | `[UNVERIFIED]` | 仍缺 |
 | 3 | `RELEASE_NOTES_3.9.39.md:79` | **`s2-b-frame-assembly` 的突变裁决仍然缺失**：它的突变本身破坏模块加载，harness 按设计拒绝 把这种运行当作证据（拒绝 ≠ 判绿）。 | `[UNVERIFIED]` | 仍缺 |
+
+## 3.2.11 — `docs/releases/RELEASE_NOTES_3.2.11.md`
+
+1 个小节 · 2 条：已复核 0 · 仍缺 2 · 已修 0（无 marker 2）
+
+小节 `## Open verification / 尚未验证`（`:92`）
+
+| # | 位置 | bullet | marker | 状态 |
+|---:|---|---|---|---|
+| 1 | `RELEASE_NOTES_3.2.11.md:94` | Enterprise Cascade behavior in [issue #245](https://github.com/dwgx/WindsurfAPI/issues/245) remains open pending a confirmed result on the reported client and account type. | — | 仍缺 |
+| 2 | `RELEASE_NOTES_3.2.11.md:96` | Fixture tests exercise admission, response-cache behavior and retry boundaries. Any claim about upstream billing needs a provider-side receipt from an authorized run. | — | 仍缺 |
