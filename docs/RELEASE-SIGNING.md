@@ -255,9 +255,11 @@ deployment must already have) and remains intentionally not wired.
 
 ### Select an exact signed source release
 
-Use an explicit tag when moving from `v3.141.592661` to a signed 3.2 release.
-The default source updater ranks stable tags by numeric SemVer, so the legacy
-tag still takes precedence over the 3.2 line.
+For an existing source installation moving to v3.2.11, follow the
+[v3.2.11 staged migration](releases/RELEASE_NOTES_3.2.11.md#signed-upgrade).
+Both v3.141.592661 and v3.2.11 ship the numeric stable-tag selector. The
+one-shot selector described below is available in subsequent source builds
+that include this change.
 
 To check support on your trusted installation, inspect the updater source in
 the current Git revision.
@@ -266,13 +268,15 @@ the current Git revision.
 git show HEAD:update.sh | grep -F 'Usage: bash update.sh [--tag vX.Y.Z]'
 ```
 
-If the command prints the usage line, save a recoverable copy of the
-installation and its operator state, then run the update with the exact
-release tag you have chosen. If the usage line is absent, use the
-[staged migration instructions](releases/RELEASE_NOTES_3.2.10.md#migrating-from-v3141592661).
+If the command prints the usage line, choose a published, signed release
+that is a descendant of your current checkout. Save a recoverable copy of
+the installation and its operator state before applying that release.
+If the line is absent, follow the staged migration in the chosen release's
+own notes.
 
 ```bash
-bash update.sh --tag v3.2.11
+read -r -p 'Exact signed release tag to install: ' target_tag
+bash update.sh --tag "${target_tag:?a release tag is required}"
 ```
 
 The tag applies to this invocation. The updater requires the remote annotated
