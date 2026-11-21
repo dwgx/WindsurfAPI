@@ -143,8 +143,7 @@ status.
   [2026-08-docs](HISTORY-LEDGER-2026-08-docs.md)
 - [HISTORY-LEDGER-PRS.md](HISTORY-LEDGER-PRS.md) — 69 PRs, one by one.
 - [HISTORY-LEDGER-ISSUES.md](HISTORY-LEDGER-ISSUES.md) — 177 issues, one by one.
-- [HISTORY-LEDGER-VIZ.html](HISTORY-LEDGER-VIZ.html) — interactive visualization (numbers stop
-  at v3.9.34 / 2026-09-15).
+- [Project history and evidence](HISTORY-LEDGER-VIZ.html#history) — searchable public records with snapshot coverage and the original v3.9.34 visualization through 2026-09-15.
 
 ## Verification tooling
 

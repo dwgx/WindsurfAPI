@@ -6,7 +6,7 @@
 
 > Turn Windsurf / Devin's 100+ AI models (Claude, GPT, Gemini, DeepSeek, Kimi, GLM, SWE…) into OpenAI / Anthropic / Gemini standard APIs. Zero npm runtime dependencies.
 
-> **History Ledger** · Every commit laid out: 1387 commits, 196 releases, 82 PRs, 180 issues (the ledger's own frozen scope — **its numbers stop at v3.9.34 / 2026-09-15**) — timeline, contributor analysis, Git tree (vertical / horizontal / ring), and a full account of every mistake along the way. [**Open the interactive ledger**](https://dwgx.github.io/WindsurfAPI/HISTORY-LEDGER-VIZ.html) (zero-dependency, pure vanilla).
+> **Project history & evidence** · Browse PRs, issues, commits, releases and tags, with development milestones, contributor roles and source coverage. Expand the original visualization for the snapshot through 2026-09-15. [Open the project history](https://dwgx.github.io/WindsurfAPI/HISTORY-LEDGER-VIZ.html#history)
 
 
 <p align="center">
