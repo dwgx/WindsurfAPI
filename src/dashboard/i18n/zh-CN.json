@@ -1947,7 +1947,7 @@
     "apiKeyGenerated": "API Key 已生成{{autoAdd}}",
     "fail": "✗ 登录失败",
     "batchComplete": "批量导入完成",
-    "batchDesc": "共 {{total}} 个账号，成功 {{success}} 个，失败 {{fail}} 个{{autoAdd}}",
+    "batchDesc": "共 {{total}} 个账号，成功 {{success}} 个，跳过 {{skipped}} 个，失败 {{fail}} 个{{autoAdd}}",
     "tryOther": "换个方式试试",
     "oauthHint": "若你用 Google/GitHub 注册的 Windsurf 账号 此处密码登录不适用 请用页面顶部的 Google / GitHub 登录按钮 或访问 {{link}} 复制 Auth Token 后在「账号管理」页手动添加",
     "fields": {
@@ -1959,7 +1959,7 @@
       "accountId": "账号 ID"
     },
     "successTitle": "登录成功",
-    "addedToPool": "并加入账号池"
+    "addedToPool": "，并加入账号池"
   },
   "timeRange": {
     "minutesAgo": "{{count}}分钟前",

@@ -2703,15 +2703,15 @@ const App = {
       if (!r.success || !Array.isArray(r.results)) {
         this.toast(r.error || 'batch failed', 'error'); return;
       }
-      this.showWLResult(`<div class="anno" style="font-size:20px">batch · ${r.successCount || 0} ok / ${r.failCount || 0} fail</div>
+      this.showWLResult(`<div class="anno" style="font-size:20px">batch · ${r.successCount || 0} ok / ${r.skippedCount || 0} skipped / ${r.failCount || 0} fail</div>
         <div class="table-wrap" style="margin-top:12px"><table>
           <thead><tr><th>email</th><th>status</th><th>note</th></tr></thead>
           <tbody>${r.results.map(x => `<tr><td>${this.esc(x.email || '-')}</td>
-            <td><span class="badge ${x.success ? 'active' : 'error'}">${x.success ? 'ok' : 'fail'}</span></td>
-            <td class="text-sm">${x.success ? `<code class="break-all">${this.esc(x.apiKey_masked || x.apiKey?.slice(0,16) + '…' || '-')}</code>` : `<span style="color:var(--error)">${this.esc(x.error || 'unknown')}</span>`}</td></tr>`).join('')}</tbody>
+            <td><span class="badge ${x.success ? 'active' : (x.skipped ? 'warn' : 'error')}">${x.success ? 'ok' : (x.skipped ? 'skipped' : 'fail')}</span></td>
+            <td class="text-sm">${x.success ? `<code class="break-all">${this.esc(x.apiKey_masked || x.apiKey?.slice(0,16) + '…' || '-')}</code>` : `<span style="color:var(--${x.skipped ? 'warn' : 'error'})">${this.esc(x.error || 'unknown')}</span>`}</td></tr>`).join('')}</tbody>
         </table></div>`);
       this.pushLoginHistoryEntries(r.results.map(x => ({ time: new Date().toISOString(), email: x.email, proxy: 'batch', status: x.success ? 'success' : 'error: ' + (x.error || 'unknown'), apiKey: x.success ? x.apiKey_masked : undefined })));
-      this.toast(`batch · ${r.successCount || 0} ok / ${r.failCount || 0} fail`);
+      this.toast(`batch · ${r.successCount || 0} ok / ${r.skippedCount || 0} skipped / ${r.failCount || 0} fail`);
       if ((r.successCount || 0) > 0) { this.loadAccounts(); document.getElementById('wl-batch-input').value = ''; }
     } catch (err) { this.toast(err.message, 'error'); }
     finally { btn.disabled = false; btn.textContent = '批量导入'; }

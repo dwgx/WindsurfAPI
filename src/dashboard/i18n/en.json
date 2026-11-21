@@ -1947,7 +1947,7 @@
     "apiKeyGenerated": "API Key generated{{autoAdd}}",
     "fail": "✗ Login Failed",
     "batchComplete": "Batch Import Complete",
-    "batchDesc": "Total {{total}} accounts, {{success}} success, {{fail}} fail{{autoAdd}}",
+    "batchDesc": "Total {{total}} accounts, {{success}} success, {{skipped}} skipped, {{fail}} fail{{autoAdd}}",
     "tryOther": "Try Another Way",
     "oauthHint": "If Google/GitHub OAuth was used to register, password login won't work. Use the Google/GitHub buttons above, or visit {{link}} to copy Auth Token then manually add in Account Pool page.",
     "fields": {
@@ -1959,7 +1959,7 @@
       "accountId": "Account ID"
     },
     "successTitle": "Login Success",
-    "addedToPool": "and added to account pool"
+    "addedToPool": ", added to account pool"
   },
   "timeRange": {
     "minutesAgo": "{{count}}m ago",
