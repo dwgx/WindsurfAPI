@@ -5,7 +5,7 @@
 
 import { createHash, randomUUID } from 'crypto';
 import { WindsurfClient, contentToString, isCascadeTransportError, acquireLsUseOrThrow, detachedClaimLostError, classifyCascadeEnd } from '../client.js';
-import { getApiKey, acquireAccountByKey, releaseAccountById, currentApiKeyForId, getAccountInternal, getAccountAvailability, reportError, reportSuccess, markRateLimited, markQuotaExhausted, markSelectorIneligible, reportInternalError, reportDeadToken, updateCapability, getAccountList, isAllRateLimited, isAllTemporarilyUnavailable, isAllConnectAccountsUnavailable, refundReservation, looksLikeBanSignal, reportBanSignal, clearBanSignals, isModelBlockedByDrought, isConnectSelectorBlockedByDrought, getDroughtSummary, getConnectFreeFallbackSelectors, reLoginAccount as _reLoginAccount, getAccountCount, hasConnectEntitledAccount, recordAccountSpend, recordAccountAttempt, ensureDeviceSeed, requestReauthCheck, getConnectSelectorImageCapabilityForAccount } from '../auth.js';
+import { getApiKey, acquireAccountByKey, releaseAccountById, currentApiKeyForId, getAccountInternal, getAccountAvailability, reportError, reportSuccess, markRateLimited, markQuotaExhausted, markSelectorIneligible, reportInternalError, reportDeadToken, updateCapability, getAccountList, isAllRateLimited, isAllTemporarilyUnavailable, isAllConnectAccountsUnavailable, refundReservation, looksLikeBanSignal, reportBanSignal, clearBanSignals, isModelBlockedByDrought, isConnectSelectorBlockedByDrought, isConnectFreeOnlyDroughtAdmission, getDroughtSummary, getConnectFreeFallbackSelectors, reLoginAccount as _reLoginAccount, getAccountCount, hasConnectEntitledAccount, recordAccountSpend, recordAccountAttempt, ensureDeviceSeed, requestReauthCheck, getConnectSelectorImageCapabilityForAccount } from '../auth.js';
 
 import { isStickyEnabled, setStickyBinding, peekStickyBinding } from '../account/sticky-session.js';
 import { resolveModel, getModelInfo, pickRateLimitFallback, isModelDisabledUpstream, getModelCaps } from '../models.js';
@@ -2651,13 +2651,13 @@ export function __resetConnectDeps() {
 // (e.g. a fable) off a free account, which the upstream rejects as
 // permission_denied. modelKey stays null — connect selectors are a different
 // namespace from the Cascade catalog and must not hit the catalog model-allow filter.
-async function acquireConnectAccount(signal, callerKey, selector = null, budget = null) {
+async function acquireConnectAccount(signal, callerKey, selector = null, budget = null, opts = {}) {
   // Empty pool (single-token deploy: only WINDSURF_API_KEY/DEVIN_CONNECT_TOKEN
   // in env) → there is nothing to wait for. Return null immediately for the
   // env-token fallback instead of blocking QUEUE_MAX_WAIT_MS on every request.
   if (getAccountCount().total === 0) return null;
   const tried = [];
-  const acct = await waitForAccount(tried, signal, budgetWaitMs(budget, QUEUE_MAX_WAIT_MS), null, callerKey, selector);
+  const acct = await waitForAccount(tried, signal, budgetWaitMs(budget, QUEUE_MAX_WAIT_MS), null, callerKey, selector, opts);
   return acct; // may be null → env-token fallback
 }
 
@@ -2674,7 +2674,7 @@ async function acquireConnectAccount(signal, callerKey, selector = null, budget 
 // just stall the request for QUEUE_MAX_WAIT_MS before failing. We take whatever
 // untried account is selectable after a bounded failover pause, or give up.
 // This helper is never called for the initial, successful acquisition.
-async function acquireConnectFailover(triedKeys, signal, callerKey, selector = null, budget = null) {
+async function acquireConnectFailover(triedKeys, signal, callerKey, selector = null, budget = null, opts = {}) {
   if (signal?.aborted) return null;
   // Match Cascade's 500ms first backoff, but keep a fixed per-hop budget.
   // Wait before acquisition so an idle timer never holds an account reservation.
@@ -2692,7 +2692,7 @@ async function acquireConnectFailover(triedKeys, signal, callerKey, selector = n
     signal?.addEventListener('abort', finish, { once: true });
   });
   if (signal?.aborted) return null;
-  return getApiKey(triedKeys, null, callerKey, selector);
+  return getApiKey(triedKeys, null, callerKey, selector, opts);
 }
 
 // Prompt-cache affinity for the DEVIN_CONNECT path.
@@ -3257,7 +3257,7 @@ export function finalizeConnectAccount(acct, { model, selector = null, startTime
  *   wait this function actually performed — see the note at its use site for why that has
  *   to be distinguishable from an ordinary give-up.
  */
-async function waitForOwnPin(tried, signal, modelKey, callerKey, connectSelector) {
+async function waitForOwnPin(tried, signal, modelKey, callerKey, connectSelector, opts = {}) {
   const NO_WAIT = { acct: null, aborted: false };
   const budgetMs = getBreakerTunable('stickyQueueOnPinMs');
   if (!budgetMs || budgetMs <= 0) return NO_WAIT;
@@ -3295,7 +3295,7 @@ async function waitForOwnPin(tried, signal, modelKey, callerKey, connectSelector
     if (signal?.aborted) return { acct: null, aborted: true };
     // pinOnly: reuses the real usability test, and cannot answer with a substitute or
     // clear the pin on a miss.
-    const acct = getApiKey(tried, modelKey, callerKey, connectSelector, { pinOnly: true });
+    const acct = getApiKey(tried, modelKey, callerKey, connectSelector, { ...opts, pinOnly: true });
     if (acct) {
       log.info(`[sticky] QUEUE-ON-PIN served the pinned account after ${Date.now() - started}ms (reason was ${avail.reason})`);
       return { acct, aborted: false };
@@ -3305,9 +3305,9 @@ async function waitForOwnPin(tried, signal, modelKey, callerKey, connectSelector
   return NO_WAIT;
 }
 
-async function waitForAccount(tried, signal, maxWaitMs = QUEUE_MAX_WAIT_MS, modelKey = null, callerKey = null, connectSelector = null) {
+async function waitForAccount(tried, signal, maxWaitMs = QUEUE_MAX_WAIT_MS, modelKey = null, callerKey = null, connectSelector = null, opts = {}) {
   const deadline = Date.now() + maxWaitMs;
-  const pinWait = await waitForOwnPin(tried, signal, modelKey, callerKey, connectSelector);
+  const pinWait = await waitForOwnPin(tried, signal, modelKey, callerKey, connectSelector, opts);
   if (pinWait.acct) return pinWait.acct;
   // Aborted DURING a wait we chose to perform. The pre-existing contract below is "if an
   // account is free, serve it even if the signal is aborted" — the abort check sits inside
@@ -3317,7 +3317,7 @@ async function waitForAccount(tried, signal, maxWaitMs = QUEUE_MAX_WAIT_MS, mode
   // in-flight count — for a caller we now KNOW has gone. Bail instead, which is also what
   // the loop below would do on its next iteration.
   if (pinWait.aborted) return null;
-  let acct = getApiKey(tried, modelKey, callerKey, connectSelector);
+  let acct = getApiKey(tried, modelKey, callerKey, connectSelector, opts);
   while (!acct) {
     if (signal?.aborted) return null;
     if (Date.now() >= deadline) return null;
@@ -3326,7 +3326,7 @@ async function waitForAccount(tried, signal, maxWaitMs = QUEUE_MAX_WAIT_MS, mode
       return null;
     }
     await new Promise(r => setTimeout(r, QUEUE_RETRY_MS));
-    acct = getApiKey(tried, modelKey, callerKey, connectSelector);
+    acct = getApiKey(tried, modelKey, callerKey, connectSelector, opts);
   }
   return acct;
 }
@@ -4105,6 +4105,14 @@ async function _handleChatCompletionsInner(body, context = {}) {
         },
       };
     }
+    // The gate above admitted this request; WHY matters for account selection.
+    // When the only reason is "the selector is free on at least one account", the
+    // account that executes must be one where it is free RIGHT NOW — otherwise the
+    // gate's whole purpose (do not burn quota) is inverted by the scheduler. The
+    // predicate lives in auth.js next to the gate so the two cannot disagree, and
+    // the flag rides every acquisition path below (queue wait, sticky pin, failover
+    // hops, degraded serve) through getApiKey's single admission check.
+    const freeOnlyDroughtAdmission = isConnectFreeOnlyDroughtAdmission(selector);
     // Tool calling: connect selectors have no native function-calling slot, so
     // we emulate exactly like the Cascade path — inject the tool protocol into
     // the prompt (normalizeMessagesForCascade folds role:tool history and
@@ -4416,7 +4424,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
       // acquired null, which is indistinguishable from "no pool" and fell through to
       // the un-accounted env token. Ask the scheduler's own admission predicate
       // (read-only) so that shape fails fast instead.
-      const adm = isAllConnectAccountsUnavailable(selector);
+      const adm = isAllConnectAccountsUnavailable(selector, { freeOnly: freeOnlyDroughtAdmission });
       // L2: when degraded-serve is on, DON'T fast-429 a fully-throttled pool here.
       // Fall through to acquireConnectAccount → getApiKey, which will degrade-serve
       // the least-bad transiently-cooled account (pickDegradedFallback) instead of
@@ -4449,7 +4457,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
         };
       }
     }
-    const ccAcct = __sHit ? null : await acquireConnectAccount(context.signal, callerKey, selector, context.budget || null);
+    const ccAcct = __sHit ? null : await acquireConnectAccount(context.signal, callerKey, selector, context.budget || null, { freeOnly: freeOnlyDroughtAdmission });
     // Upstream-declared image capability (GetCliModelConfigs #5, the same bit
     // /v1/models advertises). Until this gate no request path read it, so an
     // image was forwarded to a model the same server had just told the client
@@ -5155,7 +5163,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
                 // !emitted, since replaying after bytes are on the wire would
                 // duplicate content. The offending account is already cooled.
                 if (isAccountFailoverError(r.err.code) && !emitted && hops < maxHops) {
-                  const next = await acquireConnectFailover(triedKeys, abortController.signal, callerKey, selector, context.budget || null);
+                  const next = await acquireConnectFailover(triedKeys, abortController.signal, callerKey, selector, context.budget || null, { freeOnly: freeOnlyDroughtAdmission });
                   if (next) {
                     log.info(`Chat[${reqId}]: DEVIN_CONNECT ${r.err.code} on account → stream failover hop ${hops + 1} to next pooled account`);
                     bumpConnect(r.err.code === 'SELECTOR_NOT_ELIGIBLE' ? 'selector_failover_hops' : 'quota_failover_hops');
@@ -5191,7 +5199,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
               // failover never waits on it.
               if (acct) requestReauthCheck(acct.id, { source: 'request' }).catch(() => {});
               if (hops >= maxHops || emitted) { bumpConnect('failover_exhausted'); await send(chatStreamError('all DEVIN_CONNECT accounts exhausted (dead session tokens)', 'upstream_error', 'UNAUTHORIZED')); break; }
-              const next = await acquireConnectFailover(triedKeys, abortController.signal, callerKey, selector, context.budget || null);
+              const next = await acquireConnectFailover(triedKeys, abortController.signal, callerKey, selector, context.budget || null, { freeOnly: freeOnlyDroughtAdmission });
               if (!next) { bumpConnect('failover_exhausted'); await send(chatStreamError('all DEVIN_CONNECT accounts exhausted (dead session tokens)', 'upstream_error', 'UNAUTHORIZED')); break; }
               log.info(`Chat[${reqId}]: DEVIN_CONNECT failover hop ${hops + 1} → next pooled account`);
               bumpConnect('failover_hops');
@@ -5410,7 +5418,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
         // a 402/429 while healthy accounts sit idle. Non-stream is always replay-safe
         // (nothing reached the client yet). Exhausted pool → fall through to surface.
         if (isAccountFailoverError(r.err.code) && hops < maxHops) {
-          const next = await acquireConnectFailover(triedKeys, context.signal, callerKey, selector, context.budget || null);
+          const next = await acquireConnectFailover(triedKeys, context.signal, callerKey, selector, context.budget || null, { freeOnly: freeOnlyDroughtAdmission });
           if (next) {
             log.info(`Chat[${reqId}]: DEVIN_CONNECT ${r.err.code} on account → failover hop ${hops + 1} to next pooled account`);
             bumpConnect(r.err.code === 'SELECTOR_NOT_ELIGIBLE' ? 'selector_failover_hops' : 'quota_failover_hops');
@@ -5443,7 +5451,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
         bumpConnect('failover_exhausted');
         return { status, body: { error: { message: 'all DEVIN_CONNECT accounts exhausted (dead session tokens)', type, code: 'UNAUTHORIZED' } } };
       }
-      const next = await acquireConnectFailover(triedKeys, context.signal, callerKey, selector, context.budget || null);
+      const next = await acquireConnectFailover(triedKeys, context.signal, callerKey, selector, context.budget || null, { freeOnly: freeOnlyDroughtAdmission });
       if (!next) {
         const { status, type } = connectErrorToHttp('UNAUTHORIZED');
         log.error(`Chat[${reqId}]: DEVIN_CONNECT no more pooled accounts for failover`);

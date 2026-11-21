@@ -33,6 +33,8 @@ import {
   forgetCloudModelCatalog,
   setActiveCloudCatalogAccounts,
   getCloudCostTierFreeSelectors,
+  getCloudCostTierInfoForAccount,
+  isCostTierFreeNow,
   getCloudBillingSyncState,
   getCloudSelectorPricing,
   getCloudZeroRateSelectors,
@@ -313,12 +315,39 @@ export function isModelBlockedByDrought(modelKey) {
  */
 export function isConnectSelectorBlockedByDrought(selector) {
   if (!selector) return false;
+  if (!connectDroughtApplies(selector)) return false;
+  return !isConnectSelectorCurrentlyFree(selector);
+}
+
+/**
+ * Does the drought restriction apply to this selector at all?
+ *
+ * Shared by the gate and the free-only admission reason so the two can never
+ * disagree about WHICH selectors are in scope. Weekly-quota-exempt paid selectors
+ * (#258) are excluded here: their routing is deliberately not tied to pricing.
+ */
+function connectDroughtApplies(selector) {
+  if (!selector) return false;
   if (!isDroughtRestrictEnabled()) return false;
   if (!isDroughtMode()) return false;
-  // Weekly-quota-exempt paid selectors (#258). Separate from
-  // FREE_REACHABLE_SELECTORS so unpaid accounts stay off swe-1-7 / glm-5-2.
-  if (DROUGHT_SAFE_SELECTORS.has(selector)) return false;
-  return !isConnectSelectorCurrentlyFree(selector);
+  // Separate from FREE_REACHABLE_SELECTORS so unpaid accounts stay off
+  // swe-1-7 / glm-5-2.
+  return !DROUGHT_SAFE_SELECTORS.has(selector);
+}
+
+/**
+ * Was this selector admitted by the drought gate SOLELY because it is currently
+ * free? That is the one admission reason that is per-account in reality but
+ * pool-wide in decision: `isConnectSelectorCurrentlyFree` says "SOME account can
+ * run it without debiting quota", so the scheduler must not hand the request to a
+ * different account that bills for it. This is the gate's complementary arm —
+ * `blocked === !free` within `connectDroughtApplies` — exposed so the handler can
+ * carry the reason into account selection instead of re-deriving the predicate (a
+ * second copy is how "admitted as free" and "selected as free" drift apart).
+ */
+export function isConnectFreeOnlyDroughtAdmission(selector) {
+  if (!connectDroughtApplies(selector)) return false;
+  return isConnectSelectorCurrentlyFree(selector);
 }
 
 /**
@@ -553,6 +582,39 @@ function billingFreshness(now = Date.now()) {
 export function isConnectSelectorCurrentlyFree(selector) {
   if (!selector) return false;
   return getConnectSelectorPricing(selector).freeNow === true;
+}
+
+/**
+ * Is `selector` free on THIS account right now?
+ *
+ * The pool-wide answer (above) is "somebody can run it without spending quota",
+ * which is exactly wrong for a free-only admission: spending account A's promotion
+ * on account B's bill is the defect. This asks the same two evidence sources the
+ * pool answer reads, scoped to one account:
+ *
+ *   1. that account's cost-tier row, promo-aware (`isCostTierFreeNow`), and
+ *   2. that account's paired rate table, keeping only `rate === 0`.
+ *
+ * No data for the account means NOT free. Unknown/stale pricing fails closed here
+ * exactly like it does at the gate, so this predicate can only ever NARROW the
+ * gate's admission, never widen it.
+ *
+ * One deliberate exception, and it is not a new fallback: when the pool gate itself
+ * fell back to the static FREE_REACHABLE floor (`freeReason === 'fallback_whitelist'`
+ * — no live source anywhere named the selector), the gate's "free" is a
+ * deployment-level entitlement statement that applies to every account. Refusing it
+ * here would turn a cold-start deployment's admitted selector into a 429.
+ */
+export function isConnectSelectorFreeForAccount(account, selector) {
+  if (!account || !selector) return false;
+  const table = account.credits?.rateTable;
+  if (table && !Array.isArray(table)) {
+    const rate = table[selector];
+    if (typeof rate === 'number' && rate === 0) return true;
+  }
+  const info = getCloudCostTierInfoForAccount(selector, account.id);
+  if (info && isCostTierFreeNow(info)) return true;
+  return getConnectSelectorPricing(selector).freeReason === 'fallback_whitelist';
 }
 
 /**
@@ -2336,6 +2398,7 @@ function isAdmittedForRequest(account, {
   now = Date.now(),
   inflightCap = maxInflightPerAccount(),
   excludeKeys = null,
+  requireFreeSelector = null,
 } = {}) {
   if (!account || account.status !== 'active') return false;
   if (excludeKeys && excludeKeys.includes(account.apiKey)) return false;
@@ -2347,6 +2410,13 @@ function isAdmittedForRequest(account, {
   if (isInflightCapped(account, inflightCap)) return false;
   if (modelKey && !isModelAllowedForAccount(account, modelKey)) return false;
   if (connectSelector && !isConnectSelectorAllowedForAccount(account, connectSelector)) return false;
+  // Free-only admission (`requireFreeSelector`): the drought gate let this request
+  // through because the SELECTOR is free on SOME account. Handing it to a peer that
+  // bills for the same selector is the quota burn the gate exists to prevent, so the
+  // per-account fact is part of admission itself — the same predicate the sticky
+  // arm, the candidate loop, the degraded fallback and the preflights already use,
+  // which is what keeps "usable here" and "selected there" from drifting.
+  if (requireFreeSelector && !isConnectSelectorFreeForAccount(account, requireFreeSelector)) return false;
   return true;
 }
 
@@ -3303,7 +3373,7 @@ export function removeAccount(id) {
 // ea1332e (`degradedServe` def:true) — it shipped default-off for a byte-identical rollout,
 // then was flipped deliberately to break the 429 lockout loop. Opt out with
 // WINDSURFAPI_DEGRADED_SERVE=0 to get a hard 429 back.
-function pickDegradedFallback(now, excludeKeys, modelKey, connectSelector) {
+function pickDegradedFallback(now, excludeKeys, modelKey, connectSelector, requireFreeSelector = null) {
   let best = null;
   let bestUntil = Infinity;
   for (const a of accounts) {
@@ -3315,6 +3385,9 @@ function pickDegradedFallback(now, excludeKeys, modelKey, connectSelector) {
     if (pruneRpmHistory(a, now) >= rpmLimitFor(a)) continue;   // RPM full — don't compound
     if (modelKey && !isModelAllowedForAccount(a, modelKey)) continue;
     if (connectSelector && !isConnectSelectorAllowedForAccount(a, connectSelector)) continue;
+    // Free-only admission survives degraded serve: a transient throttle must not
+    // turn "the free account is briefly busy" into "bill the paid peer".
+    if (requireFreeSelector && !isConnectSelectorFreeForAccount(a, requireFreeSelector)) continue;
     // A selector-scoped upstream rejection is not a throttle: degraded-serve must
     // not re-send a request the upstream already refused for this account.
     if (connectSelector && isSelectorIneligible(a, connectSelector, now)) continue;
@@ -3335,7 +3408,7 @@ function pickDegradedFallback(now, excludeKeys, modelKey, connectSelector) {
  * @param {string|null} [modelKey]
  * @param {string|null} [callerKey]
  * @param {string|null} [connectSelector]
- * @param {{ pinOnly?: boolean, trackReservation?: boolean }} [opts] `pinOnly` makes the sticky arm NON-DESTRUCTIVE:
+ * @param {{ pinOnly?: boolean, trackReservation?: boolean, freeOnly?: boolean }} [opts] `pinOnly` makes the sticky arm NON-DESTRUCTIVE:
  *   return the pinned account if it is usable right now, otherwise return null WITHOUT
  *   clearing the binding and WITHOUT rotating to a substitute. It exists so an async
  *   caller can poll for its own pin (chat.js queue-on-pin) using the very same
@@ -3345,11 +3418,19 @@ function pickDegradedFallback(now, excludeKeys, modelKey, connectSelector) {
  *   when no binding exists, so a poll can never be answered with a substitute.
  *   `trackReservation` attaches a one-shot settler for early failures and normal
  *   completion. The caller uses it instead of the key-based release and refund.
+ *   `freeOnly` is the drought free-only admission flag: when true, an account is
+ *   only selectable if `connectSelector` is free ON THAT ACCOUNT right now
+ *   (isConnectSelectorFreeForAccount). It rides the one admission predicate, so the
+ *   sticky pin, the candidate loop, the degraded fallback and the preflights all
+ *   agree; it never widens admission, only narrows it.
  */
 export function getApiKey(excludeKeys = [], modelKey = null, callerKey = null, connectSelector = null, opts = {}) {
   const now = Date.now();
   const pinOnly = !!opts.pinOnly;
   const inflightCap = maxInflightPerAccount();
+  // A free-only admission is about a SELECTOR. Without one there is nothing to be
+  // free about, so the flag is inert rather than silently permissive.
+  const requireFreeSelector = (opts.freeOnly && connectSelector) ? connectSelector : null;
 
   // ── Sticky session: prefer the account from the last turn ────────
   // When enabled, this keeps multi-turn conversations on the same upstream
@@ -3395,7 +3476,7 @@ export function getApiKey(excludeKeys = [], modelKey = null, callerKey = null, c
         // status, maintenance (incl. language-server), cooldown, selector latch,
         // RPM window, in-flight cap, tier/entitlement. Keeping it in ONE place is
         // what stops "usable here" from drifting away from "usable in getApiKey".
-        if (isAdmittedForRequest(acct, { modelKey, connectSelector, now, inflightCap, excludeKeys })) {
+        if (isAdmittedForRequest(acct, { modelKey, connectSelector, now, inflightCap, excludeKeys, requireFreeSelector })) {
           pruneRpmHistory(acct, now); // housekeeping only; the predicate is read-only
           // A pinOnly poll that SUCCEEDS is a real acquisition, so record it as one now
           // (the silent peek above deliberately did not). Without this a queued turn
@@ -3475,7 +3556,7 @@ export function getApiKey(excludeKeys = [], modelKey = null, callerKey = null, c
     // latch, RPM window, in-flight cap, tier/entitlement. The latch asks this
     // exact question before writing "a peer can take over", so it can no longer
     // latch an account while the only peer is one this loop would skip.
-    if (!isAdmittedForRequest(a, { modelKey, connectSelector, now, inflightCap, excludeKeys })) continue;
+    if (!isAdmittedForRequest(a, { modelKey, connectSelector, now, inflightCap, excludeKeys, requireFreeSelector })) continue;
     const used = pruneRpmHistory(a, now); // housekeeping only; the predicate is read-only
     candidates.push({ account: a, used, limit: rpmLimitFor(a) });
   }
@@ -3486,7 +3567,7 @@ export function getApiKey(excludeKeys = [], modelKey = null, callerKey = null, c
     // covers the single-account pool AND any pool where every entitled account is
     // momentarily throttled, without a special-case "last account" rule.
     if (degradedServeEnabled()) {
-      const fallback = pickDegradedFallback(now, excludeKeys, modelKey, connectSelector);
+      const fallback = pickDegradedFallback(now, excludeKeys, modelKey, connectSelector, requireFreeSelector);
       if (fallback) {
         const reservation = recordRpmReservation(fallback, now, opts.trackReservation);
         fallback.lastUsed = now;
@@ -5163,24 +5244,43 @@ export function isAllTemporarilyUnavailable(modelKey, connectSelector = null) {
  * runs inside getApiKey, so a 429 would never let it happen. The trial is evaluated
  * on a COPY: this function still mutates nothing.
  */
-export function isAllConnectAccountsUnavailable(selector) {
+export function isAllConnectAccountsUnavailable(selector, { freeOnly = false } = {}) {
   const now = Date.now();
+  const requireFreeSelector = freeOnly ? selector : null;
   let anyEligible = false;
+  let entitledButNotFree = false;
   for (const a of accounts) {
     if (a.status !== 'active') {
       if (errorRecoveryDue(a, now)
-          && isAdmittedForRequest({ ...a, status: 'active' }, { connectSelector: selector, now })) {
+          && isAdmittedForRequest({ ...a, status: 'active' }, { connectSelector: selector, now, requireFreeSelector })) {
         return { allUnavailable: false, retryAfterMs: null };
       }
       continue;
     }
     if (!isConnectSelectorAllowedForAccount(a, selector)) continue;
+    // A free-only admission cannot be served by a peer that bills for the same
+    // selector. Counting that peer as eligible would send the handler into the
+    // queue wait only to acquire null and fall back to the un-accounted env token
+    // (the P0-2 conflation this preflight exists to prevent), so it is tracked
+    // separately: the pool exists, it just cannot serve THIS admission.
+    if (requireFreeSelector && !isConnectSelectorFreeForAccount(a, requireFreeSelector)) {
+      entitledButNotFree = true;
+      continue;
+    }
     anyEligible = true;
-    if (isAdmittedForRequest(a, { connectSelector: selector, now })) {
+    if (isAdmittedForRequest(a, { connectSelector: selector, now, requireFreeSelector })) {
       return { allUnavailable: false, retryAfterMs: null };
     }
   }
-  if (!anyEligible) return { allUnavailable: false, retryAfterMs: null };
+  if (!anyEligible) {
+    // Free-only: an entitled-but-paid peer still means "the pool cannot serve this
+    // admission right now" (429), not "there is no pool to judge" (env-token
+    // fallback). Without free-only the historical answer is unchanged.
+    if (freeOnly && entitledButNotFree) {
+      return { allUnavailable: true, retryAfterMs: 30_000 };
+    }
+    return { allUnavailable: false, retryAfterMs: null };
+  }
   return { allUnavailable: true, retryAfterMs: 30_000 };
 }
 
