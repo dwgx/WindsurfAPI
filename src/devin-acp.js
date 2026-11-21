@@ -1,4 +1,5 @@
 import { spawn } from 'child_process';
+import { StringDecoder } from 'node:string_decoder';
 import { setTimeout as delay } from 'node:timers/promises';
 import { VERSION } from './version.js';
 import { log } from './config.js';
@@ -376,6 +377,8 @@ function makeAcpClient({ command, args, env, signal, deadline, timeoutMs, output
   let closeCode = null;
   let fatalError = null;
   let stdoutBuffer = '';
+  const stdoutDecoder = new StringDecoder('utf8');
+  const stderrDecoder = new StringDecoder('utf8');
   // Active session id, set after session/new. Held here so an abort can send a
   // graceful `session/cancel` notification (spec §6.1) before SIGTERM.
   let activeSessionId = null;
@@ -401,13 +404,20 @@ function makeAcpClient({ command, args, env, signal, deadline, timeoutMs, output
     pending.clear();
   };
 
+  const appendStderr = (text) => {
+    stderr += text;
+    if (stderr.length > 8192) stderr = stderr.slice(-8192);
+  };
+
   const onData = (name, chunk) => {
     if (!signal?.aborted && deadline.remainingMs() <= 0) {
       failAll(deadline.error());
       return;
     }
-    const s = chunk.toString('utf8');
-    outputBytes += Buffer.byteLength(s);
+    // A pipe chunk can end inside a UTF-8 character. Count the original bytes
+    // before decoding and keep each pipe's unfinished character separate.
+    const bytes = typeof chunk === 'string' ? Buffer.from(chunk, 'utf8') : chunk;
+    outputBytes += bytes.byteLength;
     if (outputBytes > outputLimit) {
       const err = Object.assign(new Error(`Devin ACP output exceeded ${outputLimit} bytes`), {
         status: 502,
@@ -418,11 +428,10 @@ function makeAcpClient({ command, args, env, signal, deadline, timeoutMs, output
       return;
     }
     if (name === 'stderr') {
-      stderr += s;
-      if (stderr.length > 8192) stderr = stderr.slice(-8192);
+      appendStderr(stderrDecoder.write(bytes));
       return;
     }
-    stdoutBuffer += s;
+    stdoutBuffer += stdoutDecoder.write(bytes);
     const lines = stdoutBuffer.split(/\r?\n/);
     stdoutBuffer = lines.pop() || '';
     for (const line of lines) {
@@ -464,6 +473,7 @@ function makeAcpClient({ command, args, env, signal, deadline, timeoutMs, output
 
   child.stdout.on('data', c => onData('stdout', c));
   child.stderr.on('data', c => onData('stderr', c));
+  child.stderr.on('end', () => appendStderr(stderrDecoder.end()));
   // stdin 'error' guard (audit finding): every writeJsonLine already checks
   // child.stdin?.writable, but that check races the child dying mid-write — if
   // the CLI exits between the guard and the write, the write emits EPIPE on
