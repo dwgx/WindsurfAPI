@@ -67,10 +67,12 @@ describe('dashboard request ring', () => {
     recordRequest({ id: 'req_early', ts: 100 });
     const seen = [];
     let cursor = null;
+    let pages = 0;
     do {
       const page = listRequests({ cursor, limit: 1 });
       seen.push(...page.items.map((r) => r.id));
       cursor = page.nextCursor;
+      if (++pages > 20) assert.fail('pagination did not terminate');
     } while (cursor);
     assert.deepEqual(seen, ['req_early', 'req_late']);
   });
@@ -81,10 +83,12 @@ describe('dashboard request ring', () => {
     for (const id of ['req_z9', 'req_a1', 'req_m5']) recordRequest({ id, ts, model: 'm', status: 200 });
     const seen = [];
     let cursor = null;
+    let pages = 0;
     do {
       const page = listRequests({ cursor, limit: 1 });
       seen.push(...page.items.map((r) => r.id));
       cursor = page.nextCursor;
+      if (++pages > 20) assert.fail('pagination did not terminate');
     } while (cursor);
     assert.deepEqual(seen, ['req_m5', 'req_a1', 'req_z9']);
   });
@@ -109,7 +113,9 @@ describe('dashboard request ring', () => {
     const seen = first.items.map((r) => r.id);
     for (let i = 0; i < 10; i++) recordRequest({ id: `req_new_${i}`, ts, model: 'm', status: 200 });
     let cursor = first.nextCursor;
+    let pages = 0;
     while (cursor) {
+      if (++pages > 20) assert.fail('pagination did not terminate');
       const page = listRequests({ limit: 500, cursor });
       seen.push(...page.items.map((r) => r.id));
       cursor = page.nextCursor;
@@ -147,5 +153,59 @@ describe('dashboard request ring', () => {
     assert.deepEqual(Object.keys(listRequests({}).items[0]).sort(), [
       'caller', 'class', 'durationMs', 'id', 'model', 'protocol', 'selector', 'status', 'stream', 'ts',
     ]);
+  });
+
+  it('treats a cursor from another ring instance as expired, not as a first page', () => {
+    recordRequest({ id: 'req_old_1', ts: 100 });
+    recordRequest({ id: 'req_old_2', ts: 100 });
+    const cursor = listRequests({ limit: 1 }).nextCursor;
+    assert.ok(cursor);
+
+    __resetRequestRingForTest(); // models a restart or a second process
+    recordRequest({ id: 'req_new_1', ts: 200 });
+    recordRequest({ id: 'req_new_2', ts: 200 });
+
+    const page = listRequests({ cursor, limit: 3 });
+    assert.deepEqual(page.items, []);
+    assert.equal(page.nextCursor, null);
+    assert.equal(page.total, 2);
+  });
+
+  it('does not replay a pre-identity s: cursor against unrelated rows', () => {
+    recordRequest({ id: 'req_1', ts: 100 });
+    recordRequest({ id: 'req_2', ts: 200 });
+    const bare = Buffer.from('s:1', 'utf8').toString('base64url');
+    assert.deepEqual(listRequests({ cursor: bare }).items, []);
+  });
+
+  it('returns empty for a legacy cursor whose anchor was evicted', () => {
+    const ts = 1_700_000_003_000;
+    recordRequest({ id: 'req_zulu', ts });
+    const legacy = Buffer.from(`${ts}:req_zulu`, 'utf8').toString('base64url');
+    for (let i = 0; i < 2000; i++) recordRequest({ id: `req_aa${i}`, ts });
+
+    const page = listRequests({ cursor: legacy, limit: 2 });
+    assert.deepEqual(page.items, []);
+    assert.equal(page.nextCursor, null);
+    assert.equal(page.total, 2000);
+  });
+
+  it('falls back to the first page for a malformed cursor', () => {
+    recordRequest({ id: 'r1', ts: 100 });
+    assert.deepEqual(listRequests({ cursor: 'not-a-cursor' }).items.map((r) => r.id), ['r1']);
+    assert.deepEqual(listRequests({ cursor: '' }).items.map((r) => r.id), ['r1']);
+  });
+
+  it('keeps cursors stable for duplicate unordered ids', () => {
+    const ts = 1_700_000_004_000;
+    const a = recordRequest({ id: 'dup', ts });
+    const b = recordRequest({ id: 'dup', ts });
+    const c = recordRequest({ id: 'dup', ts });
+
+    const first = listRequests({ limit: 2 });
+    const second = listRequests({ limit: 2, cursor: first.nextCursor });
+    assert.deepEqual(first.items, [c, b]);
+    assert.deepEqual(second.items, [a]);
+    assert.equal(second.nextCursor, null);
   });
 });
