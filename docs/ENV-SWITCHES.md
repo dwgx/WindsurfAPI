@@ -186,17 +186,18 @@ checkout 账号（`acct === null`），成功尾必须把 usage 记到条目 own
 
 ## 默认开的功能开关
 
-这五个默认**开**，其中四个只能往「关」的方向调。它们都是「设 `0` 才关闭」的写法 ——
+这四个默认**开**，只能往「关」的方向调。它们都是「设 `0` 才关闭」的写法 ——
 写成别的值（`false` / `off`）不生效，除 `RESPONSE_CACHE` 外都只认精确的 `'0'`。
 `LS_PER_PROXY_USER` 是例外：未设置时按 sticky 用户名自动判定；`=1` 强制每个不同
 username 分池，`=0` 关闭。
+`VARIANT_FALLBACK_ON_RATE_LIMIT` 不属于这组：默认**关**，显式 `=1` 才启用。
 
 | 变量 | 默认 | 说明 |
 |---|---|---|
 | `WINDSURFAPI_ENV_LIFT` | **开** | 把调用方的环境上下文提升进 prompt（`handlers/chat.js`，`?? '1'` 后 `=== '0'` 关闭）。注意这个用 `?? '1'` 而不是 `\|\| '1'`，且会 trim + 转小写。 |
 | `WINDSURFAPI_LS_PER_PROXY_USER` | **按 sticky 用户名自动开** | 默认不是无条件按用户分池：只有 proxy username 命中 `STICKY_USER_RE` 才独立一个 LS 实例（`langserver.js:222` 的 `_sid` / `-session-` / `-sticky` / `+ws_` / `^user-` / `-cc-xx` / `-country-` / `-zone-` 等标记；判定在 `:248-255`）。普通静态用户名（如 `alice`）默认共享 LS；`=1` 强制每个不同 username 一个实例；`=0` 完全关闭分池。 |
 | `WINDSURFAPI_NLU_RECOVERY` | **开** | 意图抽取失败时走恢复路径（`handlers/intent-extractor.js`，`=== '0'` 时直接返回空数组）。 |
-| `WINDSURFAPI_VARIANT_FALLBACK_ON_RATE_LIMIT` | **开** | 撞限流时自动回落到同族其它变体（`handlers/chat.js`，`=== '0'` 关闭）。关掉后限流直接报错给客户端。 |
+| `WINDSURFAPI_VARIANT_FALLBACK_ON_RATE_LIMIT` | **关** | 撞限流时自动回落到同族其它变体（`handlers/chat.js`）。默认关：限流直接报错给客户端；显式设 `=1` 才启用回落。 |
 | `WINDSURFAPI_RESPONSE_CACHE` | **开** | 响应缓存（`cache.js`）。链式兜底：`RESPONSE_CACHE_ENABLED ?? WINDSURFAPI_RESPONSE_CACHE ?? '1'`，所以前者优先。这个认多种关闭写法（`0`/`false`/`off`/`no`）。 |
 
 ## 源码 OTA 来源证明（D9）

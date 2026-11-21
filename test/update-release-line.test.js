@@ -30,9 +30,19 @@ test('the new v3 line includes later minor releases and excludes the historical 
   assert.equal((await selectReleaseLine('3.x', head, tags.filter(t => t.name !== 'v3.3.0'), git)).name, 'v3.2.10');
 });
 
+test('the 4.x line selects v4.x tags off the same ancestry and never a v3.x tag', async () => {
+  const tags = parseRemoteStableReleaseTags([
+    tag('v3.2.10', RELEASE_LINE_START), tag('v3.3.0', future),
+    tag('v4.0.0', head), tag('v4.1.0', future),
+  ].join('\n'));
+  assert.equal((await selectReleaseLine('4.x', head, tags, git)).name, 'v4.1.0');
+  await assert.rejects(selectReleaseLine('4.x', head, tags.filter(t => !t.name.startsWith('v4.')), git), /No eligible/);
+});
+
 test('a selected lightweight tag, other branch history or unknown line cannot silently downgrade', async () => {
   const tags = parseRemoteStableReleaseTags([tag('v3.2.10', RELEASE_LINE_START), tag('v3.3.0', future, false)].join('\n'));
   await assert.rejects(selectReleaseLine('3.x', head, tags, git), /annotated/);
   await assert.rejects(selectReleaseLine('stable', head, tags, git), /Unsupported/);
+  await assert.rejects(selectReleaseLine('v3', head, tags, git), /Unsupported/);
   await assert.rejects(selectReleaseLine('3.x', head, tags, args => args[0] === 'merge-base' ? older : git(args)), /does not contain/);
 });

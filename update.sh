@@ -14,12 +14,12 @@ if [ "$#" -ne 0 ]; then
   if [ "$#" -eq 1 ] && { [ "$1" = "--help" ] || [ "$1" = "-h" ]; }; then
     echo "Usage: bash update.sh [--tag vX.Y.Z]"
     echo "  --tag  Fast-forward to this signed stable release for this run only."
-    echo "  --line 3.x  Follow stable signed descendants of the v3.2.10 release."
+    echo "  --line <major>.x  Follow stable signed descendants on that major's release line (e.g. 3.x, 4.x)."
     exit 0
   fi
   if [ "$#" -eq 2 ] && [ "$1" = "--line" ] && [ -z "$REQUESTED_LINE" ]; then
     REQUESTED_LINE="$2"
-    [ "$REQUESTED_LINE" = "3.x" ] || { echo "Expected --line 3.x" >&2; exit 2; }
+    [[ "$REQUESTED_LINE" =~ ^[0-9]+\.x$ ]] || { echo "Expected --line <major>.x" >&2; exit 2; }
   elif [ "$#" -ne 2 ] || [ "$1" != "--tag" ] || ! [[ "$2" =~ $STABLE_TAG_PATTERN ]]; then
     echo "✗ Expected a stable release tag: bash update.sh --tag vX.Y.Z" >&2
     exit 2
@@ -28,8 +28,8 @@ if [ "$#" -ne 0 ]; then
   fi
 fi
 if [ -n "$REQUESTED_LINE" ]; then
-  if [ "$REQUESTED_LINE" != "3.x" ] || [ -n "$REQUESTED_TAG" ]; then
-    echo "Choose exactly one signed tag or the 3.x release line" >&2; exit 2
+  if ! [[ "$REQUESTED_LINE" =~ ^[0-9]+\.x$ ]] || [ -n "$REQUESTED_TAG" ]; then
+    echo "Choose exactly one signed tag or a <major>.x release line" >&2; exit 2
   fi
 fi
 if [ -n "$REQUESTED_TAG$REQUESTED_LINE" ]; then

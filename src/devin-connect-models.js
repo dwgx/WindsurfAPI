@@ -112,7 +112,7 @@ const SELECTOR_MAP = new Map(Object.entries({
   'swe-2-0-medium': 'swe-2-medium',
   'swe-2-0-high': 'swe-2-high',
   'swe-2-0-max': 'swe-2-max',
-  'deepseek-v4': 'deepseek-v4-pro-high',
+  // 'deepseek-v4' 已下线：不再改指 deepseek-v4-pro-high（不偷换），直接 400。
 
   // GPT-5.6 family (live catalog 2026-07-09, docs.devin.ai price table). Luna is
   // the fastest/cheapest sibling. Bare, dash and compact forms (issue #244 verbatim

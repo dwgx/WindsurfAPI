@@ -57,19 +57,22 @@ export function parseRemoteStableReleaseTags(output) {
   return candidates;
 }
 
-// The project resumed ordinary 3.x numbering at this immutable public commit.
-// Numeric comparison within this ancestry also admits future minor releases.
+// The project resumed ordinary stable numbering (3.x and later majors share this
+// ancestry) at this immutable public commit. Numeric comparison within this
+// ancestry also admits future minor releases.
 export const RELEASE_LINE_START = 'f3b47990b372d12d9cfed76cc4ed0a4538383c0e';
 
 export async function selectReleaseLine(line, remoteRef, advertised, git) {
-  if (line !== '3.x') throw new Error('Unsupported release line; expected 3.x');
+  const lineMatch = String(line || '').match(/^([0-9]+)\.x$/);
+  if (!lineMatch) throw new Error('Unsupported release line; expected <major>.x (e.g. 3.x)');
+  const majorPrefix = 'v' + lineMatch[1] + '.';
   const head = (await git(['rev-parse', remoteRef + '^{commit}'])).trim();
   if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(head)) throw new Error('Invalid release branch commit');
   const base = (await git(['merge-base', RELEASE_LINE_START, head])).trim();
-  if (base !== RELEASE_LINE_START) throw new Error('Release branch does not contain the start of the 3.x line');
+  if (base !== RELEASE_LINE_START) throw new Error('Release branch does not contain the start of the stable release line');
   const history = await git(['rev-list', '--ancestry-path', RELEASE_LINE_START + '..' + head]);
   const eligible = new Set([RELEASE_LINE_START, ...history.trim().split(/\s+/)]);
-  const selected = advertised.find(tag => tag.name.startsWith('v3.') && eligible.has(tag.peeled || tag.object));
-  if (!selected?.peeled) throw new Error('No eligible annotated release at the head of the 3.x line');
+  const selected = advertised.find(tag => tag.name.startsWith(majorPrefix) && eligible.has(tag.peeled || tag.object));
+  if (!selected?.peeled) throw new Error(`No eligible annotated release at the head of the ${line} line`);
   return selected;
 }

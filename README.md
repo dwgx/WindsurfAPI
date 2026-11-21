@@ -493,7 +493,7 @@ curl -X DELETE http://localhost:3003/v1/responses/resp_xxx -H "Authorization: Be
 | `API_KEY` | 空 | 调 API 要带的密钥。空=默认 fail-closed（401，本机 bind 也一样）。本机开放需 `WINDSURFAPI_ALLOW_UNAUTHENTICATED=1` 且本机 bind |
 | `WINDSURFAPI_ALLOW_UNAUTHENTICATED` | 关 | 空 `API_KEY` 时放行本机 bind。默认关。公网 bind 即使设了也不放行 |
 | `DATA_DIR` | 项目根目录 | 持久化 JSON 状态和 `logs/` 的目录，Docker 推荐设成 `/data` |
-| `DEFAULT_MODEL` | `claude-sonnet-4.6` | 不传 model 用哪个。必须是当前后端能解析的名字。Connect 上解析不到默认 400 `model_not_found`（`WINDSURFAPI_STRICT_MODEL=0` 才降级到**当前真的可调**的免费 selector；连这样的 selector 都没有时仍然 400，不再落到目录里已不存在的 `swe-1-6-slow`） |
+| `DEFAULT_MODEL` | `claude-sonnet-4.6` | 不传 model 用哪个。必须是当前后端能解析的名字。Connect 上解析不到直接 400 `model_not_found`，不再静默降级到免费 selector |
 | `MAX_TOKENS` | `8192` | 默认最大回复 token 数 |
 | `LOG_LEVEL` | `info` | 控制台级别：debug / info / warn / error；JSONL 文件和 Dashboard 仍接收所有级别 |
 | `LOG_RETENTION_DAYS` | `0`（关闭） | 应用 JSONL 日志保留的 UTC 日历天数，包含当天；示例 `14`。启动及每小时清理，改配置需重启 |
