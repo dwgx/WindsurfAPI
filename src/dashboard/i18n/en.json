@@ -210,7 +210,7 @@
     "readClipboard": "Read Clipboard",
     "uploadJson": "Upload JSON",
     "clearFile": "Clear File",
-    "batchImport": "Batch Import & Login",
+    "batchImport": "Process batch",
     "paste": "Paste",
     "add": "Add",
     "close": "Close",

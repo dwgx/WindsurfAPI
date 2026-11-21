@@ -210,7 +210,7 @@
     "readClipboard": "读取剪贴板",
     "uploadJson": "上传 JSON",
     "clearFile": "清除文件",
-    "batchImport": "批量导入并登录",
+    "batchImport": "处理此批次",
     "paste": "粘贴",
     "add": "添加",
     "close": "关闭",
