@@ -270,6 +270,21 @@ function queueTimeoutRetryAfterMs(temporaryUnavailable, rateLimited) {
   return QUEUE_RETRY_MS;
 }
 
+// Shared 429 for a pool that EXISTS but cannot lease this request. The preflight
+// (before the queue wait) and the post-wait lease check are the same verdict, so
+// they must produce the same documented surface: 429 rate_limit_exceeded with the
+// Retry-After header and the body's retry_after_ms derived from ONE clamped
+// second count (F3) — a client scheduling from either reads the same number.
+function connectPoolUnavailableFailure(message, retryAfterMs) {
+  const retryAfterSec = clientRetryAfterSeconds(retryAfterMs);
+  bumpConnect('pool_exhausted');
+  return {
+    status: 429,
+    headers: { 'Retry-After': String(retryAfterSec) },
+    body: { error: { message, type: 'rate_limit_exceeded', retry_after_ms: retryAfterSec * 1000 } },
+  };
+}
+
 // Clamp every admission/attempt wait to the route's remaining budget. A layer
 // may only shorten its own bound; the request deadline is the outer bound.
 function budgetWaitMs(budget, capMs) {
@@ -2656,9 +2671,14 @@ async function acquireConnectAccount(signal, callerKey, selector = null, budget 
   // in env) → there is nothing to wait for. Return null immediately for the
   // env-token fallback instead of blocking QUEUE_MAX_WAIT_MS on every request.
   if (getAccountCount().total === 0) return null;
+  // `waitForAccount` stays injectable through the same context seam the Cascade
+  // path uses (context.waitForAccount at the handler). Production passes the
+  // real function; a test can answer the queue window deterministically without
+  // sleeping QUEUE_MAX_WAIT_MS.
+  const { waitForAccount: waitFn = waitForAccount, ...waitOpts } = opts;
   const tried = [];
-  const acct = await waitForAccount(tried, signal, budgetWaitMs(budget, QUEUE_MAX_WAIT_MS), null, callerKey, selector, opts);
-  return acct; // may be null → env-token fallback
+  const acct = await waitFn(tried, signal, budgetWaitMs(budget, QUEUE_MAX_WAIT_MS), null, callerKey, selector, waitOpts);
+  return acct; // may be null → env-token fallback (only when no pool existed at admission)
 }
 
 // Cross-account failover for DEVIN_CONNECT. When the current account's token is
@@ -4393,7 +4413,13 @@ async function _handleChatCompletionsInner(body, context = {}) {
     // gets the queue benefit via acquireConnectAccount below. A cache hit skips
     // both: it is already the answer, and charging RPM for it would exhaust the
     // pool under exactly the retry storm the cache exists to absorb.
-    if (!__sHit && getAccountCount().total > 0) {
+    //
+    // `poolAtAdmission` is the boundary this request was admitted against: a
+    // cache hit needs no pool at all, but once a real pool existed the request
+    // must hold a lease before dispatch. The post-wait check below re-reads that
+    // decision, not the live count (the pool can drain while the request queues).
+    const poolAtAdmission = !__sHit && getAccountCount().total > 0;
+    if (poolAtAdmission) {
       // No account entitled to this selector? (e.g. a paid selector like a fable
       // with only free-tier accounts in the pool.) Fail fast with a clear 403
       // instead of routing to an unentitled account and eating an upstream
@@ -4443,21 +4469,53 @@ async function _handleChatCompletionsInner(body, context = {}) {
         // (ceil). header + body report the SAME clamped value.
         const retryAfterSec = clientRetryAfterSeconds(retryAfterMs);
         log.info(`Chat[${reqId}]: DEVIN_CONNECT pool exhausted (${throttled ? 'all accounts rate-limited/unavailable' : 'no account admitted for the selector — maintenance / in-flight cap / latch'}) → 429 retry_after=${retryAfterMs}ms (advertised ${retryAfterSec}s)`);
-        bumpConnect('pool_exhausted');
-        return {
-          status: 429,
-          headers: { 'Retry-After': String(retryAfterSec) },
-          body: { error: {
-            message: throttled
-              ? `All DEVIN_CONNECT accounts are temporarily rate-limited. Retry in ~${retryAfterSec}s.`
-              : `No DEVIN_CONNECT account is currently selectable for \`${reqModelName}\` (maintenance, in-flight cap, or model unavailable for the pool). Retry in ~${retryAfterSec}s.`,
-            type: 'rate_limit_exceeded',
-            retry_after_ms: retryAfterSec * 1000,
-          } },
-        };
+        return connectPoolUnavailableFailure(
+          throttled
+            ? `All DEVIN_CONNECT accounts are temporarily rate-limited. Retry in ~${retryAfterSec}s.`
+            : `No DEVIN_CONNECT account is currently selectable for \`${reqModelName}\` (maintenance, in-flight cap, or model unavailable for the pool). Retry in ~${retryAfterSec}s.`,
+          retryAfterMs,
+        );
       }
     }
-    const ccAcct = __sHit ? null : await acquireConnectAccount(context.signal, callerKey, selector, context.budget || null, { freeOnly: freeOnlyDroughtAdmission });
+    const ccAcct = __sHit ? null : await acquireConnectAccount(context.signal, callerKey, selector, context.budget || null, { freeOnly: freeOnlyDroughtAdmission, waitForAccount: waitForAccountFn });
+    // Pooled admission contract (P0-2): a request admitted against a real pool
+    // MUST hold a lease before dispatch. `acquireConnectAccount` resolves null
+    // for two unrelated states — "no pool existed" (handled above; the operator's
+    // standalone env-token deploy is legitimate) and "the wait ended with no
+    // slot" (queue timeout, abort, or the pool stopped admitting this selector).
+    // Only the former may continue un-accounted. Falling through here with a
+    // pooled request would put an un-tracked env-token call behind a request the
+    // preflight already promised would be leased, and the preflight above cannot
+    // see a pool that emptied or latched during the async wait.
+    //
+    // The check sits BEFORE connectParams/image work, so neither the streaming
+    // nor the buffered path prepares an adapter for an unacquired request.
+    if (poolAtAdmission && !ccAcct) {
+      if (context.signal?.aborted) {
+        log.info(`Chat[${reqId}]: DEVIN_CONNECT client disconnected while waiting for a pooled account — not dispatching`);
+        return { status: 499, body: { error: { message: 'Client closed request', type: 'client_disconnect', code: 'client_disconnect' } } };
+      }
+      // Same budget surface as the existing connect failover gate: the deadline
+      // (or the turn cap) stopped admission before any upstream work.
+      if (context.budget && !context.budget.canStartAttempt()) {
+        const stop = budgetExceededError(`request budget exhausted while waiting for a DEVIN_CONNECT account (${context.budget.describe()})`);
+        log.warn(`Chat[${reqId}]: ${stop.message}`);
+        const { status, type } = connectErrorToHttp('DEADLINE_EXCEEDED');
+        return { status, body: { error: { message: stop.message, type, code: 'DEADLINE_EXCEEDED' } } };
+      }
+      const temporary = isAllTemporarilyUnavailable(null, selector);
+      const rateLimited = isAllRateLimited(null, selector);
+      const retryAfterMs = queueTimeoutRetryAfterMs(temporary, rateLimited);
+      const retryAfterSec = clientRetryAfterSeconds(retryAfterMs);
+      const limited = temporary.allUnavailable || rateLimited.allLimited;
+      log.info(`Chat[${reqId}]: DEVIN_CONNECT pooled admission ended without an account lease (${limited ? 'pool rate-limited/unavailable' : 'queue window elapsed'}) → 429 retry_after=${retryAfterMs}ms (advertised ${retryAfterSec}s)`);
+      return connectPoolUnavailableFailure(
+        limited
+          ? `All DEVIN_CONNECT accounts are temporarily rate-limited. Retry in ~${retryAfterSec}s.`
+          : `No DEVIN_CONNECT account became available for \`${reqModelName}\` within the queue window (pool busy or selector unavailable). Retry in ~${retryAfterSec}s.`,
+        retryAfterMs,
+      );
+    }
     // Upstream-declared image capability (GetCliModelConfigs #5, the same bit
     // /v1/models advertises). Until this gate no request path read it, so an
     // image was forwarded to a model the same server had just told the client
@@ -5431,12 +5489,28 @@ async function _handleChatCompletionsInner(body, context = {}) {
         // as 401, and a rate limit as 429 — not a blanket 502.
         const { status, type } = connectErrorToHttp(r.err.code);
         log.error(`Chat[${reqId}]: DEVIN_CONNECT error (${r.err.code || 'UPSTREAM_ERROR'} -> ${status}): ${r.err.message}`);
-        return { status, body: { error: {
-          message: r.err.message,
-          type,
-          code: r.err.code || null,
-          ...(r.err.param ? { param: r.err.param } : {}),
-        } } };
+        // F3: a provider-declared reset window on a rate limit is a usable wait
+        // hint. Advertise it on the real 429 the same way the streaming path
+        // already does: header and body carry ONE clamped value (whole seconds
+        // via clientRetryAfterSeconds); the body field is that same value in ms.
+        // No hint (missing/non-positive resetMs) keeps the historical body and
+        // header set untouched.
+        const hintedMs = r.err.code === 'RATE_LIMITED'
+          && Number.isFinite(r.err.resetMs) && r.err.resetMs > 0
+          ? r.err.resetMs
+          : null;
+        const retryAfterSec = hintedMs ? clientRetryAfterSeconds(hintedMs) : null;
+        return {
+          status,
+          ...(retryAfterSec ? { headers: { 'Retry-After': String(retryAfterSec) } } : {}),
+          body: { error: {
+            message: r.err.message,
+            type,
+            code: r.err.code || null,
+            ...(r.err.param ? { param: r.err.param } : {}),
+            ...(retryAfterSec ? { retry_after_ms: retryAfterSec * 1000 } : {}),
+          } },
+        };
       }
       // r.kind === 'dead' — the session token couldn't be revived on this account.
       if (acct) reportDeadToken(currentApiKeyForId(acct.id, acct.apiKey));

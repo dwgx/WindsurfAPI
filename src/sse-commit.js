@@ -268,6 +268,11 @@ export function createDeferredSseResponse(realRes, {
           message: error?.message || 'Upstream error',
           type,
           ...(error?.code ? { code: error.code } : {}),
+          // The header is already the clamped whole-second value; expose the
+          // same advertised delay in the default JSON body so a client reading
+          // only `error.retry_after_ms` cannot see a different (or missing)
+          // wait. Custom `errorBody` builders keep their own shape.
+          ...(retry ? { retry_after_ms: retry * 1000 } : {}),
         },
         ...(requestId ? { request_id: requestId } : {}),
       };
