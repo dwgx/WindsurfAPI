@@ -12,6 +12,11 @@ The public history page is live. [Release notes](releases/RELEASE_NOTES_3.2.11.m
 
 ## Next increments
 
+The ACP v1 client should end initialization if an agent selects an unsupported
+protocol version. Check the ordered RPCs with a synthetic agent selecting v1
+and one selecting a different major. Preserve the existing v1 request path.
+[ACP v1 negotiation](https://agentclientprotocol.com/protocol/v1/initialization#version-negotiation)
+
 The follow-up branch has a one-shot signed source selector and dedicated
 side-effect-free account preview routes. Its import fixtures cover mixed
 JSON, repeated imports and unsupported entries with user-visible positions.
