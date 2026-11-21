@@ -1,0 +1,32 @@
+{
+  "tests": [
+    "test/apply-patch-diagnostic.test.js"
+  ],
+  "expectBaselinePass": 5,
+  "mutations": [
+    {
+      "name": "native diagnostics discard the invalid-json witness",
+      "file": "src/devin-connect-openai.js",
+      "anchor": "observeApplyPatch(tc.name, tc.arguments, tc.invalidJson, 'native');",
+      "replacement": "observeApplyPatch(tc.name, tc.arguments, null, 'native');"
+    },
+    {
+      "name": "emulated stream calls are never recorded",
+      "file": "src/devin-connect-openai.js",
+      "anchor": "if (filter) observeApplyPatch(tc.name, tc.argumentsJson ?? tc.arguments, null, 'emulated');",
+      "replacement": "if (false) observeApplyPatch(tc.name, tc.argumentsJson ?? tc.arguments, null, 'emulated');"
+    },
+    {
+      "name": "large inputs undergo diagnostic parsing",
+      "file": "src/apply-patch-diagnostic.js",
+      "anchor": "if (value.length > MAX_INSPECT_UNITS) return 'over_limit';",
+      "replacement": "if (false) return 'over_limit';"
+    },
+    {
+      "name": "diagnostic retention grows past its fixed capacity",
+      "file": "src/apply-patch-diagnostic.js",
+      "anchor": "if (samples.length === MAX_SAMPLES) samples.shift();",
+      "replacement": "if (false) samples.shift();"
+    }
+  ]
+}

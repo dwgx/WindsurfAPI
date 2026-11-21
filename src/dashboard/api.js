@@ -3,6 +3,7 @@
  * All routes are under /dashboard/api/*.
  */
 
+import { getApplyPatchDiagnostics } from '../apply-patch-diagnostic.js';
 import { config, log } from '../config.js';
 import { accountLoginIdentity, loginResultIdentity } from '../account/login-identity.js';
 import * as credentials from '../devin-connect-credentials.js';
@@ -2780,6 +2781,9 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
     // STICKY_SESSION_ENABLED is actually binding (hits/creates > 0) instead
     // of counting log lines — the only way to check before this.
     const params = dashboardUrl(req).searchParams;
+    if (params.get('applyPatch') === '1') {
+      return json(res, 200, { applyPatch: getApplyPatchDiagnostics() }, NO_STORE);
+    }
     if (params.get('cacheBindings') === '1') {
       return json(res, 200, { sticky: { enabled: isStickyEnabled(),
         cacheOutcomes: getStickyCacheOutcomes(Number(params.get('offset'))) } }, NO_STORE);

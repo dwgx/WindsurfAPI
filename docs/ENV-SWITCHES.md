@@ -398,3 +398,16 @@ selectors; ordinary Connect affinity uses a separate binding for each selector.
 A positive provider cache-read count is a hit, an explicit zero is a miss,
 and a missing breakdown is unknown. Token counts describe delivered upstream
 turns. A gateway response-cache hit incurs no upstream turn and adds no sample.
+
+## Connect apply_patch diagnostics
+
+The authenticated dashboard route `GET /dashboard/api/connect-metrics?applyPatch=1`
+shows the latest 16 native or emulated client-owned `apply_patch` calls. It
+reports argument and error lengths in UTF-16 code units and fixed shape names.
+Each argument or invalid JSON string is inspected only up to 16,384 code units.
+An oversized value receives the `over_limit` shape. The `bare_patch` shape in
+the invalid field indicates that patch delimiters survived upstream parsing.
+
+Patch text, file names, tool-call IDs and error contents are excluded. Reading
+this diagnostic does not alter tool arguments or apply a patch. Resetting
+Connect metrics also clears these samples.

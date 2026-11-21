@@ -29,6 +29,7 @@ import { applyStop, StopSequenceGate } from './stop-sequences.js';
 import { normalizeToolCallArgs, recordArgRepair } from './handlers/cline-compat.js';
 import { ThinkTextClassifier } from './response-classifier.js';
 import { budgetExceededError } from './request-budget.js';
+import { observeApplyPatch } from './apply-patch-diagnostic.js';
 import { bumpConnect } from './devin-connect-metrics.js';
 import { toClientToolCallId, restoreUpstreamToolIds } from './tool-ids.js';
 
@@ -604,6 +605,11 @@ function nowSeconds() {
   return Math.floor(Date.now() / 1000);
 }
 
+function nativeToolForChat(tc) {
+  observeApplyPatch(tc.name, tc.arguments, tc.invalidJson, 'native');
+  return { id: tc.id, name: tc.name, argumentsJson: tc.arguments };
+}
+
 /**
  * Collect a full DEVIN_CONNECT completion and shape it as a non-streaming
  * `chat.completion` object.
@@ -727,9 +733,7 @@ export async function toChatCompletion(params, opts = {}) {
     // arguments is the raw JSON string off the wire (decodeToolCalls); map it to
     // the same shape parseToolCallsFromText produces so the message builder below
     // is source-agnostic.
-    toolCalls = nativeToolCalls.map((tc) => ({
-      id: tc.id, name: tc.name, argumentsJson: tc.arguments,
-    }));
+    toolCalls = nativeToolCalls.map(nativeToolForChat);
     finishReason = 'tool_calls';
   } else if (emulateTools) {
     const parsed = parseToolCallsFromText(content, {
@@ -797,6 +801,9 @@ export async function toChatCompletion(params, opts = {}) {
   // longer a thinking block, so a signature beside it would seal nothing.
   if (reasoning && !promotedReasoning && reasoningSignature && !multipleSignedSegments) message.reasoning_signature = reasoningSignature;
   if (toolCalls.length) {
+    if (!nativeToolCalls.length) {
+      for (const tc of toolCalls) observeApplyPatch(tc.name, tc.argumentsJson ?? tc.arguments, null, 'emulated');
+    }
     message.tool_calls = toolCalls.map((tc, i) => ({
       id: toClientToolCallId(tc.id, `call_${i}_${Date.now().toString(36)}`),
       type: 'function',
@@ -981,6 +988,7 @@ export async function streamChatCompletion(params, send, opts = {}) {
     // (structured ev.toolCalls from upstream) are trusted and pass through.
     if (filter) calls = filterToolCallsByAllowlist(calls || [], params.tools || []);
     for (const tc of calls || []) {
+      if (filter) observeApplyPatch(tc.name, tc.argumentsJson ?? tc.arguments, null, 'emulated');
       await prime(); // a tool_call is a real delta — open the message before it
       const idx = collectedToolCalls.length;
       // Normalize once, before the call is recorded: the emitted delta AND the
@@ -1103,9 +1111,7 @@ export async function streamChatCompletion(params, send, opts = {}) {
   // twice. Native arrives whole on the finish event, so it's emitted here rather
   // than inline — same wire shape as the emulated deltas above.
   if (nativeToolCalls.length && !collectedToolCalls.length) {
-    await emitToolCalls(nativeToolCalls.map((tc) => ({
-      id: tc.id, name: tc.name, argumentsJson: tc.arguments,
-    })), false);   // native calls are trusted (structured upstream data), no allowlist filter
+    await emitToolCalls(nativeToolCalls.map(nativeToolForChat), false);   // native calls are trusted (structured upstream data), no allowlist filter
     finishReason = 'tool_calls';
   }
 

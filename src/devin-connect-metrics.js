@@ -1,3 +1,4 @@
+import { resetApplyPatchDiagnostics } from './apply-patch-diagnostic.js';
 /**
  * DEVIN_CONNECT operational counters — in-memory, lifetime-of-process.
  *
@@ -199,6 +200,7 @@ export function __registerCredHealth(fn) { _credHealthRef = fn || null; }
 
 /** Reset counters (tests / dashboard DELETE). */
 export function resetConnectMetrics() {
+  resetApplyPatchDiagnostics();
   for (const k of Object.keys(_counters)) _counters[k] = 0;
   _startedAt = Date.now();
 }
