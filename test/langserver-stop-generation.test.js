@@ -377,9 +377,28 @@ describe('LS stop boundary: stale cleanup is generation-bound', () => {
     await assert.rejects(ls.startLanguageServer(), (err) => isStopping(err));
     assert.equal(fake.spawns, 1, 'no child spawned during the drain');
 
+    // The admission surface must agree with the refusal: no `can_start` while
+    // the drain is in flight, and a distinguishable reason for the caller.
+    const duringDrain = ls.getLsAdmissionStatus(null);
+    assert.equal(duringDrain.ok, false);
+    assert.equal(duringDrain.reason, 'stopping');
+    assert.equal(duringDrain.errorType, 'ls_stopping');
+    assert.equal(duringDrain.wouldStart, true);
+    const drainPool = status();
+    assert.equal(drainPool.canStartNewNonDefault, false);
+    assert.equal(drainPool.blockReason, 'stopping');
+    assert.equal(drainPool.stoppingInFlight, true);
+
     releaseExits();
     await stopping;
     assert.equal(status().stopping, 0);
+    const afterDrain = ls.getLsAdmissionStatus(null);
+    assert.equal(afterDrain.ok, true);
+    assert.equal(afterDrain.reason, 'can_start');
+    assert.equal(afterDrain.errorType, null);
+    assert.equal(status().canStartNewNonDefault, true);
+    assert.equal(status().blockReason, null);
+    assert.equal(status().stoppingInFlight, false);
 
     const replacement = await ls.ensureLs(null);
     assert.equal(replacement.ready, true);

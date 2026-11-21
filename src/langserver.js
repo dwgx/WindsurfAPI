@@ -845,11 +845,16 @@ function getLsPoolSummary(now = Date.now()) {
   const memoryGuard = getLsMemoryGuardStatus({ reservedStarts: activeSpawnReservationCount() });
   const poolHasCapacity = hasLsPoolCapacityForStart(effectiveOccupancy, MAX_LS_INSTANCES, evictionCandidateCount);
   const memoryOk = memoryGuard.okToSpawn || memoryGuard.availableBytes == null || !LS_MEMORY_GUARD_ENABLED;
-  const blockReason = !memoryOk
-    ? 'memory_guard'
-    : !poolHasCapacity
-      ? 'pool_full_no_idle'
-      : null;
+  // A drain refuses starts (ensureLs throws LS_STOPPING), so the summary must
+  // not advertise capacity while it is in flight.
+  const drainInFlight = _stopDrainDepth > 0;
+  const blockReason = drainInFlight
+    ? 'stopping'
+    : !memoryOk
+      ? 'memory_guard'
+      : !poolHasCapacity
+        ? 'pool_full_no_idle'
+        : null;
   return {
     size: _pool.size,
     occupancy,
@@ -862,6 +867,7 @@ function getLsPoolSummary(now = Date.now()) {
     pendingKeys,
     stopping: _stopping.size,
     stoppingInstances,
+    stoppingInFlight: drainInFlight,
     activeRequests,
     maintenanceRequests,
     nonDefaultInstances,
@@ -912,6 +918,23 @@ export function getLsAdmissionStatus(proxy = null) {
       wouldStart: false,
       errorType: null,
       reason: 'start_pending',
+      key: publicLsKey(key),
+      poolSize: occupancy,
+      effectivePoolSize: effectiveOccupancy,
+      maxInstances: MAX_LS_INSTANCES,
+      pending,
+      memoryGuard,
+    };
+  }
+  // A drain refuses every start (ensureLs throws LS_STOPPING) until it settles.
+  // The admission surface must agree: report the refusal with a distinguishable
+  // reason instead of advertising `can_start` for a start that cannot happen.
+  if (_stopDrainDepth > 0) {
+    return {
+      ok: false,
+      wouldStart: true,
+      errorType: 'ls_stopping',
+      reason: 'stopping',
       key: publicLsKey(key),
       poolSize: occupancy,
       effectivePoolSize: effectiveOccupancy,
