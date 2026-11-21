@@ -34,6 +34,7 @@ export function parseArgs(argv) {
   const options = {
     tag: '',
     commit: '',
+    tree: '',
     dir: '',
     repository: '',
     mode: 'warn',
@@ -44,7 +45,7 @@ export function parseArgs(argv) {
   for (let index = 0; index < argv.length; index += 1) {
     const arg = argv[index];
     if (arg === '-h' || arg === '--help') return { help: true };
-    if (!['--tag', '--commit', '--dir', '--repository', '--mode', '--cosign', '--identity', '--issuer'].includes(arg)) {
+    if (!['--tag', '--commit', '--tree', '--dir', '--repository', '--mode', '--cosign', '--identity', '--issuer'].includes(arg)) {
       throw new CliError(`unknown option: ${arg}`);
     }
     const value = argv[index + 1];
@@ -52,6 +53,7 @@ export function parseArgs(argv) {
     index += 1;
     if (arg === '--tag') options.tag = value;
     if (arg === '--commit') options.commit = value;
+    if (arg === '--tree') options.tree = value;
     if (arg === '--dir') options.dir = value;
     if (arg === '--repository') options.repository = value;
     if (arg === '--mode') options.mode = value;
@@ -74,6 +76,7 @@ Usage:
 Options:
   --tag <vX.Y.Z>       selected release tag (required)
   --commit <sha>       peeled tag commit that the update will install (required)
+  --tree <sha>         tree object of that commit for exact source verification
   --dir <dir>          pre-staged directory containing ${ATTESTATION_FILENAME}
                        and ${ATTESTATION_FILENAME}.sigstore.json
                        (default: download from the canonical GitHub release)
@@ -97,6 +100,7 @@ export async function main(argv) {
   const result = await verifyReleaseAttestation({
     tag: options.tag,
     commit: options.commit,
+    tree: options.tree,
     dir: options.dir ? resolve(options.dir) : '',
     repository: options.repository,
     mode: options.mode,
