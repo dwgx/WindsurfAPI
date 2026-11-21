@@ -2,6 +2,7 @@ import { spawn } from 'child_process';
 import { VERSION } from './version.js';
 import { log } from './config.js';
 import { sanitizeToolName } from './tool-names.js';
+import { MODELS, resolveModel } from './models.js';
 import { buildSubprocessEnv, buildMinimalSubprocessEnv } from './log-safety.js';
 
 // Spawn seam: `spawn` is captured behind an indirection so a test can inject a
@@ -627,7 +628,74 @@ function acpRetryBaseMs() {
   return Number.isFinite(raw) && raw >= 0 ? raw : 250;
 }
 
-export async function runDevinAcpProcess(prompt, { modelKey = '', apiKey = '', apiServerUrl = '', signal = null, onChunk = null } = {}) {
+// Capture the bundled keys before runtime catalog sync can add provider data.
+const diagnosticModelKeys = new Set(Object.keys(MODELS));
+
+function diagnosticModel(value) {
+  if (typeof value !== 'string' || !/^[a-z0-9][a-z0-9._:/-]{0,95}$/i.test(value)) return null;
+  return diagnosticModelKeys.has(resolveModel(value)) ? value : null;
+}
+
+function observeLaunchModel(args, operatorArgCount) {
+  let source = 'none';
+  let value = null;
+  for (let i = 0; i < args.length && args[i] !== '--'; i++) {
+    const arg = args[i];
+    if (arg !== '--model' && !arg.startsWith('--model=')) continue;
+    // Keep the existing argv semantics, including mixed equal/split forms.
+    if (source !== 'none') return { source: 'ambiguous', value: null };
+    source = i < operatorArgCount ? 'operator_argv' : 'request_argv';
+    const candidate = arg === '--model' ? args[i + 1] : arg.slice('--model='.length);
+    value = typeof candidate === 'string' && candidate && !candidate.startsWith('-') ? candidate : null;
+  }
+  return { source, value };
+}
+
+function logAcpModelSelection({ modelDiagnostics, launch, sessionStatus, sessionValue, hasHint, attempt }) {
+  const { requestId, requestedModel } = modelDiagnostics || {};
+  const rejected = sessionStatus === 'rejected';
+  if (!requestId && !rejected) return;
+  const launchModel = diagnosticModel(launch.value);
+  const sessionModel = diagnosticModel(sessionValue);
+  const configAccepted = sessionStatus === 'accepted';
+  const configPending = sessionStatus === 'unresolved';
+  let source = hasHint && !configPending ? 'prompt_hint' : 'unknown';
+  let effectiveModel = null;
+
+  if (launch.source === 'ambiguous') {
+    source = 'unknown';
+  } else if (launch.source !== 'none' && (configAccepted || configPending) && launch.value !== sessionValue) {
+    source = 'conflict';
+  } else if (configAccepted && sessionModel) {
+    source = 'session_config';
+    effectiveModel = sessionModel;
+  } else if (launch.source !== 'none') {
+    source = launchModel ? launch.source : 'unknown';
+    effectiveModel = launchModel;
+  } else if (configAccepted) {
+    source = 'unknown';
+  }
+
+  const level = rejected ? 'warn' : 'info';
+  log[level]('Devin ACP model selection', {
+    requestId: typeof requestId === 'string' && /^[a-z0-9_-]{1,96}$/i.test(requestId) ? requestId : null,
+    attempt,
+    requested_model: diagnosticModel(requestedModel),
+    launch_model: launchModel,
+    launch_source: launch.source,
+    session_model: sessionModel,
+    session_config_status: sessionStatus,
+    prompt_hint: hasHint,
+    // Effective refers to local selection evidence such as submitted argv.
+    effective_model: effectiveModel,
+    selection_source: source,
+    // No calibrated upstream served-model field is consumed by this adapter.
+    backend_confirmed_model: null,
+    tool_owner: 'agent',
+  });
+}
+
+export async function runDevinAcpProcess(prompt, { modelKey = '', apiKey = '', apiServerUrl = '', signal = null, onChunk = null, modelDiagnostics = null } = {}) {
   if (!apiKey) {
     throw Object.assign(new Error('Devin ACP mode requires an upstream Windsurf account apiKey.'), {
       status: 503,
@@ -644,12 +712,14 @@ export async function runDevinAcpProcess(prompt, { modelKey = '', apiKey = '', a
     keep: ['SSH_AUTH_SOCK', 'SSH_AGENT_PID'],
   });
   const args = parseAcpArgs();
+  const operatorArgCount = args.length;
   // One channel only: `devin acp --model` (do not also set DEVIN_MODEL — the
   // two can disagree). Leave DEVIN_PERMISSION_MODE to the operator; do not
   // default it to auto.
   if (modelKey && !args.includes('--model')) {
     args.push('--model', modelKey);
   }
+  const launch = observeLaunchModel(args, operatorArgCount);
 
   // A replay after ANY chunk crossed onChunk would duplicate the visible answer.
   let emitted = false;
@@ -662,6 +732,7 @@ export async function runDevinAcpProcess(prompt, { modelKey = '', apiKey = '', a
     try {
       return await runDevinAcpAttempt(prompt, {
         command, args, env, modelKey, apiKey, apiServerUrl, signal, onChunk: trackedChunk,
+        modelDiagnostics, launch, attempt: attempt + 1,
       });
     } catch (err) {
       if (attempt >= maxRetries || emitted || signal?.aborted || !isAcpRetryable(err)) throw err;
@@ -675,7 +746,10 @@ export async function runDevinAcpProcess(prompt, { modelKey = '', apiKey = '', a
   }
 }
 
-async function runDevinAcpAttempt(prompt, { command, args, env, modelKey, apiKey, apiServerUrl, signal, onChunk }) {
+async function runDevinAcpAttempt(prompt, {
+  command, args, env, modelKey, apiKey, apiServerUrl, signal, onChunk,
+  modelDiagnostics, launch, attempt,
+}) {
   const client = makeAcpClient({
     command,
     args,
@@ -686,6 +760,9 @@ async function runDevinAcpAttempt(prompt, { command, args, env, modelKey, apiKey
     onChunk,
   });
 
+  let sessionStatus = 'not_reached';
+  let sessionValue = null;
+  let hasHint = false;
   try {
     const init = await client.request('initialize', {
       protocolVersion: 1,
@@ -725,7 +802,9 @@ async function runDevinAcpAttempt(prompt, { command, args, env, modelKey, apiKey
     // Optional native config: the CLI advertises configOptions on session/new.
     // Flag-off by default because the live option ids/values are not calibrated
     // against a real ACP peer yet; the prompt hint remains the fallback.
+    sessionStatus = 'disabled';
     if (modelKey && process.env.DEVIN_ACP_CONFIG_OPTIONS === '1') {
+      sessionStatus = 'not_advertised';
       const rawOptions = session?.result?.configOptions || session?.result?.config_options || [];
       const modelOption = Array.isArray(rawOptions)
         ? rawOptions.find((o) => {
@@ -741,18 +820,20 @@ async function runDevinAcpAttempt(prompt, { command, args, env, modelKey, apiKey
           return v === modelKey;
         });
         const value = chosen ? (chosen.value ?? chosen.id ?? chosen.name) : modelKey;
+        sessionValue = value;
+        sessionStatus = 'unresolved';
         const cfg = await client.request('session/set_config_option', {
           sessionId,
           configId,
           value,
         }, 15_000);
-        if (cfg.error) {
-          log.warn(`Devin ACP set_config_option ${configId}=${value} failed: ${cfg.error.message || cfg.error.code || 'unknown'}`);
-        }
+        if (cfg.error) sessionStatus = 'rejected';
+        else if (Object.hasOwn(cfg, 'result')) sessionStatus = 'accepted';
       }
     }
 
     const modelHint = modelKey ? `Model requested by caller: ${modelKey}\n\n` : '';
+    hasHint = Boolean(modelHint);
     const result = await client.request('session/prompt', {
       sessionId,
       prompt: buildAcpPromptBlocks(prompt, modelHint, env),
@@ -794,5 +875,6 @@ async function runDevinAcpAttempt(prompt, { command, args, env, modelKey, apiKey
     };
   } finally {
     client.close();
+    logAcpModelSelection({ modelDiagnostics, launch, sessionStatus, sessionValue, hasHint, attempt });
   }
 }

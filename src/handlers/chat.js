@@ -3994,6 +3994,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
         created: Math.floor(Date.now() / 1000),
         model: reqModelName,
         modelKey: routingModelKey,
+        requestId: reqId,
         messages: acpMessages,
         callerKey,
       }, context.specialAgent || {});
@@ -5574,6 +5575,7 @@ async function _handleChatCompletionsInner(body, context = {}) {
       created: Math.floor(Date.now() / 1000),
       model: displayModel,
       modelKey: routingModelKey,
+      requestId: reqId,
       messages,
       callerKey,
     }, context.specialAgent || {});

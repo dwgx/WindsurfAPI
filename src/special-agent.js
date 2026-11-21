@@ -406,13 +406,13 @@ export function getSpecialAgentStatus() {
   };
 }
 
-export async function runDevinAcp(prompt, { modelKey = '', apiKey = '', apiServerUrl = '', signal = null, onChunk = null } = {}) {
+export async function runDevinAcp(prompt, { modelKey = '', apiKey = '', apiServerUrl = '', signal = null, onChunk = null, modelDiagnostics = null } = {}) {
   const release = await acquireSlot(signal);
   try {
     // GAP-ACP-05: forward onChunk so the live streamer's incremental chunks
     // actually reach the ACP pump. Without this the wrapper silently drops it
     // and the "real-time" stream degrades to a single buffered flush at the end.
-    return await runDevinAcpProcess(prompt, { modelKey, apiKey, apiServerUrl, signal, onChunk });
+    return await runDevinAcpProcess(prompt, { modelKey, apiKey, apiServerUrl, signal, onChunk, modelDiagnostics });
   } finally {
     release();
   }
@@ -627,7 +627,7 @@ function streamFromText({ id, created, model, messages, text, reasoning = '', us
  * literal can leak across a chunk boundary. Reasoning chunks are forwarded as
  * reasoning_content only when explicitly opted in.
  */
-function streamLiveAcp({ id, created, model, messages, prompt, modelKey, acct, runner, signal, onDone, includeUsage = false }) {
+function streamLiveAcp({ id, created, model, messages, prompt, modelKey, acct, runner, signal, onDone, includeUsage = false, modelDiagnostics }) {
   return {
     status: 200,
     stream: true,
@@ -695,7 +695,10 @@ function streamLiveAcp({ id, created, model, messages, prompt, modelKey, acct, r
       let ok = true;
       let runErr = null;
       try {
-        const result = await runner(prompt, { modelKey, apiKey: acct?.apiKey || '', apiServerUrl: acct?.apiServerUrl || '', signal: abortController.signal, onChunk });
+        const result = await runner(prompt, {
+          modelKey, apiKey: acct?.apiKey || '', apiServerUrl: acct?.apiServerUrl || '',
+          signal: abortController.signal, onChunk, modelDiagnostics,
+        });
         const tail = msgSanitizer.flush();
         if (tail) {
           emittedText += tail;
@@ -943,6 +946,7 @@ export async function handleSpecialAgentChatCompletion(body, route, deps = {}) {
     const runner = mode === 'acp'
       ? (deps.runDevinAcp || runDevinAcp)
       : (deps.runDevinPrint || runDevinPrint);
+    const modelDiagnostics = { requestId: route?.requestId || id, requestedModel: body?.model ?? null };
 
     // Live streaming is only meaningful for ACP, whose runner emits chunks via
     // onChunk. Print mode has no incremental output, so it keeps the buffered
@@ -951,7 +955,7 @@ export async function handleSpecialAgentChatCompletion(body, route, deps = {}) {
     if (body?.stream && mode === 'acp') {
       const onSuccess = deps.reportSuccess || reportSuccess;
       const stream = streamLiveAcp({
-        id, created, model, messages, prompt, modelKey, acct, runner, includeUsage,
+        id, created, model, messages, prompt, modelKey, acct, runner, includeUsage, modelDiagnostics,
         signal: route?.signal || null,
         onDone: (ok, err) => {
           try {
@@ -975,6 +979,7 @@ export async function handleSpecialAgentChatCompletion(body, route, deps = {}) {
       apiKey: acct?.apiKey || '',
       apiServerUrl: acct?.apiServerUrl || '',
       signal: route?.signal || null,
+      ...(mode === 'acp' ? { modelDiagnostics } : {}),
     });
     const text = sanitizeText(result?.text || '');
     const reasoning = exposeReasoning() ? sanitizeText(result?.reasoning || '') : '';
