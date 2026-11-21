@@ -2,9 +2,21 @@ import { execSync } from 'child_process';
 import { existsSync, readFileSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { dirname, join } from 'path';
+import { packageAssetDigest } from './package-assets.js';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..');
+
+// The bundle defines this value even when its source revision is unknown.
+// A portable bundle must never borrow the checkout in which it happens to run.
+const bundled = typeof __WA_BUILD_IDENTITY__ !== 'undefined';
+const embeddedCommit = (() => {
+  if (!bundled || !__WA_BUILD_IDENTITY__) return '';
+  try {
+    const { commit, assets } = __WA_BUILD_IDENTITY__;
+    return packageAssetDigest(root) === assets ? commit : '';
+  } catch { return ''; }
+})();
 
 export const VERSION = (() => {
   try {
@@ -23,7 +35,7 @@ function firstEnv(names) {
 }
 
 function git(args) {
-  if (!existsSync(join(root, '.git'))) return '';
+  if (bundled || !existsSync(join(root, '.git'))) return '';
   try {
     return execSync(`git ${args}`, { cwd: root, timeout: 2000 }).toString().trim();
   } catch {
@@ -37,14 +49,15 @@ function shortCommit(s) {
 }
 
 export function getVersionInfo() {
-  const commit = shortCommit(firstEnv([
+  const envCommit = firstEnv([
     'WINDSURFAPI_BUILD_COMMIT',
     'BUILD_COMMIT',
     'GIT_COMMIT',
     'SOURCE_COMMIT',
     'VCS_REF',
     'COMMIT_SHA',
-  ]) || git('rev-parse --short=12 HEAD'));
+  ]);
+  const commit = shortCommit(envCommit || embeddedCommit || git('rev-parse --short=12 HEAD'));
   const commitMessage = firstEnv([
     'WINDSURFAPI_BUILD_COMMIT_MESSAGE',
     'BUILD_COMMIT_MESSAGE',
@@ -58,9 +71,7 @@ export function getVersionInfo() {
     'BUILD_BRANCH',
     'GIT_BRANCH',
   ]) || git('rev-parse --abbrev-ref HEAD') || 'unknown';
-  const source = commit
-    ? (existsSync(join(root, '.git')) ? 'git' : 'build-env')
-    : 'package';
+  const source = envCommit ? 'build-env' : embeddedCommit ? 'build-git' : commit ? 'git' : 'package';
   return {
     version: firstEnv(['WINDSURFAPI_BUILD_VERSION', 'BUILD_VERSION']) || VERSION,
     commit,

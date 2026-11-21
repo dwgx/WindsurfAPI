@@ -32,6 +32,19 @@ function proxy(req, res) {
     fwdHeaders['x-forwarded-for'] = prior ? `${prior}, ${peer}` : peer;
   }
 
+  let clientGone = false;
+  function fail(error) {
+    if (clientGone || res.destroyed || res.writableEnded) return;
+    console.error(`[${ts}] Proxy error: ${error.message} (${method} ${redactUrlForLog(url)})`);
+    if (res.headersSent) {
+      // A truncated response must fail at the transport instead of ending cleanly.
+      res.destroy(error);
+      return;
+    }
+    res.writeHead(502, { 'content-type': 'application/json' });
+    res.end(JSON.stringify({ error: { message: 'Bad Gateway', type: 'proxy_error' } }));
+  }
+
   const proxyReq = http.request({
     hostname: '127.0.0.1',
     port: TARGET_PORT,
@@ -58,22 +71,21 @@ function proxy(req, res) {
     // origin for every client that reaches the dashboard through this helper.
     res.writeHead(proxyRes.statusCode, respHeaders);
 
-    proxyRes.on('data', (chunk) => {
-      res.write(chunk);
-    });
-    proxyRes.on('end', () => res.end());
+    proxyRes.on('error', fail);
+    proxyRes.pipe(res);
   });
 
-  proxyReq.on('error', (e) => {
-    console.error(`[${ts}] Proxy error: ${e.message} (${req.method} ${redactUrlForLog(req.url)})`);
-    if (!res.headersSent) {
-      res.writeHead(502, { 'content-type': 'application/json' });
-      res.end(JSON.stringify({ error: { message: 'Bad Gateway', type: 'proxy_error' } }));
-    }
+  proxyReq.on('error', fail);
+  const cancel = () => {
+    clientGone = true;
+    proxyReq.destroy();
+  };
+  // HTTP/1.1 closes the request's readable side when the upload is complete.
+  // A peer reset can finish the underlying HTTP/2 writable stream without res.end().
+  res.once('close', () => {
+    if (!res.writableEnded) cancel();
   });
-
-  req.on('error', () => proxyReq.destroy());
-  req.on('close', () => { if (!proxyReq.destroyed) proxyReq.destroy(); });
+  req.on('error', cancel);
   req.pipe(proxyReq);
 }
 

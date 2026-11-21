@@ -56,6 +56,7 @@ scripts/*
 !scripts/smoke-matrix-mutants.mjs
 !scripts/smoke-matrix/
 !scripts/smoke-matrix/*.mjs
+!scripts/build-bundle.mjs
 !scripts/exe-boot-smoke.mjs
 !scripts/verify-release-version.mjs
 !scripts/mutate-verify.mjs

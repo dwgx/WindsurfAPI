@@ -32,7 +32,7 @@
     "sync:contributors": "node scripts/sync-docs-contributors.mjs",
     "secret-scan": "node scripts/secret-scan.mjs",
     "verify:release-assets": "node scripts/verify-release-assets.mjs",
-    "build:bundle": "esbuild src/index.js --bundle --platform=node --format=cjs --target=node22 --outfile=src/_bundle.cjs --external:node:* --define:import.meta.url=__WA_IMPORT_META_URL__ --banner:js=\"const __WA_IMPORT_META_URL__=require('node:url').pathToFileURL(__filename).href;\"",
+    "build:bundle": "node scripts/build-bundle.mjs",
     "build:exe": "npm run build:bundle && pkg src/_bundle.cjs --config package.json --targets node22-win-x64 --output dist-windows/windsurfapi.exe",
     "build:exe:macos": "npm run build:bundle && pkg src/_bundle.cjs --config package.json --targets node22-macos-arm64 --output dist-macos/windsurfapi-macos-arm64",
     "build:exe:macos-x64": "npm run build:bundle && pkg src/_bundle.cjs --config package.json --targets node22-macos-x64 --output dist-macos/windsurfapi-macos-x64",
