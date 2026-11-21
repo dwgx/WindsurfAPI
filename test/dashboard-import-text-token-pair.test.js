@@ -176,6 +176,20 @@ describe('POST /accounts/import-text — email + session-token pair', () => {
     assert.equal(getAccountList().length, 0);
   });
 
+  it('processes recognized siblings and identifies unsupported JSON items by index', async () => {
+    config.dashboardPassword = DASH_PW;
+    const rows = JSON.stringify([{ token: TOKEN }, { description: 'unsupported' }, null], null, 2);
+    const preview = await importText(rows, { preview: true });
+    assert.equal(preview.body.recognized, 1);
+    assert.deepEqual(preview.body.unrecognizedEntries, [2, 3]);
+    assert.deepEqual(preview.body.unrecognizedLines, []);
+    assert.equal(getAccountList().length, 0);
+    const applied = await importText(rows);
+    assert.equal(applied.body.added.length, 1);
+    assert.deepEqual(applied.body.unrecognizedEntries, [2, 3]);
+    assert.equal(applied.text.includes(TOKEN), false);
+  });
+
   it('leaks neither the session token nor the auth1 value in any failure text', async () => {
     config.dashboardPassword = DASH_PW;
     // The pair path plus a bare token path in one submission: both are

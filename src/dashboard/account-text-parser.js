@@ -186,6 +186,10 @@ function parseAccountText(content, { includeDiagnostics = false, preview = false
         const arr9 = [];
         for (const [index, v13] of parseResult.entries()) {
           if (!v13 || typeof v13 !== "object") {
+            if (includeDiagnostics) {
+              unrecognizedEntries.push(index + 1);
+              continue;
+            }
             v12 = false;
             break;
           }
@@ -219,6 +223,10 @@ function parseAccountText(content, { includeDiagnostics = false, preview = false
           } else if (v6) {
             arr7.push(String(v6).trim());
           } else {
+            if (includeDiagnostics) {
+              unrecognizedEntries.push(index + 1);
+              continue;
+            }
             v12 = false;
             break;
           }
