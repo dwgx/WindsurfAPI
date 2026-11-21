@@ -180,7 +180,7 @@ function normalize(body, identity = null) {
       : {}),
     response_format: body.response_format ? stableClone(body.response_format) : null,
     // With a routing identity the handler passes the ROUTER-CANONICAL effort
-    // (resolveReasoningEffort — the same truthy flat-then-nested precedence the
+    // (normalizeReasoningEffortValue — the same canonical spelling the
     // router's mergeReasoningEffortIntoModel uses) so spellings that route
     // identically share the slot; the raw normalized spelling stays for
     // identity-less callers.

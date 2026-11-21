@@ -1513,7 +1513,7 @@ export function cascadeCacheIdentity(body) {
   return {
     model: resolveEffectiveModelKey(resolveModel(reqModel || config.defaultModel), wantThinking),
     thinking: wantThinking,
-    effort: resolveReasoningEffort(body) || null,
+    effort: normalizeReasoningEffortValue(body),
   };
 }
 
@@ -1529,7 +1529,7 @@ export function cascadeCacheIdentity(body) {
 // default-equivalent and must keep sharing one slot.
 function connectCacheIdentity(body) {
   return {
-    effort: resolveReasoningEffort(body) || null,
+    effort: normalizeReasoningEffortValue(body),
     connectSequential: isToolChoicePassthroughEnabled() && body.parallel_tool_calls === false,
   };
 }
@@ -3431,7 +3431,7 @@ export function normalizeReasoningEffortValue(body) {
 // catalog model; anything else returns reqModel unchanged.
 export function mergeReasoningEffortIntoModel(reqModel, body) {
   if (!reqModel || typeof reqModel !== 'string') return reqModel;
-  const effort = resolveReasoningEffort(body);
+  const effort = normalizeReasoningEffortValue(body);
   if (!effort) return reqModel;
   const VALID = new Set(['minimal', 'none', 'low', 'medium', 'high', 'xhigh', 'max']);
   if (!VALID.has(effort)) return reqModel;

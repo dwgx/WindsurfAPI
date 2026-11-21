@@ -5,9 +5,10 @@
 //
 //   1. Cascade: flat `reasoning_effort` and nested `reasoning.effort` produced
 //      EQUAL cache keys while routing sent them to DIFFERENT Cascade models
-//      (mergeReasoningEffortIntoModel consumes the effort field, but the
-//      thinking sibling route only reads the flat spelling). A warm cache
-//      replayed the first variant's prose for the second request.
+//      (the thinking sibling route read only the flat spelling). 7ed61802
+//      later aligned that route to resolveReasoningEffort, so the spellings
+//      now select the SAME generation and must share the slot — the test
+//      asserts the sharing (no surprise second dispatch, no stale prose).
 //   2. Cascade, blank flat effort: `reasoning_effort: ''` + nested
 //      `low`/`high` both normalized to the same key (`''` beats the nested
 //      value under nullish precedence) while the router merged the nested
@@ -167,7 +168,10 @@ describe('cache key routing identity (unit: cacheKey identity overrides)', () =>
 });
 
 describe('cascade cache identity: effort spellings must agree with routing', () => {
-  it('flat and nested reasoning.effort route to different variants and never share a warm slot', async () => {
+  it('flat and nested reasoning.effort route to the same variant and share one warm slot', async () => {
+    // 7ed61802 aligned the thinking-sibling route to resolveReasoningEffort
+    // (flat || nested, truthy) — the two spellings select the SAME Cascade
+    // generation now, so the identity-keyed cache must share the slot.
     seedAccount('flat-vs-nested');
     const state = { dispatches: 0, modelUids: [], contents: [] };
 
@@ -176,12 +180,11 @@ describe('cascade cache identity: effort spellings must agree with routing', () 
 
     const nested = await handleChatCompletions(cascadeBody({ reasoning: { effort: 'high' } }), cascadeDeps('nested answer', state));
 
-    assert.equal(state.dispatches, 2,
-      'the two spellings select different Cascade models — a warm cache must not collapse them into one dispatch');
-    assert.deepEqual(state.modelUids, ['claude-sonnet-4-6-thinking', 'claude-sonnet-4-6'],
-      'the flat spelling routes to the thinking sibling, the nested one to the base model');
-    assert.equal(nested.body.choices[0].message.content, 'nested answer',
-      'the second request must be answered by its own generation, not a replay of the first variant');
+    assert.equal(state.dispatches, 1,
+      'the two spellings resolve the same routed generation — one dispatch, the second replays warm');
+    assert.deepEqual(state.modelUids, ['claude-sonnet-4-6-thinking']);
+    assert.equal(nested.body.choices[0].message.content, 'flat answer',
+      'equivalent spellings of one generation must be served by the same cache entry');
   });
 
   it('a blank flat effort with a nested effort keys by the tier the router consumed', async () => {

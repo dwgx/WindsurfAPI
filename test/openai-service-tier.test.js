@@ -5,6 +5,7 @@ import { addAccountByKey, removeAccount } from '../src/auth.js';
 import { cacheClear, cacheKey, cacheSet } from '../src/cache.js';
 import {
   handleChatCompletions, __setConnectDeps, __resetConnectDeps, chatStreamError,
+  cascadeCacheIdentity,
 } from '../src/handlers/chat.js';
 
 // O12 (ROADMAP-GATE): every successful OpenAI chat.completion /
@@ -108,7 +109,9 @@ describe('O12 service_tier on successful chat.completion', () => {
       messages: [{ role: 'user', content: 'hi' }],
       __callerKey: CALLER,
     };
-    cacheSet(cacheKey(body, CALLER), { text: 'cached answer', thinking: '' });
+    // Seed under the routed identity: the handler looks up by the effective
+    // generation now, not the raw spelling (BLUE-CACHE P2).
+    cacheSet(cacheKey(body, CALLER, cascadeCacheIdentity(body)), { text: 'cached answer', thinking: '' });
 
     const r = await handleChatCompletions(body);
     assert.equal(r.status, 200, JSON.stringify(r?.body));
@@ -163,7 +166,7 @@ describe('O12 service_tier on successful chat.completion.chunk', () => {
       messages: [{ role: 'user', content: 'hi' }],
       __callerKey: CALLER,
     };
-    cacheSet(cacheKey(body, CALLER), { text: 'cached answer', thinking: '' });
+    cacheSet(cacheKey(body, CALLER, cascadeCacheIdentity(body)), { text: 'cached answer', thinking: '' });
 
     const result = await handleChatCompletions(body);
     assert.equal(result.status, 200);

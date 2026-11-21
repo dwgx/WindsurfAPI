@@ -33,7 +33,7 @@ import {
   removeAccount,
   __setModelCatalogDeps,
 } from '../src/auth.js';
-import { handleChatCompletions, __setConnectDeps } from '../src/handlers/chat.js';
+import { handleChatCompletions, __setConnectDeps, cascadeCacheIdentity } from '../src/handlers/chat.js';
 import { handleMessages } from '../src/handlers/messages.js';
 import { cacheKey, cacheGet, cacheSet } from '../src/cache.js';
 import {
@@ -302,7 +302,9 @@ describe('SEED-C3b: the Cascade route enforces the caller stop sequence', () => 
     const callerKey = 'proto-key:user:c3b-raw';
     const body = { model: CASCADE_MODEL, messages: [{ role: 'user', content: 'raw entry' }], stop: ['END'] };
     // An entry written before the repair: raw upstream text, no recorded cause.
-    const key = cacheKey(body, callerKey);
+    // Seed under the routed identity — the handler looks up by the effective
+    // generation, not the raw spelling (BLUE-CACHE P2).
+    const key = cacheKey(body, callerKey, cascadeCacheIdentity(body));
     assert.ok(key, 'the fixture needs a shareable per-user cache key');
     cacheSet(key, { text: UPSTREAM_TEXT, thinking: '' });
     assert.ok(cacheGet(key), 'the raw entry is in the cache');
@@ -566,7 +568,7 @@ describe('review regressions: composed stream completion', () => {
     const ctx = cascadeContextFor();
     const callerKey = 'proto:user:raw-stream';
     const body = { model: CASCADE_MODEL, messages: [{ role: 'user', content: 'raw stream' }], stop: ['END'], stream: true };
-    cacheSet(cacheKey(body, callerKey), { text: UPSTREAM_TEXT, thinking: '' });
+    cacheSet(cacheKey(body, callerKey, cascadeCacheIdentity(body)), { text: UPSTREAM_TEXT, thinking: '' });
     const direct = await handleChatCompletions(body, { ...ctx, callerKey });
     const res = fakeResponse(); await direct.handler(res);
     assert.equal(streamedContent(res.body), 'hello '); assert.equal(ctx.upstreamCalls, 0);
