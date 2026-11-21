@@ -59,4 +59,93 @@ describe('dashboard request ring', () => {
     assert.equal(row.durationMs, 0);
     assert.equal('body' in row, false);
   });
+
+  it('resumes in recording order when completion timestamps are out of order', () => {
+    // Concurrent completions can finish out of timestamp order. Recording order
+    // is the only stable newest-first order the ring promises.
+    recordRequest({ id: 'req_late', ts: 900 });
+    recordRequest({ id: 'req_early', ts: 100 });
+    const seen = [];
+    let cursor = null;
+    do {
+      const page = listRequests({ cursor, limit: 1 });
+      seen.push(...page.items.map((r) => r.id));
+      cursor = page.nextCursor;
+    } while (cursor);
+    assert.deepEqual(seen, ['req_early', 'req_late']);
+  });
+
+  it('pages same-millisecond rows with unordered server ids exactly once', () => {
+    const ts = 1_700_000_000_000;
+    // Server ids are `req_<uuid>`: random, so lexicographic order is arbitrary.
+    for (const id of ['req_z9', 'req_a1', 'req_m5']) recordRequest({ id, ts, model: 'm', status: 200 });
+    const seen = [];
+    let cursor = null;
+    do {
+      const page = listRequests({ cursor, limit: 1 });
+      seen.push(...page.items.map((r) => r.id));
+      cursor = page.nextCursor;
+    } while (cursor);
+    assert.deepEqual(seen, ['req_m5', 'req_a1', 'req_z9']);
+  });
+
+  it('keeps a stable page boundary when a row arrives between pages', () => {
+    const ts = 1_700_000_000_500;
+    recordRequest({ id: 'req_c', ts });
+    recordRequest({ id: 'req_a', ts });
+    const first = listRequests({ limit: 1 });
+    assert.deepEqual(first.items.map((r) => r.id), ['req_a']);
+    recordRequest({ id: 'req_b', ts });
+    const second = listRequests({ limit: 1, cursor: first.nextCursor });
+    assert.deepEqual(second.items.map((r) => r.id), ['req_c']);
+    const third = listRequests({ limit: 1, cursor: second.nextCursor });
+    assert.deepEqual(third.items, []);
+  });
+
+  it('pages a wrapped ring without duplicates or new rows reappearing', () => {
+    const ts = 1_700_000_001_000;
+    for (let i = 0; i < 2000; i++) recordRequest({ id: `req_old_${i}`, ts, model: 'm', status: 200 });
+    const first = listRequests({ limit: 500 });
+    const seen = first.items.map((r) => r.id);
+    for (let i = 0; i < 10; i++) recordRequest({ id: `req_new_${i}`, ts, model: 'm', status: 200 });
+    let cursor = first.nextCursor;
+    while (cursor) {
+      const page = listRequests({ limit: 500, cursor });
+      seen.push(...page.items.map((r) => r.id));
+      cursor = page.nextCursor;
+    }
+    const expected = [];
+    for (let i = 1999; i >= 10; i--) expected.push(`req_old_${i}`);
+    assert.deepEqual(seen, expected);
+    assert.equal(seen.some((id) => id.startsWith('req_new_')), false);
+    assert.equal(new Set(seen).size, seen.length);
+  });
+
+  it('accepts legacy ts:id cursors for rows still in the ring', () => {
+    recordRequest({ id: 'r1', ts: 100 });
+    recordRequest({ id: 'r2', ts: 200 });
+    recordRequest({ id: 'r3', ts: 300 });
+    const legacy = Buffer.from('200:r2', 'utf8').toString('base64url');
+    const page = listRequests({ cursor: legacy, limit: 5 });
+    assert.deepEqual(page.items.map((r) => r.id), ['r1']);
+  });
+
+  it('keeps filtered pagination in recording order', () => {
+    const ts = 1_700_000_002_000;
+    recordRequest({ id: 'req_1', ts, model: 'x' });
+    recordRequest({ id: 'req_2', ts, model: 'y' });
+    recordRequest({ id: 'req_3', ts, model: 'x' });
+    recordRequest({ id: 'req_4', ts, model: 'x' });
+    const first = listRequests({ limit: 1, filter: { model: 'x' } });
+    const second = listRequests({ limit: 1, cursor: first.nextCursor, filter: { model: 'x' } });
+    const third = listRequests({ limit: 1, cursor: second.nextCursor, filter: { model: 'x' } });
+    assert.deepEqual([...first.items, ...second.items, ...third.items].map((r) => r.id), ['req_4', 'req_3', 'req_1']);
+  });
+
+  it('keeps the public row shape unchanged', () => {
+    recordRequest({ id: 'r1', ts: 100, model: 'a', status: 200 });
+    assert.deepEqual(Object.keys(listRequests({}).items[0]).sort(), [
+      'caller', 'class', 'durationMs', 'id', 'model', 'protocol', 'selector', 'status', 'stream', 'ts',
+    ]);
+  });
 });
