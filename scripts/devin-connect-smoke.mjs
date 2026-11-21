@@ -154,7 +154,7 @@ if (!token) {
 // the map + fixture get refreshed before a client silently degrades to free.
 if (liveCatalog) {
   try {
-    const snap = JSON.parse(readFileSync(new URL('../test/fixtures/devin-catalog-snapshot.json', import.meta.url), 'utf8'));
+    const snap = JSON.parse(readFileSync(new URL('../src/data/devin-catalog-snapshot.json', import.meta.url), 'utf8'));
     const snapSelectors = new Set(snap.models.map((m) => m.selector));
     const liveSelectors = new Set(liveCatalog.map((m) => m.selector));
     const added = [...liveSelectors].filter((s) => !snapSelectors.has(s));
