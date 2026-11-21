@@ -14,8 +14,8 @@
     {
       "name": "Abort after the wait no longer prevents reservation",
       "file": "src/handlers/chat.js",
-      "anchor": "  });\n  if (signal?.aborted) return null;\n  return getApiKey(triedKeys, null, callerKey, selector);",
-      "replacement": "  });\n  return getApiKey(triedKeys, null, callerKey, selector);",
+      "anchor": "  });\n  if (signal?.aborted) return null;\n  return getApiKey(triedKeys, null, callerKey, selector, opts);",
+      "replacement": "  });\n  return getApiKey(triedKeys, null, callerKey, selector, opts);",
       "expectCaught": true
     },
     {

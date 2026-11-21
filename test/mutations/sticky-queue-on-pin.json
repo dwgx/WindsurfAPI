@@ -67,7 +67,7 @@
     {
       "name": "hook removed entirely",
       "file": "src/handlers/chat.js",
-      "anchor": "  const pinWait = await waitForOwnPin(tried, signal, modelKey, callerKey, connectSelector);\n  if (pinWait.acct) return pinWait.acct;",
+      "anchor": "  const pinWait = await waitForOwnPin(tried, signal, modelKey, callerKey, connectSelector, opts);\n  if (pinWait.acct) return pinWait.acct;",
       "replacement": "  const pinWait = { acct: null, aborted: false };"
     },
     {
