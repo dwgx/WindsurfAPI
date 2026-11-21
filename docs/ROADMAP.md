@@ -1,5 +1,14 @@
 # WindsurfAPI roadmap
 
+## Current private wave
+
+Verify an isolated authenticated turn, negotiated model, repeated-prompt
+cache behavior and a downstream client with separate receipts for usage and
+provider charges. Next, implement opt-in maintenance-line updates, make
+non-adding imports side-effect free and clarify the signed-release tooling.
+Keep provider-catalog pricing changes gated on actual catalog shapes. Evaluate
+peer features by observed client need, implementation cost and upstream cost.
+
 Updated 2026-11-21 after the v3.2.11 release. The annotated tag resolves to
 `3f8d88a0475c`. This release passed its hosted build and verification workflow.
 The public history page is live. [Release notes](releases/RELEASE_NOTES_3.2.11.md) · [Release workflow](https://github.com/dwgx/WindsurfAPI/actions/runs/44899513802) · [Project history](https://dwgx.github.io/WindsurfAPI/HISTORY-LEDGER-VIZ.html#history)
