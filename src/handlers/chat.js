@@ -6,7 +6,7 @@ import { boundResetMs, MAX_RATE_RESET_MS, parseGoResetMs, quotaResetDelay } from
 
 import { createHash, randomUUID } from 'crypto';
 import { WindsurfClient, contentToString, isCascadeTransportError, acquireLsUseOrThrow, detachedClaimLostError, classifyCascadeEnd } from '../client.js';
-import { getApiKey, acquireAccountByKey, releaseAccountById, currentApiKeyForId, getAccountInternal, getAccountAvailability, reportError, reportSuccess, markRateLimited, markQuotaExhausted, markSelectorIneligible, reportInternalError, reportDeadToken, updateCapability, getAccountList, isAllRateLimited, isAllTemporarilyUnavailable, isAllConnectAccountsUnavailable, refundReservation, looksLikeBanSignal, reportBanSignal, clearBanSignals, isModelBlockedByDrought, isConnectSelectorBlockedByDrought, isConnectFreeOnlyDroughtAdmission, getDroughtSummary, getConnectFreeFallbackSelectors, reLoginAccount as _reLoginAccount, getAccountCount, hasConnectEntitledAccount, recordAccountSpend, recordAccountAttempt, ensureDeviceSeed, requestReauthCheck, getConnectSelectorImageCapabilityForAccount } from '../auth.js';
+import { getApiKey, acquireAccountByKey, releaseAccountById, currentApiKeyForId, getAccountInternal, getAccountAvailability, reportError, reportSuccess, markRateLimited, markQuotaExhausted, markSelectorIneligible, reportInternalError, reportDeadToken, updateCapability, getAccountList, isAllRateLimited, isAllTemporarilyUnavailable, isAllConnectAccountsUnavailable, refundReservation, looksLikeBanSignal, reportBanSignal, clearBanSignals, isModelBlockedByDrought, isConnectSelectorBlockedByDrought, isConnectFreeOnlyDroughtAdmission, getDroughtSummary, getConnectFreeFallbackSelectors, reLoginAccount as _reLoginAccount, getAccountCount, hasConnectEntitledAccount, isConnectSelectorUnavailableForAll, recordAccountSpend, recordAccountAttempt, ensureDeviceSeed, requestReauthCheck, getConnectSelectorImageCapabilityForAccount } from '../auth.js';
 
 import { isStickyEnabled, setStickyBinding, peekStickyBinding } from '../account/sticky-session.js';
 import { resolveModel, getModelInfo, pickRateLimitFallback, isModelDisabledUpstream, getModelCaps } from '../models.js';
@@ -3473,20 +3473,18 @@ export function mergeReasoningEffortIntoModel(reqModel, body) {
  * v2.0.85 (#126 KLFDan0534 + #128 wnfilm) — server-side auto-fallback
  * on rate_limit_exceeded.
  *
- * Default ON. When the inner handler returns 429 with a `fallback_model`
- * field (set by chat.js + stream.js when the whole pool is rate-limited
- * on a high-effort variant like `claude-opus-4-7-max`), the wrapper
- * silently retries the request against the suggested lower-effort
- * variant. The caller sees a successful response under the original
- * model name (we restore it post-flight) so existing client code is
- * unaffected.
+ * Default OFF (release-candidate policy): a silent retry against a
+ * lower-effort variant returns a successful response under the ORIGINAL
+ * model name, which is a silent model swap — the exact contract the
+ * owner rejected. A pool that cannot serve the requested variant now
+ * surfaces its 429 (with the `fallback_model` hint) instead of
+ * impersonating it. The machinery stays reachable for operators who
+ * explicitly opt back in via `WINDSURFAPI_VARIANT_FALLBACK_ON_RATE_LIMIT=1`.
  *
  * Stream requests are NOT auto-retried — by the time the inner
  * handler decides to error, no chunks have been written yet but the
  * caller flow is harder to rewind. Stream callers see the 429 with
  * the same `fallback_model` hint and can retry client-side.
- *
- * Disable via `WINDSURFAPI_VARIANT_FALLBACK_ON_RATE_LIMIT=0`.
  */
 export function shouldAutoFallback(body, context, result) {
   if (body?.stream) return false;
@@ -3502,7 +3500,9 @@ export function shouldAutoFallback(body, context, result) {
   // — see context.__aliasModelKey threading). This means the next
   // turn from the client (under the original model name) finds the
   // cascade in the pool and reuse stays intact across the fallback.
-  if (process.env.WINDSURFAPI_VARIANT_FALLBACK_ON_RATE_LIMIT === '0') return false;
+  // → release-candidate (owner decision): default OFF, opt-in '=1', so an
+  // unservable model reports the error rather than silently swapping.
+  if (process.env.WINDSURFAPI_VARIANT_FALLBACK_ON_RATE_LIMIT !== '1') return false;
   const err = result?.body?.error;
   if (!err) return false;
   if (err.type !== 'rate_limit_exceeded') return false;
@@ -4550,6 +4550,24 @@ async function _handleChatCompletionsInner(body, context, captureCacheGeneration
       const throttled = rl.allLimited || tu.allUnavailable;
       const degradable = getBreakerTunable('degradedServe') && rl.allLimited && !tu.allUnavailable;
       if ((throttled && !degradable) || (!throttled && adm.allUnavailable)) {
+        // Owner decision (release candidate): when every entitled account's
+        // upstream catalog has latched this selector out ("model no longer
+        // available for this account"), the miss is permanent — answer the
+        // non-retryable model_unavailable instead of a retryable 429 the
+        // client would keep hammering.
+        if (!throttled && isConnectSelectorUnavailableForAll(selector)) {
+          log.info(`Chat[${reqId}]: DEVIN_CONNECT selector "${selector}" unavailable on every entitled account → 403 model_unavailable`);
+          bumpConnect('model_unavailable');
+          return {
+            status: 403,
+            body: { error: {
+              message: `Model \`${reqModelName}\` is no longer available on any entitled DEVIN_CONNECT account (upstream catalog dropped it for the whole pool). This is not retryable; choose a different model from GET /v1/models.`,
+              type: 'invalid_request_error',
+              param: 'model',
+              code: 'model_unavailable',
+            } },
+          };
+        }
         const retryAfterMs = rl.retryAfterMs || tu.retryAfterMs || adm.retryAfterMs || 60000;
         // F3: clamp the advertised Retry-After so an agent client's auto-retry
         // backs off usefully (floor) and is never frozen by an over-long window
@@ -4595,6 +4613,21 @@ async function _handleChatCompletionsInner(body, context, captureCacheGeneration
       const retryAfterMs = queueTimeoutRetryAfterMs(temporary, rateLimited);
       const retryAfterSec = clientRetryAfterSeconds(retryAfterMs);
       const limited = temporary.allUnavailable || rateLimited.allLimited;
+      // Same permanent-miss split as the preflight arm: a selector latched out
+      // on every entitled account is not retryable pool pressure.
+      if (!limited && isConnectSelectorUnavailableForAll(selector)) {
+        log.info(`Chat[${reqId}]: DEVIN_CONNECT selector "${selector}" unavailable on every entitled account after queue wait → 403 model_unavailable`);
+        bumpConnect('model_unavailable');
+        return {
+          status: 403,
+          body: { error: {
+            message: `Model \`${reqModelName}\` is no longer available on any entitled DEVIN_CONNECT account (upstream catalog dropped it for the whole pool). This is not retryable; choose a different model from GET /v1/models.`,
+            type: 'invalid_request_error',
+            param: 'model',
+            code: 'model_unavailable',
+          } },
+        };
+      }
       log.info(`Chat[${reqId}]: DEVIN_CONNECT pooled admission ended without an account lease (${limited ? 'pool rate-limited/unavailable' : 'queue window elapsed'}) → 429 retry_after=${retryAfterMs}ms (advertised ${retryAfterSec}s)`);
       return connectPoolUnavailableFailure(
         limited

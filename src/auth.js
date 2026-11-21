@@ -2497,6 +2497,24 @@ export function hasConnectEntitledAccount(selector) {
   return accounts.some(a => a.status === 'active' && isConnectSelectorAllowedForAccount(a, selector));
 }
 
+// Owner decision (release candidate): a selector the upstream catalog has
+// dropped for EVERY entitled account is a permanent miss, not pool pressure —
+// answering it as a retryable 429 tells the client to keep retrying a model
+// that cannot run on this pool. True when at least one active account is
+// entitled and every entitled active account is selector-latched
+// (isSelectorIneligible: upstream said "no longer available for this account").
+export function isConnectSelectorUnavailableForAll(selector) {
+  let entitled = 0;
+  let ineligible = 0;
+  for (const a of accounts) {
+    if (a.status !== 'active') continue;
+    if (!isConnectSelectorAllowedForAccount(a, selector)) continue;
+    entitled++;
+    if (isSelectorIneligible(a, selector)) ineligible++;
+  }
+  return entitled > 0 && ineligible === entitled;
+}
+
 /** List of model keys this account is currently allowed to call. */
 export function getAvailableModelsForAccount(account) {
   const blocked = new Set(account.blockedModels || []);

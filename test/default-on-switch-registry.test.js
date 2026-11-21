@@ -89,7 +89,9 @@ const LEDGER = {
   WINDSURFAPI_LS_PER_PROXY_USER: { tested: true },
   WINDSURFAPI_TOOL_HYGIENE: { tested: true },
   WINDSURFAPI_NLU_RECOVERY: { tested: true },
-  WINDSURFAPI_VARIANT_FALLBACK_ON_RATE_LIMIT: { tested: true },
+  // WINDSURFAPI_VARIANT_FALLBACK_ON_RATE_LIMIT is default-OFF (release-candidate
+  // owner decision: no silent variant swap), so it leaves the ledger. Its '1'
+  // opt-in path stays tested in test/v2085-auto-fallback.test.js.
   // Both found only after this file's discovery patterns were widened to accept `??`.
   RESPONSE_CACHE_ENABLED: {
     waived: 'off means "do not serve a cached response". No test drives it — the switch '

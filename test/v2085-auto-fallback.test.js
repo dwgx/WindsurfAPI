@@ -27,9 +27,9 @@ describe('shouldAutoFallback — gating decision', () => {
     else process.env.WINDSURFAPI_VARIANT_FALLBACK_ON_RATE_LIMIT = savedEnv;
   });
 
-  it('v2.0.87 default ON: rate_limit + fallback_model → fallback (alias checkin restores cascade reuse)', () => {
+  it('release-candidate default OFF: rate_limit + fallback_model → error, no silent swap', () => {
     delete process.env.WINDSURFAPI_VARIANT_FALLBACK_ON_RATE_LIMIT;
-    assert.equal(shouldAutoFallback(baseBody, {}, rateLimitResult), true);
+    assert.equal(shouldAutoFallback(baseBody, {}, rateLimitResult), false);
   });
 
   it('env =0 → no fallback (operator opt-out for clients that mistrust silent variant changes)', () => {
