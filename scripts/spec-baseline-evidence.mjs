@@ -57,7 +57,8 @@ export function measureEvidence(result, files, root, policy, platform = process.
   if (measured.size !== wanted.size || FIELDS.some(k => totals[k] !== counts[k])) fail('file coverage or aggregate reconciliation failed');
   const policyForPlatform = policy?.platforms?.[platform];
   if (policy?.version !== 1 || !policy.platforms || typeof policy.platforms !== 'object') fail('invalid platform skip policy');
-  const approved = new Set((policyForPlatform?.tests || []).filter(x => wanted.has(x.file)).map(leafKey));
+  const approved = new Map((policyForPlatform?.tests || []).filter(x => wanted.has(x.file))
+    .map((x) => [leafKey(x), x.reason ?? policyForPlatform.reason]));
   const seenNames = new Set(), skippedNames = new Set();
   let actualSkipped = 0;
   for (const row of leaves) {
@@ -67,12 +68,12 @@ export function measureEvidence(result, files, root, policy, platform = process.
     seenNames.add(key);
     if (row.status !== 'pass' || row.todo) fail('non-passing test result');
     if (!row.skip) continue;
-    if (row.type !== 'test' || !approved.has(key) || row.skip !== policyForPlatform.reason
+    if (row.type !== 'test' || !approved.has(key) || row.skip !== approved.get(key)
         || skippedNames.has(key)) fail(`unapproved or duplicate platform skip: ${file}: ${row.name}`);
     skippedNames.add(key); actualSkipped++;
   }
   if (actualSkipped !== counts.skipped) fail('skip events do not reconcile with measured counts');
-  for (const key of approved) if (!seenNames.has(key)) fail('a named machine-gated test disappeared');
+  for (const key of approved.keys()) if (!seenNames.has(key)) fail('a named machine-gated test disappeared');
   return { pass: counts.passed, skipped: counts.skipped, total: counts.tests,
     disposition: counts.skipped ? 'COUNT_COMPATIBLE_WITH_APPROVED_SKIPS' : 'MEASURED_NO_SKIPS' };
 }

@@ -319,11 +319,13 @@
         },
         {
           "file": "test/concurrency-stream-flow.test.js",
-          "name": "R10 — LS cap with N live streams and detach churn"
+          "name": "R10 — LS cap with N live streams and detach churn",
+          "reason": "POSIX-only: ensureLs spawns a shebang fake LS"
         },
         {
           "file": "test/concurrency-stream-flow.test.js",
-          "name": "R11 — resume after LS eviction under pressure"
+          "name": "R11 — resume after LS eviction under pressure",
+          "reason": "POSIX-only: ensureLs spawns a shebang fake LS"
         }
       ]
     }
