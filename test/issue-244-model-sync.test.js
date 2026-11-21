@@ -128,7 +128,7 @@ describe('issue #244 — SWE native vision is encoded on the captured wire shape
     return getAllFields(parseFields(request), 3).map((field) => parseFields(field.value));
   }
 
-  for (const alias of ['swe-1-7', 'swe-1-7-lightning']) {
+  for (const alias of ['swe-1-7', 'swe-1-7-medium']) {
     it(`${alias} keeps one image on the source=USER message at repeated field #10`, () => {
       const messages = chatMessagesOf(alias, [
         { type: 'text', text: TEXT },

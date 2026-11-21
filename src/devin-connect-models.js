@@ -29,12 +29,6 @@ const SELECTOR_MAP = new Map(Object.entries({
   'swe-1.6-slow': 'swe-1-6-slow',
   'swe-1-6': 'swe-1-6',
   'swe-1.6': 'swe-1-6',
-  'swe-1-6-fast': 'swe-1-6-fast',
-  'swe-1.6-fast': 'swe-1-6-fast',
-  'swe-1-5': 'MODEL_SWE_1_5_SLOW',
-  'swe-1.5': 'MODEL_SWE_1_5_SLOW',
-  'swe-1-5-fast': 'MODEL_SWE_1_5',
-  'swe-1.5-fast': 'MODEL_SWE_1_5',
   'subagent-default': 'subagent-default',
 
   // ── Anthropic (paid) ──
@@ -55,14 +49,6 @@ const SELECTOR_MAP = new Map(Object.entries({
   // alias `claude-sonnet-4.6` carries the curated -thinking default.
   'claude-sonnet-4.6': 'claude-sonnet-4-6-thinking',
   'claude-sonnet-4-6-thinking': 'claude-sonnet-4-6-thinking',
-  'claude-opus-4-5': 'MODEL_CLAUDE_4_5_OPUS',
-  'claude-opus-4.5': 'MODEL_CLAUDE_4_5_OPUS',
-  'claude-opus-4-5-thinking': 'MODEL_CLAUDE_4_5_OPUS_THINKING',
-  'claude-sonnet-4-5': 'MODEL_PRIVATE_2',
-  'claude-sonnet-4.5': 'MODEL_PRIVATE_2',
-  'claude-sonnet-4-5-thinking': 'MODEL_PRIVATE_3',
-  'claude-haiku-4-5': 'MODEL_PRIVATE_11',
-  'claude-haiku-4.5': 'MODEL_PRIVATE_11',
 
   // ── OpenAI (paid) ──
   // The catalog advertises bare `gpt-5.5` as the alias for gpt-5-5-low, so the
@@ -73,25 +59,8 @@ const SELECTOR_MAP = new Map(Object.entries({
   'gpt-5.5': 'gpt-5-5-low',
   'gpt-5-5-low': 'gpt-5-5-low',
   'gpt-5.5-low': 'gpt-5-5-low',
-  'gpt-5-2': 'MODEL_GPT_5_2_NONE',
-  'gpt-5.2': 'MODEL_GPT_5_2_NONE',
-  'gpt-5-2-low': 'MODEL_GPT_5_2_LOW',
-  'gpt-5-2-medium': 'MODEL_GPT_5_2_MEDIUM',
-  'gpt-5-2-high': 'MODEL_GPT_5_2_HIGH',
-  'gpt-5-2-xhigh': 'MODEL_GPT_5_2_XHIGH',
 
   // ── Google (paid) ──
-  // Catalog advertises the family alias as `gemini-3.0-flash` (with the .0),
-  // which normalizes to `gemini-3-0-flash`. Keep both that and the shorter
-  // `gemini-3-flash` form pointing at the MEDIUM default so the catalog's own
-  // alias resolves instead of degrading to free.
-  'gemini-3-0-flash': 'MODEL_GOOGLE_GEMINI_3_0_FLASH_MEDIUM',
-  'gemini-3.0-flash': 'MODEL_GOOGLE_GEMINI_3_0_FLASH_MEDIUM',
-  'gemini-3-flash': 'MODEL_GOOGLE_GEMINI_3_0_FLASH_MEDIUM',
-  'gemini-3-flash-minimal': 'MODEL_GOOGLE_GEMINI_3_0_FLASH_MINIMAL',
-  'gemini-3-flash-low': 'MODEL_GOOGLE_GEMINI_3_0_FLASH_LOW',
-  'gemini-3-flash-medium': 'MODEL_GOOGLE_GEMINI_3_0_FLASH_MEDIUM',
-  'gemini-3-flash-high': 'MODEL_GOOGLE_GEMINI_3_0_FLASH_HIGH',
 
   // ── Others (paid) ──
   'glm-5-2': 'glm-5-2',
@@ -111,12 +80,8 @@ const SELECTOR_MAP = new Map(Object.entries({
   'gpt-5.4': 'gpt-5-4-medium',
   'gpt-5-4-mini': 'gpt-5-4-mini-medium',
   'gpt-5.4-mini': 'gpt-5-4-mini-medium',
-  'gpt-5-3-codex': 'gpt-5-3-codex-medium',
-  'gpt-5.3-codex': 'gpt-5-3-codex-medium',
   'gemini-3-5-flash': 'gemini-3-5-flash-medium',
   'gemini-3.5-flash': 'gemini-3-5-flash-medium',
-  'gemini-3-1-pro': 'gemini-3-1-pro-low',
-  'gemini-3.1-pro': 'gemini-3-1-pro-low',
   // GLM-5.1 is the previous discovery id for the same upstream model (selector
   // glm-5-2). Clients send it both dotted and dashed; without the dashed row the
   // dashed spelling missed every map lookup, was absent from the live catalog,
@@ -129,8 +94,6 @@ const SELECTOR_MAP = new Map(Object.entries({
   // New families in the live 105 catalog (2026-07): SWE-1.7 + DeepSeek V4 Pro.
   'swe-1-7': 'swe-1-7',
   'swe-1.7': 'swe-1-7',
-  'swe-1-7-lightning': 'swe-1-7-lightning',
-  'swe-1.7-lightning': 'swe-1-7-lightning',
   'swe-2': 'swe-2-medium',
   'swe-2.0': 'swe-2-medium',
   'swe-2-0': 'swe-2-medium',
@@ -149,7 +112,7 @@ const SELECTOR_MAP = new Map(Object.entries({
   'swe-2-0-medium': 'swe-2-medium',
   'swe-2-0-high': 'swe-2-high',
   'swe-2-0-max': 'swe-2-max',
-  'deepseek-v4': 'deepseek-v4',
+  'deepseek-v4': 'deepseek-v4-pro-high',
 
   // GPT-5.6 family (live catalog 2026-07-09, docs.devin.ai price table). Luna is
   // the fastest/cheapest sibling. Bare, dash and compact forms (issue #244 verbatim
@@ -176,7 +139,7 @@ const SELECTOR_MAP = new Map(Object.entries({
   'claude-fable-5-1': 'claude-fable-5-1-medium',
   'claude-opus-5-5': 'claude-opus-5-5-medium',
   'claude-sonnet-5-5': 'claude-sonnet-5-5-medium',
-  'deepseek-v4-1-flash': 'deepseek-v4-1-flash-high',
+  'deepseek-v4-1-flash': 'deepseek-v4-1-flash-1017-high',
   'deepseek-v4-flash': 'deepseek-v4-flash-high',
   'deepseek-v4-pro': 'deepseek-v4-pro-high',
   'gemini-3-7-flash': 'gemini-3-7-flash-medium',
@@ -201,12 +164,10 @@ const SELECTOR_MAP = new Map(Object.entries({
   // client sending the family name (the shape grok-4-6 / grok-4-7 already accept)
   // got a 400 while the siblings worked. Same convention as the rest of this map:
   // a bare family alias defaults to -medium. Targets are snapshot selectors.
-  'grok-4-5': 'grok-4-5-medium',
   'grok-4-6': 'grok-4-6-medium',
   'grok-4.6': 'grok-4-6-medium',
   'grok-4-7': 'grok-4-7-medium',
   'grok-4.7': 'grok-4-7-medium',
-  'inkling': 'inkling-medium',
   'kimi-k3': 'kimi-k3-high',
   'nemotron-3-ultra': 'nemotron-3-ultra-medium',
 

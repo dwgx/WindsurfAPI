@@ -88,8 +88,12 @@ describe('resolveConnectSelector', () => {
       { selector: 'claude-sonnet-4-6', mapped: true });
     assert.deepEqual(resolveConnectSelector('claude-sonnet-4.6'),
       { selector: 'claude-sonnet-4-6-thinking', mapped: true });
-    assert.equal(resolveConnectSelector('claude-sonnet-4.5').selector, 'MODEL_PRIVATE_2');
-    assert.equal(resolveConnectSelector('claude-haiku-4-5').selector, 'MODEL_PRIVATE_11');
+    // Retired upstream spellings (dropped from the live 306-model catalog) now
+    // fail closed — never silently remapped to a different generation.
+    assert.deepEqual(resolveConnectSelector('claude-sonnet-4.5'),
+      { selector: FREE_TIER_SELECTOR, mapped: false });
+    assert.deepEqual(resolveConnectSelector('claude-haiku-4-5'),
+      { selector: FREE_TIER_SELECTOR, mapped: false });
   });
 
   it('keeps the base sonnet model reachable under its explicit spelling (O1)', () => {
@@ -107,13 +111,13 @@ describe('resolveConnectSelector', () => {
   });
 
   it('maps gpt and gemini families', () => {
-    assert.equal(resolveConnectSelector('gpt-5-2-high').selector, 'MODEL_GPT_5_2_HIGH');
-    assert.equal(resolveConnectSelector('gemini-3-flash').selector, 'MODEL_GOOGLE_GEMINI_3_0_FLASH_MEDIUM');
+    assert.equal(resolveConnectSelector('gpt-5-4-high').selector, 'gpt-5-4-high');
+    assert.equal(resolveConnectSelector('gemini-3-5-flash').selector, 'gemini-3-5-flash-medium');
   });
 
   it('is case-insensitive and strips a provider prefix', () => {
     assert.equal(resolveConnectSelector('Claude-Opus-4.8').selector, 'claude-opus-4-8-medium');
-    assert.equal(resolveConnectSelector('anthropic/claude-sonnet-4-5').selector, 'MODEL_PRIVATE_2');
+    assert.equal(resolveConnectSelector('anthropic/claude-sonnet-4-6').selector, 'claude-sonnet-4-6');
   });
 
   it('strips a hyphenated provider prefix (x-ai/, z-ai/) like a plain one', () => {
@@ -122,8 +126,8 @@ describe('resolveConnectSelector', () => {
     // missed every lookup and resolved to {selector:null, mapped:false} on a live
     // catalog — a 400 model_not_found for a model the account can run — while
     // `xai/…` and `openai/…` resolved. 313 probed rows across 48 families.
-    assert.deepEqual(resolveConnectSelector('x-ai/grok-4-5-low'),
-      { selector: 'grok-4-5-low', mapped: true });
+    assert.deepEqual(resolveConnectSelector('x-ai/grok-4-6-low'),
+      { selector: 'grok-4-6-low', mapped: true });
     assert.deepEqual(resolveConnectSelector('z-ai/glm-5.1'),
       { selector: 'glm-5-2', mapped: true });
     // Control: a plain prefix keeps working, and the strip stays SINGLE — in
@@ -167,28 +171,35 @@ describe('resolveConnectSelector', () => {
     // while the normalized fallthrough lowercases — so a lowercased or prefixed
     // enum matched neither path (96 probed rows). The existence check is what
     // keeps a bogus MODEL_* from being written raw to #21.
+    // The live 306-model catalog carries no MODEL_* enum spellings, so enum
+    // names now fail closed through the existence check — the exact property
+    // this test exists to pin (no bogus MODEL_* written raw to #21).
     assert.deepEqual(resolveConnectSelector('openai/MODEL_GPT_5_2_LOW'),
-      { selector: 'MODEL_GPT_5_2_LOW', mapped: true });
+      { selector: FREE_TIER_SELECTOR, mapped: false });
     assert.deepEqual(resolveConnectSelector('model_gpt_5_2_low'),
-      { selector: 'MODEL_GPT_5_2_LOW', mapped: true });
+      { selector: FREE_TIER_SELECTOR, mapped: false });
     assert.deepEqual(resolveConnectSelector('MODEL_GPT_5_2_LOW'),
-      { selector: 'MODEL_GPT_5_2_LOW', mapped: true });
+      { selector: FREE_TIER_SELECTOR, mapped: false });
     // An unknown enum still fails closed: it is never passed through raw.
     assert.deepEqual(resolveConnectSelector('openai/model_gpt_9_9_ultra'),
       { selector: FREE_TIER_SELECTOR, mapped: false });
   });
 
-  it('resolves the bare grok-4-5 and inkling family names to their -medium tier', () => {
+  it('resolves the live bare grok family names to their -medium tier', () => {
     // Family residue from the alias matrix: these two bare names 400'd because the
     // catalog exposes only tier selectors and the map had no row — while the
     // sibling families grok-4-6 / grok-4-7 carry exactly such a row. The bare
     // family alias defaulting to -medium is the map's existing convention
     // (claude-fable-5-1, deepseek-v4-flash, gemini-3-7-flash, ...). Targets are
     // real snapshot selectors.
+    assert.deepEqual(resolveConnectSelector('grok-4-6'),
+      { selector: 'grok-4-6-medium', mapped: true });
+    // grok-4-5 and inkling left the live catalog in the 306-model refresh —
+    // their bare names now fail closed rather than silently rerouting.
     assert.deepEqual(resolveConnectSelector('grok-4-5'),
-      { selector: 'grok-4-5-medium', mapped: true });
+      { selector: FREE_TIER_SELECTOR, mapped: false });
     assert.deepEqual(resolveConnectSelector('inkling'),
-      { selector: 'inkling-medium', mapped: true });
+      { selector: FREE_TIER_SELECTOR, mapped: false });
   });
 
   it('pins the known prefix asymmetry for a dotted family alias (P2-1)', () => {

@@ -119,9 +119,12 @@ describe('resolver guard: catalog-existence check on passthrough', () => {
   });
 
   it('a real enum-form catalog selector still passes through verbatim', () => {
+    // The 306-model catalog carries no MODEL_* spellings: an enum-form name
+    // now fails closed instead of passing through — the existence check is
+    // the guarantee a bogus MODEL_* is never written raw to #21.
     assert.deepEqual(
       resolveConnectSelector('MODEL_GOOGLE_GEMINI_3_0_FLASH_HIGH'),
-      { selector: 'MODEL_GOOGLE_GEMINI_3_0_FLASH_HIGH', mapped: true },
+      { selector: FREE_TIER_SELECTOR, mapped: false },
     );
   });
 
