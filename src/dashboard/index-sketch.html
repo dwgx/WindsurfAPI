@@ -2718,6 +2718,18 @@ const App = {
     return copy[english ? 0 : 1];
   },
 
+  batchImportSuccess(disposition) {
+    if (['added', 'existing', 'login_only'].includes(disposition)) return this.batchImportMessage(disposition);
+    return I18n.locale === 'en' ? 'Success' : '成功';
+  },
+
+  batchImportPosition(mode, line) {
+    if (!Number.isInteger(line) || line < 1) return '—';
+    return I18n.locale === 'en'
+      ? `${mode === 'json' ? 'Item' : 'Line'} ${line}`
+      : `第 ${line} ${mode === 'json' ? '项' : '行'}`;
+  },
+
   async windsurfLoginBatch(preview = false) {
     const input = document.getElementById('wl-batch-input').value;
     if (!input.trim()) return this.toast('paste accounts first', 'error');
@@ -2734,9 +2746,7 @@ const App = {
         this.toast(this.batchImportMessage(r.error), 'error');
         return;
       }
-      const position = line => english
-        ? `${r.mode === 'json' ? 'Item' : 'Line'} ${line}`
-        : `第 ${line} ${r.mode === 'json' ? '项' : '行'}`;
+      const position = line => this.batchImportPosition(r.mode, line);
       if (preview) {
         const note = english ? 'Format check only. No sign-ins were attempted and no accounts were changed.' : '仅检查格式。未尝试登录，未改动账号。';
         this.showWLResult(`<div class="anno" style="font-size:20px">${note}</div>
@@ -2752,7 +2762,7 @@ const App = {
         <div class="table-wrap" style="margin-top:12px"><table>
           <thead><tr><th>${english ? 'Input' : '输入'}</th><th>${english ? 'Status' : '状态'}</th><th>${english ? 'Note' : '说明'}</th></tr></thead>
           <tbody>${r.results.map(x => `<tr><td>${this.esc(position(x.lineNumber))}${x.importKind === 'email_password' && x.email ? ` · ${this.esc(x.email)}` : ''}</td>
-            <td><span class="badge ${x.success ? 'active' : (x.skipped ? 'warn' : 'error')}">${x.success ? this.batchImportMessage(x.poolDisposition) : (x.skipped ? skipped : failed)}</span></td>
+            <td><span class="badge ${x.success ? 'active' : (x.skipped ? 'warn' : 'error')}">${x.success ? this.batchImportSuccess(x.poolDisposition) : (x.skipped ? skipped : failed)}</span></td>
             <td class="text-sm">${x.success ? this.esc(x.account?.id || '—') : this.esc(this.batchImportMessage(x.error))}</td></tr>`).join('')}</tbody>
         </table></div>`);
       this.pushLoginHistoryEntries(r.results.map(x => ({
@@ -2778,7 +2788,7 @@ const App = {
       return `<tr>
         <td class="text-sm nowrap">${new Date(h.time).toLocaleString()}</td>
         <td><span style="display:inline-flex;align-items:center;gap:8px"><span class="avatar-letter">${this.esc((h.email || '?')[0].toUpperCase())}</span>${this.esc(h.email)}</span></td>
-        <td><span class="badge ${ok ? 'active' : (skipped ? 'warn' : 'error')}">${ok ? (h.poolDisposition ? this.batchImportMessage(h.poolDisposition) : 'ok') : (skipped ? 'skipped' : 'fail')}</span>${!ok ? `<div class="text-xs" style="color:var(--${skipped ? 'warn' : 'error'});margin-top:3px">${this.esc(h.proxy === 'batch' ? this.batchImportMessage(error) : error)}</div>` : ''}</td>
+        <td><span class="badge ${ok ? 'active' : (skipped ? 'warn' : 'error')}">${ok ? this.batchImportSuccess(h.poolDisposition) : (skipped ? 'skipped' : 'fail')}</span>${!ok ? `<div class="text-xs" style="color:var(--${skipped ? 'warn' : 'error'});margin-top:3px">${this.esc(h.proxy === 'batch' ? this.batchImportMessage(error) : error)}</div>` : ''}</td>
         <td class="text-sm">${this.esc(h.proxy || '-')}</td>
         <td><button class="btn btn-ghost btn-xs" onclick="App.removeLoginHistory(${i})">×</button></td>
       </tr>`;

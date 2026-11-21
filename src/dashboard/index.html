@@ -8474,7 +8474,14 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     return message === key ? I18n.t('batch.importFailed') : message;
   },
 
+  batchImportSuccess(disposition) {
+    const key = ['added', 'existing', 'login_only'].includes(disposition)
+      ? `batch.outcome.${disposition}` : 'batch.success';
+    return I18n.t(key);
+  },
+
   batchImportPosition(mode, lineNumber) {
+    if (!Number.isInteger(lineNumber) || lineNumber < 1) return '—';
     return I18n.t(mode === 'json' ? 'batch.item' : 'batch.line', { line: lineNumber });
   },
 
@@ -8509,7 +8516,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
               ${results.map(r => `
                 <tr>
                   <td>${this.esc(this.batchImportPosition(mode, r.lineNumber))}${r.importKind === 'email_password' && r.email ? ` · ${this.esc(r.email)}` : ''}</td>
-                  <td><span class="badge ${r.success ? 'active' : (r.skipped ? 'warn' : 'error')}">${r.success ? I18n.t(`batch.outcome.${r.poolDisposition}`) : (r.skipped ? I18n.t('batch.skipped') : I18n.t('batch.fail'))}</span></td>
+                  <td><span class="badge ${r.success ? 'active' : (r.skipped ? 'warn' : 'error')}">${r.success ? this.batchImportSuccess(r.poolDisposition) : (r.skipped ? I18n.t('batch.skipped') : I18n.t('batch.fail'))}</span></td>
                   <td class="text-sm">${r.success
                     ? (r.account ? `${I18n.t('table.header.account')} ${this.esc(r.account.id)}` : '—')
                     : (() => {
@@ -9051,7 +9058,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
         <td class="text-sm nowrap">${new Date(h.time).toLocaleString()}</td>
         <td>${this.esc(h.email)}</td>
         <td>
-          <span class="badge ${ok ? 'active' : (skipped ? 'warn' : 'error')}">${ok ? (h.poolDisposition ? I18n.t(`batch.outcome.${h.poolDisposition}`) : I18n.t('batch.success')) : (skipped ? I18n.t('batch.skipped') : I18n.t('batch.fail'))}</span>
+          <span class="badge ${ok ? 'active' : (skipped ? 'warn' : 'error')}">${ok ? this.batchImportSuccess(h.poolDisposition) : (skipped ? I18n.t('batch.skipped') : I18n.t('batch.fail'))}</span>
           ${!ok ? (() => {
             const errCode = String(h.status || '').replace(skipped ? 'skipped: ' : 'error: ', '');
             const errKey = `error.${errCode}`;
