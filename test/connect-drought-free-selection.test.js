@@ -38,7 +38,8 @@ import assert from 'node:assert/strict';
 const {
   __setModelCatalogDeps, __resetModelCatalogState, __waitForModelCatalogSync,
   addAccountByKey, getAccountInternal, removeAccount,
-  getConnectSelectorPricing, isConnectSelectorBlockedByDrought, getDroughtSummary,
+  getConnectSelectorPricing, isConnectSelectorBlockedByDrought,
+  isConnectFreeOnlyDroughtAdmission, getDroughtSummary,
 } = await import('../src/auth.js');
 const { MODELS, mergeCloudModels, clearCloudModelCatalogs } = await import('../src/models.js');
 const { clearLiveCatalogSelectors } = await import('../src/devin-connect-models.js');
@@ -354,5 +355,230 @@ describe('connect drought free-only admission stays on the free account', () => 
     assert.equal(adapter.calls.filter((t) => t === paid.apiKey).length, 0);
     assert.equal(sticky.getStickyBinding(STICKY_CALLER, null, selector)?.accountId, free.id,
       'the success path re-pins to the account that actually served');
+  });
+});
+
+// ── Retry cost class ────────────────────────────────────────────────────────
+// The drought gate decides ONCE, at request entry, whether the request is a
+// free-only admission (`isConnectFreeOnlyDroughtAdmission`). That reason is
+// threaded through the initial acquire, the queue/pin wait and every failover
+// hop, so a pool measurement arriving WHILE the first attempt is in flight must
+// not silently re-price the retry:
+//   - a free-only request that hits an account dry-well keeps that cost limit,
+//     even if the drought lifted mid-attempt (the paid peer must stay unused);
+//   - a pre-output streaming failover is the same decision on the same wire;
+//   - an INDEPENDENT request started after the change is admitted afresh, so the
+//     ordinary paid route is legal again once the pool is no longer in drought.
+// All adapters are fake and record the account CLASS actually dispatched to.
+
+function rateLimited(resetMs = 42_000) {
+  return Object.assign(
+    new Error('Reached message rate limit for this model. Please try again later.'),
+    { code: 'RATE_LIMITED', resetMs },
+  );
+}
+
+// The pool's last measured quota recovers: the weekly percentage is what
+// isDroughtMode() reads, so this flips the gate to "wet" for every caller that
+// enters the handler AFTER this point.
+function setPoolWet(...accounts) {
+  for (const acct of accounts) {
+    acct.credits.weeklyPercent = 60;
+    acct.credits.dailyPercent = 60;
+  }
+}
+
+function accountClass(free, paid, token) {
+  if (token === free.apiKey) return 'free';
+  if (token === paid.apiKey) return 'paid';
+  return 'unmatched';
+}
+
+function fakeRes() {
+  const listeners = new Map();
+  return {
+    body: '', writableEnded: false,
+    write(chunk) { this.body += String(chunk); return true; },
+    end(chunk) { if (chunk) this.write(chunk); this.writableEnded = true; for (const cb of listeners.get('close') || []) cb(); },
+    on(event, cb) { if (!listeners.has(event)) listeners.set(event, []); listeners.get(event).push(cb); return this; },
+  };
+}
+
+function parseFrames(raw) {
+  return raw.split('\n\n').filter(Boolean).filter(f => !f.startsWith(':')).map(f => {
+    const d = f.split('\n').find(l => l.startsWith('data: '))?.slice(6) || '';
+    return d === '[DONE]' ? '[DONE]' : JSON.parse(d);
+  });
+}
+
+describe('connect drought free-only admission survives request retries', () => {
+  it('keeps the retry on the free admission after the drought lifts mid-attempt', async () => {
+    const free = seed('retry-A');
+    const paid = seed('retry-B');
+    await __waitForModelCatalogSync();
+    priceSnapshot(free, config(true));
+    priceSnapshot(paid, config(false));
+
+    const calls = [];
+    __setConnectDeps({
+      toChatCompletion: async (params) => {
+        calls.push(accountClass(free, paid, params.token));
+        if (params.token === free.apiKey) {
+          // The quota snapshot recovers while THIS attempt is on the wire.
+          setPoolWet(free, paid);
+          throw rateLimited();
+        }
+        return success();
+      },
+    });
+
+    assert.equal(getDroughtSummary().drought, true, 'precondition: the request enters during a drought');
+    assert.equal(isConnectFreeOnlyDroughtAdmission(selector), true);
+
+    const result = await chat(selector, 'retry-caller', 'retry');
+    assert.equal(getDroughtSummary().drought, false, 'precondition: the pool became wet during the attempt');
+    assert.equal(result.status, 429);
+    assert.equal(result.body?.error?.type, 'rate_limit_error');
+    assert.equal(result.body?.error?.code, 'RATE_LIMITED');
+    assert.deepEqual(calls, ['free'],
+      'the retry hop keeps the admission cost limit: the paid peer must not execute even though a fresh request would be allowed to');
+
+    // Independent request AFTER the change: the gate and the admission reason
+    // are re-derived from the now-wet pool, so the ordinary paid route is legal
+    // again. Evidence is the account the fake adapter was actually handed.
+    assert.equal(isConnectFreeOnlyDroughtAdmission(selector), false);
+    assert.equal(getConnectSelectorPricing(selector).freeNow, true,
+      'the free pricing row is still live — the fresh request is ordinary routing, not a forced paid fallback');
+    const fresh = await chat(selector, 'retry-caller-fresh', 'after-change');
+    assert.equal(fresh.status, 200);
+    assert.deepEqual(calls, ['free', 'paid'],
+      'a new request admitted after the change legitimately executes the paid account');
+  });
+
+  it('does not fail a free-only stream over to the paid peer when the drought lifts mid-attempt', async () => {
+    const free = seed('stream-retry-A');
+    const paid = seed('stream-retry-B');
+    await __waitForModelCatalogSync();
+    priceSnapshot(free, config(true));
+    priceSnapshot(paid, config(false));
+
+    const calls = [];
+    __setConnectDeps({
+      streamChatCompletion: async (params, send) => {
+        calls.push(accountClass(free, paid, params.token));
+        if (params.token === free.apiKey) {
+          setPoolWet(free, paid);
+          throw rateLimited();
+        }
+        send({ id: 's', object: 'chat.completion.chunk', choices: [{ index: 0, delta: { content: 'OK' }, finish_reason: null }] });
+        send({ id: 's', object: 'chat.completion.chunk', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] });
+      },
+    });
+
+    assert.equal(getDroughtSummary().drought, true);
+    assert.equal(isConnectFreeOnlyDroughtAdmission(selector), true);
+    const result = await handleChatCompletions(
+      { model: selector, stream: true, messages: [{ role: 'user', content: 'offline stream retry' }] },
+      { callerKey: 'b1-stream-retry' },
+    );
+    const res = fakeRes();
+    await result.handler(res);
+
+    assert.equal(getDroughtSummary().drought, false, 'precondition: the pool became wet during the attempt');
+    assert.equal(result.status, 200, 'the SSE response was committed before the upstream attempt');
+    assert.equal(res.writableEnded, true);
+    assert.deepEqual(calls, ['free'], 'the pre-output failover hop must stay on the free admission');
+    const frames = parseFrames(res.body);
+    const err = frames.find(f => f !== '[DONE]' && f.error);
+    assert.equal(err?.error?.type, 'rate_limit_error');
+    assert.equal(err?.error?.code, 'RATE_LIMITED');
+    assert.equal(err?.error?.retry_after_ms, 42_000,
+      'the upstream reset window rides the terminal frame');
+    assert.equal(frames.includes('[DONE]'), false, 'a pre-content error is not a completed turn');
+  });
+
+  it('surfaces a post-content stream error without replaying on the paid peer', async () => {
+    const free = seed('stream-mid-A');
+    const paid = seed('stream-mid-B');
+    await __waitForModelCatalogSync();
+    priceSnapshot(free, config(true));
+    priceSnapshot(paid, config(false));
+
+    const calls = [];
+    __setConnectDeps({
+      streamChatCompletion: async (params, send) => {
+        calls.push(accountClass(free, paid, params.token));
+        // One real chunk is on the wire, THEN the account hits its limit.
+        // A failover would duplicate content, so the terminal must be the
+        // error frame on this same 200 SSE response — never a second account.
+        send({ id: 's', object: 'chat.completion.chunk', choices: [{ index: 0, delta: { content: 'partial' }, finish_reason: null }] });
+        throw rateLimited();
+      },
+    });
+
+    assert.equal(getDroughtSummary().drought, true);
+    const result = await handleChatCompletions(
+      { model: selector, stream: true, messages: [{ role: 'user', content: 'offline stream mid error' }] },
+      { callerKey: 'b1-stream-mid' },
+    );
+    const res = fakeRes();
+    await result.handler(res);
+
+    assert.equal(result.status, 200);
+    assert.equal(res.writableEnded, true);
+    assert.deepEqual(calls, ['free'], 'no replay after a byte is on the wire');
+    const frames = parseFrames(res.body);
+    const partials = frames.filter(f => f !== '[DONE]' && f.choices?.[0]?.delta?.content === 'partial');
+    assert.equal(partials.length, 1, 'the delivered partial must not be replayed');
+    const err = frames.find(f => f !== '[DONE]' && f.error);
+    assert.equal(err?.error?.type, 'rate_limit_error');
+    assert.equal(err?.error?.retry_after_ms, 42_000);
+    assert.equal(frames.includes('[DONE]'), true,
+      'content already on the wire keeps the historical clean close');
+  });
+
+  it('releases the free lease on cancel and never spends the paid peer', async () => {
+    const free = seed('cancel-A');
+    const paid = seed('cancel-B');
+    await __waitForModelCatalogSync();
+    priceSnapshot(free, config(true));
+    priceSnapshot(paid, config(false));
+
+    const controller = new AbortController();
+    const calls = [];
+    __setConnectDeps({
+      toChatCompletion: async (params) => {
+        calls.push(accountClass(free, paid, params.token));
+        // The caller cancels while this account owns the in-flight slot.
+        controller.abort();
+        throw Object.assign(new Error('This operation was aborted'), { name: 'AbortError' });
+      },
+    });
+
+    const result = await handleChatCompletions(
+      { model: selector, messages: [{ role: 'user', content: 'offline cancel' }] },
+      { callerKey: 'b1-cancel', signal: controller.signal },
+    );
+    assert.equal(result.status, 499);
+    assert.equal(result.body?.error?.code, 'client_disconnect');
+    assert.deepEqual(calls, ['free']);
+
+    const released = getAccountInternal(free.id);
+    assert.equal(released._inflight || 0, 0, 'the cancel must return the in-flight lease to the pool');
+    assert.equal(released.errorCount || 0, 0, 'a client cancel is not an account fault');
+    assert.equal(released.status, 'active');
+    assert.equal(getAccountInternal(paid.id)._inflight || 0, 0);
+
+    // The freed lease is reusable by the next request, and the free-only
+    // admission still selects the free account rather than the paid peer.
+    __setConnectDeps({
+      toChatCompletion: async (params) => {
+        calls.push(accountClass(free, paid, params.token));
+        return success();
+      },
+    });
+    const next = await chat(selector, 'b1-cancel-next', 'after-cancel');
+    assert.equal(next.status, 200);
+    assert.deepEqual(calls, ['free', 'free'], 'the released account is immediately selectable again');
   });
 });
