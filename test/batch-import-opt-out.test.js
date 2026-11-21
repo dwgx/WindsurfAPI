@@ -38,7 +38,7 @@ function dashboard(skin) {
     .map(m => m[1]).find(s => s.includes('const App =') && s.includes('const I18n ='));
   assert.ok(script);
   const input = { value: 'row one\nrow two' };
-  const nodes = { 'wl-batch-input': input, 'wl-auto-add': { checked: true }, 'wl-batch-btn': {} };
+  const nodes = { 'wl-batch-input': input, 'wl-auto-add': { checked: true }, 'wl-batch-btn': {}, 'wl-batch-preview-btn': {} };
   const browser = { localStorage: { getItem() { return null; } }, addEventListener() {},
     document: { addEventListener() {}, getElementById(id) { return nodes[id]; } } };
   browser.window = browser;

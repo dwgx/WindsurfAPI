@@ -3625,8 +3625,11 @@ tbody tr:hover td { background: var(--surface-2); }
             </div>
             <div class="section-body">
               <textarea id="import-text-area" class="input" rows="5" style="width:100%;font-family:var(--mono);font-size:12px;resize:vertical" data-i18n-placeholder="section.smartImport.placeholder" placeholder="devin-session-token$...  或  show-auth-token 链接  或  email----password  每行一个,可混合"></textarea>
-              <div style="margin-top:10px"><button class="btn btn-primary" onclick="App.importAccountsFromText()" data-i18n="section.smartImport.button">智能导入</button></div>
-              <div id="import-text-result" style="margin-top:10px"></div>
+              <div class="field-row-actions" style="margin-top:10px">
+                <button type="button" class="btn btn-outline" id="smart-import-preview-btn" onclick="App.importAccountsFromText(true)" data-i18n="batch.preview">预览格式</button>
+                <button type="button" class="btn btn-primary" id="smart-import-btn" onclick="App.importAccountsFromText()" data-i18n="section.smartImport.button">智能导入</button>
+              </div>
+              <div id="import-text-result" style="margin-top:10px" aria-live="polite"></div>
             </div>
           </div>
           <div class="section">
@@ -3652,9 +3655,10 @@ tbody tr:hover td { background: var(--surface-2); }
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
                   <span data-i18n="action.clearFile">清除文件</span>
                 </button>
+                <button type="button" class="btn btn-outline" id="wl-batch-preview-btn" onclick="App.windsurfLoginBatch(true)" data-i18n="batch.preview">预览格式</button>
                 <button class="btn btn-primary" onclick="App.windsurfLoginBatch()" id="wl-batch-btn">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M3 5h18"/><path d="M3 12h18"/><path d="M3 19h18"/></svg>
-                  <span data-i18n="action.batchImport">批量导入并登录</span>
+                  <span data-i18n="action.batchImport">处理此批次</span>
                 </button>
               </div>
               <div class="field-hint" id="wl-batch-file-status" data-i18n="batch.fileNone">未选择 JSON 文件</div>
@@ -3680,7 +3684,7 @@ tbody tr:hover td { background: var(--surface-2); }
           </div>
         </div>
 
-        <div class="add-result hidden" id="wl-result"></div>
+        <div class="add-result hidden" id="wl-result" aria-live="polite"></div>
       </div>
     </div>
   </div>
@@ -7801,6 +7805,9 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     const uptime = d.uptime ? this.fmtDuration(d.uptime) : '-';
     const ls = d.langServer || {};
     const poolCount = (ls.instances || []).length || (ls.running ? 1 : 0);
+    const cacheHits = d.cache?.hits ?? 0;
+    const cacheLookups = d.cache?.eligibleLookups ?? (cacheHits + (d.cache?.misses ?? 0));
+    const cacheRate = cacheLookups ? (100 * cacheHits / cacheLookups).toFixed(1) + '%' : I18n.t('card.responseCache.noSamples');
     const totalRss = ls.totalRssBytes ? this.fmtBytes(ls.totalRssBytes) : '-';
     // The local Language Server is retired on the DEVIN_CONNECT cloud path
     // (backend-router: DEVIN_CONNECT retires both Cascade AND the local CLI). When
@@ -7855,8 +7862,8 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
         <div class="card-header"><div class="card-title">${I18n.t('card.responseCache.title')}</div>
           <svg class="card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4 3 9 3s9-1.34 9-3"/></svg>
         </div>
-        <div class="card-value">${d.cache?.hitRate || '0.0'}%</div>
-        <div class="card-sub">${I18n.t('card.responseCache.subtitle', { hits: d.cache?.hits || 0, misses: d.cache?.misses || 0, size: d.cache?.size || 0, max: d.cache?.maxSize || 0 })}</div>
+        <div class="card-value">${cacheRate}</div>
+        <div class="card-sub">${I18n.t('card.responseCache.subtitle', { hits: cacheHits, total: cacheLookups, size: d.cache?.size || 0, max: d.cache?.maxSize || 0 })}</div>
       </div>
       ${this._tokenCacheKpiCard(s)}
     `;
@@ -8458,7 +8465,36 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
       <div class="section-body"><p class="text-sm">${this.esc(errMsg)}</p>${this.getWindsurfLoginFailActions(r)}</div>`);
   },
 
-  renderBatchWindsurfLoginResult(results, autoAdd) {
+  batchImportError(code) {
+    const key = `error.${code}`;
+    const message = I18n.t(key);
+    return message === key ? I18n.t('batch.importFailed') : message;
+  },
+
+  batchImportSuccess(disposition) {
+    const key = ['added', 'existing', 'login_only'].includes(disposition)
+      ? `batch.outcome.${disposition}` : 'batch.success';
+    return I18n.t(key);
+  },
+
+  batchImportPosition(mode, lineNumber) {
+    if (!Number.isInteger(lineNumber) || lineNumber < 1) return '—';
+    return I18n.t(mode === 'json' ? 'batch.item' : 'batch.line', { line: lineNumber });
+  },
+
+  renderBatchImportPreview(result) {
+    this.showWindsurfLoginResult(`
+      <div class="section-header"><div>
+        <div class="section-title">${I18n.t('batch.preview')}</div>
+        <div class="section-desc">${I18n.t('batch.previewOnly')}</div>
+      </div></div>
+      <ul class="text-sm">${result.results.map(row => {
+        const note = row.error ? this.batchImportError(row.error) : I18n.t(`batch.kind.${row.importKind}`);
+        return `<li>${this.esc(this.batchImportPosition(result.mode, row.lineNumber))} · ${this.esc(note)}</li>`;
+      }).join('')}</ul>`);
+  },
+
+  renderBatchWindsurfLoginResult(results, mode) {
     const successCount = results.filter(r => r.success).length;
     const skippedCount = results.filter(r => r.skipped).length;
     const failCount = results.filter(r => !r.success && !r.skipped).length;
@@ -8466,25 +8502,23 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
         <div class="section-header">
         <div>
           <div class="section-title" style="color:${failCount ? 'var(--warn)' : 'var(--success)'}">${I18n.t('loginResult.batchComplete')}</div>
-          <div class="section-desc">${I18n.t('loginResult.batchDesc', {total: results.length, success: successCount, fail: failCount, skipped: skippedCount, autoAdd: autoAdd ? I18n.t('loginResult.addedToPool') : ''})}</div>
+          <div class="section-desc">${I18n.t('loginResult.batchDesc', {total: results.length, success: successCount, fail: failCount, skipped: skippedCount})}</div>
         </div>
       </div>
       <div class="section-body tight">
         <div class="table-wrap" tabindex="0" role="region" aria-label="可滚动表格" data-i18n-aria-label="aria.scrollableTable">
           <table>
-            <thead><tr><th>${I18n.t('table.header.email')}</th><th>${I18n.t('table.header.status')}</th><th>${I18n.t('table.header.note')}</th></tr></thead>
+            <thead><tr><th>${I18n.t('batch.input')}</th><th>${I18n.t('table.header.status')}</th><th>${I18n.t('table.header.note')}</th></tr></thead>
             <tbody>
               ${results.map(r => `
                 <tr>
-                  <td>${this.esc(r.email || (r.lineNumber ? `Line ${r.lineNumber}` : '-'))}</td>
-                  <td><span class="badge ${r.success ? 'active' : (r.skipped ? 'warn' : 'error')}">${r.success ? I18n.t('batch.success') : (r.skipped ? I18n.t('batch.skipped') : I18n.t('batch.fail'))}</span></td>
+                  <td>${this.esc(this.batchImportPosition(mode, r.lineNumber))}${r.importKind === 'email_password' && r.email ? ` · ${this.esc(r.email)}` : ''}</td>
+                  <td><span class="badge ${r.success ? 'active' : (r.skipped ? 'warn' : 'error')}">${r.success ? this.batchImportSuccess(r.poolDisposition) : (r.skipped ? I18n.t('batch.skipped') : I18n.t('batch.fail'))}</span></td>
                   <td class="text-sm">${r.success
-                    ? `<span class="break-all"><code>${this.esc(r.apiKey_masked || (r.apiKey ? r.apiKey.slice(0, 16) + '...' : '-'))}</code>${r.account ? ` · ${I18n.t('table.header.account')} ${this.esc(r.account.id)}` : ''}</span>`
+                    ? (r.account ? `${I18n.t('table.header.account')} ${this.esc(r.account.id)}` : '—')
                     : (() => {
-                        const errKey = r.error ? `error.${r.error}` : null;
-                        const translated = (errKey && I18n.t(errKey) !== errKey) ? I18n.t(errKey) : (r.error || I18n.t('error.unknown'));
                         const detail = r.detail ? ` <span class="text-dim">· ${this.esc(r.detail)}</span>` : '';
-                        return `<span style="color:${r.skipped ? 'var(--warn)' : 'var(--error)'}">${this.esc(translated)}</span>${detail}`;
+                        return `<span style="color:${r.skipped ? 'var(--warn)' : 'var(--error)'}">${this.esc(this.batchImportError(r.error))}</span>${detail}`;
                       })()}</td>
                 </tr>
               `).join('')}
@@ -8939,29 +8973,32 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4"/><polyline points="10 17 15 12 10 7"/><line x1="15" y1="12" x2="3" y2="12"/></svg> ' + I18n.t('action.login');
   },
 
-  async windsurfLoginBatch() {
+  async windsurfLoginBatch(preview = false) {
     const input = document.getElementById('wl-batch-input').value;
     const pasted = !this.windsurfBatchFile;
     const batchText = this.windsurfBatchFile?.text || input;
     if (!batchText.trim()) return this.toast(I18n.t('batch.pasteFirst'), 'error');
     const autoAdd = document.getElementById('wl-auto-add').checked;
+    const previewOnly = preview === true;
     const storeCredential = document.getElementById('wl-store-cred')?.checked || false;
     const btn = document.getElementById('wl-batch-btn');
+    const previewBtn = document.getElementById('wl-batch-preview-btn');
     const sourceDesc = this.windsurfBatchFile
-      ? I18n.t('batch.importingFile', { name: this.windsurfBatchFile.name })
+      ? I18n.t('batch.fileLoaded', { name: this.windsurfBatchFile.name })
       : I18n.t('batch.importingDesc', { count: input.trim().split('\n').filter(l => l.trim()).length });
-    btn.disabled = true;
-    btn.innerHTML = '<span class="spinner"></span> ' + I18n.t('batch.importing');
+    btn.disabled = previewBtn.disabled = true;
     this.showWindsurfLoginResult(`
       <div class="section-header">
         <div>
-          <div class="section-title">${I18n.t('batch.importing')}</div>
-          <div class="section-desc">${sourceDesc}</div>
+          <div class="section-title">${I18n.t(previewOnly ? 'batch.preview' : 'batch.importing')}</div>
+          <div class="section-desc">${this.esc(sourceDesc)}</div>
         </div>
       </div>`);
 
     try {
-      const r = await this.api('POST', '/batch-import', { text: batchText, autoAdd, storeCredential });
+      const route = previewOnly ? '/batch-import/preview' : '/batch-import';
+      const request = previewOnly ? { text: batchText } : { text: batchText, autoAdd, storeCredential };
+      const r = await this.api('POST', route, request);
       if (!r.success || !Array.isArray(r.results)) {
         const errKey = r.error ? `error.${r.error}` : null;
         this.showWindsurfLoginResult(`
@@ -8973,13 +9010,17 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
         return this.toast(translatedErr || I18n.t('batch.importFailed'), 'error');
       }
 
-      this.renderBatchWindsurfLoginResult(r.results, autoAdd);
+      if (previewOnly || r.preview === true) {
+        this.renderBatchImportPreview(r);
+        return;
+      }
+      this.renderBatchWindsurfLoginResult(r.results, r.mode);
       this.pushLoginHistoryEntries(r.results.map(item => ({
           time: new Date().toISOString(),
-          email: item.email || item.label || '-',
+          email: item.importKind === 'email_password' && item.email ? item.email : this.batchImportPosition(r.mode, item.lineNumber),
           proxy: this.getWindsurfProxyLabel(item.proxy),
           status: item.success ? 'success' : (item.skipped ? `skipped: ${item.error || 'unknown'}` : `error: ${item.error || 'unknown'}`),
-          apiKey: item.success ? (item.apiKey_masked || (item.apiKey ? item.apiKey.slice(0, 16) + '...' : undefined)) : undefined,
+          poolDisposition: item.poolDisposition,
         })));
       this.toast(
         I18n.t('batch.importComplete', {success: r.successCount || 0, fail: r.failCount || 0, skipped: r.skippedCount || 0}),
@@ -9001,8 +9042,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
       const translatedErr = (errKey && I18n.t(errKey) !== errKey) ? I18n.t(errKey) : err.message;
       this.toast(translatedErr, 'error');
     } finally {
-      btn.disabled = false;
-      btn.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M3 5h18"/><path d="M3 12h18"/><path d="M3 19h18"/></svg> ' + I18n.t('action.batchImport');
+      btn.disabled = previewBtn.disabled = false;
     }
   },
 
@@ -9016,7 +9056,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
         <td class="text-sm nowrap">${new Date(h.time).toLocaleString()}</td>
         <td>${this.esc(h.email)}</td>
         <td>
-          <span class="badge ${ok ? 'active' : (skipped ? 'warn' : 'error')}">${ok ? I18n.t('batch.success') : (skipped ? I18n.t('batch.skipped') : I18n.t('batch.fail'))}</span>
+          <span class="badge ${ok ? 'active' : (skipped ? 'warn' : 'error')}">${ok ? this.batchImportSuccess(h.poolDisposition) : (skipped ? I18n.t('batch.skipped') : I18n.t('batch.fail'))}</span>
           ${!ok ? (() => {
             const errCode = String(h.status || '').replace(skipped ? 'skipped: ' : 'error: ', '');
             const errKey = `error.${errCode}`;
@@ -11555,26 +11595,43 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     }
   },
 
-  async importAccountsFromText() {
+  async importAccountsFromText(preview = false) {
     const el = document.getElementById('import-text-area');
     const out = document.getElementById('import-text-result');
     if (!el || !el.value.trim()) { this.toast(I18n.t('section.smartImport.empty'), 'info'); return; }
+    const buttons = ['smart-import-btn', 'smart-import-preview-btn'].map(id => document.getElementById(id));
+    buttons.forEach(button => { button.disabled = true; });
     const text = el.value;
-    out.innerHTML = `<div class="text-sm text-muted">${I18n.t('section.smartImport.importing')}</div>`;
+    out.innerHTML = `<div class="text-sm text-muted">${I18n.t(preview ? 'batch.preview' : 'section.smartImport.importing')}</div>`;
     try {
       const opts = { method: 'POST', headers: { 'Content-Type': 'application/json' } };
       if (this.password) opts.headers['X-Dashboard-Password'] = this.password;
       opts.body = JSON.stringify({ text });
-      const r = await fetch('/dashboard/api/accounts/import-text', opts);
+      const route = preview ? '/dashboard/api/accounts/import-text/preview' : '/dashboard/api/accounts/import-text';
+      const r = await fetch(route, opts);
       const data = await r.json().catch(() => ({}));
-      if (!r.ok) { out.innerHTML = `<div class="text-sm" style="color: var(--error-text)">${this.esc((data && (data.error||data.message)) || I18n.t('toast.requestFailed', { status: r.status }))}</div>`; return; }
-      const added = (data.added || []).length, skipped = (data.skipped || []).length, failed = (data.failed || []).length;
-      out.innerHTML = `<div class="text-sm">${I18n.t('section.smartImport.result', { added, skipped, failed })}</div>`;
+      if (!r.ok) { out.innerHTML = `<div class="text-sm" style="color: var(--error-text)">${this.esc(this.batchImportError(data.error))}</div>`; return; }
+      const lines = [
+        ...(data.unrecognizedLines || []).map(line => this.batchImportPosition('text', line)),
+        ...(data.unrecognizedEntries || []).map(index => this.batchImportPosition('json', index)),
+      ].join(', ');
+      const issues = lines ? `<div class="text-sm">${this.esc(I18n.t('section.smartImport.unrecognized', { lines }))}</div>` : '';
+      if (preview) {
+        out.innerHTML = `<div class="text-sm">${I18n.t('section.smartImport.recognized', { count: data.recognized })} · ${I18n.t('batch.previewOnly')}</div>${issues}`;
+        return;
+      }
+      const existing = data.added.filter(row => row.poolDisposition === 'existing').length;
+      const added = data.added.length - existing;
+      const skipped = data.skipped.length;
+      const failed = data.failed.length;
+      out.innerHTML = `<div class="text-sm">${I18n.t('section.smartImport.result', { added, existing, skipped, failed })}</div>${issues}`;
       el.value = ''; // clear paste (never persist tokens)
       this.toast(I18n.t('section.smartImport.done', { added }), added > 0 ? 'success' : 'info');
       if (added > 0) this.loadAccounts();
     } catch (e) {
-      out.innerHTML = `<div class="text-sm" style="color: var(--error-text)">${this.esc(e.message || 'error')}</div>`;
+      out.innerHTML = `<div class="text-sm" style="color: var(--error-text)">${this.esc(this.batchImportError(e.message))}</div>`;
+    } finally {
+      buttons.forEach(button => { button.disabled = false; });
     }
   },
   async discoverLocalWindsurf() {    const root = document.getElementById('local-windsurf-result');

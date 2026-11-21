@@ -210,7 +210,7 @@
     "readClipboard": "读取剪贴板",
     "uploadJson": "上传 JSON",
     "clearFile": "清除文件",
-    "batchImport": "批量导入并登录",
+    "batchImport": "处理此批次",
     "paste": "粘贴",
     "add": "添加",
     "close": "关闭",
@@ -390,12 +390,14 @@
     },
     "smartImport": {
       "title": "智能导入",
-      "desc": "把 Token、登录链接或邮箱密码粘进来，会自动识别并批量导入。",
+      "desc": "粘贴 Token 或登录链接。邮箱密码请使用批量导入。",
       "placeholder": "devin-session-token$...  或  show-auth-token 链接  或  email----password  每行一个,可混合",
       "button": "智能导入",
       "empty": "先粘贴一些 token 或账号",
       "importing": "导入中…",
-      "result": "已添加 {{added}} · 跳过 {{skipped}} · 失败 {{failed}}",
+      "result": "已添加 {{added}} · 已在账号池 {{existing}} · 跳过 {{skipped}} · 失败 {{failed}}",
+      "recognized": "识别到 {{count}} 项",
+      "unrecognized": "无法识别的输入 · {{lines}}",
       "done": "成功导入 {{added}} 个账号"
     },
     "accountList": {
@@ -829,7 +831,8 @@
     },
     "responseCache": {
       "title": "响应缓存",
-      "subtitle": "{{hits}} 命中 / {{misses}} 未命中 · {{size}}/{{max}} 条"
+      "noSamples": "暂无样本",
+      "subtitle": "{{hits}} 次命中 / {{total}} 次查询 · {{size}}/{{max}} 条"
     },
     "tokens": {
       "title": "Token 用量分布",
@@ -1649,6 +1652,23 @@
     }
   },
   "batch": {
+    "autoAdd": "将账号加入账号池",
+    "autoAddHint": "取消勾选仅预览所有输入，不登录、不保存账号。",
+    "preview": "预览格式",
+    "previewOnly": "仅检查格式。未尝试登录，未改动账号。",
+    "line": "第 {{line}} 行",
+    "item": "第 {{line}} 项",
+    "input": "输入",
+    "kind": {
+      "email_password": "邮箱和密码",
+      "token": "Token",
+      "api_key": "API Key"
+    },
+    "outcome": {
+      "added": "已加入账号池",
+      "existing": "已在账号池",
+      "login_only": "登录成功，未加入账号池"
+    },
     "pasteFirst": "请先粘贴批量账号",
     "importing": "导入中...",
     "importingDesc": "{{count}} 行，请稍候",
@@ -1948,7 +1968,7 @@
     "apiKeyGenerated": "API Key 已生成{{autoAdd}}",
     "fail": "✗ 登录失败",
     "batchComplete": "批量导入完成",
-    "batchDesc": "共 {{total}} 个账号，成功 {{success}} 个，跳过 {{skipped}} 个，失败 {{fail}} 个{{autoAdd}}",
+    "batchDesc": "共 {{total}} 项 · 成功 {{success}} · 跳过 {{skipped}} · 失败 {{fail}}",
     "tryOther": "换个方式试试",
     "oauthHint": "若你用 Google/GitHub 注册的 Windsurf 账号 此处密码登录不适用 请用页面顶部的 Google / GitHub 登录按钮 或访问 {{link}} 复制 Auth Token 后在「账号管理」页手动添加",
     "fields": {

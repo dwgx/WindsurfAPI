@@ -48,10 +48,11 @@ function authedReq() {
   };
 }
 
-async function importText(text) {
+async function importText(text, { preview = false, autoAdd } = {}) {
   const res = fakeRes();
-  await handleDashboardApi('POST', '/accounts/import-text', { text }, authedReq(), res);
-  return { status: res.statusCode, body: res.json(), text: res.body };
+  const subpath = preview ? '/accounts/import-text/preview' : '/accounts/import-text';
+  await handleDashboardApi('POST', subpath, { text, autoAdd }, { ...authedReq(), url: '/dashboard/api' + subpath }, res);
+  return { status: res.statusCode, body: res.json(), text: res.body, headers: res.headers };
 }
 
 afterEach(() => {
@@ -64,6 +65,15 @@ afterEach(() => {
 });
 
 describe('POST /accounts/import-text — email + session-token pair', () => {
+  it('refuses autoAdd false on the normal endpoint without writing', async () => {
+    config.dashboardPassword = DASH_PW;
+    const before = getAccountList().length;
+    const r = await importText(TOKEN, { autoAdd: false });
+    assert.equal(r.status, 400);
+    assert.equal(r.body.error, 'ERR_AUTO_ADD_DISABLED');
+    assert.equal(getAccountList().length, before);
+  });
+
   it('adds the pasted pair to the pool with the pasted email as its label', async () => {
     config.dashboardPassword = DASH_PW;
     const r = await importText(`${EMAIL}\nToken: ${TOKEN}`);
@@ -111,6 +121,7 @@ describe('POST /accounts/import-text — email + session-token pair', () => {
     const first = await importText(text);
     assert.equal(first.body.added.length, 1, JSON.stringify(first.body));
     const id = first.body.added[0].id;
+    assert.equal(first.body.added[0].poolDisposition, 'added');
     created.add(id);
     const before = getAccountInternal(id);
     const poolSize = getAccountList().length;
@@ -120,6 +131,7 @@ describe('POST /accounts/import-text — email + session-token pair', () => {
     assert.deepEqual(again.body.failed, []);
     assert.equal(again.body.added.length, 1, 'duplicate re-import is still reported added');
     assert.equal(again.body.added[0].id, id, 'the same account row is reused');
+    assert.equal(again.body.added[0].poolDisposition, 'existing');
     assert.equal(getAccountList().length, poolSize, 'no new pool row');
 
     const after = getAccountInternal(id);
@@ -128,6 +140,63 @@ describe('POST /accounts/import-text — email + session-token pair', () => {
     assert.equal(after.apiKey, before.apiKey);
     assert.equal(after.addedAt, before.addedAt);
     assert.equal(again.text.includes(TOKEN), false);
+  });
+
+  it('previews formats and ignored line numbers without adding the paired token', async () => {
+    config.dashboardPassword = DASH_PW;
+    const pasted = 'unrecognized fixture line';
+    const text = `# note\r\n${EMAIL}\r\nToken: ${TOKEN}\r\n\r\n${pasted}\r\ndangling@example.test`;
+    const r = await importText(text, { preview: true });
+    assert.equal(r.status, 200);
+    assert.equal(r.headers['Cache-Control'], 'no-store');
+    assert.deepEqual(r.body, { success: true, preview: true, recognized: 1, unrecognizedLines: [5, 6] });
+    assert.equal(getAccountList().length, 0);
+    assert.equal(r.text.includes(TOKEN) || r.text.includes(pasted), false);
+
+    const run = await importText(text);
+    assert.equal(run.body.added.length, 1);
+    assert.deepEqual(run.body.unrecognizedLines, [5, 6]);
+  });
+
+  it('reports unsupported text and array positions without echoing the input', async () => {
+    config.dashboardPassword = DASH_PW;
+    const unsupported = 'example-user----example-pass----example-factor';
+    for (const preview of [true, false]) {
+      const text = await importText('# comment\n' + unsupported + '\n\nunknown line', { preview });
+      assert.deepEqual(text.body.unrecognizedLines, [2, 4]);
+      assert.equal(text.text.includes('example-factor'), false);
+      const array = await importText(JSON.stringify([{ username: 'example-user', password: 'example-pass', totp: 'example-factor' }]), { preview });
+      assert.deepEqual(array.body.unrecognizedEntries, [1]);
+      assert.equal(array.text.includes('example-pass'), false);
+    }
+  });
+
+  it('excludes a callback without a token from recognized preview entries', async () => {
+    config.dashboardPassword = DASH_PW;
+    const url = 'https://example.test/show-auth-token';
+    const preview = await importText('# comment\n' + url, { preview: true });
+    assert.equal(preview.body.recognized, 0);
+    assert.deepEqual(preview.body.unrecognizedLines, [2]);
+    const array = await importText(JSON.stringify([{ token: url }]), { preview: true });
+    assert.equal(array.body.recognized, 0);
+    assert.deepEqual(array.body.unrecognizedEntries, [1]);
+    const applied = await importText(url);
+    assert.equal(applied.body.failed[0].error, 'ERR_NO_TOKEN_IN_INPUT');
+    assert.equal(getAccountList().length, 0);
+  });
+
+  it('processes recognized siblings and identifies unsupported JSON items by index', async () => {
+    config.dashboardPassword = DASH_PW;
+    const rows = JSON.stringify([{ token: TOKEN }, { description: 'unsupported' }, null], null, 2);
+    const preview = await importText(rows, { preview: true });
+    assert.equal(preview.body.recognized, 1);
+    assert.deepEqual(preview.body.unrecognizedEntries, [2, 3]);
+    assert.deepEqual(preview.body.unrecognizedLines, []);
+    assert.equal(getAccountList().length, 0);
+    const applied = await importText(rows);
+    assert.equal(applied.body.added.length, 1);
+    assert.deepEqual(applied.body.unrecognizedEntries, [2, 3]);
+    assert.equal(applied.text.includes(TOKEN), false);
   });
 
   it('leaks neither the session token nor the auth1 value in any failure text', async () => {

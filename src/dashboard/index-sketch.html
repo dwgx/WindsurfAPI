@@ -1673,19 +1673,20 @@ window._firebaseOAuth = async function(provider) {
       <div class="section-head">
         <div>
           <div class="section-title"><span class="num">3</span><span data-zh="批量导入" data-en="Batch import">批量导入</span></div>
-          <div class="section-desc" data-zh="每行一组：email password [proxy]。proxy 可省略；格式 type://[user:pass@]host:port，例 socks5://127.0.0.1:7890 或 http://u:p@1.2.3.4:8080。空白行忽略。" data-en="One per line: email password [proxy]. Proxy is optional; format type://[user:pass@]host:port (e.g. socks5://127.0.0.1:7890 or http://u:p@1.2.3.4:8080). Blank lines ignored.">每行一组：email password [proxy]。proxy 可省略；格式 type://[user:pass@]host:port，例 socks5://127.0.0.1:7890 或 http://u:p@1.2.3.4:8080。空白行忽略。</div>
+          <div class="section-desc" data-zh="每行粘贴一个 Token 或一组 [代理] 邮箱 密码。也可粘贴 JSON 账号列表。" data-en="Paste one token or [proxy] email password per line, or a JSON list of accounts.">每行粘贴一个 Token 或一组 [代理] 邮箱 密码。也可粘贴 JSON 账号列表。</div>
         </div>
         <button class="btn btn-ghost btn-sm" onclick="App.pasteWindsurfBatch()"><svg class="ic" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:inline-block;vertical-align:-2px"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg> paste</button>
       </div>
       <div class="frame">
         <textarea class="textarea input" id="wl-batch-input" rows="6" style="font-family:'JetBrains Mono',monospace;resize:vertical;width:100%" placeholder="alice@example.com  hunter2&#10;bob@example.com  letme1n"></textarea>
         <div class="field-row-actions">
-          <button class="btn btn-primary" id="wl-batch-btn" onclick="App.windsurfLoginBatch()" data-zh="批量导入" data-en="Batch import">批量导入</button>
+          <button type="button" class="btn btn-ghost" id="wl-batch-preview-btn" onclick="App.windsurfLoginBatch(true)" data-zh="预览格式" data-en="Preview formats">预览格式</button>
+          <button class="btn btn-primary" id="wl-batch-btn" onclick="App.windsurfLoginBatch()" data-zh="处理此批次" data-en="Process batch">处理此批次</button>
         </div>
       </div>
     </div>
 
-    <div id="wl-result" class="frame hidden" style="margin-bottom:24px"></div>
+    <div id="wl-result" class="frame hidden" style="margin-bottom:24px" aria-live="polite"></div>
 
     <div class="section">
       <div class="section-head">
@@ -2435,6 +2436,9 @@ const App = {
     const uptime = d.uptime ? this.fmtDuration(d.uptime) : '-';
     const ls = d.langServer || {};
     const poolCount = (ls.instances || []).length || (ls.running ? 1 : 0);
+    const cacheHits = d.cache?.hits ?? 0;
+    const cacheLookups = d.cache?.eligibleLookups ?? (cacheHits + (d.cache?.misses ?? 0));
+    const cacheRate = cacheLookups ? (100 * cacheHits / cacheLookups).toFixed(1) + '%' : (I18n.locale === 'en' ? 'No samples' : '暂无样本');
     const totalAccts = d.accounts?.total || 0;
     const navAcct = document.getElementById('nav-accounts-count');
     if (navAcct) navAcct.textContent = totalAccts;
@@ -2444,7 +2448,7 @@ const App = {
       ${this.metric({ label: 'total requests', value: d.totalRequests || 0, sub: `${d.successRate || 0}% success`, kind: 'accent' })}
       ${this.metric({ label: 'uptime', value: uptime, sub: d.startedAt ? new Date(d.startedAt).toLocaleString() : '—', valueSize: 22 })}
       ${this.metric({ label: 'language server', value: ls.running ? 'running' : 'stopped', sub: `${poolCount} inst · :${ls.port || '-'}`, kind: ls.running ? 'good' : 'error', valueSize: 22 })}
-      ${this.metric({ label: 'response cache', value: (d.cache?.hitRate || '0.0') + '%', sub: `${d.cache?.hits || 0} / ${d.cache?.misses || 0} · ${d.cache?.size || 0}/${d.cache?.maxSize || 0}` })}
+      ${this.metric({ label: 'response cache', value: cacheRate, sub: `${cacheHits} / ${cacheLookups} · ${d.cache?.size || 0}/${d.cache?.maxSize || 0}` })}
     `;
     const instances = ls.instances || [];
     if (instances.length > 0) {
@@ -2692,33 +2696,93 @@ const App = {
     } catch (err) { this.toast('clipboard error: ' + err.message, 'error'); }
   },
 
-  async windsurfLoginBatch() {
+  batchImportMessage(code) {
+    const english = I18n.locale === 'en';
+    const messages = {
+      email_password: ['Email and password', '邮箱和密码'],
+      token: ['Token', 'Token'],
+      api_key: ['API key', 'API Key'],
+      added: ['Added to pool', '已加入账号池'],
+      existing: ['Already in pool', '已在账号池'],
+      login_only: ['Signed in — not added', '登录成功，未加入账号池'],
+      ERR_AUTO_ADD_DISABLED: ['Adding to the pool is off', '未启用加入账号池'],
+      ERR_FORMAT_INVALID: ['Unrecognized input', '无法识别的输入'],
+      ERR_UNSUPPORTED_IMPORT_ITEM: ['Unrecognized input', '无法识别的输入'],
+      ERR_PROXY_FORMAT_INVALID: ['Invalid proxy format', '代理格式错误'],
+      ERR_PROXY_PRIVATE_IP: ['Proxy host rejected', '代理地址被拒绝'],
+      ERR_PROXY_PRIVATE_HOST: ['Proxy host rejected', '代理地址被拒绝'],
+      ERR_AUTH1_NOT_A_POOL_KEY: ['Auth1 cannot be used as a pool key', 'Auth1 无法用作账号池密钥'],
+      ERR_JSON_INVALID: ['Invalid JSON', 'JSON 格式错误'],
+      ERR_NO_VALID_LINES: ['No input entries found', '没有可处理的输入项'],
+      ERR_LOGIN_FAILED: ['Sign-in failed', '登录失败'],
+    };
+    const copy = Object.hasOwn(messages, code) ? messages[code] : ['Import failed', '导入失败'];
+    return copy[english ? 0 : 1];
+  },
+
+  batchImportSuccess(disposition) {
+    if (['added', 'existing', 'login_only'].includes(disposition)) return this.batchImportMessage(disposition);
+    return I18n.locale === 'en' ? 'Success' : '成功';
+  },
+
+  batchImportPosition(mode, line) {
+    if (!Number.isInteger(line) || line < 1) return '—';
+    return I18n.locale === 'en'
+      ? `${mode === 'json' ? 'Item' : 'Line'} ${line}`
+      : `第 ${line} ${mode === 'json' ? '项' : '行'}`;
+  },
+
+  async windsurfLoginBatch(preview = false) {
     const input = document.getElementById('wl-batch-input').value;
     if (!input.trim()) return this.toast('paste accounts first', 'error');
     const autoAdd = document.getElementById('wl-auto-add').checked;
+    const previewOnly = preview === true;
     const btn = document.getElementById('wl-batch-btn');
-    btn.disabled = true; btn.innerHTML = '<span class="spinner"></span> importing …';
+    const previewBtn = document.getElementById('wl-batch-preview-btn');
+    const english = I18n.locale === 'en';
+    btn.disabled = previewBtn.disabled = true;
     try {
-      const r = await this.api('POST', '/batch-import', { text: input, autoAdd });
+      const route = previewOnly ? '/batch-import/preview' : '/batch-import';
+      const request = previewOnly ? { text: input } : { text: input, autoAdd };
+      const r = await this.api('POST', route, request);
       if (!r.success || !Array.isArray(r.results)) {
-        this.toast(r.error || 'batch failed', 'error'); return;
+        this.toast(this.batchImportMessage(r.error), 'error');
+        return;
       }
-      this.showWLResult(`<div class="anno" style="font-size:20px">batch · ${r.successCount || 0} ok / ${r.skippedCount || 0} skipped / ${r.failCount || 0} fail</div>
+      const position = line => this.batchImportPosition(r.mode, line);
+      if (previewOnly || r.preview === true) {
+        const note = english ? 'Format check only. No sign-ins were attempted and no accounts were changed.' : '仅检查格式。未尝试登录，未改动账号。';
+        this.showWLResult(`<div class="anno" style="font-size:20px">${note}</div>
+          <ul class="text-sm">${r.results.map(row => `<li>${this.esc(position(row.lineNumber))} · ${this.esc(this.batchImportMessage(row.error || row.importKind))}</li>`).join('')}</ul>`);
+        return;
+      }
+      const skipped = english ? 'Skipped' : '跳过';
+      const failed = english ? 'Failed' : '失败';
+      const summary = english
+        ? `${r.successCount} successful · ${r.skippedCount} skipped · ${r.failCount} failed`
+        : `成功 ${r.successCount} · 跳过 ${r.skippedCount} · 失败 ${r.failCount}`;
+      this.showWLResult(`<div class="anno" style="font-size:20px">${summary}</div>
         <div class="table-wrap" style="margin-top:12px"><table>
-          <thead><tr><th>email</th><th>status</th><th>note</th></tr></thead>
-          <tbody>${r.results.map(x => `<tr><td>${this.esc(x.email || '-')}</td>
-            <td><span class="badge ${x.success ? 'active' : (x.skipped ? 'warn' : 'error')}">${x.success ? 'ok' : (x.skipped ? 'skipped' : 'fail')}</span></td>
-            <td class="text-sm">${x.success ? `<code class="break-all">${this.esc(x.apiKey_masked || x.apiKey?.slice(0,16) + '…' || '-')}</code>` : `<span style="color:var(--${x.skipped ? 'warn' : 'error'})">${this.esc(x.error === 'ERR_AUTO_ADD_DISABLED' ? (I18n.locale === 'en' ? 'Adding to the pool is off' : '未启用加入账号池') : x.error || 'unknown')}</span>`}</td></tr>`).join('')}</tbody>
+          <thead><tr><th>${english ? 'Input' : '输入'}</th><th>${english ? 'Status' : '状态'}</th><th>${english ? 'Note' : '说明'}</th></tr></thead>
+          <tbody>${r.results.map(x => `<tr><td>${this.esc(position(x.lineNumber))}${x.importKind === 'email_password' && x.email ? ` · ${this.esc(x.email)}` : ''}</td>
+            <td><span class="badge ${x.success ? 'active' : (x.skipped ? 'warn' : 'error')}">${x.success ? this.batchImportSuccess(x.poolDisposition) : (x.skipped ? skipped : failed)}</span></td>
+            <td class="text-sm">${x.success ? this.esc(x.account?.id || '—') : this.esc(this.batchImportMessage(x.error))}</td></tr>`).join('')}</tbody>
         </table></div>`);
-      this.pushLoginHistoryEntries(r.results.map(x => ({ time: new Date().toISOString(), email: x.email, proxy: 'batch', status: x.success ? 'success' : 'error: ' + (x.error || 'unknown'), apiKey: x.success ? x.apiKey_masked : undefined })));
-      this.toast(`batch · ${r.successCount || 0} ok / ${r.skippedCount || 0} skipped / ${r.failCount || 0} fail`);
+      this.pushLoginHistoryEntries(r.results.map(x => ({
+        time: new Date().toISOString(),
+        email: x.importKind === 'email_password' && x.email ? x.email : position(x.lineNumber),
+        proxy: 'batch',
+        status: x.success ? 'success' : `${x.skipped ? 'skipped' : 'error'}: ${x.error || 'ERR_IMPORT_ITEM_FAILED'}`,
+        poolDisposition: x.poolDisposition,
+      })));
+      this.toast(summary);
       if ((r.successCount || 0) > 0) {
         this.loadAccounts();
         const field = document.getElementById('wl-batch-input');
         if (r.results.every(item => item.success) && field.value === input) field.value = '';
       }
-    } catch (err) { this.toast(err.message, 'error'); }
-    finally { btn.disabled = false; btn.textContent = '批量导入'; }
+    } catch (err) { this.toast(this.batchImportMessage(err.message), 'error'); }
+    finally { btn.disabled = previewBtn.disabled = false; }
   },
 
   renderLoginHistory() {
@@ -2726,10 +2790,12 @@ const App = {
     if (!tbody) return;
     tbody.innerHTML = this.loginHistory.map((h, i) => {
       const ok = h.status === 'success';
+      const skipped = String(h.status || '').startsWith('skipped: ');
+      const error = String(h.status || '').replace(/^(skipped|error): /, '');
       return `<tr>
         <td class="text-sm nowrap">${new Date(h.time).toLocaleString()}</td>
         <td><span style="display:inline-flex;align-items:center;gap:8px"><span class="avatar-letter">${this.esc((h.email || '?')[0].toUpperCase())}</span>${this.esc(h.email)}</span></td>
-        <td><span class="badge ${ok ? 'active' : 'error'}">${ok ? 'ok' : 'fail'}</span>${!ok ? `<div class="text-xs" style="color:var(--error);margin-top:3px">${this.esc((h.status||'').replace('error: ',''))}</div>` : ''}</td>
+        <td><span class="badge ${ok ? 'active' : (skipped ? 'warn' : 'error')}">${ok ? this.batchImportSuccess(h.poolDisposition) : (skipped ? 'skipped' : 'fail')}</span>${!ok ? `<div class="text-xs" style="color:var(--${skipped ? 'warn' : 'error'});margin-top:3px">${this.esc(h.proxy === 'batch' ? this.batchImportMessage(error) : error)}</div>` : ''}</td>
         <td class="text-sm">${this.esc(h.proxy || '-')}</td>
         <td><button class="btn btn-ghost btn-xs" onclick="App.removeLoginHistory(${i})">×</button></td>
       </tr>`;

@@ -18,7 +18,7 @@ flowchart TD
     PR --> G1["零 npm 依赖 —— 不要 npm install 新包"]
     G1 --> G2["commit: type(scope): 小写祈使句<br/>绝不加任何 AI 署名尾注"]
     G2 --> G3["改协议/鉴权/解码器前<br/>先读 AUDIT-LEDGER 的 🛡 标记"]
-    G3 --> G4["CI 会跑全量;权威口径是<br/>npm run test:release"]
+    G3 --> G4["PR 走分片测试<br/>发布标签走 npm run test:release"]
 
     classDef warn fill:#d1242f22,stroke:#d1242f
     classDef act fill:#1f6feb22,stroke:#1f6feb
@@ -76,11 +76,15 @@ flowchart TD
 碰到标 🛡 的地方,注意别把守卫住的性质改掉(例如给路由路径加 URL 解码、
 或把 parseFields 改成自动递归)。
 
-项目有完整的自动测试套件，PR 合并前 CI 会自动跑。权威计数口径是
-`npm run test:release`（逐文件进程隔离）。**当前数字见
-[最终交接摘要 §Verify](docs/HANDOFF-SUMMARY.md) 与
-[发布验收附录 §3](docs/releases/ACCEPTANCE_3.141.592657.md)，本文不复述** —— 这里此前钉着 v3.9.14 的
-"3418 / 261"，而那之后又发了五个版本。一个数字写在不是它权威来源的地方就会烂。
+本地全量运行 `npm test`。单独运行测试文件时，在仓库根目录运行：
+
+```text
+node --import ./test/setup-env.mjs --test test/runtime-config-hardening.test.js
+```
+
+测试前备份现有的 `runtime-config.json`。预加载会跳过 `.env`，使用临时数据目录，并限制普通测试访问上游。裸跑 `node --test` 可能改写运行配置。
+
+`npm run test:release` 逐文件启动独立进程。发布计数见对应标签的 Release 工作流 Test 作业日志末尾的测试摘要。
 全量 `npm test` 的总数**不再漂**：2026-09-13 实测，真正的原因不是"输出竞态"而是
 `--test-force-exit` 会在跑完**部分 suite 之后**就让进程以 **0** 退出 —— 同一份字节跑 10 轮得到
 **8 个不同的数字（34…72）**，去掉它之后 **10/10 稳定**（两臂逐轮交错跑，逐轮原始计数在 `939872b` 的 commit message 里，`git show -s --format=%B 939872b` 可复核）。该 flag 已从 `package.json`、
@@ -90,13 +94,9 @@ flowchart TD
 **门禁全绿并不等于你没弄坏东西。** 测试套件**不跑**突变 spec（`test/mutations/*.json`），
 所以如果你改的那一行正好是某条突变的 anchor，它会静默失配 —— 而你和 CI 都看不见。
 PR #241 真发生过这件事：贡献者的套件全绿、维护者复测也全绿、合并后的门禁也全绿，
-三个绿灯都没看见两条 anchor 已经断了。改了 `src/` 就顺手跑一次：
+三个绿灯都没看见两条 anchor 已经断了。改动测试所锚定的代码时，按[下方 Linux/POSIX 与 Windows 步骤](#testing)复测。突变复测需独占干净的已提交检出，并依赖可信绝对路径上的 POSIX Git。Windows 使用 WSL Linux 检出。
 
-```bash
-for s in test/mutations/*.json; do npm run mutate -- "$s"; done
-```
-
-它排他持有工作树（每步都在"写入 → 跑测试 → 还原"），跑起来之后别碰仓库。
+`npm run secret-scan` 扫描工作树。`npm run gate` 还会检查突变规格与受影响的基线、运行发布测试并检查暂存和未暂存的空白问题。增量基线检查需要 `origin/master`。按[下方宿主示例](#testing)通过 `GATE_INERT_SKIP_PATHS` 声明整文件跳过。声明的跳过项仍属于未执行的覆盖。
 
 提 PR 时建议在描述里补充：
 
@@ -162,7 +162,7 @@ for s in test/mutations/*.json; do npm run mutate -- "$s"; done
 
 ### CI
 
-GitHub Actions 跑 `npm run test:release`（语法校验 + 核心回归）。本地 `npm test` 跑全量。
+GitHub Actions 在 PR 和 `master` 推送上运行独立的语法检查，并按 `npm run test:shard -- N 4` 运行四个测试分片（`N` 为 0–3）。`v*` 标签触发 Release 工作流。Test 作业检查标签版本，选择严格祖先发布标签作为 wire 基线，扫描秘密，测量全部突变基线并运行 `npm run test:release`。
 
 ---
 
@@ -218,13 +218,19 @@ been probed, what the conclusion was, and which invariants have mutation-verifie
 Where you see 🛡, take care not to change the guarded property (e.g. adding URL decoding to
 the routed path, or making parseFields recurse).
 
-The project has a full automated test suite and CI runs it on every PR. The authoritative
-count comes from `npm run test:release` (one process per file). **The current number lives in
-the final handoff summary ([docs/HANDOFF-SUMMARY.md](docs/HANDOFF-SUMMARY.md) §Verify) and the
-release acceptance appendix ([docs/releases/ACCEPTANCE_3.141.592657.md](docs/releases/ACCEPTANCE_3.141.592657.md) §3),
-and is deliberately not repeated here** — this spot used to pin "3418 / 261 as of v3.9.14" and five
-releases shipped after that. A number written anywhere other than its authoritative source
-rots. Totals from a plain `npm test` **no longer drift**: measured 2026-09-13, the cause was not
+Run `npm test` for the full local suite. For a single file, run this from the repository root:
+
+```text
+node --import ./test/setup-env.mjs --test test/runtime-config-hardening.test.js
+```
+
+Back up an existing `runtime-config.json` before testing. The preload skips `.env`,
+uses a temporary data directory, and blocks upstream requests in ordinary tests.
+A bare `node --test` can rewrite operator settings.
+
+`npm run test:release` runs one process per file. Find release test counts in the
+test summary in the corresponding tag's Release workflow Test job log.
+Totals from a plain `npm test` **no longer drift**: measured 2026-09-13, the cause was not
 an "output race" but `--test-force-exit` ending the process after **part of the suites** and
 still exiting **0** — ten identical runs of one file gave **eight distinct counts (34..72)**,
 and **10/10 stable** without it (both arms interleaved round by round; the per-round raw counts
@@ -244,9 +250,10 @@ green, and all three missed two broken anchors.
 npm run gate
 ```
 
-It runs spec-static-check, secret-scan, the unchanged test:release command, and whitespace
-checks for both unstaged and staged changes. Every step prints PASS/FAIL and its exit code;
-the release result includes explicit skips. Mutations print SKIP because they are not part
+It checks mutation specs, measures changed baselines against `origin/master`, runs
+`npm run secret-scan` and `npm run test:release`, and checks staged and unstaged whitespace.
+Keep the `origin/master` ref available for the incremental baseline check. Every step prints
+PASS/FAIL and its exit code. The release result includes explicit skips. Mutations print SKIP because they are not part
 of this incremental command. Exit 0 is incremental success, 1 a failed check, 2 missing or
 untrustworthy evidence. PR CI deliberately does not run mutations because of their cost.
 
@@ -273,11 +280,11 @@ Partial skips stay legal — platforms legitimately gate fixtures. The real-Git 
 standing example: they skip on any host without `git` at a trusted absolute POSIX path, by
 design (`test/git-fixture-env.js`, asserted in `test/git-fixture-availability.test.js`). Declare
 what you accept on your host; the value is host-specific — the sets below are what each host
-*measures*, not a universal list. The measured pair for a POSIX host with no wire base and no
-live credentials is:
+*measures*, not a universal list. For a POSIX host with wire comparison, live relogin and
+detach soak disabled, use:
 
-```text
-GATE_INERT_SKIP_PATHS=test/wire-byte-identity.test.js;test/devin-connect-relogin-live.test.js
+```bash
+export GATE_INERT_SKIP_PATHS='test/wire-byte-identity.test.js;test/devin-connect-relogin-live.test.js;test/detach-soak.test.js'
 ```
 
 `test/wire-byte-identity.test.js` skips without `WIRE_BASE_TREE` because it is a CI-only
@@ -291,8 +298,8 @@ is a suite-level skip unless `DETACH_SOAK=1` (it needs a real 120 s TTL), and
 `test/detach-ls-pool-pressure.test.js` skips its POSIX-only pressure arms on Windows
 (`ensureLs` must spawn a shebang fake LS). The full measured Windows set is:
 
-```text
-GATE_INERT_SKIP_PATHS=test/wire-byte-identity.test.js;test/devin-connect-relogin-live.test.js;test/mutate-verify-harness.test.js;test/self-update-untracked-safety.test.js;test/detach-soak.test.js;test/detach-ls-pool-pressure.test.js
+```powershell
+$env:GATE_INERT_SKIP_PATHS = 'test/wire-byte-identity.test.js;test/devin-connect-relogin-live.test.js;test/mutate-verify-harness.test.js;test/self-update-untracked-safety.test.js;test/detach-soak.test.js;test/detach-ls-pool-pressure.test.js'
 ```
 
 Semicolon- or newline-separated, repo-relative, `/` or `\`. The variable is an override with no
@@ -303,7 +310,7 @@ caught; a file that declares nothing at all is no evidence either. Entries that 
 reported as `unused` — a stale entry is a claim about the host that has stopped being true.
 
 **Full gate on Linux/POSIX** (Node >= 22.13 — the release gate runs Node 24 — plus npm, Git and
-Bash; clean committed checkout):
+Bash; clean committed checkout). Set the POSIX skip list above for your host first:
 
 ```bash
 set -eu
@@ -325,11 +332,12 @@ printf 'VERDICT coverage: %s/%s\n' "$completed" "$expected"
 [ "$failed" -eq 0 ]
 ```
 
-**Full gate from Windows PowerShell:** run the incremental command natively, then run the
-POSIX fixtures in a clean WSL Linux clone of the **same committed HEAD**. Do not add Git for
-Windows paths to the trusted POSIX fixture candidates. WSL must already have Node, npm,
-Git and Bash; this command does not install or silently substitute them. Native skips are
-not mutation evidence. Keep both logs when reviewing a Windows-originated change.
+**Full gate from Windows PowerShell:** set the PowerShell skip list above for your host. Run
+the incremental command natively, then run the POSIX fixtures in a clean WSL Linux clone of
+the **same committed HEAD**. Do not add Git for Windows paths to the trusted POSIX fixture
+candidates. WSL needs Linux Node, npm, Git and Bash on the non-interactive PATH. Adjust the
+POSIX skip list in the script if you enable the wire, live relogin or detach soak fixtures.
+Keep the native skip report and the Linux mutation results for review.
 
 ```powershell
 $ErrorActionPreference = 'Stop'
@@ -339,11 +347,13 @@ if (git status --porcelain) { throw 'Commit changes before mutation validation' 
 $owner = (git rev-parse --show-toplevel).Trim()
 if ($LASTEXITCODE -ne 0) { throw 'Not a Git checkout' }
 $commit = (git rev-parse HEAD).Trim()
-$linuxOwner = (wsl -- wslpath -a -- $owner).Trim()
+$linuxOwner = wsl --exec wslpath -a -- $owner
 if ($LASTEXITCODE -ne 0) { throw 'WSL path conversion failed' }
+$linuxOwner = $linuxOwner.Trim()
 $script = @'
 set -eu
 owner=$1; commit=$2
+export GATE_INERT_SKIP_PATHS='test/wire-byte-identity.test.js;test/devin-connect-relogin-live.test.js;test/detach-soak.test.js'
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
 # --no-local transfers Git objects rather than hard-linking across filesystems.
@@ -370,9 +380,10 @@ printf 'VERDICT coverage: %s/%s\n' "$completed" "$expected"
 $localScript = [IO.Path]::GetTempFileName()
 try {
   [IO.File]::WriteAllText($localScript, ($script -replace "`r", ''), [Text.UTF8Encoding]::new($false))
-  $linuxScript = (wsl -- wslpath -a -- $localScript).Trim()
+  $linuxScript = wsl --exec wslpath -a -- $localScript
   if ($LASTEXITCODE -ne 0) { throw 'WSL script path conversion failed' }
-  wsl -- bash $linuxScript $linuxOwner $commit
+  $linuxScript = $linuxScript.Trim()
+  wsl --exec bash $linuxScript $linuxOwner $commit
   if ($LASTEXITCODE -ne 0) { throw "Linux full gate failed: exit=$LASTEXITCODE" }
 } finally {
   Remove-Item -LiteralPath $localScript -Force
@@ -444,7 +455,10 @@ Reviews in the 2026-07-28..09-16 period settled into four artifacts:
 
 ### CI
 
-GitHub Actions runs `npm run test:release` (syntax + core regression). Run `npm test` locally for the full suite.
+PR and `master` push CI run a separate syntax job and four test jobs via
+`npm run test:shard -- N 4` (N = 0–3). A pushed `v*` tag triggers the Release workflow.
+Its Test job checks the tag version, selects a strict-ancestor release tag for the wire
+baseline, scans for secrets, measures every mutation baseline, and runs `npm run test:release`.
 
 ### Offline Connect transport check
 

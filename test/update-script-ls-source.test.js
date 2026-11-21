@@ -27,7 +27,8 @@ describe('update.sh language-server source selection', () => {
     assert.ok(stashAt >= 0, 'forced reset must preserve local changes in a stash');
     assert.ok(resetAt > stashAt, 'stash must happen before hard reset');
     assert.match(pullStage, /RESET_TARGET="\$TARGET"/);
-    assert.match(pullStage, /git merge --ff-only --quiet "\$TARGET"/);
+    assert.match(pullStage, /MERGE_ARGS=\(--ff-only --quiet\)/);
+    assert.match(pullStage, /git merge "\$\{MERGE_ARGS\[@\]\}" "\$TARGET"/);
     assert.doesNotMatch(pullStage, /git pull --ff-only/);
     assert.doesNotMatch(pullStage, /if ! git pull[\s\S]*git reset --hard/);
   });

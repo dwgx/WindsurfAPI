@@ -8,6 +8,21 @@ beforeEach(() => {
   cacheClear();
 });
 
+it('distinguishes no eligible lookups from a measured zero hit rate', () => {
+  const key = 'dashboard-cache-sample';
+  const sample = () => {
+    const { eligibleLookups, hitRatePercent } = cacheStats();
+    return [eligibleLookups, hitRatePercent];
+  };
+  assert.deepEqual(sample(), [0, null]);
+  cacheGet(key);
+  assert.deepEqual(sample(), [1, 0]);
+  cacheSet(key, { text: 'sample' });
+  cacheGet(key);
+  assert.deepEqual(sample(), [2, 50]);
+  assert.deepEqual(sample(), [2, 50]);
+});
+
 describe('cacheKey', () => {
   it('produces deterministic keys', () => {
     const body = { model: 'gpt-4o', messages: [{ role: 'user', content: 'hi' }] };

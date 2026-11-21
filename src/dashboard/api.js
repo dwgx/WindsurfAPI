@@ -5,6 +5,7 @@
 
 import { getApplyPatchDiagnostics } from '../apply-patch-diagnostic.js';
 import { config, log } from '../config.js';
+import { parseRemoteStableReleaseTags, selectReleaseLine } from '../update-release-line.js';
 import { accountLoginIdentity, loginResultIdentity } from '../account/login-identity.js';
 import * as credentials from '../devin-connect-credentials.js';
 import { accountRef, buildSubprocessEnv } from '../log-safety.js';
@@ -22,6 +23,7 @@ import { randomUUID } from 'node:crypto';
 import { dirname, join, resolve } from 'node:path';
 import {
   getAccountList, getAccountCount, getAccountListStats, getAccountPublic, addAccountByKey, addAccountByPastedSecret,
+  addAccountByKeyWithDisposition, addAccountByPastedSecretWithDisposition,
   countAccountList, ACCOUNT_STATE_VALUES, ACCOUNT_SORT_VALUES,
   removeAccount, setAccountStatus, resetAccountErrors, updateAccountLabel,
   markAccountReauthenticated, requestReauthCheck, setAccountCredentialEmail, setAccountIdentityEmail,
@@ -258,6 +260,14 @@ function describeImportItem(item) {
   const kind = IMPORT_KIND_LABELS[item?.kind] || IMPORT_KIND_LABELS.issue;
   const proxy = redactedProxyLabel(item?.proxy);
   return proxy ? `${kind} · proxy ${proxy}` : kind;
+}
+
+function importErrorCode(error) {
+  for (const value of [error?.code, error?.message]) {
+    const match = typeof value === 'string' && /^(ERR_[A-Z0-9_]{1,64})(?::|$)/.exec(value);
+    if (match) return match[1];
+  }
+  return 'ERR_IMPORT_ITEM_FAILED';
 }
 
 // AUTH-1 CORS hardening: the dashboard used to answer every request (and
@@ -937,7 +947,7 @@ function captureBoundWindsurfLogin(accountId) {
   return bound;
 }
 
-async function processWindsurfLogin({ email, password, loginProxy, autoAdd, storeCredential: wantStore, req, accountId = null }) {
+async function processWindsurfLogin({ email, password, loginProxy, autoAdd, storeCredential: wantStore, req, accountId = null, reportPoolDisposition = false }) {
   if (!email || !password) {
     const err = new Error('ERR_EMAIL_PASSWORD_REQUIRED');
     err.statusCode = 400;
@@ -949,16 +959,17 @@ async function processWindsurfLogin({ email, password, loginProxy, autoAdd, stor
   const proxy = loginProxy?.host ? loginProxy : getProxyConfig().global;
   const bound = accountId ? captureBoundWindsurfLogin(accountId) : null;
   const result = await windsurfLogin(email, password, proxy);
-  return finalizeWindsurfLogin(result, { password, loginProxy, autoAdd, storeCredential: wantStore, req, bound });
+  return finalizeWindsurfLogin(result, { password, loginProxy, autoAdd, storeCredential: wantStore, req, bound, reportPoolDisposition });
 }
 
 // Keep validation and all credential writes synchronous after upstream login.
-function finalizeWindsurfLogin(result, { password, loginProxy, autoAdd, storeCredential: wantStore, req, bound = null }) {
+function finalizeWindsurfLogin(result, { password, loginProxy, autoAdd, storeCredential: wantStore, req, bound = null, reportPoolDisposition = false }) {
   const email = result.email || '';
   // The address this login proved. Independent of whether a password is kept:
   // a retention:false password login and an email-code login both establish it.
   const resultIdentity = loginResultIdentity(result);
   let account = null;
+  let poolDisposition = 'login_only';
   let reauthenticated = false;
   // Whether the password the caller asked to store actually landed. null = not
   // asked / store unavailable, true = encrypted and persisted, false = the save
@@ -989,7 +1000,7 @@ function finalizeWindsurfLogin(result, { password, loginProxy, autoAdd, storeCre
     // `result.name` is upstream-supplied: sanitize (never assert) so a hostile
     // login response cannot fail the whole login via the caller-facing label
     // boundary inside addAccountByKey.
-    account = addAccountByKey(result.apiKey, sanitizeLabelText(result.name) || email);
+    ({ account, poolDisposition } = addAccountByKeyWithDisposition(result.apiKey, sanitizeLabelText(result.name) || email));
     const knownIdentity = accountLoginIdentity(account);
     if (resultIdentity && knownIdentity) assertLoginIdentity(result, knownIdentity);
   }
@@ -1059,6 +1070,7 @@ function finalizeWindsurfLogin(result, { password, loginProxy, autoAdd, storeCre
     email: result.email,
     apiServerUrl: result.apiServerUrl,
     account: account ? { id: account.id, email: account.email, status: account.status } : null,
+    ...(reportPoolDisposition ? { poolDisposition } : {}),
     // How the session was obtained, so the UI can show it instead of making
     // the operator guess which path ran.
     method: result.viaEmailCode ? 'email_code' : 'password',
@@ -1523,6 +1535,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
       return json(res, 200, withJournal({ ok: true, mode: 'git', ...info }));
     } catch (err) {
       if (isSelfUpdateUnavailableError(err)) {
+        if (process.env.WINDSURFAPI_UPDATE_RELEASE_LINE) return json(res, 200, { ok: false, error: 'ERR_RELEASE_LINE_REQUIRES_GIT' });
         // Git path is unavailable (most often docker). Fall back to
         // docker self-update via /var/run/docker.sock if the user
         // mounted it into the container; otherwise report the same
@@ -1835,6 +1848,10 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
     let mutationLockHandedOff = false;
     try {
       try {
+        const line = process.env.WINDSURFAPI_UPDATE_RELEASE_LINE;
+        if (line && (body?.forceUpdate || body?.forceReset)) {
+          return json(res, 200, { ok: false, error: 'ERR_RELEASE_LINE_FORCE' });
+        }
         const before = await gitStatus();
         reconcilePendingRollbackPoint(before.commitFull);
       // M1: resolve the update target before any write (including forceReset).
@@ -1848,10 +1865,10 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
         // A failed fetch is not permission to operate on stale refs. The docker
         // fallback still activates when git itself is unavailable; every source
         // checkout otherwise fails closed until branch and tag refs are current.
-        await runGit(['fetch', '--quiet', '--no-tags', 'origin', safeBranch]);
+        const lineHead = await fetchSourceUpdateBranch(safeBranch);
         const forceGate = !!(body && body.forceUpdate);
         const targetState = await releaseUpdateState(safeBranch, before.commitFull, {
-          followUnreleased: forceGate,
+          followUnreleased: forceGate, lineHead,
         });
         if (targetState.diverged) {
           return json(res, 200, {
@@ -1864,7 +1881,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
         // accounts.json, stats.json, runtime-config.json which live in the
         // repo root but aren't checked in). If tracked files were edited,
         // surface a friendly error instead of a raw git failure.
-        const dirty = (await runGit(['status', '--porcelain', '-uno'])).trim();
+        const dirty = (await runGit(line ? ['status', '--porcelain', '--ignore-submodules=none'] : ['status', '--porcelain', '-uno'])).trim();
         let resetTarget = before.commitFull;
         if (dirty) {
           const allowForce = !!(body && body.forceReset);
@@ -1941,6 +1958,11 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
             });
           }
         }
+        if (line && ((await runGit(['rev-parse', 'HEAD'])).trim() !== before.commitFull
+            || (await runGit(['rev-parse', '--abbrev-ref', 'HEAD'])).trim() !== before.branch
+            || (await runGit(['status', '--porcelain', '--ignore-submodules=none'])).trim())) {
+          return json(res, 200, { ok: false, error: 'ERR_CHECKOUT_CHANGED' });
+        }
         if (willChangeHead) {
           try {
             // Write a durable PENDING point before stash/reset/merge while keeping
@@ -1980,7 +2002,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
           pull = dirty
             ? await runGit(['reset', '--hard', resetTarget]).then(() => 'hard-reset applied')
             : targetState.updateAvailable
-              ? await runGit(['merge', '--ff-only', targetState.targetCommit])
+              ? await runGit(['merge', '--ff-only', ...(line ? ['--no-overwrite-ignore'] : []), targetState.targetCommit])
               : `Already at latest published release ${targetState.latestTag || targetState.targetCommit.slice(0, 7)}`;
         } catch (err) {
           mutationError = err;
@@ -2154,6 +2176,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
       });
       } catch (err) {
         if (isSelfUpdateUnavailableError(err)) {
+          if (process.env.WINDSURFAPI_UPDATE_RELEASE_LINE) return json(res, 200, { ok: false, error: 'ERR_RELEASE_LINE_REQUIRES_GIT' });
         // Same fallback as /self-update/check: when git is unavailable
         // (docker), try the docker socket path. The dashboard may already
         // have called /self-update/check first and routed the user
@@ -2378,17 +2401,32 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
   // classifies each and adds via addAccountByPastedSecret. auth1_ is skipped
   // (PostAuth intermediate, not a pool key). SECURITY: never logs the pasted
   // text or any token; results carry only id/email/kind, never raw token.
-  if (subpath === '/accounts/import-text' && method === 'POST') {
+  if (method === 'POST' && (subpath === '/accounts/import-text' || subpath === '/accounts/import-text/preview')) {
     try {
       const text = String(body.text || '');
-      if (!text.trim()) return json(res, 400, { error: 'ERR_IMPORT_TEXT_EMPTY' });
-      const parsed = parseAccountText(text);
-      const results = { added: [], skipped: [], failed: [] };
+      if (!text.trim()) return json(res, 400, { error: 'ERR_IMPORT_TEXT_EMPTY' }, NO_STORE);
+      const preview = subpath.endsWith('/preview');
+      // Every row on this route adds to the pool, so opting out cannot be
+      // honored row by row. Previews use the explicit /preview route.
+      if (!preview && body.autoAdd === false) return json(res, 400, { error: 'ERR_AUTO_ADD_DISABLED' }, NO_STORE);
+      const parsed = parseAccountText(text, { includeDiagnostics: true, preview });
+      const { tokens, tokenPairs, accounts: passwordAccounts, unrecognizedLines, unrecognizedEntries = [] } = parsed;
+      if (preview) {
+        return json(res, 200, {
+          success: true, preview: true,
+          recognized: tokens.length + tokenPairs.length + passwordAccounts.length,
+          unrecognizedLines, ...(unrecognizedEntries.length ? { unrecognizedEntries } : {}),
+        }, NO_STORE);
+      }
+      // The legacy added array means the account is present after import.
+      // poolDisposition distinguishes a newly created row from an existing one.
+      const results = { added: [], skipped: [], failed: [], unrecognizedLines,
+        ...(unrecognizedEntries.length ? { unrecognizedEntries } : {}) };
       // A devin-session-token$ is itself the apiKey (addAccountByKey); other
       // token shapes run RegisterUser (addAccountByToken). Route by classified
       // kind so a pasted session token doesn't fail against the Firebase-only
       // RegisterUser path.
-      for (const raw of (parsed.tokens || [])) {
+      for (const raw of tokens) {
         const kind = classifyToken(raw);
         // auth1_ is a PostAuth intermediate, not a pool key.
         if (kind === 'auth1') { results.skipped.push({ kind, reason: 'auth1_not_a_pool_key' }); continue; }
@@ -2399,28 +2437,28 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
         // routes a session token to the pool key and everything else through
         // RegisterUser, and reports a rejection per token instead of hiding it.
         try {
-          const acc = await addAccountByPastedSecret(raw, '');
-          results.added.push({ id: acc.id, email: acc.email, kind });
-        } catch (e) { results.failed.push({ kind, error: e.message }); }
+          const { account, poolDisposition } = await addAccountByPastedSecretWithDisposition(raw, '');
+          results.added.push({ id: account.id, email: account.email, kind, poolDisposition });
+        } catch (e) { results.failed.push({ kind, error: importErrorCode(e) }); }
       }
-      for (const pair of (parsed.tokenPairs || [])) {
+      for (const pair of tokenPairs) {
         const pairKind = classifyToken(pair.token);
         if (pairKind === 'auth1') {
           results.skipped.push({ kind: pairKind, email: pair.email, reason: 'auth1_not_a_pool_key' });
           continue;
         }
         try {
-          const acc = await addAccountByPastedSecret(pair.token, pair.email || '');
-          results.added.push({ id: acc.id, email: acc.email || pair.email, kind: pairKind });
-        } catch (e) { results.failed.push({ email: pair.email, error: e.message }); }
+          const { account, poolDisposition } = await addAccountByPastedSecretWithDisposition(pair.token, pair.email || '');
+          results.added.push({ id: account.id, email: account.email || pair.email, kind: pairKind, poolDisposition });
+        } catch (e) { results.failed.push({ email: pair.email, error: importErrorCode(e) }); }
       }
       // Email/password accounts need the login flow (batch 2+); record as skipped.
-      for (const a of (parsed.accounts || [])) {
+      for (const a of passwordAccounts) {
         results.skipped.push({ kind: 'email_password', email: a.email, reason: 'use_login_flow' });
       }
-      return json(res, 200, { success: true, ...results, ...getAccountCount() });
+      return json(res, 200, { success: true, ...results, ...getAccountCount() }, NO_STORE);
     } catch (err) {
-      return json(res, 400, { error: err.message });
+      return json(res, 400, { error: importErrorCode(err) }, NO_STORE);
     }
   }
 
@@ -3847,13 +3885,23 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
   }
 
   // ─── Batch proxy + account import ─────────────────────
-  // POST /batch-import — each line: "proxy email password" or "email password"
-  if (subpath === '/batch-import' && method === 'POST') {
+  // POST /batch-import/preview reports parsed formats without attempting
+  // logins, validating proxy reachability, or writing any account or proxy.
+  if (method === 'POST' && (subpath === '/batch-import' || subpath === '/batch-import/preview')) {
     try {
       const { text, autoAdd = true, storeCredential } = body || {};
-      if (!text || typeof text !== 'string') return json(res, 400, { error: 'ERR_TEXT_REQUIRED' });
+      if (!text || typeof text !== 'string') return json(res, 400, { error: 'ERR_TEXT_REQUIRED' }, NO_STORE);
       const parsed = parseBatchImportInput(text, parseProxyUrl);
-      if (!parsed.items.length) return json(res, 400, { error: 'ERR_NO_VALID_LINES' });
+      if (!parsed.items.length) return json(res, 400, { error: 'ERR_NO_VALID_LINES' }, NO_STORE);
+      if (subpath.endsWith('/preview')) {
+        return json(res, 200, {
+          success: true, preview: true, mode: parsed.mode,
+          results: parsed.items.map(item => {
+            const error = item.error || (classifyToken(item.token || item.apiKey) === 'auth1' ? 'ERR_AUTH1_NOT_A_POOL_KEY' : undefined);
+            return { lineNumber: item.lineNumber, importKind: item.kind, error };
+          }),
+        }, NO_STORE);
+      }
       const results = [];
       let skippedCount = 0;
       for (const item of parsed.items) {
@@ -3891,6 +3939,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
               autoAdd,
               storeCredential,
               req,
+              reportPoolDisposition: true,
             });
             const binding = buildBatchProxyBinding(result, item.proxy);
             if (binding) {
@@ -3898,25 +3947,27 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
               scheduleAccountWarmup(binding.accountId);
             }
           } else if (item.kind === 'token') {
-            const account = await addAccountByPastedSecret(item.token, item.label);
+            const { account, poolDisposition } = await addAccountByPastedSecretWithDisposition(item.token, item.label);
             if (item.proxy) {
               setAccountProxy(account.id, item.proxy);
               scheduleAccountWarmup(account.id);
             }
             result = {
               success: true,
+              poolDisposition,
               email: account.email,
               apiKey_masked: maskApiKey(account.apiKey),
               account: { id: account.id, email: account.email, status: account.status },
             };
           } else if (item.kind === 'api_key') {
-            const account = await addAccountByPastedSecret(item.apiKey, item.label, item.apiServerUrl || '', { unknownAsKey: true });
+            const { account, poolDisposition } = await addAccountByPastedSecretWithDisposition(item.apiKey, item.label, item.apiServerUrl || '', { unknownAsKey: true });
             if (item.proxy) {
               setAccountProxy(account.id, item.proxy);
               scheduleAccountWarmup(account.id);
             }
             result = {
               success: true,
+              poolDisposition,
               email: account.email,
               apiKey_masked: maskApiKey(account.apiKey),
               account: { id: account.id, email: account.email, status: account.status },
@@ -3928,6 +3979,8 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
           // and is what the dashboard shows / stores in login history.
           results.push({
             ...publicBatchLoginResult(result),
+            poolDisposition: result.poolDisposition,
+            lineNumber: item.lineNumber,
             proxy: redactedProxyLabel(item.proxy),
             importKind: item.kind,
           });
@@ -3936,9 +3989,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
             success: false,
             skipped: false,
             email: item.email || item.label || '',
-            // Prefer the stable code; a bare Error message can carry upstream
-            // prose, so it is bounded as a last resort.
-            error: err.code || String(err.message || 'ERR_IMPORT_ITEM_FAILED').slice(0, 200),
+            error: importErrorCode(err),
             lineNumber: item.lineNumber,
             proxy: redactedProxyLabel(item.proxy),
             importKind: item.kind,
@@ -3959,9 +4010,9 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
       }, NO_STORE);
     } catch (err) {
       if (err instanceof BatchImportParseError) {
-        return json(res, 400, { error: err.code });
+        return json(res, 400, { error: err.code }, NO_STORE);
       }
-      return json(res, 400, { error: err.message });
+      return json(res, 400, { error: importErrorCode(err) }, NO_STORE);
     }
   }
 
@@ -4802,7 +4853,7 @@ export function runGit(args, opts = {}) {
   return new Promise((resolve, reject) => {
     if (!hasGitMetadata(opts.cwd)) return reject(makeSelfUpdateUnavailableError());
     getGitExecFile().then((execFile) => {
-      execFile('git', args, { timeout: 30_000, maxBuffer: 1024 * 1024, ...opts }, (err, stdout, stderr) => {
+      execFile('git', args, { timeout: 30_000, maxBuffer: 1024 * 1024, ...opts, ...(process.env.WINDSURFAPI_UPDATE_RELEASE_LINE ? { env: { ...process.env, ...opts.env, GIT_NO_REPLACE_OBJECTS: '1' } } : {}) }, (err, stdout, stderr) => {
         if (err?.code === 'ENOENT') return reject(makeSelfUpdateUnavailableError());
         if (err) {
           const failure = new Error((stderr || err.message).toString().slice(0, 500));
@@ -4818,65 +4869,6 @@ export function runGit(args, opts = {}) {
       });
     }).catch(reject);
   });
-}
-
-function stableReleaseVersion(tag) {
-  const match = String(tag || '').match(/^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/);
-  return match ? match.slice(1) : null;
-}
-
-function compareDecimalComponents(left, right) {
-  if (left.length !== right.length) return left.length > right.length ? 1 : -1;
-  if (left === right) return 0;
-  return left > right ? 1 : -1;
-}
-
-function compareStableReleaseTags(left, right) {
-  const a = stableReleaseVersion(left);
-  const b = stableReleaseVersion(right);
-  for (let i = 0; i < 3; i++) {
-    const compared = compareDecimalComponents(a[i], b[i]);
-    if (compared) return compared;
-  }
-  return 0;
-}
-
-function validRemoteTagName(tag) {
-  return !!tag
-    && !tag.startsWith('.')
-    && !tag.endsWith('.')
-    && !tag.startsWith('/')
-    && !tag.endsWith('/')
-    && !tag.includes('..')
-    && !tag.includes('//')
-    && !tag.includes('@{')
-    && !/[\x00-\x20\x7f~^:?*[\\]/.test(tag);
-}
-
-function parseRemoteStableReleaseTags(output) {
-  const byName = new Map();
-  for (const line of String(output || '').split(/\r?\n/).filter(Boolean)) {
-    const match = line.match(/^([0-9a-f]{40}|[0-9a-f]{64})\trefs\/tags\/(.+)$/i);
-    if (!match) throw new Error('remote tag enumeration returned a malformed record');
-    const oid = match[1].toLowerCase();
-    const peeled = match[2].endsWith('^{}');
-    const name = peeled ? match[2].slice(0, -3) : match[2];
-    if (!validRemoteTagName(name)) throw new Error('remote tag enumeration returned an invalid ref name');
-    if (!stableReleaseVersion(name)) continue;
-
-    const entry = byName.get(name) || { name, object: '', peeled: '' };
-    const field = peeled ? 'peeled' : 'object';
-    if (entry[field]) throw new Error(`remote tag enumeration duplicated ${name}${peeled ? '^{}' : ''}`);
-    entry[field] = oid;
-    byName.set(name, entry);
-  }
-
-  const candidates = [...byName.values()];
-  for (const candidate of candidates) {
-    if (!candidate.object) throw new Error(`remote tag ${candidate.name} has a peeled record without its tag ref`);
-  }
-  candidates.sort((left, right) => compareStableReleaseTags(right.name, left.name));
-  return candidates;
 }
 
 async function materializeRemoteReleaseTag(candidate) {
@@ -4915,7 +4907,7 @@ async function gitCommitIsAncestor(commit, ref) {
   }
 }
 
-async function latestReleaseTag(branch) {
+async function latestReleaseTag(branch, lineHead) {
   // Query the remote tag namespace directly. `git fetch --tags` is additive:
   // when a mistaken/revoked release tag is deleted upstream, its local ref
   // survives and `git tag --list` keeps selecting it indefinitely. Remote refs
@@ -4923,7 +4915,13 @@ async function latestReleaseTag(branch) {
   try {
     const output = await runGit(['ls-remote', '--tags', 'origin', 'refs/tags/v[0-9]*']);
     const remoteRef = `origin/${branch}`;
-    for (const advertised of parseRemoteStableReleaseTags(output)) {
+    const tags = parseRemoteStableReleaseTags(output);
+    const line = process.env.WINDSURFAPI_UPDATE_RELEASE_LINE;
+    if (line) {
+      const selected = await selectReleaseLine(line, lineHead, tags, runGit);
+      return await materializeRemoteReleaseTag(selected);
+    }
+    for (const advertised of tags) {
       const candidate = await materializeRemoteReleaseTag(advertised);
       if (await gitCommitIsAncestor(candidate.commit, remoteRef)) return candidate;
     }
@@ -4946,7 +4944,8 @@ async function latestReleaseTag(branch) {
  * updating; `required` makes missing material fatal.
  */
 async function verifySelectedReleaseAttestation(release) {
-  const mode = normalizeAttestationMode(process.env.WINDSURFAPI_UPDATE_ATTESTATION);
+  const line = process.env.WINDSURFAPI_UPDATE_RELEASE_LINE;
+  const mode = line ? 'required' : normalizeAttestationMode(process.env.WINDSURFAPI_UPDATE_ATTESTATION);
   let repository = '';
   try {
     const originUrl = (await runGit(['remote', 'get-url', 'origin'])).trim();
@@ -4968,6 +4967,12 @@ async function verifySelectedReleaseAttestation(release) {
     dir: process.env.WINDSURFAPI_ATTESTATION_DIR || '',
     repository,
   };
+  if (line) {
+    options.repository = DEFAULT_ATTESTATION_REPOSITORY;
+    options.tree = (await runGit(['rev-parse', release.commit + '^{tree}'])).trim();
+    const tag = release.name.replaceAll('.', '\\.');
+    options.identity = '^https://github\\.com/dwgx/WindsurfAPI/\\.github/workflows/release\\.yml@refs/tags/' + tag + '$';
+  }
   const result = releaseAttestationVerifierForTest
     ? await releaseAttestationVerifierForTest(options)
     : await verifyReleaseAttestation(options);
@@ -4984,10 +4989,27 @@ function safeUpdateBranch(branch) {
   return candidate !== 'HEAD' && /^[\w.\-\/]+$/.test(candidate) ? candidate : 'master';
 }
 
-async function releaseUpdateState(branch, currentCommit, { followUnreleased = false } = {}) {
-  const remoteRef = `origin/${branch}`;
+async function fetchSourceUpdateBranch(branch) {
+  if (!process.env.WINDSURFAPI_UPDATE_RELEASE_LINE) {
+    await runGit(['fetch', '--quiet', '--no-tags', 'origin', branch]);
+    return null;
+  }
+  const branchRef = 'refs/heads/master';
+  const advertised = (await runGit(['ls-remote', '--heads', 'origin', branchRef])).trimEnd();
+  const [head, ref, ...extra] = advertised.split('\t');
+  if (ref !== branchRef || extra.length || !validGitObjectId(head)) throw new Error('Invalid advertised release branch');
+  await runGit(['fetch', '--quiet', '--no-tags', 'origin', branchRef]);
+  // Other dashboard checks can fetch tags concurrently and overwrite FETCH_HEAD.
+  // Compare against this request's own branch advertisement before using it.
+  const fetched = (await runGit(['rev-parse', 'FETCH_HEAD^{commit}'])).trim();
+  if (head !== fetched) throw new Error('Release branch changed during fetch; retry the update check');
+  return head;
+}
+
+async function releaseUpdateState(branch, currentCommit, { followUnreleased = false, lineHead = null } = {}) {
+  const remoteRef = lineHead || `origin/${branch}`;
   const remoteHead = (await runGit(['rev-parse', remoteRef])).trim();
-  const release = await latestReleaseTag(branch);
+  const release = await latestReleaseTag(branch, lineHead);
   const latestTag = release.name;
   if (!latestTag && !followUnreleased) {
     throw makeSelfUpdateError(
@@ -5035,8 +5057,8 @@ async function gitStatus() {
   let updateError = '';
   try {
     const safeBranch = safeUpdateBranch(branch);
-    await runGit(['fetch', '--quiet', '--no-tags', 'origin', safeBranch]);
-    update = await releaseUpdateState(safeBranch, commit);
+    const lineHead = await fetchSourceUpdateBranch(safeBranch);
+    update = await releaseUpdateState(safeBranch, commit, { lineHead });
   } catch (err) {
     if (isSelfUpdateUnavailableError(err)) throw err;
     updateError = err?.code || err?.message || 'ERR_UPDATE_CHECK_FAILED';

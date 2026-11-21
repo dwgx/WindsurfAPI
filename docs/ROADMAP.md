@@ -19,6 +19,17 @@ await a real-account recording. For WebSocket work, the acceptance fixture
 must cover Origin policy and `previous_response_id`. Legacy Git-source updates
 continue to use numeric tag ordering. [Manual migration](RELEASE-SIGNING.md#manual-git-source-migration-from-v3141-to-v32x)
 
+## Integrated candidate
+
+This candidate merges the ordered follow-up to v3.2.11 with the private
+real-upstream wave. It adds explicit selection of a signed 3.x release line,
+dedicated side-effect-free preview routes for batch and text imports, per-row
+pool outcomes (added, already present, login only) in both dashboard skins and
+a distinction between an empty cache sample and a measured zero hit rate. With
+`autoAdd: false`, batch token and API-key rows are skipped before any pool write
+and email rows sign in once without joining the pool; the text import route
+refuses the request. [Import opt-out tests](../test/batch-import-opt-out.test.js) · [Import outcomes](../test/dashboard-import-outcomes.test.js)
+
 ## Published baseline and open observations
 
 | Work | Evidence today | Acceptance |

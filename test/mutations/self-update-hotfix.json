@@ -11,7 +11,7 @@
   "mutations": [
     {
       "name": "dashboard stable-tag selection accepts leading-zero pseudo versions",
-      "file": "src/dashboard/api.js",
+      "file": "src/update-release-line.js",
       "anchor": "  const match = String(tag || '').match(/^v(0|[1-9]\\d*)\\.(0|[1-9]\\d*)\\.(0|[1-9]\\d*)$/);",
       "replacement": "  const match = String(tag || '').match(/^v(\\d+)\\.(\\d+)\\.(\\d+)$/);"
     },
@@ -41,7 +41,7 @@
     },
     {
       "name": "dashboard remote-tag parser accepts records with repeated literal tabs",
-      "file": "src/dashboard/api.js",
+      "file": "src/update-release-line.js",
       "anchor": "    const match = line.match(/^([0-9a-f]{40}|[0-9a-f]{64})\\trefs\\/tags\\/(.+)$/i);",
       "replacement": "    const match = line.match(/^([0-9a-f]{40}|[0-9a-f]{64})\\t+refs\\/tags\\/(.+)$/i);"
     },
@@ -168,14 +168,14 @@
     {
       "name": "shell stable-tag selection accepts leading-zero pseudo versions",
       "file": "update.sh",
-      "anchor": "  [[ \"$advertised_name\" =~ ^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$ ]] || continue",
+      "anchor": "  [[ \"$advertised_name\" =~ $STABLE_TAG_PATTERN ]] || continue",
       "replacement": "  [[ \"$advertised_name\" =~ ^v[0-9]+\\.[0-9]+\\.[0-9]+$ ]] || continue"
     },
     {
       "name": "shell tag enumeration ignores a partial-output nonzero exit",
       "file": "update.sh",
-      "anchor": "if ! git ls-remote --tags origin 'refs/tags/v[0-9]*' > \"$UPDATE_TAG_LIST_TMP\"; then\n  echo \"    ! could not verify published release tags; refusing update\"\n  exit 1\nfi",
-      "replacement": "git ls-remote --tags origin 'refs/tags/v[0-9]*' > \"$UPDATE_TAG_LIST_TMP\" || true"
+      "anchor": "if ! git ls-remote --tags origin \"${TAG_PATTERNS[@]}\" > \"$UPDATE_TAG_LIST_TMP\"; then\n  echo \"    ! could not verify published release tags; refusing update\"\n  exit 1\nfi",
+      "replacement": "git ls-remote --tags origin \"${TAG_PATTERNS[@]}\" > \"$UPDATE_TAG_LIST_TMP\" || true"
     },
     {
       "name": "shell remote-tag parser accepts records with repeated literal tabs",
@@ -198,7 +198,7 @@
     {
       "name": "shell selects a stable tag that is not reachable from origin master",
       "file": "update.sh",
-      "anchor": "  if git merge-base --is-ancestor \"$fetched_commit\" origin/master; then",
+      "anchor": "  if git merge-base --is-ancestor \"$fetched_commit\" \"$release_branch\"; then",
       "replacement": "  if true; then"
     },
     {

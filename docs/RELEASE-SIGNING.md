@@ -255,6 +255,59 @@ release environment are separate controls.
 Adding `git verify-tag` is a different root of trust (a signing key that every
 deployment must already have) and remains intentionally not wired.
 
+### Select an exact signed source release
+
+Source builds that include the release-line selector can follow the project's
+new 3.x numbering with `bash update.sh --line 3.x`. The equivalent
+`WINDSURFAPI_UPDATE_RELEASE_LINE=3.x` setting also applies to dashboard Git
+checks and updates. Confirm support with `git show HEAD:update.sh` before
+using either option. The staged migration in the target release's notes
+remains the entry point for older installations.
+
+The selector ranks published stable v3 tags numerically **within the
+descendants of the v3.2.10 commit on the release branch**. It includes
+future minor releases and excludes the earlier v3.141 series. It requires an
+annotated tag and signed source attestation. Source updates follow a
+fast-forward. Leave the setting unset for the default numeric selector.
+
+For an existing source installation moving to v3.2.11, follow the
+[v3.2.11 staged migration](releases/RELEASE_NOTES_3.2.11.md#signed-upgrade).
+Both v3.141.592661 and v3.2.11 ship the numeric stable-tag selector. The
+one-shot selector described below is available in subsequent source builds
+that include this change.
+
+To check support on your trusted installation, inspect the updater source in
+the current Git revision.
+
+```bash
+git show HEAD:update.sh | grep -F 'Usage: bash update.sh [--tag vX.Y.Z]'
+```
+
+If the command prints the usage line, choose a published, signed release
+that is a descendant of your current checkout. Save a recoverable copy of
+the installation and its operator state before applying that release.
+If the line is absent, follow the staged migration in the chosen release's
+own notes.
+
+```bash
+read -r -p 'Exact signed release tag to install: ' target_tag
+bash update.sh --tag "${target_tag:?a release tag is required}"
+```
+
+The tag applies to this invocation. The updater requires the remote annotated
+tag and its peeled commit to agree with the Git advertisement, and the commit
+must be reachable from the fetched `origin/master`. Your checkout must be
+clean and able to fast-forward to that commit. The updater verifies the
+canonical repository, exact tag workflow identity, commit and tree in the
+signed release attestation before changing the checkout. To use a downloaded
+attestation and bundle, set `WINDSURFAPI_ATTESTATION_DIR` to their directory.
+Cosign and the bundle are required, and both force overrides are incompatible
+with `--tag`.
+
+After the update, check the running commit in `/health`. The script uses the
+existing PM2 health check and rollback and returns a failure if it rolls back
+the elected update.
+
 ### Docker OTA
 
 The dashboard one-click update (when `/var/run/docker.sock` is mounted) never

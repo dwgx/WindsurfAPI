@@ -1,7 +1,7 @@
 import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
-import { join } from 'node:path';
+import { mkdtempSync, readFileSync, writeFileSync, rmSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { runDevinAcpProcess } from '../src/devin-acp.js';
 
@@ -133,6 +133,32 @@ rl.on('line', line => {
 });
 
 describe('Devin ACP runner — process + protocol failure paths', () => {
+  for (const [scenario, result] of [
+    ['a different major', { protocolVersion: 2 }],
+    ['an omitted version', {}],
+    ['a non-integer version', { protocolVersion: '1' }],
+  ]) {
+    it(`stops after initialize when a peer selects ${scenario}`, async () => {
+      const script = installFakeAcp(`${HANDSHAKE}
+import { appendFileSync } from 'node:fs';
+rl.on('line', line => {
+  const { id, method } = JSON.parse(line);
+  appendFileSync(new URL('methods.log', import.meta.url), method + '\\n');
+  if (method === 'initialize') {
+    send({ jsonrpc: '2.0', id, result: ${JSON.stringify(result)} });
+  } else {
+    send({ jsonrpc: '2.0', id, error: { code: -32601, message: 'unexpected method' } });
+  }
+});
+`);
+      await assert.rejects(
+        () => runDevinAcpProcess('hi', { modelKey: 'swe-1.6', apiKey: 'fixture' }),
+        { status: 502, type: 'backend_protocol_error', code: 'ACP_PROTOCOL_VERSION', retryable: false },
+      );
+      assert.equal(readFileSync(join(dirname(script), 'methods.log'), 'utf8'), 'initialize\n');
+    });
+  }
+
   it('maps a non-zero CLI exit to 502 backend_error', async () => {
     installFakeAcp(`
 process.exit(3);

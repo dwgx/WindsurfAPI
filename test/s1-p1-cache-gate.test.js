@@ -130,7 +130,7 @@ test('cache hits, misses, stores and payload bytes stay identical under the exis
   for (const enabled of ['0', '1']) {
     for (const caller of ['api:synthetic', 'session:synthetic']) {
       const pair = [keyHarness({ baseline: true, enabled }), keyHarness({ enabled })];
-      const results = pair.map(h => {
+      const results = pair.map((h, index) => {
         const key = h.cacheKey(body, caller);
         const shareable = h.hasPerUserScope(caller);
         const first = shareable ? h.cache.cacheGet(key) : null;
@@ -138,7 +138,14 @@ test('cache hits, misses, stores and payload bytes stay identical under the exis
         const second = shareable ? h.cache.cacheGet(key) : null;
         const otherKey = h.cacheKey(body, 'session:other');
         const other = h.cache.cacheGet(otherKey);
-        return JSON.stringify({ first, second, other, stats: h.cache.cacheStats() });
+        const stats = h.cache.cacheStats();
+        if (index === 1) {
+          const { eligibleLookups, hitRatePercent, ...legacyStats } = stats;
+          assert.equal(eligibleLookups, stats.hits + stats.misses);
+          assert.equal(hitRatePercent, eligibleLookups ? 100 * stats.hits / eligibleLookups : null);
+          return JSON.stringify({ first, second, other, stats: legacyStats });
+        }
+        return JSON.stringify({ first, second, other, stats });
       });
       assert.equal(results[1], results[0]);
     }

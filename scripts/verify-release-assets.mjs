@@ -137,7 +137,7 @@ export function runCosignCommand(cosign, args) {
   if (result.error) {
     if (result.error.code === 'ENOENT') {
       throw new CliError(
-        `cosign not found (${cosign}); install it from https://docs.sigstore.dev or pass --cosign <path>`,
+        `cosign not found (${cosign}); install Cosign v3 from https://docs.sigstore.dev or pass --cosign <path>`,
         2,
       );
     }

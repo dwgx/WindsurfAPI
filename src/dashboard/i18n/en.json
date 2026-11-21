@@ -210,7 +210,7 @@
     "readClipboard": "Read Clipboard",
     "uploadJson": "Upload JSON",
     "clearFile": "Clear File",
-    "batchImport": "Batch Import & Login",
+    "batchImport": "Process batch",
     "paste": "Paste",
     "add": "Add",
     "close": "Close",
@@ -390,12 +390,14 @@
     },
     "smartImport": {
       "title": "Smart Import",
-      "desc": "Paste a token, a login link, or an email and password — each line is recognised and imported automatically.",
+      "desc": "Paste tokens or login links. Use batch import for email and password.",
       "placeholder": "devin-session-token$...  or  show-auth-token URL  or  email----password  — one per line, mixable",
       "button": "Smart Import",
       "empty": "Paste some tokens or accounts first",
       "importing": "Importing…",
-      "result": "Added {{added}} · Skipped {{skipped}} · Failed {{failed}}",
+      "result": "Added {{added}} · Already in pool {{existing}} · Skipped {{skipped}} · Failed {{failed}}",
+      "recognized": "Recognized entries {{count}}",
+      "unrecognized": "Unrecognized input · {{lines}}",
       "done": "Imported {{added}} account(s)"
     },
     "accountList": {
@@ -829,7 +831,8 @@
     },
     "responseCache": {
       "title": "Response Cache",
-      "subtitle": "{{hits}} hit / {{misses}} miss · {{size}}/{{max}} entries"
+      "noSamples": "No samples",
+      "subtitle": "Hits {{hits}} / lookups {{total}} · entries {{size}}/{{max}}"
     },
     "tokens": {
       "title": "Token usage breakdown",
@@ -1649,6 +1652,23 @@
     }
   },
   "batch": {
+    "autoAdd": "Add accounts to the pool",
+    "autoAddHint": "Uncheck to preview all rows without signing in or saving accounts.",
+    "preview": "Preview formats",
+    "previewOnly": "Format check only. No sign-ins were attempted and no accounts were changed.",
+    "line": "Line {{line}}",
+    "item": "Item {{line}}",
+    "input": "Input",
+    "kind": {
+      "email_password": "Email and password",
+      "token": "Token",
+      "api_key": "API key"
+    },
+    "outcome": {
+      "added": "Added to pool",
+      "existing": "Already in pool",
+      "login_only": "Signed in — not added"
+    },
     "pasteFirst": "Please paste batch accounts first",
     "importing": "Importing...",
     "importingDesc": "{{count}} lines, please wait",
@@ -1948,7 +1968,7 @@
     "apiKeyGenerated": "API Key generated{{autoAdd}}",
     "fail": "✗ Login Failed",
     "batchComplete": "Batch Import Complete",
-    "batchDesc": "Total {{total}} accounts, {{success}} success, {{skipped}} skipped, {{fail}} fail{{autoAdd}}",
+    "batchDesc": "{{total}} entries · {{success}} successful · {{skipped}} skipped · {{fail}} failed",
     "tryOther": "Try Another Way",
     "oauthHint": "If Google/GitHub OAuth was used to register, password login won't work. Use the Google/GitHub buttons above, or visit {{link}} to copy Auth Token then manually add in Account Pool page.",
     "fields": {

@@ -6,6 +6,40 @@ cd "$(dirname "$0")"
 
 PORT="${PORT:-3003}"
 NAME="${PM2_NAME:-windsurf-api}"
+STABLE_TAG_PATTERN='^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'
+REQUESTED_TAG=""
+REQUESTED_LINE="${WINDSURFAPI_UPDATE_RELEASE_LINE:-}"
+LINE_COMMIT=""
+if [ "$#" -ne 0 ]; then
+  if [ "$#" -eq 1 ] && { [ "$1" = "--help" ] || [ "$1" = "-h" ]; }; then
+    echo "Usage: bash update.sh [--tag vX.Y.Z]"
+    echo "  --tag  Fast-forward to this signed stable release for this run only."
+    echo "  --line 3.x  Follow stable signed descendants of the v3.2.10 release."
+    exit 0
+  fi
+  if [ "$#" -eq 2 ] && [ "$1" = "--line" ] && [ -z "$REQUESTED_LINE" ]; then
+    REQUESTED_LINE="$2"
+    [ "$REQUESTED_LINE" = "3.x" ] || { echo "Expected --line 3.x" >&2; exit 2; }
+  elif [ "$#" -ne 2 ] || [ "$1" != "--tag" ] || ! [[ "$2" =~ $STABLE_TAG_PATTERN ]]; then
+    echo "✗ Expected a stable release tag: bash update.sh --tag vX.Y.Z" >&2
+    exit 2
+  else
+    REQUESTED_TAG="$2"
+  fi
+fi
+if [ -n "$REQUESTED_LINE" ]; then
+  if [ "$REQUESTED_LINE" != "3.x" ] || [ -n "$REQUESTED_TAG" ]; then
+    echo "Choose exactly one signed tag or the 3.x release line" >&2; exit 2
+  fi
+fi
+if [ -n "$REQUESTED_TAG$REQUESTED_LINE" ]; then
+  if [ "${WINDSURFAPI_UPDATE_FORCE:-0}" = "1" ] || [ "${WINDSURFAPI_UPDATE_FORCE_RESET:-0}" = "1" ]; then
+    echo "✗ --tag cannot be combined with WINDSURFAPI_UPDATE_FORCE or WINDSURFAPI_UPDATE_FORCE_RESET" >&2
+    exit 2
+  fi
+  # An elected release is checked out using the actual signed Git objects.
+  export GIT_NO_REPLACE_OBJECTS=1
+fi
 
 # Cross-process serialization for update.sh. mkdir is atomic on every platform
 # supported by this script (including macOS hosts without flock). A second
@@ -382,10 +416,26 @@ echo "=== [1/5] Pull latest ==="
 # Fetch only the release branch here. Published-tag authority comes from
 # `ls-remote` below; importing/pruning the remote tag namespace would either keep
 # revoked local refs alive or destroy operator-owned local tags.
-git fetch --quiet --no-tags origin master
+if [ -n "$REQUESTED_TAG$REQUESTED_LINE" ]; then
+  git fetch --quiet --no-tags origin refs/heads/master
+  REMOTE_HEAD=$(git rev-parse 'FETCH_HEAD^{commit}')
+  BEFORE_REF=$(git rev-parse --symbolic-full-name HEAD)
+else
+  git fetch --quiet --no-tags origin master
+  REMOTE_HEAD=$(git rev-parse origin/master)
+fi
 BEFORE=$(git rev-parse HEAD)
-REMOTE_HEAD=$(git rev-parse origin/master)
 DIRTY=$(git status --porcelain)
+if [ -n "$REQUESTED_TAG$REQUESTED_LINE" ]; then
+  if ! DIRTY=$(git status --porcelain --ignore-submodules=none --untracked-files=all) || [ -n "$DIRTY" ]; then
+    echo "    ! --tag needs a clean checkout before attestation verification"
+    exit 1
+  fi
+fi
+if [ -n "$REQUESTED_LINE" ]; then
+  selection=$(node scripts/select-release-line.mjs "$REQUESTED_LINE" "$REMOTE_HEAD") || exit 1
+  read -r REQUESTED_TAG LINE_COMMIT LINE_OBJECT <<< "$selection"
+fi
 FORCE_RESET="${WINDSURFAPI_UPDATE_FORCE_RESET:-0}"
 FORCE_UPDATE="${WINDSURFAPI_UPDATE_FORCE:-0}"
 
@@ -399,8 +449,12 @@ FORCE_UPDATE="${WINDSURFAPI_UPDATE_FORCE:-0}"
 # Each candidate is fetched only into FETCH_HEAD, preserving all local tags.
 LATEST_TAG=""
 RELEASE_COMMIT=""
+TAG_PATTERNS=('refs/tags/v[0-9]*')
+if [ -n "$REQUESTED_TAG" ]; then
+  TAG_PATTERNS=("refs/tags/$REQUESTED_TAG" "refs/tags/$REQUESTED_TAG^{}")
+fi
 UPDATE_TAG_LIST_TMP="$(mktemp "$GIT_DIR_PATH/windsurfapi-release-tags.XXXXXX")"
-if ! git ls-remote --tags origin 'refs/tags/v[0-9]*' > "$UPDATE_TAG_LIST_TMP"; then
+if ! git ls-remote --tags origin "${TAG_PATTERNS[@]}" > "$UPDATE_TAG_LIST_TMP"; then
   echo "    ! could not verify published release tags; refusing update"
   exit 1
 fi
@@ -433,7 +487,8 @@ while IFS= read -r advertised_line || [ -n "$advertised_line" ]; do
     echo "    ! remote tag enumeration returned an invalid ref name; refusing update"
     exit 1
   fi
-  [[ "$advertised_name" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]] || continue
+  [[ "$advertised_name" =~ $STABLE_TAG_PATTERN ]] || continue
+  [ -z "$REQUESTED_TAG" ] || [ "$advertised_name" = "$REQUESTED_TAG" ] || continue
 
   advertised_index="-1"
   for index in "${!REMOTE_TAG_NAMES[@]}"; do
@@ -501,7 +556,18 @@ while true; do
     exit 1
   fi
 
-  if git merge-base --is-ancestor "$fetched_commit" origin/master; then
+  release_branch="origin/master"
+  if [ -n "$REQUESTED_TAG" ]; then
+    if [ "$fetched_type" != "tag" ]; then
+      echo "    ! --tag requires an annotated release tag; refusing $candidate"
+      exit 1
+    fi
+    release_branch="$REMOTE_HEAD"
+  fi
+  if [ -n "$LINE_COMMIT" ] && { [ "$LINE_COMMIT" != "$fetched_commit" ] || [ "$LINE_OBJECT" != "$fetched_object" ]; }; then
+    echo "    ! release line selection changed during verification"; exit 1
+  fi
+  if git merge-base --is-ancestor "$fetched_commit" "$release_branch"; then
     LATEST_TAG="$candidate"
     RELEASE_COMMIT="$fetched_commit"
     break
@@ -511,9 +577,17 @@ while true; do
       echo "    ! could not verify whether $candidate is reachable from origin/master; refusing update"
       exit 1
     fi
+    if [ -n "$REQUESTED_TAG" ]; then
+      echo "    ! $candidate is not reachable from origin/master; refusing update"
+      exit 1
+    fi
   fi
 done
 
+if [ -n "$REQUESTED_TAG" ] && [ -z "$LATEST_TAG" ]; then
+  echo "    ! $REQUESTED_TAG is not advertised by origin; refusing update"
+  exit 1
+fi
 if [ "$FORCE_UPDATE" = "1" ]; then
   TARGET="$REMOTE_HEAD"
 elif [ -z "$LATEST_TAG" ]; then
@@ -565,6 +639,10 @@ if ! is_nonnegative_git_count "$UNPUSHED"; then
   exit 1
 fi
 
+if [ -n "$REQUESTED_TAG" ] && [ "$PAST_TARGET" -gt 0 ]; then
+  echo "    ! --tag requires a fast-forward from HEAD to $REQUESTED_TAG; refusing update"
+  exit 1
+fi
 if [ "${TO_TARGET:-0}" -gt 0 ] && [ "${PAST_TARGET:-0}" -gt 0 ]; then
   echo "    ! 当前 HEAD 与更新目标 ${TARGET:0:7} 已分叉；拒绝非 fast-forward 更新"
   exit 1
@@ -594,7 +672,8 @@ fi
 #   warn (default): missing attestation/bundle/cosign logs a warning and the
 #                   update proceeds, so existing installs keep working;
 #   required:       missing material refuses the update.
-# A present but mismatched or invalid attestation is always fatal.
+# A present but mismatched or invalid attestation is always fatal. An explicit
+# tag always requires the canonical workflow identity for that exact tag.
 ATTESTATION_MODE="${WINDSURFAPI_UPDATE_ATTESTATION:-warn}"
 case "$ATTESTATION_MODE" in
   warn|required) ;;
@@ -613,7 +692,16 @@ if [ -n "$LATEST_TAG" ] && [ "$FORCE_UPDATE" != "1" ] \
       ;;
   esac
   ATTESTATION_ARGS=(--tag "$LATEST_TAG" --commit "$RELEASE_COMMIT" --mode "$ATTESTATION_MODE")
-  [ -n "$ATTESTATION_REPOSITORY" ] && ATTESTATION_ARGS+=(--repository "$ATTESTATION_REPOSITORY")
+  if [ -n "$REQUESTED_TAG" ]; then
+    ATTESTATION_MODE="required"
+    RELEASE_TREE=$(git rev-parse "$RELEASE_COMMIT^{tree}")
+    IDENTITY_TAG=${LATEST_TAG//./\\.}
+    ATTESTATION_ARGS=(--tag "$LATEST_TAG" --commit "$RELEASE_COMMIT" --tree "$RELEASE_TREE" --mode "$ATTESTATION_MODE"
+      --repository dwgx/WindsurfAPI
+      --identity '^https://github\.com/dwgx/WindsurfAPI/\.github/workflows/release\.yml@refs/tags/'"$IDENTITY_TAG"'$')
+  elif [ -n "$ATTESTATION_REPOSITORY" ]; then
+    ATTESTATION_ARGS+=(--repository "$ATTESTATION_REPOSITORY")
+  fi
   [ -n "${WINDSURFAPI_ATTESTATION_DIR:-}" ] && ATTESTATION_ARGS+=(--dir "$WINDSURFAPI_ATTESTATION_DIR")
   [ -n "${COSIGN:-}" ] && ATTESTATION_ARGS+=(--cosign "$COSIGN")
   if command -v node >/dev/null 2>&1 && [ -f scripts/verify-release-attestation.mjs ]; then
@@ -627,6 +715,16 @@ if [ -n "$LATEST_TAG" ] && [ "$FORCE_UPDATE" != "1" ] \
   else
     echo "    ! node or the release attestation verifier is missing; continuing because WINDSURFAPI_UPDATE_ATTESTATION=warn"
   fi
+fi
+
+MERGE_ARGS=(--ff-only --quiet)
+if [ -n "$REQUESTED_TAG" ]; then
+  if [ "$(git rev-parse HEAD)" != "$BEFORE" ] || [ "$(git rev-parse --symbolic-full-name HEAD)" != "$BEFORE_REF" ]; then
+    echo "    ! HEAD moved while the signed update was being verified; refusing update"
+    exit 1
+  fi
+  DIRTY=$(git status --porcelain --ignore-submodules=none)
+  MERGE_ARGS+=(--no-overwrite-ignore)
 fi
 
 if [ "$FORCE_RESET" = "1" ]; then
@@ -669,7 +767,7 @@ else
     exit 1
   fi
   if [ "${TO_TARGET:-0}" -gt 0 ]; then
-    if git merge --ff-only --quiet "$TARGET"; then
+    if git merge "${MERGE_ARGS[@]}" "$TARGET"; then
       :
     else
       MUTATION_EXIT=$?
@@ -706,6 +804,12 @@ elif [ "$MUTATION_EXIT" -ne 0 ]; then
   echo "    ! Git mutation failed with exit $MUTATION_EXIT"
   exit "$MUTATION_EXIT"
 fi
+if [ -n "$REQUESTED_TAG" ] && {
+    [ "$AFTER" != "$TARGET" ] || [ "$(git rev-parse --symbolic-full-name HEAD)" != "$BEFORE_REF" ];
+  }; then
+  echo "    ! checkout changed while selecting $REQUESTED_TAG; refusing to restart the service"
+  exit 1
+fi
 if [ "$BEFORE" = "$AFTER" ]; then
   echo "    已是最新 / Already up to date"
 else
@@ -714,6 +818,29 @@ else
 fi
 
 echo ""
+check_signed_rollback_state() {
+  [ -n "$REQUESTED_TAG" ] || return 0
+  local rollback_changes
+  if [ "$(git rev-parse HEAD)" != "$TARGET" ] || [ "$(git rev-parse --symbolic-full-name HEAD)" != "$BEFORE_REF" ]; then
+    echo "✗ Automatic rollback refused: the checkout moved after the signed update."
+    return 1
+  fi
+  if ! rollback_changes=$(git status --porcelain --ignore-submodules=none --untracked-files=all) || [ -n "$rollback_changes" ]; then
+    echo "✗ Automatic rollback refused: local changes need to be preserved."
+    return 1
+  fi
+}
+
+# The previous process is still running until phase 3. Restore its checkout
+# if the elected release cannot prepare its language server.
+restore_signed_checkout_before_stop() {
+  [ -n "$REQUESTED_TAG" ] && [ "$AFTER" != "$BEFORE" ] || return 0
+  check_signed_rollback_state || return 1
+  check_ignored_target_conflicts "$BEFORE" || return 1
+  git reset --keep "$BEFORE" || return 1
+  [ "$(git rev-parse HEAD)" = "$BEFORE" ] && [ "$(git rev-parse --symbolic-full-name HEAD)" = "$BEFORE_REF" ]
+}
+
 echo "=== [2/5] Update LS binary ==="
 LS_PATH="${LS_BINARY_PATH:-/opt/windsurf/language_server_linux_x64}"
 if [ -f .env ]; then
@@ -736,6 +863,7 @@ if [ -f .env ]; then
 fi
 if [ ! -f install-ls.sh ]; then
   echo "    ! install-ls.sh not found; cannot update LS binary"
+  restore_signed_checkout_before_stop || exit 1
   exit 1
 fi
 echo "    Updating via install-ls.sh -> $LS_PATH"
@@ -747,6 +875,7 @@ else
     echo "    ! LS binary update failed (exit $_ls_rc); keeping existing binary at $LS_PATH"
   else
     echo "    ! LS binary update failed and no existing binary exists at $LS_PATH"
+    restore_signed_checkout_before_stop || exit 1
     exit "$_ls_rc"
   fi
 fi
@@ -829,6 +958,7 @@ if [ "$HEALTH_OK" = 1 ]; then
 else
   echo ""
   echo "✗ Health check failed after update. Auto-rolling back to $BEFORE ..."
+  check_signed_rollback_state || exit 1
   # Stop/delete the failed target before changing the checkout.  A bare
   # `pm2 start --name` retry is not a rollback: real PM2 can reject a duplicate
   # name, reuse the old process identity, or leave the target code resident in
@@ -888,7 +1018,12 @@ else
   fi
 
   ROLLBACK_MUTATION_EXIT=0
-  if git reset --hard "$BEFORE"; then
+  rollback_mode=--hard
+  if [ -n "$REQUESTED_TAG" ]; then
+    check_signed_rollback_state || exit 1
+    rollback_mode=--keep
+  fi
+  if git reset "$rollback_mode" "$BEFORE"; then
     :
   else
     ROLLBACK_MUTATION_EXIT=$?
@@ -954,6 +1089,7 @@ else
       exit 1
     fi
     echo "✓ Rolled back to $BEFORE — service healthy. Check 'pm2 logs $NAME' for the original failure."
+    [ -z "$REQUESTED_TAG" ] || exit 1
     exit 0
   fi
   echo "✗ Rollback also failed. Manual intervention required. Check 'pm2 logs $NAME'."

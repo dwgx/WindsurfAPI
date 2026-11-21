@@ -382,7 +382,7 @@ function writeExecutable(path, source) {
 }
 
 const shellFixtures = [];
-function makeUpdateFixture() {
+function makeUpdateFixture({ initialTag = 'v3.9.21', releaseTag = 'v3.9.22', annotated = true } = {}) {
   const root = mkdtempSync(join(SAFE_TMP_ROOT, 'wa-attestation-update-'));
   shellFixtures.push(root);
   const origin = join(root, 'origin.git');
@@ -406,20 +406,21 @@ function makeUpdateFixture() {
     join(seed, 'scripts', 'verify-release-attestation.mjs'));
   copyFileSync(join(SOURCE_ROOT, 'src', 'release-attestation.js'),
     join(seed, 'src', 'release-attestation.js'));
-  writeExecutable(join(seed, 'install-ls.sh'), '#!/usr/bin/env bash\nexit 0\n');
+  writeExecutable(join(seed, 'install-ls.sh'), '#!/usr/bin/env bash\nexit "${FIXTURE_INSTALL_STATUS:-0}"\n');
   writeFileSync(join(seed, 'src', 'index.js'), '// service fixture\n', 'utf8');
   writeFileSync(join(seed, 'release-marker.txt'), 'v3.9.21\n', 'utf8');
   realGit(seed, ['add', '.']);
   realGit(seed, ['commit', '-m', 'release v3.9.21']);
   const initialCommit = realGit(seed, ['rev-parse', 'HEAD']);
-  realGit(seed, ['tag', 'v3.9.21']);
+  realGit(seed, ['tag', initialTag]);
 
   writeFileSync(join(seed, 'release-marker.txt'), 'v3.9.22\n', 'utf8');
   realGit(seed, ['add', 'release-marker.txt']);
   realGit(seed, ['commit', '-m', 'release v3.9.22']);
   const releaseCommit = realGit(seed, ['rev-parse', 'HEAD']);
   const releaseTree = realGit(seed, ['rev-parse', 'HEAD^{tree}']);
-  realGit(seed, ['tag', '-a', '-m', '3.9.22', 'v3.9.22']);
+  const annotation = annotated ? ['-a', '-m', releaseTag] : [];
+  realGit(seed, ['tag', ...annotation, releaseTag]);
 
   writeFileSync(join(seed, 'release-notes.md'), 'post-tag documentation\n', 'utf8');
   realGit(seed, ['add', 'release-notes.md']);
@@ -437,15 +438,15 @@ function makeUpdateFixture() {
   writeExecutable(join(stubBin, 'curl'), '#!/usr/bin/env bash\ncommit="$(git rev-parse --short=12 HEAD)" || exit 22\npid="$(cat .git/windsurfapi-fixture-pm2-pid)" || exit 22\nprintf \'{"status":"ok","commit":"%s","pid":%s}\\n\' "$commit" "$pid"\n');
   writeExecutable(join(stubBin, 'cosign'), '#!/usr/bin/env bash\nexit 0\n');
 
-  return { root, origin, seed, deployment, stubBin, initialCommit, releaseCommit, releaseTree };
+  return { root, origin, seed, deployment, stubBin, initialCommit, releaseCommit, releaseTree, releaseTag };
 }
 
 after(() => {
   for (const root of shellFixtures) rmSync(root, { recursive: true, force: true });
 });
 
-function runUpdate(fixture, extraEnv = {}) {
-  return spawnSync('bash', ['update.sh'], {
+function runUpdate(fixture, extraEnv = {}, args = []) {
+  return spawnSync('bash', ['update.sh', ...args], {
     cwd: fixture.deployment,
     encoding: 'utf8',
     timeout: 20_000,
@@ -457,14 +458,19 @@ function runUpdate(fixture, extraEnv = {}) {
   });
 }
 
-function stageAttestation(fixture, { tag = 'v3.9.22', commit = fixture.releaseCommit } = {}) {
+function stageAttestation(fixture, {
+  tag = fixture.releaseTag,
+  commit = fixture.releaseCommit,
+  tree = fixture.releaseTree,
+  repository = 'dwgx/WindsurfAPI',
+} = {}) {
   const dir = mkdtempSync(join(fixture.root, 'attestation-'));
   writeFileSync(join(dir, 'release-attestation.json'), JSON.stringify({
     schema: 1,
-    repository: 'dwgx/WindsurfAPI',
+    repository: repository || undefined,
     tag,
     commit,
-    tree: fixture.releaseTree,
+    tree,
     assets: { SHA256SUMS: 'd'.repeat(64) },
   }, null, 2) + '\n');
   writeFileSync(join(dir, 'release-attestation.json.sigstore.json'), '{}\n');
@@ -527,5 +533,200 @@ describe('update.sh source attestation gate', () => {
     assert.match(result.stdout, /release attestation verification failed/i);
     assert.doesNotMatch(result.stdout, /=== \[2\/5\]/);
     assert.equal(realGit(fixture.deployment, ['rev-parse', 'HEAD']), fixture.initialCommit);
+  });
+});
+
+describe('update.sh explicit signed release selection', () => {
+  const legacyTag = 'v3.141.592661';
+  const targetTag = 'v3.2.11';
+
+  function migrationFixture(options = {}) {
+    return makeUpdateFixture({ initialTag: legacyTag, releaseTag: targetTag, ...options });
+  }
+
+  function select(fixture, dir, extraEnv = {}, tag = targetTag) {
+    return runUpdate(fixture, { WINDSURFAPI_ATTESTATION_DIR: dir, ...extraEnv }, ['--tag', tag]);
+  }
+
+  function refused(fixture, result, reason, expectedHead = fixture.initialCommit) {
+    const output = result.stdout + result.stderr;
+    assert.notEqual(result.status, 0, output);
+    assert.match(output, reason);
+    assert.doesNotMatch(output, /=== \[2\/5\]/);
+    assert.equal(realGit(fixture.deployment, ['rev-parse', 'HEAD']), expectedHead);
+  }
+
+  shellIt('keeps the higher numeric legacy version with no operator selection', () => {
+    const fixture = migrationFixture();
+    const dir = mkdtempSync(join(fixture.root, 'missing-attestation-'));
+    const result = runUpdate(fixture, { WINDSURFAPI_ATTESTATION_DIR: dir });
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.match(result.stdout, /v3\.141\.592661/);
+    assert.equal(realGit(fixture.deployment, ['rev-parse', 'HEAD']), fixture.initialCommit);
+  });
+
+  shellIt('fast-forwards a legacy detached checkout only to the elected signed tag', () => {
+    const fixture = migrationFixture();
+    const dir = stageAttestation(fixture);
+    const signatureLog = join(fixture.root, 'cosign-arguments');
+    writeExecutable(join(fixture.stubBin, 'cosign'),
+      '#!/usr/bin/env bash\nprintf "%s\\n" "$@" > "$SIGNATURE_LOG"\n');
+    realGit(fixture.deployment, ['switch', '--detach', fixture.initialCommit]);
+    const result = select(fixture, dir, {
+      SIGNATURE_LOG: signatureLog,
+      WINDSURFAPI_UPDATE_ATTESTATION: 'warn',
+    });
+    assert.equal(result.status, 0, result.stdout + result.stderr);
+    assert.equal(realGit(fixture.deployment, ['rev-parse', 'HEAD']), fixture.releaseCommit);
+    assert.equal(realGit(fixture.deployment, ['rev-parse', '--abbrev-ref', 'HEAD']), 'HEAD');
+    const cosign = readFileSync(signatureLog, 'utf8').trim().split('\n');
+    const identity = cosign[cosign.indexOf('--certificate-identity-regexp') + 1];
+    assert.ok(new RegExp(identity).test(
+      'https://github.com/dwgx/WindsurfAPI/.github/workflows/release.yml@refs/tags/v3.2.11'));
+    assert.ok(!new RegExp(identity).test(
+      'https://github.com/dwgx/WindsurfAPI/.github/workflows/release.yml@refs/tags/v3.141.592661'));
+    assert.ok(!new RegExp(identity).test(
+      'https://github.com/dwgx/WindsurfAPI/.github/workflows/release.yml@refs/tags/v3x2x11'));
+    assert.equal(cosign[cosign.indexOf('--certificate-oidc-issuer') + 1],
+      'https://token.actions.githubusercontent.com');
+    assert.notEqual(cosign.at(-1), join(dir, 'release-attestation.json'),
+      'Cosign must verify a private snapshot of the attestation bytes that were parsed');
+  });
+
+  for (const [label, alteration, reason] of [
+    ['wrong tag', { tag: legacyTag }, /attestation tag .* does not match/i],
+    ['wrong commit', { commit: OTHER_COMMIT }, /attestation commit .* does not match/i],
+    ['wrong tree', { tree: OTHER_COMMIT }, /attestation tree .* does not match/i],
+    ['wrong repository', { repository: 'another/publisher' }, /attestation repository .* does not match/i],
+    ['missing repository', { repository: '' }, /attestation repository .* does not match/i],
+  ]) {
+    shellIt(`refuses a signed attestation with ${label}`, () => {
+      const fixture = migrationFixture();
+      refused(fixture, select(fixture, stageAttestation(fixture, alteration)), reason);
+    });
+  }
+
+  shellIt('refuses a missing signature even when the operator set warn mode', () => {
+    const fixture = migrationFixture();
+    const dir = stageAttestation(fixture);
+    rmSync(join(dir, 'release-attestation.json.sigstore.json'));
+    const result = select(fixture, dir, { WINDSURFAPI_UPDATE_ATTESTATION: 'warn' });
+    refused(fixture, result, /no \.sigstore\.json bundle/i);
+  });
+
+  shellIt('refuses an invalid signature before changing Git or the service', () => {
+    const fixture = migrationFixture();
+    writeExecutable(join(fixture.stubBin, 'cosign'), '#!/usr/bin/env bash\necho "certificate identity mismatch" >&2\nexit 1\n');
+    refused(fixture, select(fixture, stageAttestation(fixture)), /certificate identity mismatch/i);
+  });
+
+  shellIt('refuses an unadvertised tag without falling back to the legacy tag', () => {
+    const fixture = migrationFixture();
+    realGit(fixture.deployment, ['tag', 'v3.2.12']);
+    refused(fixture, select(fixture, stageAttestation(fixture), {}, 'v3.2.12'), /v3\.2\.12.*not advertised/i);
+  });
+
+  shellIt('refuses an elected lightweight ref even with a matching attestation', () => {
+    const fixture = migrationFixture({ annotated: false });
+    refused(fixture, select(fixture, stageAttestation(fixture)), /requires an annotated release tag/i);
+  });
+
+  shellIt('refuses an elected tag outside the fetched release branch', () => {
+    const fixture = migrationFixture();
+    realGit(fixture.seed, ['push', '--force', fixture.origin, `${fixture.initialCommit}:refs/heads/master`]);
+    refused(fixture, select(fixture, stageAttestation(fixture)), /not reachable from origin\/master/i);
+  });
+
+  shellIt('refuses a divergent local commit and a rewind', () => {
+    const fixture = migrationFixture();
+    realGit(fixture.deployment, ['reset', '--hard', 'origin/master']);
+    const newerHead = realGit(fixture.deployment, ['rev-parse', 'HEAD']);
+    refused(fixture, select(fixture, stageAttestation(fixture)), /requires a fast-forward/i, newerHead);
+
+    realGit(fixture.deployment, ['reset', '--hard', fixture.initialCommit]);
+    realGit(fixture.deployment, ['-c', 'user.name=Fixture', '-c', 'user.email=test@example.invalid',
+      'commit', '--allow-empty', '-m', 'local work']);
+    const localHead = realGit(fixture.deployment, ['rev-parse', 'HEAD']);
+    refused(fixture, select(fixture, stageAttestation(fixture)), /requires a fast-forward/i, localHead);
+  });
+
+  shellIt('rejects both force overrides when selecting an exact tag', () => {
+    const fixture = migrationFixture();
+    const dir = stageAttestation(fixture);
+    for (const flag of ['WINDSURFAPI_UPDATE_FORCE', 'WINDSURFAPI_UPDATE_FORCE_RESET']) {
+      refused(fixture, select(fixture, dir, { [flag]: '1' }), /cannot be combined with .*FORCE/i);
+    }
+  });
+
+  shellIt('reports a failed signed update when health verification restores the prior commit', () => {
+    const fixture = migrationFixture();
+    const curlPath = join(fixture.stubBin, 'curl');
+    const curl = readFileSync(curlPath, 'utf8').replace(
+      'pid="$(cat',
+      '[ "$commit" = "$FAIL_HEALTH_COMMIT" ] && exit 22\npid="$(cat',
+    );
+    writeExecutable(curlPath, curl);
+    const result = select(fixture, stageAttestation(fixture), {
+      FAIL_HEALTH_COMMIT: fixture.releaseCommit.slice(0, 12),
+    });
+    const output = result.stdout + result.stderr;
+    assert.notEqual(result.status, 0, output);
+    assert.match(output, /Rolled back to .*service healthy/i);
+    assert.equal(realGit(fixture.deployment, ['rev-parse', 'HEAD']), fixture.initialCommit);
+  });
+
+  shellIt('refuses a dirty checkout before running the local verifier', () => {
+    const fixture = migrationFixture();
+    const dir = stageAttestation(fixture);
+    const marker = join(fixture.root, 'cosign-arguments');
+    writeFileSync(join(fixture.deployment, 'operator-notes.txt'), 'unsaved local notes\n');
+    writeExecutable(join(fixture.stubBin, 'cosign'),
+      '#!/usr/bin/env bash\nprintf "%s\\n" "$@" > "$SIGNATURE_LOG"\n');
+    const result = select(fixture, dir, { SIGNATURE_LOG: marker });
+    assert.equal(existsSync(marker), false, 'dirty input must be rejected before signature verification');
+    refused(fixture, result, /clean checkout.*attestation/i);
+  });
+
+  shellIt('preserves files changed by the target service when health verification fails', () => {
+    const fixture = migrationFixture();
+    const curlPath = join(fixture.stubBin, 'curl');
+    const curl = readFileSync(curlPath, 'utf8').replace(
+      'pid="$(cat',
+      'printf "new operator data\\n" > release-marker.txt\nexit 22\npid="$(cat',
+    );
+    writeExecutable(curlPath, curl);
+    const result = select(fixture, stageAttestation(fixture));
+    const output = result.stdout + result.stderr;
+    assert.notEqual(result.status, 0, output);
+    assert.match(output, /rollback refused.*local changes/i);
+    assert.equal(realGit(fixture.deployment, ['rev-parse', 'HEAD']), fixture.releaseCommit);
+    assert.equal(readFileSync(join(fixture.deployment, 'release-marker.txt'), 'utf8'), 'new operator data\n');
+  });
+
+  shellIt('restores the previous checkout when the elected installer fails before service stop', () => {
+    const fixture = migrationFixture();
+    const result = select(fixture, stageAttestation(fixture), { FIXTURE_INSTALL_STATUS: '19' });
+    const output = result.stdout + result.stderr;
+    assert.equal(result.status, 19, output);
+    assert.doesNotMatch(output, /\[3\/5\]/);
+    assert.equal(realGit(fixture.deployment, ['rev-parse', 'HEAD']), fixture.initialCommit);
+  });
+
+  shellIt('preserves ignored operator state when a signed target would overwrite it', () => {
+    const fixture = migrationFixture();
+    const localFile = join(fixture.deployment, 'operator-state.json');
+    writeFileSync(join(fixture.deployment, '.git', 'info', 'exclude'), '/operator-state.json\n');
+    writeFileSync(localFile, '{"operator":"keep"}\n');
+    realGit(fixture.seed, ['reset', '--hard', fixture.releaseCommit]);
+    writeFileSync(join(fixture.seed, 'operator-state.json'), '{"published":"replace"}\n');
+    realGit(fixture.seed, ['add', 'operator-state.json']);
+    realGit(fixture.seed, ['commit', '-m', 'signed target collides with ignored state']);
+    const commit = realGit(fixture.seed, ['rev-parse', 'HEAD']);
+    const tree = realGit(fixture.seed, ['rev-parse', 'HEAD^{tree}']);
+    realGit(fixture.seed, ['tag', '-fa', '-m', targetTag, targetTag]);
+    realGit(fixture.seed, ['push', '--force', fixture.origin, 'master', `refs/tags/${targetTag}`]);
+    const dir = stageAttestation(fixture, { commit, tree });
+    refused(fixture, select(fixture, dir), /would overwrite ignored runtime data/i);
+    assert.equal(readFileSync(localFile, 'utf8'), '{"operator":"keep"}\n');
   });
 });

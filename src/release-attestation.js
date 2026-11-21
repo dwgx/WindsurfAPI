@@ -343,7 +343,7 @@ export function runCosignVerifyBlob({
   }
 }
 
-export function assertAttestationMatches(attestation, { tag, commit, repository = '' } = {}) {
+export function assertAttestationMatches(attestation, { tag, commit, tree = '', repository = '' } = {}) {
   if (attestation.tag !== tag) {
     throw new ReleaseAttestationError(
       'ERR_RELEASE_ATTESTATION_MISMATCH',
@@ -356,7 +356,13 @@ export function assertAttestationMatches(attestation, { tag, commit, repository 
       `release attestation commit ${attestation.commit} does not match selected commit ${String(commit || '').toLowerCase()}`,
     );
   }
-  if (repository && attestation.repository && attestation.repository.toLowerCase() !== repository.toLowerCase()) {
+  if (tree && attestation.tree !== tree) {
+    throw new ReleaseAttestationError(
+      'ERR_RELEASE_ATTESTATION_MISMATCH',
+      `release attestation tree ${attestation.tree} does not match selected tree ${tree}`,
+    );
+  }
+  if (repository && (tree || attestation.repository) && attestation.repository.toLowerCase() !== repository.toLowerCase()) {
     throw new ReleaseAttestationError(
       'ERR_RELEASE_ATTESTATION_MISMATCH',
       `release attestation repository ${attestation.repository} does not match ${repository}`,
@@ -376,6 +382,7 @@ export async function verifyReleaseAttestation(options = {}) {
   const {
     tag,
     commit,
+    tree = '',
     mode = 'warn',
     dir = '',
     repository = '',
@@ -396,6 +403,11 @@ export async function verifyReleaseAttestation(options = {}) {
   const normalizedCommit = String(commit || '').toLowerCase();
   if (!validObjectId(normalizedCommit)) {
     throw new ReleaseAttestationError('ERR_RELEASE_ATTESTATION_INVALID', `selected commit is not a 40/64-hex object id: ${normalizedCommit || '(missing)'}`);
+  }
+
+  const normalizedTree = String(tree || '').toLowerCase();
+  if (normalizedTree && !validObjectId(normalizedTree)) {
+    throw new ReleaseAttestationError('ERR_RELEASE_ATTESTATION_INVALID', `selected tree is not a 40/64-hex object id: ${normalizedTree}`);
   }
 
   let material;
@@ -426,6 +438,7 @@ export async function verifyReleaseAttestation(options = {}) {
   assertAttestationMatches(attestation, {
     tag: normalizedTag,
     commit: normalizedCommit,
+    tree: normalizedTree,
     repository,
   });
 
@@ -441,16 +454,15 @@ export async function verifyReleaseAttestation(options = {}) {
     return { status: 'unsigned', mode: normalizedMode, tag: normalizedTag, commit: normalizedCommit, attestation, warning };
   }
 
-  let workDir = material.dir;
-  let cleanup = null;
-  if (!workDir) {
-    workDir = mkdtempSync(join(tempRoot || tmpdir(), 'windsurfapi-attestation-'));
-    writeFileSync(join(workDir, ATTESTATION_FILENAME), material.text, 'utf8');
-    writeFileSync(join(workDir, ATTESTATION_BUNDLE_FILENAME), material.bundleText, 'utf8');
-    cleanup = () => rmSync(workDir, { recursive: true, force: true });
-  }
-
+  // Exact source verification must authenticate the same bytes that were
+  // parsed, even if an operator refreshes a pre-staged directory concurrently.
+  const snapshot = !material.dir || Boolean(normalizedTree);
+  const workDir = snapshot ? mkdtempSync(join(tempRoot || tmpdir(), 'windsurfapi-attestation-')) : material.dir;
   try {
+    if (snapshot) {
+      writeFileSync(join(workDir, ATTESTATION_FILENAME), material.text, 'utf8');
+      writeFileSync(join(workDir, ATTESTATION_BUNDLE_FILENAME), material.bundleText, 'utf8');
+    }
     const call = {
       cosign,
       bundlePath: join(workDir, ATTESTATION_BUNDLE_FILENAME),
@@ -475,7 +487,7 @@ export async function verifyReleaseAttestation(options = {}) {
     }
     throw err;
   } finally {
-    if (cleanup) cleanup();
+    if (snapshot) rmSync(workDir, { recursive: true, force: true });
   }
 
   log(`verified release attestation for ${normalizedTag} at ${normalizedCommit}`);
