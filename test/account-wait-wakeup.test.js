@@ -115,3 +115,60 @@ test('an active caller can fall back after its pin wait expires', async t => {
   assert.equal(auth.getRpmStats()[account.id].used, 0);
   assert.deepEqual(accounting(substitute, checkout), { acquired: true, inflight: 1, rpm: 1 });
 });
+
+for (const reason of ['cooldown', 'RPM window']) {
+  test(`a pin can observe ${reason} recovery between ordinary polls`, async t => {
+    const account = seedAccount(t, 1500);
+    sticky.setStickyBinding(callerKey, null, account.id, fixtureKey);
+    if (reason === 'cooldown') {
+      auth.markRateLimited(fixtureKey, 1200);
+    } else {
+      const oldest = Date.now() - 58_800;
+      const { limit } = auth.getRpmStats()[account.id];
+      account._rpmHistory = Array.from({ length: limit }, (_, index) => oldest + index);
+    }
+    assert.equal(auth.getAccountAvailability(fixtureKey).retryAfterMs, 1200);
+
+    const waiting = waitForOwnPin([], null, null, callerKey, null);
+    t.mock.timers.tick(1000);
+    await Promise.resolve();
+    t.mock.timers.tick(200);
+    await Promise.resolve();
+    const inflightAtRecovery = account._inflight || 0;
+    t.mock.timers.tick(1);
+    await Promise.resolve();
+    const inflightAfterRecovery = account._inflight || 0;
+    t.mock.timers.tick(299);
+
+    const result = await waiting;
+    if (result.acct) auth.releaseAccountById(result.acct.id);
+    assert.deepEqual(
+      { inflightAtRecovery, inflightAfterRecovery, accountId: result.acct?.id },
+      { inflightAtRecovery: reason === 'cooldown' ? 1 : 0, inflightAfterRecovery: 1, accountId: account.id },
+    );
+  });
+}
+
+test('a stale pin recovery hint adds only one probe', async t => {
+  const account = seedAccount(t, 1500);
+  sticky.setStickyBinding(callerKey, null, account.id, fixtureKey);
+  auth.markRateLimited(fixtureKey, 1200);
+  const schedule = globalThis.setTimeout;
+  const pollDelays = [];
+  t.mock.method(globalThis, 'setTimeout', (fn, ms, ...args) => {
+    if (ms <= 1500) pollDelays.push(ms);
+    return schedule(fn, ms, ...args);
+  });
+
+  const waiting = waitForOwnPin([], null, null, callerKey, null);
+  t.mock.timers.tick(1000);
+  auth.markRateLimited(fixtureKey, 1000);
+  await Promise.resolve();
+  t.mock.timers.tick(200);
+  await Promise.resolve();
+  t.mock.timers.tick(300);
+
+  const result = await waiting;
+  assert.deepEqual(accounting(account, result.acct), { acquired: false, inflight: 0, rpm: 0 });
+  assert.deepEqual(pollDelays, [1000, 200, 300]);
+});

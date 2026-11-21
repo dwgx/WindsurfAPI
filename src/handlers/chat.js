@@ -3308,13 +3308,23 @@ async function waitForOwnPin(tried, signal, modelKey, callerKey, connectSelector
   if (!Number.isFinite(avail.retryAfterMs) || avail.retryAfterMs > budgetMs) return NO_WAIT;
 
   const deadline = started + budgetMs;
+  // An RPM entry falls out only after its timestamp crosses the cutoff.
+  const recoveryDelay = avail.reason === 'rpm_full'
+    ? Math.floor(avail.retryAfterMs) + 1
+    : Math.ceil(avail.retryAfterMs);
+  let recoveryProbeAt = Date.now() + recoveryDelay;
   let waited = false;
   while (Date.now() < deadline) {
     if (signal?.aborted) return { acct: null, aborted: true };
-    await new Promise(r => setTimeout(r, Math.min(QUEUE_RETRY_MS, Math.max(1, deadline - Date.now()))));
+    const now = Date.now();
+    const wakeAt = Math.min(now + QUEUE_RETRY_MS, recoveryProbeAt, deadline);
+    await new Promise(r => setTimeout(r, Math.max(1, wakeAt - now)));
     waited = true;
     if (signal?.aborted) return { acct: null, aborted: true };
-    if (Date.now() >= deadline) break;
+    const resumedAt = Date.now();
+    if (resumedAt >= deadline) break;
+    // Use the estimated recovery once. A failed probe resumes ordinary polling.
+    if (wakeAt === recoveryProbeAt || resumedAt >= recoveryProbeAt) recoveryProbeAt = Infinity;
     // pinOnly: reuses the real usability test, and cannot answer with a substitute or
     // clear the pin on a miss.
     const acct = getApiKey(tried, modelKey, callerKey, connectSelector, { ...opts, pinOnly: true });
