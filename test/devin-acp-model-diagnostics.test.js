@@ -17,6 +17,7 @@ const savedEnv = Object.fromEntries(envKeys.map(key => [key, process.env[key]]))
 const privateArgument = 'PrivateArgFixture9845';
 const privateError = 'PrivateRpcErrorFixture9845';
 const privatePrompt = 'PrivatePromptFixture9845';
+const privateModel = 'PrivateModelFixture9845';
 const fixtureKey = 'test-account-fixture';
 
 afterEach(() => {
@@ -26,6 +27,20 @@ afterEach(() => {
     else process.env[key] = value;
   }
 });
+
+function modelOption(currentValue, { id = 'model', values = ['swe-1.6', 'arena-smart'], grouped = false } = {}) {
+  const choices = values.map(value => ({ name: value, value }));
+  return {
+    id,
+    name: 'Session model',
+    type: 'select',
+    currentValue,
+    options: grouped ? [{ group: 'available', name: 'Available', options: choices }] : choices,
+  };
+}
+
+const successfulConfig = { result: { configOptions: [modelOption('swe-1.6')] } };
+const rejectedConfig = { error: { code: -32602, message: privateError } };
 
 function installPeer({ config }) {
   const wire = { args: null, requests: [] };
@@ -50,12 +65,10 @@ function installPeer({ config }) {
         } else if (method === 'session/new') {
           send({ id, result: {
             sessionId: 'diagnostic-session',
-            configOptions: config ? [{ id: 'model', options: [{ value: 'swe-1.6' }] }] : [],
+            configOptions: config ? [modelOption('swe-1.6')] : [],
           } });
         } else if (method === 'session/set_config_option') {
-          if (config === 'rejected') send({ id, error: { code: -32602, message: privateError } });
-          else if (config === 'malformed') send({ id });
-          else send({ id, result: {} });
+          send({ id, ...config });
         } else if (method === 'session/prompt') {
           send({ method: 'session/update', params: { update: {
             sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'ready' },
@@ -120,7 +133,7 @@ async function runCase(name, { args = ['acp'], config, configEnabled = Boolean(c
   assert.equal(rows[0].ctx.backend_confirmed_model, null);
   assert.equal(rows[0].ctx.tool_owner, 'agent');
   const logText = JSON.stringify(rows);
-  for (const value of [privateArgument, privateError, privatePrompt, fixtureKey, 'diagnostic-session']) {
+  for (const value of [privateArgument, privateError, privatePrompt, privateModel, fixtureKey, 'diagnostic-session']) {
     assert.ok(!logText.includes(value), 'ACP model selection log included non-model input');
   }
   return { wire, log: rows[0] };
@@ -132,47 +145,83 @@ describe('ACP model selection operator diagnostics', () => {
     assert.deepEqual(wire.args, ['acp', '--model', 'swe-1.6']);
     assert.equal(log.ctx.launch_model, 'swe-1.6');
     assert.equal(log.ctx.session_config_status, 'disabled');
+    assert.equal(log.ctx.session_attempted_model, null);
     assert.equal(log.ctx.session_model, null);
     assert.equal(log.ctx.effective_model, 'swe-1.6');
     assert.equal(log.ctx.selection_source, 'request_argv');
   });
 
-  it('exposes a conflict between an operator launch pin and an accepted caller setting', async () => {
-    const { wire, log } = await runCase('pin', { args: ['acp', '--model', 'arena-fast'], config: 'accepted' });
+  it('exposes a conflict between an operator launch pin and the acknowledged option', async () => {
+    const { wire, log } = await runCase('pin', { args: ['acp', '--model', 'arena-fast'], config: successfulConfig });
     assert.deepEqual(wire.args, ['acp', '--model', 'arena-fast']);
     assert.equal(wire.requests.find(row => row.method === 'session/set_config_option').params.value, 'swe-1.6');
     assert.equal(log.ctx.launch_model, 'arena-fast');
     assert.equal(log.ctx.launch_source, 'operator_argv');
-    assert.equal(log.ctx.session_config_status, 'accepted');
+    assert.equal(log.ctx.session_config_status, 'acknowledged');
+    assert.equal(log.ctx.session_attempted_model, 'swe-1.6');
     assert.equal(log.ctx.session_model, 'swe-1.6');
     assert.equal(log.ctx.effective_model, null);
     assert.equal(log.ctx.selection_source, 'conflict');
   });
 
   it('keeps the launch selection when an advertised session setting rejects the request', async () => {
-    const { wire, log } = await runCase('rejected', { config: 'rejected' });
+    const { wire, log } = await runCase('rejected', { config: rejectedConfig });
     assert.deepEqual(wire.args, ['acp', '--model', 'swe-1.6']);
     assert.equal(log.level, 'warn');
     assert.equal(log.ctx.session_config_status, 'rejected');
-    assert.equal(log.ctx.session_model, 'swe-1.6');
+    assert.equal(log.ctx.session_attempted_model, 'swe-1.6');
+    assert.equal(log.ctx.session_model, null);
     assert.equal(log.ctx.effective_model, 'swe-1.6');
     assert.equal(log.ctx.selection_source, 'request_argv');
     assert.ok(!JSON.stringify(getLogs()).includes(privateError), 'config rejection leaked raw RPC error');
   });
 
-  it('reports the accepted session model when it agrees with argv', async () => {
-    const { log } = await runCase('accepted', { config: 'accepted' });
-    assert.equal(log.ctx.session_config_status, 'accepted');
+  it('reports the acknowledged session model when it agrees with argv', async () => {
+    const { log } = await runCase('acknowledged', { config: successfulConfig });
+    assert.equal(log.ctx.session_config_status, 'acknowledged');
+    assert.equal(log.ctx.session_attempted_model, 'swe-1.6');
+    assert.equal(log.ctx.session_model, 'swe-1.6');
     assert.equal(log.ctx.effective_model, 'swe-1.6');
     assert.equal(log.ctx.selection_source, 'session_config');
   });
 
-  it('does not treat a config response without a result as an acknowledgement', async () => {
-    const { log } = await runCase('unresolved', { args: ['acp', '--model', 'arena-fast'], config: 'malformed' });
-    assert.equal(log.ctx.session_config_status, 'unresolved');
+  it('reports a returned currentValue that differs from the attempted and launch model', async () => {
+    const config = { result: { configOptions: [modelOption('arena-smart', { grouped: true })] } };
+    const { log } = await runCase('different-current-value', { config });
+    assert.equal(log.ctx.session_config_status, 'acknowledged');
+    assert.equal(log.ctx.session_attempted_model, 'swe-1.6');
+    assert.equal(log.ctx.session_model, 'arena-smart');
     assert.equal(log.ctx.effective_model, null);
     assert.equal(log.ctx.selection_source, 'conflict');
   });
+
+  it('keeps unknown values out of the logs even when the option readback is valid', async () => {
+    const config = { result: { configOptions: [modelOption(privateModel, { values: [privateModel] })] } };
+    const { log } = await runCase('private-current-value', { config });
+    assert.equal(log.ctx.session_config_status, 'acknowledged');
+    assert.equal(log.ctx.session_attempted_model, 'swe-1.6');
+    assert.equal(log.ctx.session_model, null);
+    assert.equal(log.ctx.effective_model, null);
+  });
+
+  const invalidReadbacks = {
+    missing: {},
+    null: { result: null },
+    empty: { result: {} },
+    'wrong-id': { result: { configOptions: [modelOption('swe-1.6', { id: 'unrelated' })] } },
+    'unlisted-value': { result: { configOptions: [modelOption('swe-1.6', { values: ['arena-smart'] })] } },
+    'duplicate-id': { result: { configOptions: [modelOption('swe-1.6'), modelOption('arena-smart')] } },
+  };
+  for (const [name, config] of Object.entries(invalidReadbacks)) {
+    it(`leaves the session model unconfirmed when the configuration readback is ${name}`, async () => {
+      const { log } = await runCase('unresolved-' + name, { config });
+      assert.equal(log.ctx.session_config_status, 'unresolved');
+      assert.equal(log.ctx.session_attempted_model, 'swe-1.6');
+      assert.equal(log.ctx.session_model, null);
+      assert.equal(log.ctx.effective_model, null);
+      assert.equal(log.ctx.selection_source, 'unknown');
+    });
+  }
 
   it('reports a prompt hint alone when the argv cannot set a model before the option terminator', async () => {
     const { wire, log } = await runCase('prompt-only', { args: ['acp', '--'], configEnabled: true });

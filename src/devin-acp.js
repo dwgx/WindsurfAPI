@@ -627,29 +627,48 @@ function observeLaunchModel(args, operatorArgCount) {
   return { source, value };
 }
 
-function logAcpModelSelection({ modelDiagnostics, launch, sessionStatus, sessionValue, hasHint, attempt }) {
+function readAcpConfigSelection(response, configId) {
+  const configOptions = response.result?.configOptions;
+  if (response.jsonrpc !== '2.0' || typeof configId !== 'string' || !Array.isArray(configOptions)) return null;
+  // ACP v1 returns the complete option list. The reply is correlated to the
+  // request by the pump, and the same option id must appear exactly once.
+  const matches = configOptions.filter(option => option?.id === configId);
+  if (matches.length !== 1) return null;
+  const { name, type, currentValue, options } = matches[0];
+  if (type !== 'select' || typeof name !== 'string' || typeof currentValue !== 'string'
+    || !currentValue || !Array.isArray(options)) return null;
+  const grouped = options.some(option => option?.group !== undefined || Array.isArray(option?.options));
+  if (grouped && !options.every(group => typeof group?.group === 'string'
+    && typeof group.name === 'string' && Array.isArray(group.options))) return null;
+  const choices = grouped ? options.flatMap(group => group.options) : options;
+  if (!choices.every(choice => typeof choice?.value === 'string' && typeof choice.name === 'string')) return null;
+  const values = new Set(choices.map(choice => choice.value));
+  return values.size === choices.length && values.has(currentValue) ? currentValue : null;
+}
+
+function logAcpModelSelection({ modelDiagnostics, launch, sessionStatus, sessionAttempt, sessionCurrent, hasHint, attempt }) {
   const { requestId, requestedModel } = modelDiagnostics || {};
   const rejected = sessionStatus === 'rejected';
   if (!requestId && !rejected) return;
   const launchModel = diagnosticModel(launch.value);
-  const sessionModel = diagnosticModel(sessionValue);
-  const configAccepted = sessionStatus === 'accepted';
-  const configPending = sessionStatus === 'unresolved';
-  let source = hasHint && !configPending ? 'prompt_hint' : 'unknown';
+  const sessionModel = diagnosticModel(sessionCurrent);
+  let source = 'unknown';
   let effectiveModel = null;
 
-  if (launch.source === 'ambiguous') {
-    source = 'unknown';
-  } else if (launch.source !== 'none' && (configAccepted || configPending) && launch.value !== sessionValue) {
-    source = 'conflict';
-  } else if (configAccepted && sessionModel) {
-    source = 'session_config';
-    effectiveModel = sessionModel;
-  } else if (launch.source !== 'none') {
-    source = launchModel ? launch.source : 'unknown';
-    effectiveModel = launchModel;
-  } else if (configAccepted) {
-    source = 'unknown';
+  if (launch.source !== 'ambiguous' && sessionStatus !== 'unresolved') {
+    if (sessionStatus === 'acknowledged') {
+      if (launch.source !== 'none' && launch.value !== sessionCurrent) {
+        source = 'conflict';
+      } else if (sessionModel) {
+        source = 'session_config';
+        effectiveModel = sessionModel;
+      }
+    } else if (launchModel) {
+      source = launch.source;
+      effectiveModel = launchModel;
+    } else if (launch.source === 'none' && hasHint) {
+      source = 'prompt_hint';
+    }
   }
 
   const level = rejected ? 'warn' : 'info';
@@ -659,6 +678,7 @@ function logAcpModelSelection({ modelDiagnostics, launch, sessionStatus, session
     requested_model: diagnosticModel(requestedModel),
     launch_model: launchModel,
     launch_source: launch.source,
+    session_attempted_model: diagnosticModel(sessionAttempt),
     session_model: sessionModel,
     session_config_status: sessionStatus,
     prompt_hint: hasHint,
@@ -753,7 +773,8 @@ async function runDevinAcpAttempt(prompt, {
   });
 
   let sessionStatus = 'not_reached';
-  let sessionValue = null;
+  let sessionAttempt = null;
+  let sessionCurrent = null;
   let hasHint = false;
   try {
     const init = await client.request('initialize', {
@@ -812,15 +833,19 @@ async function runDevinAcpAttempt(prompt, {
           return v === modelKey;
         });
         const value = chosen ? (chosen.value ?? chosen.id ?? chosen.name) : modelKey;
-        sessionValue = value;
+        sessionAttempt = value;
         sessionStatus = 'unresolved';
         const cfg = await client.request('session/set_config_option', {
           sessionId,
           configId,
           value,
         }, 15_000);
-        if (cfg.error) sessionStatus = 'rejected';
-        else if (Object.hasOwn(cfg, 'result')) sessionStatus = 'accepted';
+        if (cfg.error) {
+          sessionStatus = 'rejected';
+        } else {
+          sessionCurrent = readAcpConfigSelection(cfg, configId);
+          if (sessionCurrent !== null) sessionStatus = 'acknowledged';
+        }
       }
     }
 
@@ -849,6 +874,6 @@ async function runDevinAcpAttempt(prompt, {
     };
   } finally {
     client.close();
-    logAcpModelSelection({ modelDiagnostics, launch, sessionStatus, sessionValue, hasHint, attempt });
+    logAcpModelSelection({ modelDiagnostics, launch, sessionStatus, sessionAttempt, sessionCurrent, hasHint, attempt });
   }
 }
