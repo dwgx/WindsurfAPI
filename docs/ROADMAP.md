@@ -12,6 +12,13 @@ The public history page is live. [Release notes](releases/RELEASE_NOTES_3.2.11.m
 
 ## Next increments
 
+The follow-up branch has a one-shot signed source selector and dedicated
+side-effect-free account preview routes. Its import fixtures cover mixed
+JSON, repeated imports and unsupported entries with user-visible positions.
+Its updater fixtures cover verification, local edits and rollback before
+and after service stop. These features await a future release. [Source upgrade
+verification](RELEASE-SIGNING.md) · [Import preview tests](../test/dashboard-import-text-token-pair.test.js)
+
 | Work | Acceptance |
 | --- | --- |
 | Explicit signed source upgrades | Stage the operator's elected tag, check its annotated ref, exact signing workflow, commit, tree and ancestry, and preserve operator changes through rollback. Old installations use the [signed staged migration](releases/RELEASE_NOTES_3.2.11.md#signed-upgrade). |
