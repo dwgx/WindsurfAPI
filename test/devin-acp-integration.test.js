@@ -3,8 +3,12 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { EventEmitter } from 'node:events';
 import { handleChatCompletions } from '../src/handlers/chat.js';
-import { __resetDevinAcpProbeCache } from '../src/devin-acp.js';
+import { bindClientAbort } from '../src/server.js';
+import { __resetDevinAcpProbeCache, __setDevinAcpSpawnForTest } from '../src/devin-acp.js';
+import { createRequestBudget } from '../src/request-budget.js';
+import { getSpecialAgentStatus, runDevinAcp } from '../src/special-agent.js';
 import {
   getModelAccessConfig,
   setModelAccessList,
@@ -36,6 +40,8 @@ const ENV_KEYS = [
   'DEVIN_CLI_WORKDIR',
   'DEVIN_ONLY',
   'DEVIN_ACP_PROBE',
+  'DEVIN_ACP_CANCEL_GRACE_MS',
+  'DEVIN_MAX_PROCS',
 ];
 const originalEnv = Object.fromEntries(ENV_KEYS.map(k => [k, process.env[k]]));
 const originalModelAccess = getModelAccessConfig();
@@ -193,6 +199,109 @@ describe('ACP integration — full HTTP -> ACP -> response path', () => {
     const content = result.body.choices[0].message.content;
     assert.match(content, /KEY=key-only/);
     assert.match(content, /SERVER=\|/); // empty server segment
+  });
+
+  it('cancels the real buffered runner when the HTTP client closes mid-prompt', async t => {
+    process.env.WINDSURFAPI_SPECIAL_AGENT_BACKEND = 'devin-cli';
+    process.env.DEVIN_CLI_MODE = 'acp';
+    process.env.DEVIN_CLI_USE_ACCOUNT_POOL = '1';
+    process.env.DEVIN_ACP_PROBE = '0';
+    process.env.DEVIN_ACP_CANCEL_GRACE_MS = '250';
+    const response = new EventEmitter();
+    response.writableEnded = false;
+    const { signal } = bindClientAbort(response);
+    const child = new EventEmitter();
+    child.stdout = new EventEmitter();
+    child.stderr = new EventEmitter();
+    child.stdin = Object.assign(new EventEmitter(), { writable: true });
+    child.kill = () => child.emit('close', 0);
+    const frames = [];
+    const replies = {
+      initialize: { protocolVersion: 1 },
+      authenticate: {},
+      'session/new': { sessionId: 'stub-session' },
+      'session/prompt': { stopReason: 'end_turn' },
+    };
+    child.stdin.write = (line) => {
+      const frame = JSON.parse(line);
+      frames.push(frame);
+      queueMicrotask(() => {
+        if (frame.method === 'session/prompt') response.emit('close');
+        if (frame.method === 'session/cancel') child.emit('close', 0);
+        if (Object.hasOwn(replies, frame.method)) {
+          child.stdout.emit('data', JSON.stringify({
+            jsonrpc: '2.0', id: frame.id, result: replies[frame.method],
+          }) + '\n');
+        }
+      });
+      return true;
+    };
+    __setDevinAcpSpawnForTest(() => child);
+    t.after(() => __setDevinAcpSpawnForTest(null));
+
+    const settled = [];
+    const result = await handleChatCompletions({
+      model: 'swe-1.6', messages: [{ role: 'user', content: 'close during a prompt' }],
+    }, {
+      ...poolContext({ id: 'stub-account', apiKey: 'k', settleReservation: refund => settled.push(refund) }),
+      signal,
+    });
+    assert.equal(result.status, 499);
+    assert.equal(result.body.error.code, 'client_disconnect');
+    assert.equal(frames.filter(frame => frame.method === 'session/prompt').length, 1);
+    assert.deepEqual(frames.filter(frame => frame.method === 'session/cancel'), [
+      { jsonrpc: '2.0', method: 'session/cancel', params: { sessionId: 'stub-session' } },
+    ]);
+    assert.deepEqual(settled, [true]);
+  });
+
+  it('clamps the ACP process-slot wait to the route deadline and refunds that checkout', async t => {
+    process.env.WINDSURFAPI_SPECIAL_AGENT_BACKEND = 'devin-cli';
+    process.env.DEVIN_CLI_MODE = 'acp';
+    process.env.DEVIN_CLI_USE_ACCOUNT_POOL = '1';
+    process.env.DEVIN_ACP_PROBE = '0';
+    process.env.DEVIN_MAX_PROCS = '1';
+    t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: Date.now() });
+
+    const started = Promise.withResolvers();
+    const hold = new AbortController();
+    let spawns = 0;
+    __setDevinAcpSpawnForTest(() => {
+      spawns++;
+      const child = new EventEmitter();
+      child.stdout = new EventEmitter();
+      child.stderr = new EventEmitter();
+      child.stdin = Object.assign(new EventEmitter(), { writable: true, write: started.resolve });
+      child.kill = () => child.emit('close', 0);
+      return child;
+    });
+    t.after(() => {
+      hold.abort();
+      __setDevinAcpSpawnForTest(null);
+    });
+    const holdingSlot = assert.rejects(runDevinAcp('hold slot', { apiKey: 'k', signal: hold.signal }), { status: 499 });
+    await started.promise;
+
+    const budget = createRequestBudget({ deadlineMs: 10 });
+    const settled = [];
+    const queued = handleChatCompletions({
+      model: 'swe-1.6', messages: [{ role: 'user', content: 'wait for slot' }],
+    }, {
+      ...poolContext({ id: 'stub-account', apiKey: 'k', settleReservation: refund => settled.push(refund) }),
+      budget,
+    });
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(getSpecialAgentStatus().queued, 1);
+    t.mock.timers.tick(10);
+    const result = await queued;
+    assert.equal(result.status, 504);
+    assert.equal(result.body.error.code, 'windsurf_provider_deadline');
+    assert.deepEqual(settled, [true]);
+    assert.equal(budget.turnsUsed, 0);
+    assert.equal(spawns, 1);
+    assert.equal(getSpecialAgentStatus().queued, 0);
+    hold.abort();
+    await holdingSlot;
   });
 });
 

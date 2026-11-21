@@ -3,10 +3,12 @@ import assert from 'node:assert/strict';
 import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import { EventEmitter } from 'node:events';
 import { handleChatCompletions } from '../src/handlers/chat.js';
 import { handleMessages } from '../src/handlers/messages.js';
 import { handleResponses } from '../src/handlers/responses.js';
 import { getModelInfo, listModels, resolveModel } from '../src/models.js';
+import { budgetExceededError, createRequestBudget } from '../src/request-budget.js';
 import {
   getModelAccessConfig,
   setModelAccessList,
@@ -22,6 +24,7 @@ import {
 const ENV_KEYS = [
   'WINDSURFAPI_SPECIAL_AGENT_BACKEND',
   'DEVIN_CLI_ENABLED',
+  'DEVIN_CONNECT',
   'DEVIN_CLI_PATH',
   'DEVIN_CLI_ARGS_JSON',
   'DEVIN_CLI_ACP_ARGS_JSON',
@@ -1020,6 +1023,195 @@ describe('special-agent survival hardening', () => {
     await result.handler(res);
     assert.match(res.joined(), /: ping/, 'expected at least one SSE ping comment');
     assert.match(res.joined(), /"content":"done"/);
+  });
+});
+
+describe('ACP request cancellation and budget at chat routing', () => {
+  beforeEach(() => {
+    process.env.WINDSURFAPI_SPECIAL_AGENT_BACKEND = 'devin-cli';
+    process.env.DEVIN_CLI_MODE = 'acp';
+    process.env.DEVIN_CLI_USE_ACCOUNT_POOL = '1';
+    process.env.DEVIN_CONNECT = '0';
+  });
+
+  function acpAccount(calls) {
+    return {
+      id: 'acp-fixture',
+      apiKey: 'k',
+      settleReservation: (refund) => calls.push(['settle', refund]),
+    };
+  }
+
+  function hooks(calls, runner) {
+    return {
+      checkoutAccount: () => acpAccount(calls),
+      reportSuccess: () => calls.push(['success']),
+      reportError: () => calls.push(['error']),
+      runDevinAcp: runner,
+    };
+  }
+
+  function streamResponse() {
+    const res = new EventEmitter();
+    res.writableEnded = false;
+    res.writes = [];
+    res.write = frame => { res.writes.push(frame); return true; };
+    res.end = () => { res.writableEnded = true; };
+    return res;
+  }
+
+  const cancelled = {
+    status: 499,
+    body: { error: { message: 'Client closed request', type: 'client_disconnect', code: 'client_disconnect' } },
+  };
+
+  for (const vision of [false, true]) {
+    it(`forwards the caller signal through ${vision ? 'the Connect vision reroute' : 'the normal ACP route'}`, async () => {
+      if (vision) {
+        process.env.DEVIN_CONNECT = '1';
+        process.env.DEVIN_ACP_VISION = '1';
+      }
+      const control = new AbortController();
+      const budget = createRequestBudget();
+      const calls = [];
+      let seen;
+      const content = vision ? [
+        { type: 'text', text: 'describe the image' },
+        { type: 'image_url', image_url: { url: 'data:image/png;base64,iVBORw0KGgo=' } },
+      ] : 'hi';
+      const result = await handleChatCompletions({ model: 'swe-1.6', messages: [user(content)] }, {
+        signal: control.signal,
+        budget,
+        specialAgent: hooks(calls, async (prompt, opts) => {
+          seen = { prompt, signal: opts.signal, budget: opts.budget };
+          control.abort();
+          throw new Error('runner stopped after the caller closed');
+        }),
+      });
+      assert.equal(seen?.signal, control.signal);
+      assert.equal(seen?.budget, budget);
+      if (vision) assert.equal(seen.prompt.images.length, 1);
+      assert.deepEqual(result, cancelled);
+      assert.deepEqual(calls, [['settle', true]]);
+      assert.equal(budget.turnsUsed, 0, 'only the ACP transport charges prompt attempts');
+    });
+  }
+
+  it('cancels a late buffered response while retaining the completed ACP reservation', async () => {
+    const control = new AbortController();
+    const calls = [];
+    const result = await handleChatCompletions({ model: 'swe-1.6', messages: [user('hi')] }, {
+      signal: control.signal,
+      specialAgent: hooks(calls, async () => {
+        control.abort();
+        return { text: 'completed', usage: { totalTokens: 7 }, stopReason: 'end_turn' };
+      }),
+    });
+    assert.deepEqual(result, cancelled);
+    assert.deepEqual(calls, [['success'], ['settle', false]]);
+  });
+
+  for (const routeAbort of [true, false]) {
+    it(`stops a stream after ${routeAbort ? 'the route signal' : 'its response close event'} and retains completed usage`, async () => {
+      const control = new AbortController();
+      const budget = createRequestBudget({ stream: true });
+      const calls = [];
+      const res = streamResponse();
+      let seen;
+      let writesBeforeClose;
+      const result = await handleChatCompletions({
+        model: 'swe-1.6', stream: true, stream_options: { include_usage: true }, messages: [user('hi')],
+      }, {
+        signal: control.signal,
+        budget,
+        specialAgent: hooks(calls, async (_prompt, opts) => {
+          seen = opts;
+          writesBeforeClose = res.writes.length;
+          if (routeAbort) control.abort();
+          else res.emit('close');
+          opts.onChunk({ kind: 'message', text: 'late chunk' });
+          return { text: 'completed', usage: { totalTokens: 7 }, stopReason: 'end_turn' };
+        }),
+      });
+
+      await result.handler(res);
+      assert.equal(seen?.signal.aborted, true);
+      assert.equal(seen?.budget, budget);
+      assert.equal(res.writes.length, writesBeforeClose, 'no frames are emitted after disconnect');
+      assert.equal(res.listenerCount('close'), 0);
+      assert.deepEqual(calls, [['success'], ['settle', false]]);
+      assert.equal(budget.turnsUsed, 0);
+    });
+  }
+
+  it('returns a pre-cancelled request before probing or checking out an account', async () => {
+    const calls = [];
+    const result = await handleChatCompletions({ model: 'swe-1.6', messages: [user('hi')] }, {
+      signal: AbortSignal.abort(),
+      specialAgent: {
+        probeDevinCliAvailable: () => calls.push('probe'),
+        checkoutAccount: () => calls.push('checkout'),
+        runDevinAcp: () => calls.push('run'),
+      },
+    });
+    assert.deepEqual(result, cancelled);
+    assert.deepEqual(calls, []);
+  });
+
+  it('rejects an expired ACP budget before probing or reserve checkout', async () => {
+    let now = 0;
+    const budget = createRequestBudget({ now: () => now, deadlineMs: 5 });
+    now = 5;
+    const calls = [];
+    const result = await handleChatCompletions({ model: 'swe-1.6', messages: [user('hi')] }, {
+      budget,
+      specialAgent: {
+        probeDevinCliAvailable: () => calls.push('probe'),
+        checkoutAccount: () => calls.push('checkout'),
+        runDevinAcp: () => calls.push('run'),
+      },
+    });
+    assert.equal(result.status, 504);
+    assert.equal(result.body.error.type, 'upstream_deadline_exceeded');
+    assert.equal(result.body.error.code, 'windsurf_provider_deadline');
+    assert.deepEqual(calls, []);
+    assert.equal(budget.turnsUsed, 0);
+  });
+
+  it('stops an expired stream before entering its runner and releases the account', async () => {
+    let now = 0;
+    const budget = createRequestBudget({ now: () => now, deadlineMs: 5, stream: true });
+    const calls = [];
+    const result = await handleChatCompletions({
+      model: 'swe-1.6', stream: true, messages: [user('hi')],
+    }, {
+      budget,
+      specialAgent: hooks(calls, async () => { calls.push(['run']); return { text: 'unexpected' }; }),
+    });
+    assert.equal(result.stream, true);
+    now = 5;
+    const res = streamResponse();
+    await result.handler(res);
+    const errors = res.writes.filter(frame => frame.startsWith('data: {'))
+      .map(frame => JSON.parse(frame.slice(6))).filter(frame => frame.error);
+    assert.equal(errors[0]?.error.type, 'upstream_deadline_exceeded');
+    assert.equal(errors[0]?.error.code, 'windsurf_provider_deadline');
+    assert.equal(errors[0]?.error.status, 504);
+    assert.deepEqual(calls, [['settle', true]]);
+    assert.equal(budget.turnsUsed, 0);
+  });
+
+  it('maps the ACP transport budget verdict without counting an account error', async () => {
+    const calls = [];
+    const budget = createRequestBudget();
+    const result = await handleChatCompletions({ model: 'swe-1.6', messages: [user('hi')] }, {
+      budget,
+      specialAgent: hooks(calls, async () => { throw budgetExceededError(); }),
+    });
+    assert.equal(result.status, 504);
+    assert.equal(result.body.error.type, 'upstream_deadline_exceeded');
+    assert.equal(result.body.error.code, 'windsurf_provider_deadline');
+    assert.deepEqual(calls, [['settle', true]]);
   });
 });
 

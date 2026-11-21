@@ -4002,6 +4002,8 @@ async function _handleChatCompletionsInner(body, context, captureCacheGeneration
         requestId: reqId,
         messages: acpMessages,
         callerKey,
+        signal: context.signal,
+        budget: context.budget,
       }, context.specialAgent || {});
     }
     // Live free selectors are the ONLY sound degrade targets (#258 residual): the
@@ -5587,6 +5589,8 @@ async function _handleChatCompletionsInner(body, context, captureCacheGeneration
       requestId: reqId,
       messages,
       callerKey,
+      signal: context.signal,
+      budget: context.budget,
     }, context.specialAgent || {});
   }
 

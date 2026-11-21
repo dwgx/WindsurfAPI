@@ -35,6 +35,7 @@ import { runDevinAcpProcess, probeDevinCliAvailable, acpVisionEnabled } from './
 import { extractInlineImages as extractImagesFromContent } from './devin-connect.js';
 import { systemFingerprint } from './system-fingerprint.js';
 import { getBackendSwitch, strictUsageTotal } from './runtime-config.js';
+import { budgetExceededError, isBudgetExceededError } from './request-budget.js';
 import { toClientToolCallId } from './tool-ids.js';
 
 const SPECIAL_BACKEND = 'special_agent';
@@ -315,6 +316,33 @@ function errorResponse(status, type, message, extra = {}) {
   };
 }
 
+function clientDisconnectResponse() {
+  return errorResponse(499, 'client_disconnect', 'Client closed request', { code: 'client_disconnect' });
+}
+
+function requestAbortedError() {
+  return Object.assign(new Error('Request aborted'), { status: 499, type: 'request_aborted' });
+}
+
+function isClientDisconnect(err, signal) {
+  return signal?.aborted || Number(err?.status) === 499 || err?.type === 'request_aborted';
+}
+
+function acpBudgetError(budget) {
+  return budgetExceededError(`Devin ACP request budget exhausted (${budget.describe()})`);
+}
+
+function acpBudgetResponse(err) {
+  return errorResponse(504, 'upstream_deadline_exceeded',
+    redactCredentialFragments(sanitizeText(err.message || 'Devin ACP request budget exhausted')),
+    { code: 'windsurf_provider_deadline' });
+}
+
+function checkRequestAdmission(signal, budget) {
+  if (signal?.aborted) throw requestAbortedError();
+  if (budget && !budget.canStartAttempt()) throw acpBudgetError(budget);
+}
+
 function parseArgsTemplate(prompt, modelKey) {
   const raw = process.env.DEVIN_CLI_ARGS_JSON || '';
   let args;
@@ -344,7 +372,8 @@ function parseArgsTemplate(prompt, modelKey) {
 let activeProcs = 0;
 const waiters = [];
 
-function acquireSlot(signal) {
+function acquireSlot(signal, budget = null) {
+  checkRequestAdmission(signal, budget);
   if (activeProcs < maxProcs()) {
     activeProcs++;
     return Promise.resolve(() => releaseSlot());
@@ -352,35 +381,39 @@ function acquireSlot(signal) {
 
   return new Promise((resolve, reject) => {
     const started = Date.now();
+    const queueMs = queueTimeoutMs();
+    const waitMs = budget ? budget.waitMs(queueMs) : queueMs;
+    const cleanup = () => {
+      clearTimeout(timer);
+      signal?.removeEventListener('abort', onAbort);
+      const idx = waiters.indexOf(waiter);
+      if (idx !== -1) waiters.splice(idx, 1);
+    };
+    const onAbort = () => {
+      cleanup();
+      reject(requestAbortedError());
+    };
     const waiter = {
       resolve: () => {
-        clearTimeout(timer);
+        cleanup();
         activeProcs++;
         resolve(() => releaseSlot());
       },
-      reject,
     };
     const timer = setTimeout(() => {
-      const idx = waiters.indexOf(waiter);
-      if (idx !== -1) waiters.splice(idx, 1);
+      cleanup();
+      if (budget && (waitMs < queueMs || !budget.canStartAttempt())) {
+        reject(acpBudgetError(budget));
+        return;
+      }
       reject(Object.assign(new Error(`Devin CLI process pool is full after ${Date.now() - started}ms`), {
         status: 503,
         type: 'backend_pool_exhausted',
       }));
-    }, queueTimeoutMs());
+    }, Math.ceil(waitMs));
     timer.unref?.();
-    if (signal) {
-      signal.addEventListener('abort', () => {
-        clearTimeout(timer);
-        const idx = waiters.indexOf(waiter);
-        if (idx !== -1) waiters.splice(idx, 1);
-        reject(Object.assign(new Error('Request aborted while waiting for Devin CLI slot'), {
-          status: 499,
-          type: 'request_aborted',
-        }));
-      }, { once: true });
-    }
     waiters.push(waiter);
+    signal?.addEventListener('abort', onAbort, { once: true });
   });
 }
 
@@ -404,13 +437,16 @@ export function getSpecialAgentStatus() {
   };
 }
 
-export async function runDevinAcp(prompt, { modelKey = '', apiKey = '', apiServerUrl = '', signal = null, onChunk = null, modelDiagnostics = null } = {}) {
-  const release = await acquireSlot(signal);
+export async function runDevinAcp(prompt, {
+  modelKey = '', apiKey = '', apiServerUrl = '', signal = null, budget = null, onChunk = null, modelDiagnostics = null,
+} = {}) {
+  const release = await acquireSlot(signal, budget);
   try {
+    checkRequestAdmission(signal, budget);
     // GAP-ACP-05: forward onChunk so the live streamer's incremental chunks
     // actually reach the ACP pump. Without this the wrapper silently drops it
     // and the "real-time" stream degrades to a single buffered flush at the end.
-    return await runDevinAcpProcess(prompt, { modelKey, apiKey, apiServerUrl, signal, onChunk, modelDiagnostics });
+    return await runDevinAcpProcess(prompt, { modelKey, apiKey, apiServerUrl, signal, budget, onChunk, modelDiagnostics });
   } finally {
     release();
   }
@@ -419,6 +455,7 @@ export async function runDevinAcp(prompt, { modelKey = '', apiKey = '', apiServe
 export async function runDevinPrint(prompt, { modelKey = '', apiKey = '', signal = null } = {}) {
   const release = await acquireSlot(signal);
   try {
+    checkRequestAdmission(signal);
     const mode = getBackendSwitch('devinCliMode');
     if (mode !== 'print') {
       throw Object.assign(new Error(`DEVIN_CLI_MODE=${mode} is not implemented yet; use print for the first PoC`), {
@@ -467,7 +504,7 @@ export async function runDevinPrint(prompt, { modelKey = '', apiKey = '', signal
       timer.unref?.();
 
       const onAbort = () => {
-        fatalError = Object.assign(new Error('Request aborted'), { status: 499, type: 'request_aborted' });
+        fatalError = requestAbortedError();
         child.kill('SIGTERM');
       };
       if (signal) signal.addEventListener('abort', onAbort, { once: true });
@@ -618,19 +655,22 @@ function streamFromText({ id, created, model, messages, text, reasoning = '', us
  * literal can leak across a chunk boundary. Reasoning chunks are forwarded as
  * reasoning_content only when explicitly opted in.
  */
-function streamLiveAcp({ id, created, model, messages, prompt, modelKey, acct, runner, signal, onDone, includeUsage = false, modelDiagnostics }) {
+function streamLiveAcp({ id, created, model, messages, prompt, modelKey, acct, runner, signal, budget, onDone, includeUsage = false, modelDiagnostics }) {
   return {
     status: 200,
     stream: true,
     headers: { 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache' },
     handler: async (res) => {
       const fp = systemFingerprint(model);
+      const abortController = new AbortController();
+      const abortSignal = abortController.signal;
+      const canWrite = () => !abortSignal.aborted && !res.writableEnded && !res.destroyed;
       const send = data => {
         if (data && data.object === 'chat.completion.chunk') {
           if (data.system_fingerprint == null) data.system_fingerprint = fp;
           if (data.service_tier == null) data.service_tier = 'default';
         }
-        if (!res.writableEnded) res.write(`data: ${JSON.stringify(data)}\n\n`);
+        if (canWrite()) res.write(`data: ${JSON.stringify(data)}\n\n`);
       };
       const msgSanitizer = new PathSanitizeStream();
       const showReasoning = exposeReasoning();
@@ -643,32 +683,19 @@ function streamLiveAcp({ id, created, model, messages, prompt, modelKey, acct, r
       // DEVIN_TIMEOUT_MS (10 min default); with DEVIN_MAX_PROCS=1 that wedges
       // the whole backend on a single abandoned stream. runDevinAcpProcess
       // already kills the child on abort — we just have to fire it.
-      const abortController = new AbortController();
-      const onUpstreamAbort = () => abortController.abort();
+      const onRouteAbort = () => abortController.abort(signal.reason);
       if (signal) {
-        if (signal.aborted) abortController.abort();
-        else signal.addEventListener('abort', onUpstreamAbort, { once: true });
+        if (signal.aborted) onRouteAbort();
+        else signal.addEventListener('abort', onRouteAbort, { once: true });
       }
-      // res is a Node http.ServerResponse in production (always has .on); guard
-      // for minimal test/writable mocks that omit the EventEmitter surface.
-      if (typeof res.on === 'function') {
-        res.on('close', () => {
-          if (!res.writableEnded) abortController.abort();
-        });
-      }
-
-      // P0-3: SSE keepalive. Devin "thinking" can be silent for tens of
-      // seconds; without bytes, idle timers (client, nginx, CDN) drop the
-      // stream. `:` comment frames are ignored by SSE parsers.
-      const ping = setInterval(() => {
-        if (!res.writableEnded) res.write(': ping\n\n');
-      }, acpPingMs());
-      const stopPing = () => clearInterval(ping);
-
-      send({ id, object: 'chat.completion.chunk', created, model,
-        choices: [{ index: 0, delta: { role: 'assistant', content: '' }, finish_reason: null }] });
+      const onClose = () => {
+        if (!res.writableEnded) abortController.abort();
+      };
+      res.on?.('close', onClose);
+      if (res.destroyed || res.writableEnded) abortController.abort();
 
       const onChunk = ({ kind, text }) => {
+        if (!canWrite()) return;
         if (kind === 'message') {
           const safe = msgSanitizer.feed(text);
           if (safe) {
@@ -683,13 +710,25 @@ function streamLiveAcp({ id, created, model, messages, prompt, modelKey, acct, r
         }
       };
 
-      let ok = true;
+      let completed = false;
       let runErr = null;
+      let ping;
       try {
+        checkRequestAdmission(abortSignal, budget);
+        // Devin may be silent while reasoning. SSE comments keep the connection open.
+        ping = setInterval(() => {
+          if (canWrite()) res.write(': ping\n\n');
+        }, acpPingMs());
+        send({ id, object: 'chat.completion.chunk', created, model,
+          choices: [{ index: 0, delta: { role: 'assistant', content: '' }, finish_reason: null }] });
+
+        checkRequestAdmission(abortSignal, budget);
         const result = await runner(prompt, {
           modelKey, apiKey: acct?.apiKey || '', apiServerUrl: acct?.apiServerUrl || '',
-          signal: abortController.signal, onChunk, modelDiagnostics,
+          signal: abortSignal, budget, onChunk, modelDiagnostics,
         });
+        completed = true;
+        if (!canWrite()) return;
         const tail = msgSanitizer.flush();
         if (tail) {
           emittedText += tail;
@@ -728,20 +767,35 @@ function streamLiveAcp({ id, created, model, messages, prompt, modelKey, acct, r
             choices: [], usage: pickUsage(result?.usage, messages, emittedText) });
         }
       } catch (err) {
-        ok = false;
         runErr = err;
+        if (!canWrite()) return;
         // Headers are already sent (200), so surface the failure as a terminal
         // SSE error event rather than an HTTP status the client can no longer
         // see. Use a non-stop finish_reason so clients that ignore the bare
         // error frame don't mistake a failed run for a clean completion (H2).
-        send({ error: { type: err?.type || 'backend_error', message: redactCredentialFragments(sanitizeText(err?.message || 'Special-agent stream failed')) } });
+        const failure = isBudgetExceededError(err) ? acpBudgetResponse(err)
+          : isClientDisconnect(err, abortSignal) ? clientDisconnectResponse() : null;
+        const error = failure ? { ...failure.body.error, status: failure.status } : {
+          type: err?.type || 'backend_error',
+          message: redactCredentialFragments(sanitizeText(err?.message || 'Special-agent stream failed')),
+        };
+        send({ error });
         send({ id, object: 'chat.completion.chunk', created, model,
           choices: [{ index: 0, delta: {}, finish_reason: 'error' }] });
       } finally {
-        stopPing();
-        if (signal) signal.removeEventListener('abort', onUpstreamAbort);
-        if (!res.writableEnded) { res.write('data: [DONE]\n\n'); res.end(); }
-        if (onDone) onDone(ok, runErr);
+        clearInterval(ping);
+        signal?.removeEventListener('abort', onRouteAbort);
+        res.removeListener?.('close', onClose);
+        try {
+          if (canWrite()) res.write('data: [DONE]\n\n');
+          if (canWrite()) res.end();
+        } finally {
+          onDone?.({
+            completed,
+            error: runErr,
+            disconnected: (res.destroyed && !res.writableEnded) || isClientDisconnect(runErr, abortSignal),
+          });
+        }
       }
     },
   };
@@ -805,8 +859,8 @@ function reportRunFailure(apiKey, err, deps = {}) {
   if (status === 503 || type === 'backend_unavailable') {
     return;
   }
-  // A client abort (499 request_aborted) is also not an upstream/account fault.
-  if (status === 499 || type === 'request_aborted') {
+  // Cancellation and the route's budget do not report an account failure.
+  if (isClientDisconnect(err) || isBudgetExceededError(err)) {
     return;
   }
   // Errors in the local ACP exchange should not change the account's health.
@@ -845,6 +899,7 @@ export async function handleSpecialAgentChatCompletion(body, route, deps = {}) {
   const messages = Array.isArray(route?.messages) ? route.messages : (body?.messages || []);
   const id = route?.id || 'chatcmpl-' + randomUUID().replace(/-/g, '').slice(0, 29);
   const created = route?.created || Math.floor(Date.now() / 1000);
+  const signal = route?.signal ?? null;
   const tools = Array.isArray(body?.tools) ? body.tools : [];
   // O1: OpenAI streams the trailing usage-only frame only when the caller sets
   // stream_options.include_usage:true; otherwise it is omitted.
@@ -895,9 +950,11 @@ export async function handleSpecialAgentChatCompletion(body, route, deps = {}) {
 
   let acct = null;
   let handedOff = false;
-  let refund = false;
+  let completed = false;
   try {
     const mode = getBackendSwitch('devinCliMode');
+    const budget = mode === 'acp' ? route?.budget ?? null : null;
+    checkRequestAdmission(signal, budget);
     // AC1 gap-e: proactively confirm the Devin CLI is runnable BEFORE we reserve
     // a pool account / spawn the ACP child. A missing or non-executable binary
     // is an ENVIRONMENT fault, not an account fault, so failing fast here avoids
@@ -907,6 +964,7 @@ export async function handleSpecialAgentChatCompletion(body, route, deps = {}) {
     if (mode === 'acp') {
       const probe = deps.probeDevinCliAvailable || probeDevinCliAvailable;
       const status = await probe();
+      checkRequestAdmission(signal, budget);
       if (status && status.available === false) {
         // 503 backend_unavailable — same shape the post-spawn ENOENT path emits,
         // so the upper layer (failover / client) handles it identically. The
@@ -924,6 +982,7 @@ export async function handleSpecialAgentChatCompletion(body, route, deps = {}) {
       acct = deps.checkoutAccount
         ? await deps.checkoutAccount(callerKey, modelKey)
         : await checkoutAccount(callerKey, modelKey, mode === 'acp');
+      checkRequestAdmission(signal, budget);
       if (!acct) {
         return errorResponse(503, 'pool_exhausted', 'No active account is available for Devin CLI special-agent backend.');
       }
@@ -941,17 +1000,17 @@ export async function handleSpecialAgentChatCompletion(body, route, deps = {}) {
       const onSuccess = deps.reportSuccess || reportSuccess;
       const stream = streamLiveAcp({
         id, created, model, messages, prompt, modelKey, acct, runner, includeUsage, modelDiagnostics,
-        signal: route?.signal || null,
-        onDone: (ok, err) => {
+        signal, budget,
+        onDone: ({ completed, error, disconnected }) => {
           try {
-            recordRequest(model, ok, Date.now() - started, acct?.id || null);
+            recordRequest(model, completed && !error && !disconnected, Date.now() - started, acct?.id || null);
             // AP-GAP-2: feed pool health from the streaming path too.
             if (canReportAccountHealth(acct)) {
-              if (ok) onSuccess(acct.apiKey);
-              else reportRunFailure(acct.apiKey, err, deps);
+              if (completed) onSuccess(acct.apiKey);
+              else if (!disconnected) reportRunFailure(acct.apiKey, error, deps);
             }
           } finally {
-            settleAccountCheckout(acct, !ok, deps);
+            settleAccountCheckout(acct, !completed, deps);
           }
         },
       });
@@ -963,39 +1022,50 @@ export async function handleSpecialAgentChatCompletion(body, route, deps = {}) {
       modelKey,
       apiKey: acct?.apiKey || '',
       apiServerUrl: acct?.apiServerUrl || '',
-      signal: route?.signal || null,
-      ...(mode === 'acp' ? { modelDiagnostics } : {}),
+      signal,
+      ...(mode === 'acp' ? { budget, modelDiagnostics } : {}),
     });
-    const text = sanitizeText(result?.text || '');
-    const reasoning = exposeReasoning() ? sanitizeText(result?.reasoning || '') : '';
-    if (result?.stderr) log.debug(`special-agent devin stderr: ${String(result.stderr).slice(0, 240)}`);
-    recordRequest(model, true, Date.now() - started, acct?.id || null);
+    completed = true;
+    // A completed turn keeps its reservation even if the caller closed
+    // before the buffered response could be delivered.
+    const disconnected = signal?.aborted === true;
+    let response;
+    if (disconnected) {
+      response = clientDisconnectResponse();
+    } else {
+      const text = sanitizeText(result?.text || '');
+      const reasoning = exposeReasoning() ? sanitizeText(result?.reasoning || '') : '';
+      if (result?.stderr) log.debug(`special-agent devin stderr: ${String(result.stderr).slice(0, 240)}`);
+      // H3/H7: ACP usage and stop_reason pass through both shapes.
+      const usage = result?.usage || null;
+      const stopReason = result?.stopReason || null;
+      const toolCalls = result?.toolCalls || null;
+      response = body?.stream
+        ? streamFromText({ id, created, model, messages, text, reasoning, usage, stopReason, includeUsage })
+        : { status: 200, body: chatCompletionBody({ id, created, model, messages, text, reasoning, usage, stopReason, toolCalls }) };
+    }
+    recordRequest(model, !disconnected, Date.now() - started, acct?.id || null);
     if (canReportAccountHealth(acct)) (deps.reportSuccess || reportSuccess)(acct.apiKey);
-    // H3/H7: carry the runner's real usage + stop_reason through both shapes
-    // (null on print runners → pickUsage/mapFinishReason fall back gracefully).
-    const usage = result?.usage || null;
-    const stopReason = result?.stopReason || null;
-    const toolCalls = result?.toolCalls || null;
-    if (body?.stream) return streamFromText({ id, created, model, messages, text, reasoning, usage, stopReason, includeUsage });
-    return { status: 200, body: chatCompletionBody({ id, created, model, messages, text, reasoning, usage, stopReason, toolCalls }) };
+    return response;
   } catch (err) {
-    refund = true;
+    recordRequest(model, false, Date.now() - started, acct?.id || null);
+    if (isClientDisconnect(err, signal)) return clientDisconnectResponse();
+    if (isBudgetExceededError(err)) return acpBudgetResponse(err);
     const status = err?.status || 502;
     const type = err?.type || 'backend_error';
-    log.warn(`special-agent ${modelKey} failed: ${err.message}`);
-    recordRequest(model, false, Date.now() - started, acct?.id || null);
+    log.warn(`special-agent ${modelKey} failed: ${err?.message}`);
     // AP-GAP-2: classify the failure back to the pool (rate-limit / ban /
     // internal / generic error) so a bad key stops being reselected.
-    if (canReportAccountHealth(acct)) reportRunFailure(acct.apiKey, err, deps);
+    if (!completed && canReportAccountHealth(acct)) reportRunFailure(acct.apiKey, err, deps);
     // sanitizeText handles paths; redactCredentialFragments handles credentials.
     // Both are needed: err.message can carry CLI stderr, which can carry a token.
-    return errorResponse(status, type, redactCredentialFragments(sanitizeText(err.message || 'Special-agent backend failed')), {
+    return errorResponse(status, type, redactCredentialFragments(sanitizeText(err?.message || 'Special-agent backend failed')), {
       backend: 'devin-cli',
     });
   } finally {
     // The live streamer owns the account when handedOff: it releases in onDone
     // after the stream completes. Releasing here would pull the key mid-stream.
-    if (!handedOff) settleAccountCheckout(acct, refund, deps);
+    if (!handedOff) settleAccountCheckout(acct, !completed, deps);
   }
 }
 
