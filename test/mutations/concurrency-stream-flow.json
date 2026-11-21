@@ -4,7 +4,7 @@
   "tests": [
     "test/concurrency-stream-flow.test.js"
   ],
-  "expectBaselinePass": 56,
+  "expectBaselinePass": 58,
   "mutations": [
     {
       "name": "R1: peak overlap assertion weakened — N streams must reach peakActive=N",

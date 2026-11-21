@@ -316,6 +316,14 @@
         {
           "file": "test/wire-provenance.test.js",
           "name": "the real gate refuses a real checkout that is not the selected release"
+        },
+        {
+          "file": "test/concurrency-stream-flow.test.js",
+          "name": "R10 — LS cap with N live streams and detach churn"
+        },
+        {
+          "file": "test/concurrency-stream-flow.test.js",
+          "name": "R11 — resume after LS eviction under pressure"
         }
       ]
     }
