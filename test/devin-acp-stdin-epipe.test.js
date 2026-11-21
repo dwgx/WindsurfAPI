@@ -6,6 +6,9 @@ import {
   __setDevinAcpSpawnForTest,
 } from '../src/devin-acp.js';
 
+const envKeys = ['DEVIN_TIMEOUT_MS', 'DEVIN_ACP_RETRY_BASE_MS', 'DEVIN_ACP_CANCEL_GRACE_MS'];
+const originalEnv = Object.fromEntries(envKeys.map(key => [key, process.env[key]]));
+
 // Audit finding regression: child.stdin had no 'error' listener. If the Devin
 // CLI child dies mid-write, stdin.write raises EPIPE asynchronously as a stdin
 // 'error' event; with no listener that becomes an uncaughtException and kills
@@ -33,7 +36,27 @@ function makeFakeChild() {
 
 afterEach(() => {
   __setDevinAcpSpawnForTest(null); // restore the real spawn
+  for (const key of envKeys) {
+    if (originalEnv[key] === undefined) delete process.env[key];
+    else process.env[key] = originalEnv[key];
+  }
 });
+
+function attachRpcPeer(child, onRequest) {
+  const capture = child.stdin.write;
+  const send = (frame) => child.stdout.emit('data', JSON.stringify({ jsonrpc: '2.0', ...frame }) + '\n');
+  child.stdin.write = (line) => {
+    const message = JSON.parse(line);
+    queueMicrotask(() => onRequest(message, send));
+    return capture(line);
+  };
+}
+
+const HANDSHAKE = {
+  initialize: { protocolVersion: 1 },
+  authenticate: {},
+  'session/new': { sessionId: 'session-1' },
+};
 
 describe('Devin ACP — stdin EPIPE guard (audit finding)', () => {
   it('attaches an stdin error listener as soon as the child is spawned', async () => {
@@ -103,5 +126,130 @@ describe('Devin ACP — stdin EPIPE guard (audit finding)', () => {
 
     ac.abort();
     await assert.rejects(p);
+  });
+});
+
+describe('Devin ACP — prompt timing and cancellation', () => {
+  it('replies to a permission request received during cancellation with a nested cancelled outcome', async () => {
+    process.env.DEVIN_ACP_CANCEL_GRACE_MS = '250';
+    const child = makeFakeChild();
+    const controller = new AbortController();
+    attachRpcPeer(child, (message, send) => {
+      if (Object.hasOwn(HANDSHAKE, message.method)) {
+        send({ id: message.id, result: HANDSHAKE[message.method] });
+      } else if (message.method === 'session/prompt') {
+        controller.abort();
+        // Simulates bytes already on the wire when the client cancels.
+        send({
+          id: 'permission', method: 'session/request_permission',
+          params: { sessionId: 'session-1', toolCall: { toolCallId: 'stub' }, options: [
+            { kind: 'reject_once', name: 'Decline', optionId: 'decline' },
+          ] },
+        });
+      }
+    });
+    __setDevinAcpSpawnForTest(() => child);
+
+    await assert.rejects(
+      runDevinAcpProcess('hi', { apiKey: 'k', signal: controller.signal }),
+      { status: 499, type: 'request_aborted' },
+    );
+    const frames = child.stdin.writes.map(line => JSON.parse(line));
+    assert.deepEqual(frames.slice(-2), [
+      { jsonrpc: '2.0', method: 'session/cancel', params: { sessionId: 'session-1' } },
+      { jsonrpc: '2.0', id: 'permission', result: { outcome: { outcome: 'cancelled' } } },
+    ]);
+    child.emit('close', 0);
+  });
+
+  it('shares one monotonic deadline covering the first prompt and the retry handshake', async (t) => {
+    process.env.DEVIN_TIMEOUT_MS = '1000';
+    process.env.DEVIN_ACP_RETRY_BASE_MS = '0';
+    let now = 0;
+    t.mock.method(performance, 'now', () => now);
+    const children = [];
+    __setDevinAcpSpawnForTest(() => {
+      const child = makeFakeChild();
+      children.push(child);
+      const isRetry = children.length === 2;
+      attachRpcPeer(child, (message, send) => {
+        if (Object.hasOwn(HANDSHAKE, message.method)) {
+          if (isRetry && message.method === 'session/new') now = 1050;
+          send({ id: message.id, result: HANDSHAKE[message.method] });
+          return;
+        }
+        if (message.method !== 'session/prompt') return;
+        if (isRetry) {
+          send({ id: message.id, result: { stopReason: 'end_turn' } });
+        } else {
+          now = 400;
+          send({ id: message.id, error: { code: -32603, message: 'socket hang up' } });
+        }
+      });
+      return child;
+    });
+
+    await assert.rejects(
+      runDevinAcpProcess('hi', { apiKey: 'k' }),
+      { status: 504, type: 'backend_timeout' },
+    );
+    assert.equal(children.length, 2);
+    const methods = children[1].stdin.writes.map(line => JSON.parse(line).method);
+    assert.deepEqual(methods, ['initialize', 'authenticate', 'session/new']);
+  });
+
+  it('propagates a client abort during backoff without spawning another child', async () => {
+    process.env.DEVIN_TIMEOUT_MS = '5000';
+    process.env.DEVIN_ACP_RETRY_BASE_MS = '2500';
+    const controller = new AbortController();
+    let spawns = 0;
+    __setDevinAcpSpawnForTest(() => {
+      spawns++;
+      const child = makeFakeChild();
+      attachRpcPeer(child, (message, send) => {
+        if (Object.hasOwn(HANDSHAKE, message.method)) {
+          send({ id: message.id, result: HANDSHAKE[message.method] });
+        } else if (message.method === 'session/prompt') {
+          send({ id: message.id, error: { code: -32603, message: 'socket hang up' } });
+          setImmediate(() => controller.abort());
+        }
+      });
+      return child;
+    });
+
+    await assert.rejects(
+      runDevinAcpProcess('hi', { apiKey: 'k', signal: controller.signal }),
+      { status: 499, type: 'request_aborted' },
+    );
+    assert.equal(spawns, 1);
+  });
+
+  it('does not replay when a tool update is received during retry backoff', async () => {
+    process.env.DEVIN_TIMEOUT_MS = '5000';
+    process.env.DEVIN_ACP_RETRY_BASE_MS = '100';
+    let spawns = 0;
+    __setDevinAcpSpawnForTest(() => {
+      const child = makeFakeChild();
+      const attempt = ++spawns;
+      attachRpcPeer(child, (message, send) => {
+        if (Object.hasOwn(HANDSHAKE, message.method)) {
+          send({ id: message.id, result: HANDSHAKE[message.method] });
+        } else if (message.method === 'session/prompt' && attempt === 1) {
+          send({ id: message.id, error: { code: -32603, message: 'socket hang up' } });
+          setImmediate(() => send({
+            method: 'session/update',
+            params: { sessionId: 'session-1', update: {
+              sessionUpdate: 'tool_call_update', toolCallId: 'stub', status: 'completed',
+            } },
+          }));
+        } else if (message.method === 'session/prompt') {
+          send({ id: message.id, result: { stopReason: 'end_turn' } });
+        }
+      });
+      return child;
+    });
+
+    await assert.rejects(runDevinAcpProcess('hi', { apiKey: 'k' }), /socket hang up/);
+    assert.equal(spawns, 1);
   });
 });

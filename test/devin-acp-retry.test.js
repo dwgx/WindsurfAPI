@@ -1,12 +1,5 @@
-// Q5-P1 (ownership): the ACP runner had zero retry/failover. A single
-// transport hiccup (child died / RPC 5xx) surfaced as a hard client error even
-// though a fresh `devin acp` process would have served the turn. The fix adds
-// exactly ONE bounded retry for transport/5xx faults, gated so it never:
-//   - replays after any chunk reached the client (would duplicate output),
-//   - retries deterministic tool-mapping failures,
-//   - retries aborts.
-//
-// All tests use a FAKE stdio child; no Devin CLI, account or network.
+// Run the ACP retry policy against an inert stdio peer. The temporary process
+// counter detects whole-turn replay even when no callback receives text.
 
 import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
@@ -17,7 +10,7 @@ import { runDevinAcpProcess } from '../src/devin-acp.js';
 
 const ENV_KEYS = [
   'DEVIN_CLI_PATH', 'DEVIN_CLI_ACP_ARGS_JSON', 'DEVIN_TIMEOUT_MS',
-  'DEVIN_OUTPUT_LIMIT_BYTES', 'DEVIN_CLI_WORKDIR', 'FAKE_ACP_COUNTER', 'FAKE_ACP_MODE',
+  'DEVIN_OUTPUT_LIMIT_BYTES', 'DEVIN_CLI_WORKDIR', 'FAKE_ACP_COUNTER',
   'DEVIN_ACP_RETRY_BASE_MS',
 ];
 const originalEnv = Object.fromEntries(ENV_KEYS.map(k => [k, process.env[k]]));
@@ -35,7 +28,7 @@ afterEach(() => {
 
 // Each spawn increments a shared counter file, so the fake can behave
 // differently on attempt 1 vs attempt 2 (attempts are separate processes).
-function installFakeAcp(body) {
+function installFakeAcp(body, { timeoutMs = 5000, backoffMs = 1 } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'windsurfapi-acp-retry-'));
   tmpDirs.push(dir);
   const script = join(dir, 'fake-acp.mjs');
@@ -44,9 +37,9 @@ function installFakeAcp(body) {
   writeFileSync(script, body, 'utf8');
   process.env.DEVIN_CLI_PATH = process.execPath;
   process.env.DEVIN_CLI_ACP_ARGS_JSON = JSON.stringify([script]);
-  process.env.DEVIN_TIMEOUT_MS = '5000';
+  process.env.DEVIN_TIMEOUT_MS = String(timeoutMs);
   process.env.FAKE_ACP_COUNTER = counter;
-  process.env.DEVIN_ACP_RETRY_BASE_MS = '1';
+  process.env.DEVIN_ACP_RETRY_BASE_MS = String(backoffMs);
   return { dir, counter };
 }
 
@@ -67,79 +60,148 @@ function send(obj) { process.stdout.write(JSON.stringify(obj) + '\\n'); }
 function update(u) { send({ jsonrpc: '2.0', method: 'session/update', params: { sessionId: 'session-1', update: u } }); }
 `;
 
+function installPromptFake(body, options) {
+  return installFakeAcp(`${PRELUDE}
+rl.on('line', line => {
+  const msg = JSON.parse(line);
+  if (msg.method === 'initialize') { send({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: 1 } }); return; }
+  if (msg.method === 'authenticate') { send({ jsonrpc: '2.0', id: msg.id, result: {} }); return; }
+  if (msg.method === 'session/new') { send({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 'session-1' } }); return; }
+  if (msg.method === 'session/prompt') {
+    ${body}
+  }
+});
+`, options);
+}
+
+const SOCKET_ERROR = "send({ jsonrpc: '2.0', id: msg.id, error: { code: -32603, message: 'socket hang up' } });";
+const COMPLETE = `
+update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'RECOVERED' } });
+send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } });
+`;
+const TOOL_NOTICES = [
+  ['an announced pending call', "update({ sessionUpdate: 'tool_call', toolCallId: 'wc', title: 'Stub', status: 'pending' });"],
+  ['a call already running', "update({ sessionUpdate: 'tool_call', toolCallId: 'wc', title: 'Stub', status: 'in_progress' });"],
+  ['an out-of-order tool update', "update({ sessionUpdate: 'tool_call_update', toolCallId: 'unknown', status: 'completed' });"],
+  ['a permission request', `send({
+    jsonrpc: '2.0', id: 'p', method: 'session/request_permission',
+    params: { sessionId: 'session-1', toolCall: { toolCallId: 'wc' }, options: [
+      { kind: 'reject_once', name: 'Decline', optionId: 'decline' },
+    ] },
+  });`],
+];
+
 describe('runDevinAcpProcess — one bounded transport retry', () => {
-  it('retries a 5xx transport fault once and returns the second attempt', async () => {
-    const { counter } = installFakeAcp(`${PRELUDE}
-rl.on('line', line => {
-  const msg = JSON.parse(line);
-  if (msg.method === 'initialize') { send({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: 1 } }); return; }
-  if (msg.method === 'authenticate') { send({ jsonrpc: '2.0', id: msg.id, result: {} }); return; }
-  if (msg.method === 'session/new') { send({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 'session-1' } }); return; }
-  if (msg.method === 'session/prompt') {
-    if (attempt === 1) {
-      // Transport-shaped fault: the child dies mid-RPC (5xx backend_error).
-      send({ jsonrpc: '2.0', id: msg.id, error: { code: -32603, message: 'socket hang up' } });
-      return;
+  for (const streamed of [false, true]) {
+    const mode = streamed ? 'streamed' : 'buffered';
+    const run = (onChunk) => runDevinAcpProcess('hi', {
+      modelKey: 'swe-1.6', apiKey: 'k',
+      ...(streamed && { onChunk: onChunk || (() => {}) }),
+    });
+
+    it(`retries once after a child exits before progress (${mode})`, async () => {
+      const { counter } = installPromptFake(`
+        if (attempt === 1) { process.exit(4); }
+        ${COMPLETE}
+      `);
+      const chunks = [];
+      const out = await run(chunk => chunks.push(chunk));
+      assert.equal(out.text, 'RECOVERED');
+      assert.equal(attempts(counter), 2);
+      if (streamed) assert.deepEqual(chunks, [{ kind: 'message', text: 'RECOVERED' }]);
+    });
+
+    it(`retries once after an upstream transport RPC failure before progress (${mode})`, async () => {
+      const { counter } = installPromptFake(`
+        if (attempt === 1) { ${SOCKET_ERROR} return; }
+        ${COMPLETE}
+      `);
+      const out = await run();
+      assert.equal(out.text, 'RECOVERED');
+      assert.equal(attempts(counter), 2);
+    });
+
+    for (const [label, notice] of TOOL_NOTICES) {
+      it(`does not replay after ${label} (${mode})`, async () => {
+        const { counter } = installPromptFake(`
+          if (attempt === 1) {
+            ${notice}
+            ${SOCKET_ERROR}
+            return;
+          }
+          ${COMPLETE}
+        `);
+        await assert.rejects(run, /socket hang up/);
+        assert.equal(attempts(counter), 1);
+      });
     }
-    update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'RECOVERED' } });
-    send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'end_turn' } });
-    return;
+
+    it(`does not retry deterministic JSON-RPC failures (${mode})`, async () => {
+      const errors = [
+        [-32700, 'Parse error', null],
+        [-32600, 'Invalid request', null],
+        [-32601, 'Method not found'],
+        [-32602, 'Invalid params: unsupported capacity setting'],
+        [-32000, 'Authentication required'],
+        [-32002, 'Resource not found'],
+        [-32800, 'Request cancelled'],
+      ];
+      for (const [code, message, id] of errors) {
+        const { counter } = installPromptFake(`
+          send({
+            jsonrpc: '2.0', id: ${id === null ? 'null' : 'msg.id'},
+            error: { code: ${code}, message: ${JSON.stringify(message)} },
+          });
+        `, { timeoutMs: 1500 });
+        await assert.rejects(run, { message });
+        assert.equal(attempts(counter), 1, `RPC code ${code} must be terminal`);
+      }
+    });
   }
-});
-`);
 
-    const out = await runDevinAcpProcess('hi', { modelKey: 'swe-1.6', apiKey: 'k' });
-    assert.equal(out.text, 'RECOVERED', 'the retried attempt served the turn');
-    assert.equal(attempts(counter), 2, 'exactly one retry (two child processes)');
-  });
-
-  it('does NOT retry a tool-mapping failure', async () => {
-    const { counter } = installFakeAcp(`${PRELUDE}
-rl.on('line', line => {
-  const msg = JSON.parse(line);
-  if (msg.method === 'initialize') { send({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: 1 } }); return; }
-  if (msg.method === 'authenticate') { send({ jsonrpc: '2.0', id: msg.id, result: {} }); return; }
-  if (msg.method === 'session/new') { send({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 'session-1' } }); return; }
-  if (msg.method === 'session/prompt') {
-    // Tool-ish stop with no captured call -> backend_tool_call_unmapped.
-    send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'tool_use' } });
-    return;
-  }
-});
-`);
-
+  it('stops after one retry when the transport keeps failing', async () => {
+    const { counter } = installPromptFake(SOCKET_ERROR);
     await assert.rejects(
       () => runDevinAcpProcess('hi', { modelKey: 'swe-1.6', apiKey: 'k' }),
-      (err) => {
-        assert.equal(err.type, 'backend_tool_call_unmapped');
-        return true;
-      },
+      /socket hang up/,
     );
-    assert.equal(attempts(counter), 1, 'deterministic tool errors are not replayed');
+    assert.equal(attempts(counter), 2);
   });
 
-  it('does NOT retry after a chunk already reached the client', async () => {
-    const { counter } = installFakeAcp(`${PRELUDE}
-rl.on('line', line => {
-  const msg = JSON.parse(line);
-  if (msg.method === 'initialize') { send({ jsonrpc: '2.0', id: msg.id, result: { protocolVersion: 1 } }); return; }
-  if (msg.method === 'authenticate') { send({ jsonrpc: '2.0', id: msg.id, result: {} }); return; }
-  if (msg.method === 'session/new') { send({ jsonrpc: '2.0', id: msg.id, result: { sessionId: 'session-1' } }); return; }
-  if (msg.method === 'session/prompt') {
-    update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'PARTIAL' } });
-    // Then a transport-shaped failure. A retry would duplicate PARTIAL.
-    send({ jsonrpc: '2.0', id: msg.id, error: { code: -32603, message: 'socket hang up' } });
-    return;
-  }
-});
-`);
+  it('does not retry a tool-mapping failure', async () => {
+    const { counter } = installPromptFake(`
+      send({ jsonrpc: '2.0', id: msg.id, result: { stopReason: 'tool_use' } });
+    `);
+    await assert.rejects(
+      () => runDevinAcpProcess('hi', { modelKey: 'swe-1.6', apiKey: 'k' }),
+      { type: 'backend_tool_call_unmapped' },
+    );
+    assert.equal(attempts(counter), 1);
+  });
 
+  it('does not retry after a chunk already reached the client', async () => {
+    const { counter } = installPromptFake(`
+      update({ sessionUpdate: 'agent_message_chunk', content: { type: 'text', text: 'PARTIAL' } });
+      ${SOCKET_ERROR}
+    `);
     const chunks = [];
     await assert.rejects(
       () => runDevinAcpProcess('hi', { modelKey: 'swe-1.6', apiKey: 'k', onChunk: (c) => chunks.push(c) }),
       /socket hang up/,
     );
-    assert.equal(attempts(counter), 1, 'no replay once output crossed the wire');
-    assert.ok(chunks.some((c) => /PARTIAL/.test(c.text || '')), 'the partial chunk was delivered once');
+    assert.equal(attempts(counter), 1);
+    assert.deepEqual(chunks, [{ kind: 'message', text: 'PARTIAL' }]);
+  });
+
+  it('does not start a retry whose backoff cannot fit in the turn deadline', async () => {
+    const { counter } = installPromptFake(`
+      if (attempt === 1) { ${SOCKET_ERROR} return; }
+      ${COMPLETE}
+    `, { timeoutMs: 1500, backoffMs: 1600 });
+    await assert.rejects(
+      () => runDevinAcpProcess('hi', { modelKey: 'swe-1.6', apiKey: 'k' }),
+      /socket hang up/,
+    );
+    assert.equal(attempts(counter), 1);
   });
 });

@@ -1,4 +1,5 @@
 import { spawn } from 'child_process';
+import { setTimeout as delay } from 'node:timers/promises';
 import { VERSION } from './version.js';
 import { log } from './config.js';
 import { sanitizeToolName } from './tool-names.js';
@@ -219,20 +220,37 @@ export function classifyAcpError(message, rpcCode = null) {
   return { code: rpcCode ? String(rpcCode) : 'UPSTREAM_ERROR', type: 'backend_error', status: 502, retryable: false };
 }
 
+const ACP_TRANSPORT_CODES = new Set([
+  'ECONNRESET', 'ETIMEDOUT', 'ECONNREFUSED', 'EPIPE', 'EAI_AGAIN',
+  'ENOTFOUND', 'EHOSTUNREACH', 'ENETUNREACH', 'EAGAIN',
+]);
+const ACP_UNCORRELATED_ERROR_CODES = new Set(['-32700', '-32600']);
+const ACP_TERMINAL_ERROR_CODES = new Set([
+  ...ACP_UNCORRELATED_ERROR_CODES, '-32601', '-32602', '-32000', '-32002', '-32800',
+]);
+
 function errorFromRpcResponse(resp, fallback = 'ACP request failed') {
   const msg = resp?.error?.message || fallback;
+  const rpcCode = String(resp?.error?.code);
   const { code, type, status, retryable } = classifyAcpError(msg, resp?.error?.code);
   const err = new Error(msg);
   err.status = status;
   err.type = type;
   err.code = code;
-  err.retryable = retryable;
+  // An RPC error only warrants replay if it identifies a transient fault.
+  const transport = type === 'backend_error' && (
+    ACP_TRANSPORT_CODES.has(rpcCode) || ['502', '503', '504'].includes(rpcCode) || /\bsocket hang up\b/i.test(msg)
+  );
+  err.retryable = !ACP_TERMINAL_ERROR_CODES.has(rpcCode) && (retryable || transport);
   return err;
+}
+
+function acpUpdateKind(update) {
+  return String(update?.sessionUpdate || update?.type || update?.kind || update?.name || '');
 }
 
 function extractAcpUpdate(params) {
   const update = params?.update || params?.sessionUpdate || params;
-  const kind = update?.sessionUpdate || update?.type || update?.kind || update?.name || '';
   let text = '';
   const content = update?.content || update?.delta || update?.message || null;
   if (typeof update?.text === 'string') text = update.text;
@@ -244,7 +262,7 @@ function extractAcpUpdate(params) {
       .filter(Boolean)
       .join('');
   }
-  return { kind: String(kind || ''), text };
+  return { kind: acpUpdateKind(update), text };
 }
 
 // The assistant's user-visible reply. Only these land in the final text.
@@ -335,7 +353,46 @@ function collectAcpTextFromNotification(obj, buffers, onChunk) {
   // text/reasoning/tool-call split and are ignored here on purpose.
 }
 
-function makeAcpClient({ command, args, env, signal, timeoutMs, outputLimit, onChunk }) {
+function permissionResponse(options, cancelled) {
+  if (cancelled) return { result: { outcome: { outcome: 'cancelled' } } };
+
+  const optionKinds = new Map();
+  if (Array.isArray(options)) {
+    for (const option of options) {
+      const id = option?.optionId;
+      if (typeof id !== 'string' || !id.trim()) continue;
+      // A duplicate ID is ambiguous even if one entry claims it rejects.
+      optionKinds.set(id, optionKinds.has(id) ? null : option.kind);
+    }
+  }
+  let rejectOnce;
+  let rejectAlways;
+  for (const [id, kind] of optionKinds) {
+    if (kind === 'reject_once') rejectOnce ??= id;
+    if (kind === 'reject_always') rejectAlways ??= id;
+  }
+  const optionId = rejectOnce ?? rejectAlways;
+  if (optionId) return { result: { outcome: { outcome: 'selected', optionId } } };
+  return { error: { code: -32602, message: 'Permission request has no usable rejection option' } };
+}
+
+function acpTransportError(message) {
+  return Object.assign(new Error(message), { status: 502, type: 'backend_error', retryable: true });
+}
+
+function acpTimeoutError(operation, timeoutMs, retryable = false) {
+  return Object.assign(new Error(`Devin ACP ${operation} timed out after ${timeoutMs}ms`), {
+    status: 504,
+    type: 'backend_timeout',
+    retryable,
+  });
+}
+
+function acpAbortError() {
+  return Object.assign(new Error('Request aborted'), { status: 499, type: 'request_aborted' });
+}
+
+function makeAcpClient({ command, args, env, signal, deadline, timeoutMs, outputLimit, onChunk, blockReplay }) {
   const child = _spawn(command, args, {
     env,
     windowsHide: true,
@@ -375,6 +432,10 @@ function makeAcpClient({ command, args, env, signal, timeoutMs, outputLimit, onC
   };
 
   const onData = (name, chunk) => {
+    if (!signal?.aborted && performance.now() >= deadline) {
+      failAll(acpTimeoutError('turn', timeoutMs));
+      return;
+    }
     const s = chunk.toString('utf8');
     outputBytes += Buffer.byteLength(s);
     if (outputBytes > outputLimit) {
@@ -398,13 +459,28 @@ function makeAcpClient({ command, args, env, signal, timeoutMs, outputLimit, onC
       if (!line.trim()) continue;
       const obj = parseJsonLine(line);
       if (!obj) continue;
+      if (obj.method === 'session/update') {
+        const update = obj.params?.update || obj.params?.sessionUpdate || obj.params;
+        // The agent can execute tools itself. An announcement can be followed
+        // by execution even if no later status reaches this transport.
+        if (TOOL_UPDATE_KINDS.has(acpUpdateKind(update))) blockReplay();
+      }
       collectAcpTextFromNotification(obj, buffers, onChunk);
-      if (obj.method === 'session/request_permission' && obj.id != null) {
-        writeJsonLine(child, {
-          jsonrpc: '2.0',
-          id: obj.id,
-          result: { outcome: 'cancelled' },
-        });
+      if (obj.method === 'session/request_permission') {
+        blockReplay();
+        if (obj.id != null) {
+          writeJsonLine(child, {
+            jsonrpc: '2.0',
+            id: obj.id,
+            ...permissionResponse(obj.params?.options, signal?.aborted),
+          });
+        }
+        continue;
+      }
+      if (obj.id === null && pending.size === 1 && ACP_UNCORRELATED_ERROR_CODES.has(String(obj.error?.code))) {
+        // JSON-RPC uses a null ID when the peer cannot identify the request.
+        // This client sends only one RPC at a time.
+        failAll(errorFromRpcResponse(obj));
         continue;
       }
       if (obj.id == null) continue;
@@ -447,18 +523,14 @@ function makeAcpClient({ command, args, env, signal, timeoutMs, outputLimit, onC
         type: 'backend_unavailable',
       }));
     } else {
-      failAll(Object.assign(err, { status: 502, type: 'backend_error' }));
+      failAll(Object.assign(err, { status: 502, type: 'backend_error', retryable: ACP_TRANSPORT_CODES.has(err.code) }));
     }
   });
   child.on('close', code => {
     closed = true;
     closeCode = code;
-    const err = fatalError || Object.assign(new Error(`Devin ACP exited with code ${code}`), {
-      status: 502,
-      type: 'backend_error',
-    });
     if (code !== 0) {
-      failAll(err);
+      failAll(fatalError || acpTransportError(`Devin ACP exited with code ${code}`));
     } else if (pending.size > 0) {
       // GAP-ACP-01: a clean exit (code 0) that still has in-flight requests
       // means the CLI closed before answering — e.g. it exited without
@@ -466,10 +538,7 @@ function makeAcpClient({ command, args, env, signal, timeoutMs, outputLimit, onC
       // pending map WITHOUT settling those promises, hanging the awaiting
       // caller forever and permanently leaking its concurrency slot (fatal
       // under DEVIN_MAX_PROCS=1). Reject them so the slot releases.
-      failAll(Object.assign(new Error('Devin ACP exited (code 0) before responding'), {
-        status: 502,
-        type: 'backend_error',
-      }));
+      failAll(acpTransportError('Devin ACP exited (code 0) before responding'));
     } else {
       cleanup();
     }
@@ -487,8 +556,7 @@ function makeAcpClient({ command, args, env, signal, timeoutMs, outputLimit, onC
     // The reject below uses request_aborted (499) which classifyAcpError leaves
     // alone — an abort is a CLIENT action, never an upstream fault, so it must
     // not touch pool health.
-    const err = Object.assign(new Error('Request aborted'), { status: 499, type: 'request_aborted' });
-    failAll(err);
+    failAll(acpAbortError());
     const graceMs = intEnv('DEVIN_ACP_CANCEL_GRACE_MS', 250, 0);
     if (activeSessionId && child.stdin?.writable && graceMs > 0) {
       gracefulKillPending = true;
@@ -502,22 +570,20 @@ function makeAcpClient({ command, args, env, signal, timeoutMs, outputLimit, onC
   if (signal) signal.addEventListener('abort', onAbort, { once: true });
 
   const request = (method, params = {}, timeout = timeoutMs) => {
+    if (fatalError) return Promise.reject(fatalError);
     if (closed) {
-      return Promise.reject(Object.assign(new Error(`Devin ACP is closed (code ${closeCode})`), {
-        status: 502,
-        type: 'backend_error',
-      }));
+      return Promise.reject(acpTransportError(`Devin ACP is closed (code ${closeCode})`));
     }
+    const remaining = deadline - performance.now();
+    if (remaining <= 0) return Promise.reject(acpTimeoutError('turn', timeoutMs));
     const id = nextId++;
     const payload = { jsonrpc: '2.0', id, method, params };
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         pending.delete(id);
-        reject(Object.assign(new Error(`Devin ACP ${method} timed out after ${timeout}ms`), {
-          status: 504,
-          type: 'backend_timeout',
-        }));
-      }, timeout);
+        const phaseTimedOut = timeout < remaining && performance.now() < deadline;
+        reject(phaseTimedOut ? acpTimeoutError(method, timeout, true) : acpTimeoutError('turn', timeoutMs));
+      }, Math.ceil(Math.min(timeout, remaining)));
       timer.unref?.();
       pending.set(id, { resolve, reject, timer });
       writeJsonLine(child, payload);
@@ -588,39 +654,6 @@ export function buildAcpPromptBlocks(prompt, modelHint = '', env = process.env) 
     }
   }
   return blocks;
-}
-
-// One bounded retry for TRANSPORT/5xx faults. The whole ACP turn is the retry
-// unit: the child process, its handshake and the prompt are re-created, because
-// a dead `devin acp` child cannot be resumed. Deliberately excluded:
-//   - tool-mapping failures (backend_tool_call_unmapped): deterministic given
-//     the same turn; replaying burns a session for the same answer;
-//   - UPSTREAM_INTERNAL: measured persistent (3/3), same-token replay just
-//     amplifies load — mirrors devin-connect.js isRetryable();
-//   - auth / rate-limit / abort / environment faults (missing CLI, oversized
-//     output): retrying cannot change the verdict.
-const ACP_TRANSPORT_CODES = new Set([
-  'ECONNRESET', 'ETIMEDOUT', 'ECONNREFUSED', 'EPIPE', 'EAI_AGAIN',
-  'ENOTFOUND', 'EHOSTUNREACH', 'ENETUNREACH',
-]);
-
-function isAcpRetryable(err) {
-  if (!err) return false;
-  if (err.status === 499 || err.type === 'request_aborted') return false;
-  if (err.type === 'backend_tool_call_unmapped') return false;
-  if (err.type === 'backend_unavailable' || err.type === 'backend_output_too_large'
-    || err.type === 'backend_mode_unsupported') return false;
-  if (err.type === 'upstream_internal' || err.code === 'UPSTREAM_INTERNAL') return false;
-  if (err.type === 'unauthorized' || err.code === 'UNAUTHORIZED') return false;
-  if (err.code === 'RATE_LIMITED') return false;
-  // Explicit capacity ("high demand") is classified retryable by the ACP
-  // classifier; one replay is exactly the mitigation it asks for.
-  if (err.retryable === true) return true;
-  if (err.type === 'backend_timeout' || err.status === 504) return true;
-  if (err.code && ACP_TRANSPORT_CODES.has(err.code)) return true;
-  // A raw RPC 5xx / dead child (502 backend_error) is transport-shaped.
-  if (typeof err.status === 'number' && err.status >= 500 && err.status !== 501) return true;
-  return false;
 }
 
 function acpRetryBaseMs() {
@@ -702,6 +735,8 @@ export async function runDevinAcpProcess(prompt, { modelKey = '', apiKey = '', a
       type: 'backend_unavailable',
     });
   }
+  const timeoutMs = runTimeoutMs();
+  const deadline = performance.now() + timeoutMs;
   const command = process.env.DEVIN_CLI_PATH || 'devin';
   // Denylist env: the CLI gets the operator's general environment (PATH, HOME,
   // proxy vars, DEVIN_* config like DEVIN_PERMISSION_MODE) but no credentials —
@@ -721,43 +756,57 @@ export async function runDevinAcpProcess(prompt, { modelKey = '', apiKey = '', a
   }
   const launch = observeLaunchModel(args, operatorArgCount);
 
-  // A replay after ANY chunk crossed onChunk would duplicate the visible answer.
-  let emitted = false;
+  // A retry starts another child and replays the whole turn. Stop when the
+  // client has received content or the agent has reported tool activity.
+  let replayBlocked = false;
+  const blockReplay = () => { replayBlocked = true; };
   const trackedChunk = onChunk
-    ? (chunk) => { emitted = true; onChunk(chunk); }
+    ? (chunk) => { blockReplay(); onChunk(chunk); }
     : null;
 
   const maxRetries = 1;
   for (let attempt = 0; ; attempt++) {
+    if (signal?.aborted) throw acpAbortError();
+    if (performance.now() >= deadline) throw acpTimeoutError('turn', timeoutMs);
     try {
       return await runDevinAcpAttempt(prompt, {
-        command, args, env, modelKey, apiKey, apiServerUrl, signal, onChunk: trackedChunk,
-        modelDiagnostics, launch, attempt: attempt + 1,
+        command, args, env, modelKey, apiKey, apiServerUrl, signal, deadline, timeoutMs,
+        onChunk: trackedChunk, blockReplay, modelDiagnostics, launch, attempt: attempt + 1,
       });
     } catch (err) {
-      if (attempt >= maxRetries || emitted || signal?.aborted || !isAcpRetryable(err)) throw err;
+      if (signal?.aborted) throw acpAbortError();
+      if (attempt >= maxRetries || replayBlocked || err?.retryable !== true) throw err;
+      const remaining = deadline - performance.now();
+      if (remaining <= 0) throw acpTimeoutError('turn', timeoutMs);
       const backoff = acpRetryBaseMs();
+      if (backoff >= remaining) throw err;
       log.warn(`Devin ACP: retryable ${err.code || err.type || err.status} (${err.message}); retry ${attempt + 1}/${maxRetries} in ${backoff}ms`);
-      if (backoff) await new Promise((r) => setTimeout(r, backoff));
-      // The caller may have gone away while we waited; a fresh child would
-      // outlive its request (an already-aborted signal never fires onAbort).
-      if (signal?.aborted) throw err;
+      try {
+        if (backoff) await delay(backoff, undefined, { signal: signal ?? undefined });
+      } catch (waitError) {
+        if (signal?.aborted) throw acpAbortError();
+        throw waitError;
+      }
+      // Stdio can still deliver tool updates from the first child during backoff.
+      if (replayBlocked) throw err;
     }
   }
 }
 
 async function runDevinAcpAttempt(prompt, {
-  command, args, env, modelKey, apiKey, apiServerUrl, signal, onChunk,
-  modelDiagnostics, launch, attempt,
+  command, args, env, modelKey, apiKey, apiServerUrl, signal, deadline, timeoutMs,
+  onChunk, blockReplay, modelDiagnostics, launch, attempt,
 }) {
   const client = makeAcpClient({
     command,
     args,
     env,
     signal,
-    timeoutMs: runTimeoutMs(),
+    deadline,
+    timeoutMs,
     outputLimit: outputLimitBytes(),
     onChunk,
+    blockReplay,
   });
 
   let sessionStatus = 'not_reached';
@@ -837,7 +886,7 @@ async function runDevinAcpAttempt(prompt, {
     const result = await client.request('session/prompt', {
       sessionId,
       prompt: buildAcpPromptBlocks(prompt, modelHint, env),
-    }, runTimeoutMs());
+    });
     if (result.error) throw errorFromRpcResponse(result, 'Devin ACP session/prompt failed');
 
     const stopReason = result?.result?.stopReason || result?.result?.stop_reason || null;
