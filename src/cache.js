@@ -124,7 +124,13 @@ function stableClone(value, depth = 0) {
   if (depth > 64) throw new Error('stableClone: value exceeds maximum nesting depth (64)');
   if (Array.isArray(value)) return value.map((v) => stableClone(v, depth + 1));
   if (value && typeof value === 'object') {
-    const out = {};
+    // Null prototype: a JSON field literally named "__proto__" (valid in a
+    // tools/response_format JSON Schema, e.g. a parameter of that name) is an
+    // own property here. Plain `{}` would route the assignment through the
+    // inherited __proto__ accessor, silently dropping the field so the key
+    // collided with a schema that never had it. Sorting/ordering and the
+    // serialized bytes for ordinary names are unchanged.
+    const out = Object.create(null);
     for (const k of Object.keys(value).sort()) out[k] = stableClone(value[k], depth + 1);
     return out;
   }

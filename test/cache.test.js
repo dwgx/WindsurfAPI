@@ -171,6 +171,33 @@ describe('cacheKey', () => {
     );
   });
 
+  it('preserves legitimate "__proto__" JSON field names in schemas', () => {
+    // JSON text is data: a tools/response_format schema may have a property
+    // named "__proto__" (inside `properties`, never an object literal). The
+    // sorted clone used a plain `{}` accumulator, so that assignment went
+    // through the inherited __proto__ accessor, the field vanished, and the key
+    // collided with a schema that never had it.
+    const base = { model: 'gpt-4o', messages: [{ role: 'user', content: 'hi' }] };
+    const tool = (properties) => ({ type: 'function', function: { name: 'f', parameters: { type: 'object', properties } } });
+    const withString = { ...base, tools: [tool(JSON.parse('{"__proto__":{"type":"string"}}'))] };
+    const withoutName = { ...base, tools: [tool({})] };
+    const withNumber = { ...base, tools: [tool(JSON.parse('{"__proto__":{"type":"number"}}'))] };
+    assert.notEqual(cacheKey(withString), cacheKey(withoutName), 'own __proto__ field must be part of the key');
+    assert.notEqual(cacheKey(withString), cacheKey(withNumber), 'own __proto__ field value is significant');
+    assert.equal(
+      cacheKey({ ...base, tools: [tool(JSON.parse('{"x":{"type":"integer"},"__proto__":{"type":"string"}}'))] }),
+      cacheKey({ ...base, tools: [tool(JSON.parse('{"__proto__":{"type":"string"},"x":{"type":"integer"}}'))] }),
+      'key order still normalizes when an own __proto__ field is present',
+    );
+
+    const format = (propertiesJson) => JSON.parse(`{"type":"json_schema","json_schema":{"name":"s","schema":{"type":"object","properties":${propertiesJson}}}}`);
+    assert.notEqual(
+      cacheKey({ ...base, response_format: format('{"__proto__":{"type":"number"}}') }),
+      cacheKey({ ...base, response_format: format('{}') }),
+      'response_format schema __proto__ field must be part of the key',
+    );
+  });
+
   it('audit #10: genuinely different logit_bias still keys apart', () => {
     // The normalization must not over-collapse — a different bias value is a
     // different generation and must still miss.
