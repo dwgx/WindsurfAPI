@@ -424,17 +424,17 @@ else
   git fetch --quiet --no-tags origin master
   REMOTE_HEAD=$(git rev-parse origin/master)
 fi
-if [ -n "$REQUESTED_LINE" ]; then
-  selection=$(node scripts/select-release-line.mjs "$REQUESTED_LINE" "$REMOTE_HEAD") || exit 1
-  read -r REQUESTED_TAG LINE_COMMIT <<< "$selection"
-fi
 BEFORE=$(git rev-parse HEAD)
 DIRTY=$(git status --porcelain)
-if [ -n "$REQUESTED_TAG" ]; then
+if [ -n "$REQUESTED_TAG$REQUESTED_LINE" ]; then
   if ! DIRTY=$(git status --porcelain --ignore-submodules=none --untracked-files=all) || [ -n "$DIRTY" ]; then
     echo "    ! --tag needs a clean checkout before attestation verification"
     exit 1
   fi
+fi
+if [ -n "$REQUESTED_LINE" ]; then
+  selection=$(node scripts/select-release-line.mjs "$REQUESTED_LINE" "$REMOTE_HEAD") || exit 1
+  read -r REQUESTED_TAG LINE_COMMIT LINE_OBJECT <<< "$selection"
 fi
 FORCE_RESET="${WINDSURFAPI_UPDATE_FORCE_RESET:-0}"
 FORCE_UPDATE="${WINDSURFAPI_UPDATE_FORCE:-0}"
@@ -564,7 +564,7 @@ while true; do
     fi
     release_branch="$REMOTE_HEAD"
   fi
-  if [ -n "$LINE_COMMIT" ] && [ "$LINE_COMMIT" != "$fetched_commit" ]; then
+  if [ -n "$LINE_COMMIT" ] && { [ "$LINE_COMMIT" != "$fetched_commit" ] || [ "$LINE_OBJECT" != "$fetched_object" ]; }; then
     echo "    ! release line selection changed during verification"; exit 1
   fi
   if git merge-base --is-ancestor "$fetched_commit" "$release_branch"; then

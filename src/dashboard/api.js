@@ -1864,10 +1864,10 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
         // A failed fetch is not permission to operate on stale refs. The docker
         // fallback still activates when git itself is unavailable; every source
         // checkout otherwise fails closed until branch and tag refs are current.
-        await runGit(['fetch', '--quiet', '--no-tags', 'origin', safeBranch]);
+        const lineHead = await fetchSourceUpdateBranch(safeBranch);
         const forceGate = !!(body && body.forceUpdate);
         const targetState = await releaseUpdateState(safeBranch, before.commitFull, {
-          followUnreleased: forceGate,
+          followUnreleased: forceGate, lineHead,
         });
         if (targetState.diverged) {
           return json(res, 200, {
@@ -1957,6 +1957,11 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
             });
           }
         }
+        if (line && ((await runGit(['rev-parse', 'HEAD'])).trim() !== before.commitFull
+            || (await runGit(['rev-parse', '--abbrev-ref', 'HEAD'])).trim() !== before.branch
+            || (await runGit(['status', '--porcelain', '--ignore-submodules=none'])).trim())) {
+          return json(res, 200, { ok: false, error: 'ERR_CHECKOUT_CHANGED' });
+        }
         if (willChangeHead) {
           try {
             // Write a durable PENDING point before stash/reset/merge while keeping
@@ -1973,11 +1978,6 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
           }
         }
 
-        if (line && ((await runGit(['rev-parse', 'HEAD'])).trim() !== before.commitFull
-            || (await runGit(['rev-parse', '--abbrev-ref', 'HEAD'])).trim() !== before.branch
-            || (await runGit(['status', '--porcelain', '--ignore-submodules=none'])).trim())) {
-          return json(res, 200, { ok: false, error: 'ERR_CHECKOUT_CHANGED' });
-        }
         let protectiveStashOid = '';
         if (dirty) {
           try {
@@ -4889,7 +4889,7 @@ async function gitCommitIsAncestor(commit, ref) {
   }
 }
 
-async function latestReleaseTag(branch) {
+async function latestReleaseTag(branch, lineHead) {
   // Query the remote tag namespace directly. `git fetch --tags` is additive:
   // when a mistaken/revoked release tag is deleted upstream, its local ref
   // survives and `git tag --list` keeps selecting it indefinitely. Remote refs
@@ -4900,7 +4900,7 @@ async function latestReleaseTag(branch) {
     const tags = parseRemoteStableReleaseTags(output);
     const line = process.env.WINDSURFAPI_UPDATE_RELEASE_LINE;
     if (line) {
-      const selected = await selectReleaseLine(line, remoteRef, tags, runGit);
+      const selected = await selectReleaseLine(line, lineHead, tags, runGit);
       return await materializeRemoteReleaseTag(selected);
     }
     for (const advertised of tags) {
@@ -4950,7 +4950,7 @@ async function verifySelectedReleaseAttestation(release) {
     repository,
   };
   if (line) {
-    if (!repository) throw new Error('The signed source release line requires the canonical repository');
+    options.repository = DEFAULT_ATTESTATION_REPOSITORY;
     options.tree = (await runGit(['rev-parse', release.commit + '^{tree}'])).trim();
     const tag = release.name.replaceAll('.', '\\.');
     options.identity = '^https://github\\.com/dwgx/WindsurfAPI/\\.github/workflows/release\\.yml@refs/tags/' + tag + '$';
@@ -4971,10 +4971,21 @@ function safeUpdateBranch(branch) {
   return candidate !== 'HEAD' && /^[\w.\-\/]+$/.test(candidate) ? candidate : 'master';
 }
 
-async function releaseUpdateState(branch, currentCommit, { followUnreleased = false } = {}) {
-  const remoteRef = `origin/${branch}`;
+async function fetchSourceUpdateBranch(branch) {
+  if (!process.env.WINDSURFAPI_UPDATE_RELEASE_LINE) {
+    await runGit(['fetch', '--quiet', '--no-tags', 'origin', branch]);
+    return null;
+  }
+  await runGit(['fetch', '--quiet', '--no-tags', 'origin', 'refs/heads/master']);
+  const head = (await runGit(['rev-parse', 'FETCH_HEAD^{commit}'])).trim();
+  if (!validGitObjectId(head)) throw new Error('Invalid fetched release branch commit');
+  return head;
+}
+
+async function releaseUpdateState(branch, currentCommit, { followUnreleased = false, lineHead = null } = {}) {
+  const remoteRef = lineHead || `origin/${branch}`;
   const remoteHead = (await runGit(['rev-parse', remoteRef])).trim();
-  const release = await latestReleaseTag(branch);
+  const release = await latestReleaseTag(branch, lineHead);
   const latestTag = release.name;
   if (!latestTag && !followUnreleased) {
     throw makeSelfUpdateError(
@@ -5022,8 +5033,8 @@ async function gitStatus() {
   let updateError = '';
   try {
     const safeBranch = safeUpdateBranch(branch);
-    await runGit(['fetch', '--quiet', '--no-tags', 'origin', safeBranch]);
-    update = await releaseUpdateState(safeBranch, commit);
+    const lineHead = await fetchSourceUpdateBranch(safeBranch);
+    update = await releaseUpdateState(safeBranch, commit, { lineHead });
   } catch (err) {
     if (isSelfUpdateUnavailableError(err)) throw err;
     updateError = err?.code || err?.message || 'ERR_UPDATE_CHECK_FAILED';

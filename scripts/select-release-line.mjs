@@ -11,7 +11,7 @@ try {
   });
   const tags = parseRemoteStableReleaseTags(git(['ls-remote', '--tags', 'origin', 'refs/tags/v3.*']));
   const selected = await selectReleaseLine(line, head, tags, git);
-  console.log(selected.name, selected.peeled);
+  console.log(selected.name, selected.peeled, selected.object);
 } catch (error) {
   console.error('Could not select a signed release line:', error.message);
   process.exitCode = 1;
