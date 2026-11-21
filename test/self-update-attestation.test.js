@@ -675,6 +675,34 @@ describe('update.sh explicit signed release selection', () => {
     assert.equal(realGit(fixture.deployment, ['rev-parse', 'HEAD']), fixture.initialCommit);
   });
 
+  shellIt('refuses a dirty checkout before running the local verifier', () => {
+    const fixture = migrationFixture();
+    const dir = stageAttestation(fixture);
+    const marker = join(fixture.root, 'cosign-arguments');
+    writeFileSync(join(fixture.deployment, 'operator-notes.txt'), 'unsaved local notes\n');
+    writeExecutable(join(fixture.stubBin, 'cosign'),
+      '#!/usr/bin/env bash\nprintf "%s\\n" "$@" > "$SIGNATURE_LOG"\n');
+    const result = select(fixture, dir, { SIGNATURE_LOG: marker });
+    assert.equal(existsSync(marker), false, 'dirty input must be rejected before signature verification');
+    refused(fixture, result, /clean checkout.*attestation/i);
+  });
+
+  shellIt('preserves files changed by the target service when health verification fails', () => {
+    const fixture = migrationFixture();
+    const curlPath = join(fixture.stubBin, 'curl');
+    const curl = readFileSync(curlPath, 'utf8').replace(
+      'pid="$(cat',
+      'printf "new operator data\\n" > release-marker.txt\nexit 22\npid="$(cat',
+    );
+    writeExecutable(curlPath, curl);
+    const result = select(fixture, stageAttestation(fixture));
+    const output = result.stdout + result.stderr;
+    assert.notEqual(result.status, 0, output);
+    assert.match(output, /rollback refused.*local changes/i);
+    assert.equal(realGit(fixture.deployment, ['rev-parse', 'HEAD']), fixture.releaseCommit);
+    assert.equal(readFileSync(join(fixture.deployment, 'release-marker.txt'), 'utf8'), 'new operator data\n');
+  });
+
   shellIt('preserves ignored operator state when a signed target would overwrite it', () => {
     const fixture = migrationFixture();
     const localFile = join(fixture.deployment, 'operator-state.json');

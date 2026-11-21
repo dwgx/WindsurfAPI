@@ -259,9 +259,17 @@ Use an explicit tag when moving from `v3.141.592661` to a signed 3.2 release.
 The default source updater ranks stable tags by numeric SemVer, so the legacy
 tag still takes precedence over the 3.2 line.
 
-Run the following from a trusted checkout whose `bash update.sh --help` lists
-`--tag`. Replace the example with the exact release tag you have chosen. Save
-a recoverable copy of the installation and its operator state first.
+To check support on your trusted installation, inspect the updater source in
+the current Git revision.
+
+```bash
+git show HEAD:update.sh | grep -F 'Usage: bash update.sh [--tag vX.Y.Z]'
+```
+
+If the command prints the usage line, save a recoverable copy of the
+installation and its operator state, then run the update with the exact
+release tag you have chosen. If the usage line is absent, use the
+[staged migration instructions](releases/RELEASE_NOTES_3.2.10.md#migrating-from-v3141592661).
 
 ```bash
 bash update.sh --tag v3.2.11
@@ -278,9 +286,8 @@ Cosign and the bundle are required, and both force overrides are incompatible
 with `--tag`.
 
 After the update, check the running commit in `/health`. The script uses the
-existing PM2 health check and rollback and returns a failure if it rolls back the
-elected update. On a checkout that predates `--tag`, use the staged verification
-and activation instructions in the [v3.2.10 migration guide](releases/RELEASE_NOTES_3.2.10.md#migrating-from-v3141592661).
+existing PM2 health check and rollback and returns a failure if it rolls back
+the elected update.
 
 ### Docker OTA
 

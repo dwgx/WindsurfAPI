@@ -412,6 +412,12 @@ else
 fi
 BEFORE=$(git rev-parse HEAD)
 DIRTY=$(git status --porcelain)
+if [ -n "$REQUESTED_TAG" ]; then
+  if ! DIRTY=$(git status --porcelain --ignore-submodules=none --untracked-files=all) || [ -n "$DIRTY" ]; then
+    echo "    ! --tag needs a clean checkout before attestation verification"
+    exit 1
+  fi
+fi
 FORCE_RESET="${WINDSURFAPI_UPDATE_FORCE_RESET:-0}"
 FORCE_UPDATE="${WINDSURFAPI_UPDATE_FORCE:-0}"
 
@@ -906,6 +912,19 @@ if [ "$HEALTH_OK" = 1 ]; then
 else
   echo ""
   echo "✗ Health check failed after update. Auto-rolling back to $BEFORE ..."
+  check_signed_rollback_state() {
+    [ -n "$REQUESTED_TAG" ] || return 0
+    local rollback_changes
+    if [ "$(git rev-parse HEAD)" != "$TARGET" ] || [ "$(git rev-parse --symbolic-full-name HEAD)" != "$BEFORE_REF" ]; then
+      echo "✗ Automatic rollback refused: the checkout moved after the signed update."
+      return 1
+    fi
+    if ! rollback_changes=$(git status --porcelain --ignore-submodules=none --untracked-files=all) || [ -n "$rollback_changes" ]; then
+      echo "✗ Automatic rollback refused: local changes need to be preserved."
+      return 1
+    fi
+  }
+  check_signed_rollback_state || exit 1
   # Stop/delete the failed target before changing the checkout.  A bare
   # `pm2 start --name` retry is not a rollback: real PM2 can reject a duplicate
   # name, reuse the old process identity, or leave the target code resident in
@@ -965,7 +984,12 @@ else
   fi
 
   ROLLBACK_MUTATION_EXIT=0
-  if git reset --hard "$BEFORE"; then
+  rollback_mode=--hard
+  if [ -n "$REQUESTED_TAG" ]; then
+    check_signed_rollback_state || exit 1
+    rollback_mode=--keep
+  fi
+  if git reset "$rollback_mode" "$BEFORE"; then
     :
   else
     ROLLBACK_MUTATION_EXIT=$?
