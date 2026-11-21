@@ -971,10 +971,12 @@ describe('docs: version claims match the repository', () => {
     const pkgVersion = JSON.parse(read(join(ROOT, 'package.json'))).version;
     const notes = notesFor(pkgVersion);
     assert.ok(notes, `no release-notes file for the packaged version ${pkgVersion}`);
-    assert.match(
-      read(notes),
-      /\]\(\.\.\/UNVERIFIED\.md\)/,
-      `${rel(notes)} must link ../UNVERIFIED.md from its 尚未验证 section`,
+    // The notes become a GitHub Release body, where source-relative links lose their base.
+    const tagLink = '](https://github.com/dwgx/WindsurfAPI/blob/v'
+      + pkgVersion + '/docs/UNVERIFIED.md)';
+    assert.ok(
+      read(notes).includes(tagLink),
+      `${rel(notes)} must link the register at its exact release tag`,
     );
     assert.match(
       read(join(DOCS, 'README.md')),

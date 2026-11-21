@@ -134,7 +134,8 @@ release assets. The trust boundary and the exact commands are in
 ## House style for the notes themselves
 
 These files are **published** — each one becomes a GitHub Release body — and they are
-**append-only history** afterwards. Both facts shape how to write them.
+**append-only history** afterwards. Use absolute links pinned to the release
+tag for repository documents so they resolve when GitHub displays the release body.
 
 - **User-visible first, engineering second.** Open with what changes for someone
   running the proxy. A reader deciding whether to upgrade should not have to parse a

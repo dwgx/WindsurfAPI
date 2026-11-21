@@ -22,6 +22,7 @@ import {
   collectEntries,
   parseUnverifiedSections,
   renderRegister,
+  versionOf,
 } from '../scripts/unverified-register.mjs';
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..');
@@ -88,12 +89,14 @@ describe('docs: the unverified register is generated, not written', () => {
     const missing = [];
     for (const name of files) {
       const body = read(join(RELEASES, name));
-      if (!body.includes('](../UNVERIFIED.md)')) missing.push(name);
+      const taggedLink = '](https://github.com/dwgx/WindsurfAPI/blob/v'
+        + versionOf(name) + '/docs/UNVERIFIED.md)';
+      if (!body.includes('](../UNVERIFIED.md)') && !body.includes(taggedLink)) missing.push(name);
     }
     assert.deepEqual(
       missing,
       [],
-      `release notes whose 尚未验证 section does not link ../UNVERIFIED.md:\n  ${missing.join('\n  ')}`,
+      `release notes whose 尚未验证 section lacks a relative or exact-tag register link:\n  ${missing.join('\n  ')}`,
     );
     assert.ok(existsSync(join(ROOT, 'docs', 'UNVERIFIED.md')), 'the link target must exist');
   });

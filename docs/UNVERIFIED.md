@@ -554,9 +554,9 @@
 
 1 个小节 · 2 条：已复核 0 · 仍缺 2 · 已修 0（无 marker 2）
 
-小节 `## Open verification / 尚未验证`（`:92`）
+小节 `## Open verification / 尚未验证`（`:93`）
 
 | # | 位置 | bullet | marker | 状态 |
 |---:|---|---|---|---|
-| 1 | `RELEASE_NOTES_3.2.11.md:94` | Enterprise Cascade behavior in [issue #245](https://github.com/dwgx/WindsurfAPI/issues/245) remains open pending a confirmed result on the reported client and account type. | — | 仍缺 |
-| 2 | `RELEASE_NOTES_3.2.11.md:96` | Fixture tests exercise admission, response-cache behavior and retry boundaries. Any claim about upstream billing needs a provider-side receipt from an authorized run. | — | 仍缺 |
+| 1 | `RELEASE_NOTES_3.2.11.md:95` | Enterprise Cascade behavior in [issue #245](https://github.com/dwgx/WindsurfAPI/issues/245) remains open pending a confirmed result on the reported client and account type. | — | 仍缺 |
+| 2 | `RELEASE_NOTES_3.2.11.md:97` | Fixture tests exercise admission, response-cache behavior and retry boundaries. Any claim about upstream billing needs a provider-side receipt from an authorized run. | — | 仍缺 |

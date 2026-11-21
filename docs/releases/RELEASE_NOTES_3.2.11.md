@@ -25,7 +25,7 @@ portable build identity and the public project history.
   prompt, declines permission requests and keeps agent-owned tool activity
   out of caller tool calls. Request-level RPC errors are handled separately
   from account health. Operator logs distinguish launch arguments, requested
-  model and session-reported model. [OpenCode setup](../README.md#use-opencode-as-an-acp-agent)
+  model and session-reported model. [OpenCode setup](https://github.com/dwgx/WindsurfAPI/blob/v3.2.11/docs/README.md#use-opencode-as-an-acp-agent)
 - **Response cache and Cascade streaming.** Clearing the response cache
   prevents completions from before the clear from repopulating it. Cache-key
   serialization preserves literal own JSON field names. Direct Cascade
@@ -58,7 +58,8 @@ GitHub's Latest release setting is independent of this selection.
   using a trusted checkout. Stage the verified platform package separately.
 
   ```sh
-  node scripts/verify-release-assets.mjs --dir <download-directory> --tag v3.2.11
+  download_dir='/path/to/downloads'
+  node scripts/verify-release-assets.mjs --dir "$download_dir" --tag v3.2.11
   ```
 
 - **Git source.** Stage in a clean clone. Compare the remote annotated tag,
@@ -77,7 +78,7 @@ GitHub's Latest release setting is independent of this selection.
 - **Docker.** Verify the signed image digest and image signature for the
   exact tag's release workflow identity, then stage the image pinned by
   digest. Keep the existing persistent volumes and prior image for rollback.
-  [Release signing](../RELEASE-SIGNING.md)
+  [Release signing](https://github.com/dwgx/WindsurfAPI/blob/v3.2.11/docs/RELEASE-SIGNING.md)
 
 Preserve operator state and confirm the staged build and health before switching
 traffic. Keep the previous installation available for rollback.
@@ -97,4 +98,4 @@ artifacts for the published revision.
   Any claim about upstream billing needs a provider-side receipt from an
   authorized run.
 
-[Open verification register](../UNVERIFIED.md) · [Roadmap](../ROADMAP.md)
+[Open verification register](https://github.com/dwgx/WindsurfAPI/blob/v3.2.11/docs/UNVERIFIED.md) · [Roadmap](https://github.com/dwgx/WindsurfAPI/blob/v3.2.11/docs/ROADMAP.md)
