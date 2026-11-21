@@ -1652,8 +1652,8 @@
     }
   },
   "batch": {
-    "autoAdd": "密码登录成功后加入账号池",
-    "autoAddHint": "Token 和 API Key 会直接导入账号池。",
+    "autoAdd": "将账号加入账号池",
+    "autoAddHint": "取消勾选仅预览所有输入，不登录、不保存账号。",
     "preview": "预览格式",
     "previewOnly": "仅检查格式。未尝试登录，未改动账号。",
     "line": "第 {{line}} 行",

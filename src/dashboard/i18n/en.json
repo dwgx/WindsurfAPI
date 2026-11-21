@@ -1652,8 +1652,8 @@
     }
   },
   "batch": {
-    "autoAdd": "Add password sign-ins to the pool",
-    "autoAddHint": "Tokens and API keys are imported directly into the pool.",
+    "autoAdd": "Add accounts to the pool",
+    "autoAddHint": "Uncheck to preview all rows without signing in or saving accounts.",
     "preview": "Preview formats",
     "previewOnly": "Format check only. No sign-ins were attempted and no accounts were changed.",
     "line": "Line {{line}}",
