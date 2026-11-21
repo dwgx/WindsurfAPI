@@ -34,6 +34,7 @@ import {
   setActiveCloudCatalogAccounts,
   getCloudCostTierFreeSelectors,
   getCloudCostTierInfoForAccount,
+  getCloudCreditRateForAccount,
   isCostTierFreeNow,
   getCloudBillingSyncState,
   getCloudSelectorPricing,
@@ -589,15 +590,19 @@ export function isConnectSelectorCurrentlyFree(selector) {
  *
  * The pool-wide answer (above) is "somebody can run it without spending quota",
  * which is exactly wrong for a free-only admission: spending account A's promotion
- * on account B's bill is the defect. This asks the same two evidence sources the
- * pool answer reads, scoped to one account:
+ * on account B's bill is the defect. This asks the same evidence sources the pool
+ * answer reads, scoped to one account:
  *
- *   1. that account's cost-tier row, promo-aware (`isCostTierFreeNow`), and
- *   2. that account's paired rate table, keeping only `rate === 0`.
+ *   1. that account's paired rate table, keeping only `rate === 0`;
+ *   2. that account's cost-tier row, promo-aware (`isCostTierFreeNow`); and
+ *   3. that account's own catalog `creditMultiplier`, keeping only a strict numeric 0.
  *
- * No data for the account means NOT free. Unknown/stale pricing fails closed here
- * exactly like it does at the gate, so this predicate can only ever NARROW the
- * gate's admission, never widen it.
+ * (3) is the same fact the gate already reads through `getCloudCreditRate`, but
+ * account-scoped: a deployment whose accounts never receive a GetUserStatus rate
+ * table still gets the catalog's zero, and account A's zero never admits account B.
+ * Absence stays not-free; a nonzero rate (including a discounted-but-paid row)
+ * bills. Unknown/stale pricing fails closed here exactly like it does at the gate,
+ * so this predicate can only ever NARROW the gate's admission, never widen it.
  *
  * One deliberate exception, and it is not a new fallback: when the pool gate itself
  * fell back to the static FREE_REACHABLE floor (`freeReason === 'fallback_whitelist'`
@@ -614,6 +619,8 @@ export function isConnectSelectorFreeForAccount(account, selector) {
   }
   const info = getCloudCostTierInfoForAccount(selector, account.id);
   if (info && isCostTierFreeNow(info)) return true;
+  const catalogRate = getCloudCreditRateForAccount(selector, account.id);
+  if (catalogRate && catalogRate.credit === 0) return true;
   return getConnectSelectorPricing(selector).freeReason === 'fallback_whitelist';
 }
 

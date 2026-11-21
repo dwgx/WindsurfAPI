@@ -1133,6 +1133,28 @@ export function getCloudCreditRate(selector) {
 }
 
 /**
+ * The upstream's own credit rate for one selector, as reported by ONE account.
+ *
+ * The pooled getter above answers "can this deployment run it without spending
+ * SOMEONE's quota", which is the right question for the gate and the wrong one for
+ * routing: a zero on account A says nothing about whether account B can serve the
+ * same selector for free. Callers that must keep a request on a free account (the
+ * drought free-only admission) ask per account, so one account's zero cannot be
+ * spent on another account's bill.
+ *
+ * No pooling and no "free wins" reconciliation: this is that account's own row, or
+ * null when it never reported one. Null stays null — absence is not free.
+ */
+export function getCloudCreditRateForAccount(selector, accountId) {
+  const key = typeof selector === 'string' ? selector.trim().toLowerCase() : '';
+  if (!key || accountId === undefined || accountId === null || accountId === '') return null;
+  const accountKey = cloudCatalogAccountKey(accountId);
+  const credit = _cloudRatesByAccount.get(accountKey)?.get(key);
+  if (typeof credit !== 'number') return null;
+  return { credit, fetchedAt: _cloudBillingFetchedAtByAccount.get(accountKey) || 0 };
+}
+
+/**
  * Selectors at least one account's catalog prices at exactly 0 credits, or null
  * when no account has contributed a numeric rate.
  *
