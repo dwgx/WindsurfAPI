@@ -1,6 +1,7 @@
 import { afterEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { EventEmitter } from 'node:events';
+import { createRequestBudget } from '../src/request-budget.js';
 import {
   runDevinAcpProcess,
   __setDevinAcpSpawnForTest,
@@ -57,6 +58,189 @@ const HANDSHAKE = {
   authenticate: {},
   'session/new': { sessionId: 'session-1' },
 };
+
+// Drive each write through the same stdio framing as the CLI. The fixture can
+// deliver a notification from a retired child at an exact retry handshake step.
+function budgetPeer(budget, onRequest = () => {}) {
+  process.env.DEVIN_ACP_RETRY_BASE_MS = '0';
+  const children = [];
+  const prompts = [];
+  __setDevinAcpSpawnForTest(() => {
+    const child = makeFakeChild();
+    const attempt = children.push(child);
+    attachRpcPeer(child, (message, send) => {
+      if (message.method === 'session/prompt') prompts.push([attempt, budget.turnsUsed]);
+      if (onRequest({ attempt, child, message, send })) return;
+      if (Object.hasOwn(HANDSHAKE, message.method)) {
+        send({ id: message.id, result: HANDSHAKE[message.method] });
+      } else if (message.method === 'session/prompt') {
+        send({ id: message.id, result: { stopReason: 'end_turn' } });
+      }
+    });
+    return child;
+  });
+  return { children, prompts };
+}
+
+const routeDeadline = { code: 'DEADLINE_EXCEEDED', type: 'upstream_deadline_exceeded' };
+const reset = { code: 'ECONNRESET', message: 'first connection reset' };
+const toolProgress = {
+  method: 'session/update', params: { update: { sessionUpdate: 'tool_call_update', toolCallId: 'fixture' } },
+};
+
+describe('Devin ACP — route budget at prompt issuance', () => {
+  const run = (budget, opts) => runDevinAcpProcess('hi', { apiKey: 'k', budget, ...opts });
+
+  it('rejects an expired route before spawn and gives client cancellation priority', async () => {
+    let now = 0;
+    const budget = createRequestBudget({ deadlineMs: 1000, now: () => now });
+    const { children } = budgetPeer(budget);
+    now = 1000;
+    await assert.rejects(run(budget), routeDeadline);
+    await assert.rejects(run(budget, { signal: AbortSignal.abort() }), { status: 499 });
+    assert.equal(budget.turnsUsed, 0);
+    assert.equal(children.length, 0);
+  });
+
+  it('clamps the handshake to the route clock without spending a turn', async () => {
+    let now = 0;
+    const budget = createRequestBudget({ deadlineMs: 1000, now: () => now });
+    const { children, prompts } = budgetPeer(budget, ({ message }) => {
+      if (message.method === 'session/new') now = 1000;
+    });
+    await assert.rejects(run(budget), routeDeadline);
+    assert.equal(children.length, 1);
+    assert.deepEqual(prompts, []);
+    assert.equal(budget.turnsUsed, 0);
+  });
+
+  it('ends a silent prompt on the route deadline', async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: Date.now() });
+    t.mock.method(performance, 'now', () => Date.now());
+    const budget = createRequestBudget({ deadlineMs: 1000 });
+    const { prompts } = budgetPeer(budget, ({ message }) => message.method === 'session/prompt');
+    const controller = new AbortController();
+    const ended = assert.rejects(run(budget, { signal: controller.signal }), routeDeadline);
+    await new Promise(setImmediate);
+    assert.deepEqual(prompts, [[1, 1]]);
+    t.mock.timers.tick(1000);
+    await new Promise(setImmediate);
+    controller.abort(); // Release a broken implementation still waiting for a reply.
+    await ended;
+  });
+
+  it('preserves a shorter local limit when route time remains', async (t) => {
+    let local = 0;
+    t.mock.method(performance, 'now', () => local);
+    process.env.DEVIN_TIMEOUT_MS = '1000';
+    const budget = createRequestBudget({ deadlineMs: 5000, now: () => 0 });
+    const { prompts } = budgetPeer(budget, ({ message }) => {
+      if (message.method === 'session/prompt') local = 1100;
+    });
+    await assert.rejects(run(budget), { status: 504, type: 'backend_timeout' });
+    assert.deepEqual(prompts, [[1, 1]]);
+  });
+
+  it('does not charge a handshake-only retry or an unwritable prompt', async () => {
+    const budget = createRequestBudget({ upstreamTurnCap: 1 });
+    const { children, prompts } = budgetPeer(budget, ({ attempt, child, message }) => {
+      if (attempt === 1 && message.method === 'session/new') child.stdin.writable = false;
+    });
+    assert.equal((await run(budget)).stopReason, 'end_turn');
+    assert.equal(children.length, 2);
+    assert.deepEqual(prompts, [[2, 1]]);
+  });
+
+  it('charges each issued prompt and admits a retry after early transport failure', async () => {
+    const budget = createRequestBudget({ upstreamTurnCap: 2 });
+    const { prompts } = budgetPeer(budget, ({ attempt, message, send }) => {
+      if (attempt === 1 && message.method === 'session/prompt') {
+        send({ id: message.id, error: reset });
+        return true;
+      }
+      // Activity on the new child's setup is not evidence about the old child.
+      if (attempt === 2 && message.method === 'session/new') send(toolProgress);
+    });
+    assert.equal((await run(budget)).stopReason, 'end_turn');
+    assert.deepEqual(prompts, [[1, 1], [2, 2]]);
+    assert.equal(budget.turnsRemaining, 0);
+  });
+
+  it('rejects a retry after the first issued prompt spent the last turn', async () => {
+    const budget = createRequestBudget({ upstreamTurnCap: 1 });
+    const { children, prompts } = budgetPeer(budget, ({ message, send }) => {
+      if (message.method === 'session/prompt') {
+        send({ id: message.id, error: reset });
+        return true;
+      }
+    });
+    await assert.rejects(run(budget), routeDeadline);
+    assert.equal(children.length, 1);
+    assert.deepEqual(prompts, [[1, 1]]);
+  });
+
+  it('skips backoff when the route has less time left than the retry delay', async () => {
+    const budget = createRequestBudget({ deadlineMs: 5000, now: () => 0 });
+    const { children, prompts } = budgetPeer(budget, ({ message, send }) => {
+      if (message.method === 'session/prompt') {
+        send({ id: message.id, error: reset });
+        return true;
+      }
+    });
+    process.env.DEVIN_ACP_RETRY_BASE_MS = '5500';
+    await assert.rejects(run(budget), { status: 502, ...reset });
+    assert.equal(children.length, 1);
+    assert.deepEqual(prompts, [[1, 1]]);
+  });
+
+  it('refuses a retry whose setup spends the remaining route time', async () => {
+    let now = 0;
+    const budget = createRequestBudget({ deadlineMs: 5000, now: () => now });
+    const { children, prompts } = budgetPeer(budget, ({ attempt, message, send }) => {
+      if (attempt === 1 && message.method === 'session/prompt') {
+        now = 4800;
+        send({ id: message.id, error: reset });
+        return true;
+      }
+      if (attempt === 2 && message.method === 'session/new') now = 5000;
+    });
+    await assert.rejects(run(budget), routeDeadline);
+    assert.equal(children.length, 2);
+    assert.deepEqual(prompts, [[1, 1]]);
+  });
+
+  it('checks the shared cap again at issuance when another consumer takes the last turn', async () => {
+    const budget = createRequestBudget({ upstreamTurnCap: 1 });
+    const { prompts } = budgetPeer(budget, ({ message }) => {
+      if (message.method === 'session/new') budget.takeTurnOrThrow('other consumer');
+    });
+    await assert.rejects(run(budget), routeDeadline);
+    assert.deepEqual(prompts, []);
+    assert.equal(budget.turnsUsed, 1);
+  });
+
+  it('surfaces the original transport error after late activity during the retry handshake', async () => {
+    const budget = createRequestBudget({ upstreamTurnCap: 2 });
+    let oldSend;
+    let delivered = false;
+    const { children, prompts } = budgetPeer(budget, ({ attempt, message, send }) => {
+      if (attempt === 1 && message.method === 'session/prompt') {
+        oldSend = send;
+        send({ id: message.id, error: reset });
+        return true;
+      }
+      if (attempt === 2 && message.method === 'session/new') {
+        oldSend(toolProgress);
+        delivered = true;
+      }
+    });
+    await assert.rejects(run(budget), { status: 502, type: 'backend_error', ...reset });
+    assert.equal(delivered, true);
+    assert.equal(children.length, 2);
+    assert.deepEqual(prompts, [[1, 1]]);
+    assert.equal(budget.turnsUsed, 1);
+  });
+});
 
 describe('Devin ACP — stdin EPIPE guard (audit finding)', () => {
   it('attaches an stdin error listener as soon as the child is spawned', async () => {

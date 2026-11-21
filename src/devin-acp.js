@@ -4,6 +4,7 @@ import { VERSION } from './version.js';
 import { log } from './config.js';
 import { MODELS, resolveModel } from './models.js';
 import { buildSubprocessEnv, buildMinimalSubprocessEnv } from './log-safety.js';
+import { budgetExceededError } from './request-budget.js';
 
 // Spawn seam: `spawn` is captured behind an indirection so a test can inject a
 // fake child (EventEmitter stdio) to exercise the stdin 'error'/EPIPE guard
@@ -346,7 +347,22 @@ function acpAbortError() {
   return Object.assign(new Error('Request aborted'), { status: 499, type: 'request_aborted' });
 }
 
-function makeAcpClient({ command, args, env, signal, deadline, timeoutMs, outputLimit, onChunk, blockReplay }) {
+function acpTurnDeadline(timeoutMs, budget) {
+  const started = performance.now();
+  const localEnd = started + timeoutMs;
+  const routeEnd = started + (budget?.remainingMs() ?? Infinity);
+  const end = Math.min(localEnd, routeEnd);
+  return {
+    // Keep the original monotonic ceiling across retries, and also consult
+    // the route clock in case it has already advanced past its deadline.
+    remainingMs: () => Math.min(end - performance.now(), budget?.remainingMs() ?? Infinity),
+    error: () => budget && (routeEnd <= localEnd || budget.remainingMs() <= Math.max(0, localEnd - performance.now()))
+      ? budgetExceededError('Request deadline reached during Devin ACP')
+      : acpTimeoutError('turn', timeoutMs),
+  };
+}
+
+function makeAcpClient({ command, args, env, signal, deadline, timeoutMs, outputLimit, onChunk, blockReplay, beforeWrite }) {
   const child = _spawn(command, args, {
     env,
     windowsHide: true,
@@ -386,8 +402,8 @@ function makeAcpClient({ command, args, env, signal, deadline, timeoutMs, output
   };
 
   const onData = (name, chunk) => {
-    if (!signal?.aborted && performance.now() >= deadline) {
-      failAll(acpTimeoutError('turn', timeoutMs));
+    if (!signal?.aborted && deadline.remainingMs() <= 0) {
+      failAll(deadline.error());
       return;
     }
     const s = chunk.toString('utf8');
@@ -524,23 +540,26 @@ function makeAcpClient({ command, args, env, signal, deadline, timeoutMs, output
   if (signal) signal.addEventListener('abort', onAbort, { once: true });
 
   const request = (method, params = {}, timeout = timeoutMs) => {
+    if (signal?.aborted) return Promise.reject(acpAbortError());
     if (fatalError) return Promise.reject(fatalError);
     if (closed) {
       return Promise.reject(acpTransportError(`Devin ACP is closed (code ${closeCode})`));
     }
-    const remaining = deadline - performance.now();
-    if (remaining <= 0) return Promise.reject(acpTimeoutError('turn', timeoutMs));
     const id = nextId++;
-    const payload = { jsonrpc: '2.0', id, method, params };
+    const line = JSON.stringify({ jsonrpc: '2.0', id, method, params }) + '\n';
+    const remaining = deadline.remainingMs();
+    if (remaining <= 0) return Promise.reject(deadline.error());
+    if (!child.stdin?.writable) return Promise.reject(acpTransportError('Devin ACP stdin is closed'));
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
         pending.delete(id);
-        const phaseTimedOut = timeout < remaining && performance.now() < deadline;
-        reject(phaseTimedOut ? acpTimeoutError(method, timeout, true) : acpTimeoutError('turn', timeoutMs));
+        const phaseTimedOut = timeout < remaining && deadline.remainingMs() > 0;
+        reject(phaseTimedOut ? acpTimeoutError(method, timeout, true) : deadline.error());
       }, Math.ceil(Math.min(timeout, remaining)));
       timer.unref?.();
       pending.set(id, { resolve, reject, timer });
-      writeJsonLine(child, payload);
+      beforeWrite(method);
+      child.stdin.write(line);
     });
   };
 
@@ -691,7 +710,8 @@ function logAcpModelSelection({ modelDiagnostics, launch, sessionStatus, session
   });
 }
 
-export async function runDevinAcpProcess(prompt, { modelKey = '', apiKey = '', apiServerUrl = '', signal = null, onChunk = null, modelDiagnostics = null } = {}) {
+export async function runDevinAcpProcess(prompt, { modelKey = '', apiKey = '', apiServerUrl = '', signal = null, onChunk = null, modelDiagnostics = null, budget = null } = {}) {
+  if (signal?.aborted) throw acpAbortError();
   if (!apiKey) {
     throw Object.assign(new Error('Devin ACP mode requires an upstream Windsurf account apiKey.'), {
       status: 503,
@@ -699,7 +719,7 @@ export async function runDevinAcpProcess(prompt, { modelKey = '', apiKey = '', a
     });
   }
   const timeoutMs = runTimeoutMs();
-  const deadline = performance.now() + timeoutMs;
+  const deadline = acpTurnDeadline(timeoutMs, budget);
   const command = process.env.DEVIN_CLI_PATH || 'devin';
   // Denylist env: the CLI gets the operator's general environment (PATH, HOME,
   // proxy vars, DEVIN_* config like DEVIN_PERMISSION_MODE) but no credentials —
@@ -721,26 +741,47 @@ export async function runDevinAcpProcess(prompt, { modelKey = '', apiKey = '', a
 
   // A retry starts another child and replays the whole turn. Stop when the
   // client has received content or the agent has reported tool activity.
-  let replayBlocked = false;
-  const blockReplay = () => { replayBlocked = true; };
-  const trackedChunk = onChunk
-    ? (chunk) => { blockReplay(); onChunk(chunk); }
-    : null;
+  let previousAttempt = null;
+  const checkRetry = () => {
+    if (previousAttempt?.progressed) throw previousAttempt.error;
+  };
+  const checkAdmission = () => {
+    if (signal?.aborted) throw acpAbortError();
+    checkRetry();
+    if (deadline.remainingMs() <= 0) throw deadline.error();
+    if (budget && !budget.canStartAttempt()) throw budgetExceededError('No upstream turns remaining for Devin ACP');
+  };
+  const beforeWrite = (method) => {
+    checkRetry();
+    if (method === 'session/prompt') {
+      budget?.takeTurnOrThrow('Devin ACP');
+      // This prompt is now being issued. Later activity from the retired child
+      // cannot change which attempt's terminal error belongs to this prompt.
+      previousAttempt = null;
+    }
+  };
 
   const maxRetries = 1;
   for (let attempt = 0; ; attempt++) {
-    if (signal?.aborted) throw acpAbortError();
-    if (performance.now() >= deadline) throw acpTimeoutError('turn', timeoutMs);
+    checkAdmission();
+    const currentAttempt = { progressed: false, error: null };
+    const blockReplay = () => { currentAttempt.progressed = true; };
+    const trackedChunk = onChunk ? (chunk) => { blockReplay(); onChunk(chunk); } : null;
     try {
       return await runDevinAcpAttempt(prompt, {
         command, args, env, modelKey, apiKey, apiServerUrl, signal, deadline, timeoutMs,
-        onChunk: trackedChunk, blockReplay, modelDiagnostics, launch, attempt: attempt + 1,
+        onChunk: trackedChunk, blockReplay, beforeWrite, modelDiagnostics, launch, attempt: attempt + 1,
       });
     } catch (err) {
       if (signal?.aborted) throw acpAbortError();
-      if (attempt >= maxRetries || replayBlocked || err?.retryable !== true) throw err;
-      const remaining = deadline - performance.now();
-      if (remaining <= 0) throw acpTimeoutError('turn', timeoutMs);
+      checkRetry();
+      if (attempt >= maxRetries || currentAttempt.progressed || err?.retryable !== true) throw err;
+      // Keep listening to this child's stdio until the next prompt write. A
+      // notice from that child's pipe may arrive during the new handshake.
+      currentAttempt.error = err;
+      previousAttempt = currentAttempt;
+      checkAdmission();
+      const remaining = deadline.remainingMs();
       const backoff = acpRetryBaseMs();
       if (backoff >= remaining) throw err;
       log.warn(`Devin ACP: retryable ${err.code || err.type || err.status} (${err.message}); retry ${attempt + 1}/${maxRetries} in ${backoff}ms`);
@@ -750,15 +791,13 @@ export async function runDevinAcpProcess(prompt, { modelKey = '', apiKey = '', a
         if (signal?.aborted) throw acpAbortError();
         throw waitError;
       }
-      // Stdio can still deliver tool updates from the first child during backoff.
-      if (replayBlocked) throw err;
     }
   }
 }
 
 async function runDevinAcpAttempt(prompt, {
   command, args, env, modelKey, apiKey, apiServerUrl, signal, deadline, timeoutMs,
-  onChunk, blockReplay, modelDiagnostics, launch, attempt,
+  onChunk, blockReplay, beforeWrite, modelDiagnostics, launch, attempt,
 }) {
   const client = makeAcpClient({
     command,
@@ -770,6 +809,7 @@ async function runDevinAcpAttempt(prompt, {
     outputLimit: outputLimitBytes(),
     onChunk,
     blockReplay,
+    beforeWrite,
   });
 
   let sessionStatus = 'not_reached';
