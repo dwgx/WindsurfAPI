@@ -1,0 +1,108 @@
+{
+  "_scope_note": "Assertion-level mutation draft for the ConcurrencyFlow suite: one mutation per R-row (16 total), each flipping a decisive assertion in test/concurrency-stream-flow.test.js. This is a suite self-check, not a substitute for the production-defect mutations named in TEST-PLAN §5; those remain a POSIX follow-up.",
+  "_status": "NOT EXECUTED on win32. scripts/mutate-verify.mjs requires a clean reviewed tree and the repo's configured trusted POSIX git; the same limitation is recorded in test/mutations/cascade-final-sweep-deadline.json. Do not read this file as a 16/16 claim.",
+  "tests": [
+    "test/concurrency-stream-flow.test.js"
+  ],
+  "expectBaselinePass": 56,
+  "mutations": [
+    {
+      "name": "R1: peak overlap assertion weakened — N streams must reach peakActive=N",
+      "file": "test/concurrency-stream-flow.test.js",
+      "anchor": "assert.equal(peakActive, n, `${label}: peakActive must be ${n}`);",
+      "replacement": "assert.equal(peakActive, n - 1, `${label}: peakActive must be ${n}`);"
+    },
+    {
+      "name": "R2: slow-reader stop boundary moved — S0 must stop at write 2",
+      "file": "test/concurrency-stream-flow.test.js",
+      "anchor": "assert.equal(responses[0].writes.length, 2, 'R2 Connect S0 stopped at the refused content frame');",
+      "replacement": "assert.equal(responses[0].writes.length, 3, 'R2 Connect S0 stopped at the refused content frame');"
+    },
+    {
+      "name": "R3: per-stream queue floor tightened to the observed depth — a 3-frame queue must fail",
+      "file": "test/concurrency-stream-flow.test.js",
+      "anchor": "assert.ok(depth >= 4 && depth <= 8, `R3 stream ${s.i}: queued depth ${depth} outside 4..8`);",
+      "replacement": "assert.ok(depth >= 8 && depth <= 8, `R3 stream ${s.i}: queued depth ${depth} outside 4..8`);"
+    },
+    {
+      "name": "R4: Connect half-open timeout code weakened",
+      "file": "test/concurrency-stream-flow.test.js",
+      "anchor": "assert.equal(errors.length, 1, 'R4 Connect S0: exactly one error frame');",
+      "replacement": "assert.equal(errors.length, 2, 'R4 Connect S0: exactly one error frame');"
+    },
+    {
+      "name": "R5: aborted Connect stream allowed to emit its B marker",
+      "file": "test/concurrency-stream-flow.test.js",
+      "anchor": "assert.equal(countOf(wireText(responses[i]), `R5-S${i}-B`), 0, `R5 Connect S${i}: no B after abort`);",
+      "replacement": "assert.equal(countOf(wireText(responses[i]), `R5-S${i}-B`), 1, `R5 Connect S${i}: no B after abort`);"
+    },
+    {
+      "name": "R6: closed arm allowed one post-close write",
+      "file": "test/concurrency-stream-flow.test.js",
+      "anchor": "assert.equal(resA.writes.length, frozenA, `${label}: closed arm wrote after close`);",
+      "replacement": "assert.equal(resA.writes.length, frozenA + 1, `${label}: closed arm wrote after close`);"
+    },
+    {
+      "name": "R7: acquired-but-unattempted B allowed one upstream call",
+      "file": "test/concurrency-stream-flow.test.js",
+      "anchor": "assert.equal(aborted.attempts.length, 1, 'R7: only A was attempted');",
+      "replacement": "assert.equal(aborted.attempts.length, 2, 'R7: only A was attempted');"
+    },
+    {
+      "name": "R8: held Messages poll allowed a second steps RPC",
+      "file": "test/concurrency-stream-flow.test.js",
+      "anchor": "assert.equal(fixture.state.stepsCalls, 1, `R8 ${route}: exactly one steps poll while held`);",
+      "replacement": "assert.equal(fixture.state.stepsCalls, 2, `R8 ${route}: exactly one steps poll while held`);"
+    },
+    {
+      "name": "R9: preflight retry hint changed — 30000 ms is the contract",
+      "file": "test/concurrency-stream-flow.test.js",
+      "anchor": "assert.equal(r.body?.error?.retry_after_ms, 30000);",
+      "replacement": "assert.equal(r.body?.error?.retry_after_ms, 30001);"
+    },
+    {
+      "name": "R10: POSIX LS pool test skip flipped — cannot be caught on win32 by construction",
+      "file": "test/concurrency-stream-flow.test.js",
+      "anchor": "const skip = POSIX ? false : 'POSIX-only: ensureLs spawns a shebang fake LS';",
+      "replacement": "const skip = POSIX ? false : 'POSIX-only: ensureLs spawns a shebang fake LS (mutated)';",
+      "expectCaught": false
+    },
+    {
+      "name": "R11: POSIX resume-eviction test skip flipped — cannot be caught on win32 by construction",
+      "file": "test/concurrency-stream-flow.test.js",
+      "anchor": "it('R11 — resume after LS eviction under pressure', { skip }, async () => {",
+      "replacement": "it('R11 — resume after LS eviction under pressure (mutated)', { skip }, async () => {",
+      "expectCaught": false
+    },
+    {
+      "name": "R12: same-key claim race allows two claims",
+      "file": "test/concurrency-stream-flow.test.js",
+      "anchor": "assert.equal(registry.detachedRegistry.stats().claim.ok, 1, 'R12 race: one claim');",
+      "replacement": "assert.equal(registry.detachedRegistry.stats().claim.ok, 2, 'R12 race: one claim');"
+    },
+    {
+      "name": "R13: Chat replayed prefix allowed to be written twice",
+      "file": "test/concurrency-stream-flow.test.js",
+      "anchor": "assert.equal(countOf(wireText(res), DETACH_PREFIX), 1, 'R13 Chat drain: prefix written once');",
+      "replacement": "assert.equal(countOf(wireText(res), DETACH_PREFIX), 2, 'R13 Chat drain: prefix written once');"
+    },
+    {
+      "name": "R14: Connect Chat timeout error count weakened",
+      "file": "test/concurrency-stream-flow.test.js",
+      "anchor": "assert.equal(errors.length, 1, 'R14 Connect: exactly one typed error');",
+      "replacement": "assert.equal(errors.length, 2, 'R14 Connect: exactly one typed error');"
+    },
+    {
+      "name": "R15: handler fresh recovery allowed to re-send only the delta",
+      "file": "test/concurrency-stream-flow.test.js",
+      "anchor": "assert.deepEqual(fixture.state.sends, [1, 3], 'R15 handler: delta then full history');",
+      "replacement": "assert.deepEqual(fixture.state.sends, [3, 3], 'R15 handler: delta then full history');"
+    },
+    {
+      "name": "R16: drought premium rejection status weakened",
+      "file": "test/concurrency-stream-flow.test.js",
+      "anchor": "assert.equal(premium.status, 503);",
+      "replacement": "assert.equal(premium.status, 504);"
+    }
+  ]
+}
