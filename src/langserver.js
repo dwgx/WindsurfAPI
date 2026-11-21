@@ -166,6 +166,17 @@ let _apiServerUrl = DEFAULT_API_URL;
 let _idleSweepTimer = null;
 let _rssSnapshot = { at: 0, pidKey: '', byRootPid: new Map() };
 let _nextPendingStartSeq = 1;
+// Every stop opens a new start boundary. A start captures the boundary it was
+// admitted under and refuses to reserve, spawn or publish once it changes, so a
+// queued/reserved start cannot outlive the stop that invalidated it.
+let _stopEpoch = 0;
+// Non-zero while a stop that awaits children (stopLanguageServerAndWait) is
+// draining. New starts are refused during that window: a shutdown drain ends in
+// process.exit, so an LS spawned mid-drain would be an orphan.
+let _stopDrainDepth = 0;
+// Identity token for `_stopping` records. A cleanup path releases only the
+// record object it created; a newer same-key generation's record survives.
+let _stoppingRecordSeq = 0;
 const _admissionStats = {
   startAttempts: 0,
   startSuccesses: 0,
@@ -551,6 +562,60 @@ function withStartAdmissionLock(fn) {
   })();
 }
 
+// ─── Stop boundary ─────────────────────────────────────────
+// A stop invalidation is a cancellation, not a start failure: callers get a
+// typed error and the spawn counters stay clean.
+function lsStartInvalidatedError(key) {
+  const err = new Error(`LS start for ${publicLsKey(key)} invalidated by language-server stop`);
+  err.code = 'LS_START_INVALIDATED';
+  err.type = 'ls_start_invalidated';
+  return err;
+}
+
+function lsStoppingError() {
+  const err = new Error('Language server is stopping; start refused until the stop completes');
+  err.code = 'LS_STOPPING';
+  err.type = 'ls_stopping';
+  return err;
+}
+
+function assertStartCurrent(key, startEpoch) {
+  if (startEpoch !== _stopEpoch) throw lsStartInvalidatedError(key);
+}
+
+function openStopBoundary() {
+  _stopEpoch++;
+  // Everything queued or reserved before this boundary belongs to it. Drop the
+  // coalescing promises and their admission reservations so a restart starts a
+  // fresh generation and capacity is recovered immediately; the old promises
+  // abort at their next epoch check and their cleanup is identity-guarded.
+  _pending.clear();
+  _pendingStartSeq.clear();
+  return _stopEpoch;
+}
+
+function setStoppingRecord(key, fields = {}) {
+  const record = {
+    at: Date.now(),
+    pid: null,
+    reason: null,
+    boundary: _stopEpoch,
+    id: ++_stoppingRecordSeq,
+    ...fields,
+  };
+  _stopping.set(key, record);
+  return record;
+}
+
+function releaseStoppingRecord(key, record) {
+  if (!record) return false;
+  // Only the exact record this caller created may be released. A newer
+  // generation (or a newer stop) may have replaced it under the same key.
+  if (_stopping.get(key) !== record) return false;
+  _stopping.delete(key);
+  return true;
+}
+
 function poolOccupancy() {
   return _pool.size + _stopping.size;
 }
@@ -642,7 +707,7 @@ async function evictLruIdleNonDefault() {
   const candidate = findIdleNonDefaultEvictionCandidate();
   if (!candidate) return null;
   const { key: lruKey, entry: evicted } = candidate;
-  _stopping.set(lruKey, { at: Date.now(), pid: evicted?.process?.pid || null, reason: 'evicted' });
+  const stoppingRecord = setStoppingRecord(lruKey, { pid: evicted?.process?.pid || null, reason: 'evicted' });
   _pool.delete(lruKey);
   _maintenanceUses.delete(lruKey);
   markIntentionalShutdown(evicted);
@@ -653,7 +718,7 @@ async function evictLruIdleNonDefault() {
     try { evicted?.process?.kill('SIGKILL'); } catch {}
     how = await waitProcessExit(evicted?.process, 500);
   }
-  _stopping.delete(lruKey);
+  releaseStoppingRecord(lruKey, stoppingRecord);
   _admissionStats.evictions++;
   _admissionStats.lastEviction = admissionEvent({
     key: publicLsKey(lruKey),
@@ -903,10 +968,11 @@ export function getLsAdmissionStatus(proxy = null) {
   };
 }
 
-async function waitForPoolCapacity(key, pendingStartSeq = Infinity) {
+async function waitForPoolCapacity(key, pendingStartSeq = Infinity, startEpoch = _stopEpoch) {
   const start = Date.now();
   let logged = false;
   while (poolOccupancyWithPendingReservations({ excludeKey: key, beforeSeq: pendingStartSeq }) >= MAX_LS_INSTANCES) {
+    assertStartCurrent(key, startEpoch);
     if (await evictLruIdleNonDefault()) continue;
     const remaining = LS_POOL_WAIT_MS - (Date.now() - start);
     if (remaining <= 0) {
@@ -929,16 +995,18 @@ async function waitForPoolCapacity(key, pendingStartSeq = Infinity) {
       log.info(`LS pool at cap (${MAX_LS_INSTANCES}); waiting up to ${LS_POOL_WAIT_MS}ms for an active non-default instance to go idle`);
     }
     await delay(Math.min(500, remaining));
+    assertStartCurrent(key, startEpoch);
     const existing = _pool.get(key);
     if (existing?.ready) return;
   }
+  assertStartCurrent(key, startEpoch);
 }
 
 function isDefaultBootstrapStart(key) {
   return key === 'default' && poolOccupancy() === 0;
 }
 
-async function waitForMemoryHeadroom(key, pendingStartSeq = Infinity) {
+async function waitForMemoryHeadroom(key, pendingStartSeq = Infinity, startEpoch = _stopEpoch) {
   // Bootstrap exception: if no LS exists yet, allow the default instance to
   // start so low-memory single-replica deployments do not fail closed before
   // we have an observed RSS estimate. Once any LS/stopping reservation exists,
@@ -948,6 +1016,7 @@ async function waitForMemoryHeadroom(key, pendingStartSeq = Infinity) {
   const start = Date.now();
   let logged = false;
   while (true) {
+    assertStartCurrent(key, startEpoch);
     const snap = getLsMemoryGuardStatus({
       reservedStarts: activeSpawnReservationCount({ excludeKey: key, beforeSeq: pendingStartSeq }),
     });
@@ -1227,6 +1296,10 @@ async function waitPortReady(port, timeoutMs = 20000) {
  */
 export async function ensureLs(proxy = null) {
   ensureIdleSweeper();
+  // A drain that awaits children ends in process.exit in both real callers
+  // (index.js shutdown); admitting a start here would orphan the child.
+  if (_stopDrainDepth > 0) throw lsStoppingError();
+  const startEpoch = _stopEpoch;
   const key = proxyKey(proxy);
   const existing = _pool.get(key);
   if (existing && existing.ready) {
@@ -1248,8 +1321,10 @@ export async function ensureLs(proxy = null) {
     let reservedByThisCall = false;
     let attemptedStart = false;
     await withStartAdmissionLock(async () => {
-      await waitForPoolCapacity(key, pendingStartSeq);
-      await waitForMemoryHeadroom(key, pendingStartSeq);
+      assertStartCurrent(key, startEpoch);
+      await waitForPoolCapacity(key, pendingStartSeq, startEpoch);
+      await waitForMemoryHeadroom(key, pendingStartSeq, startEpoch);
+      assertStartCurrent(key, startEpoch);
       const nowExisting = _pool.get(key);
       if (nowExisting?.ready) {
         touchEntry(nowExisting);
@@ -1274,9 +1349,18 @@ export async function ensureLs(proxy = null) {
         _pool.set(key, entry);
       }
     });
-    if (entry?.ready) return entry;
+    if (entry?.ready) {
+      // A stop may have opened the boundary while this call waited for the
+      // admission lock; never hand back a handle the stop has already killed.
+      assertStartCurrent(key, startEpoch);
+      return entry;
+    }
 
     try {
+      // The boundary may have opened while this call held the admission lock.
+      // The reservation is then this call's own childless placeholder; the
+      // outer catch drops it because `reservedByThisCall` is set.
+      assertStartCurrent(key, startEpoch);
       attemptedStart = true;
       recordStartAttempt(key, { poolSize: poolOccupancy(), maxInstances: MAX_LS_INSTANCES, reservedByThisCall });
       const isDefault = key === 'default';
@@ -1311,6 +1395,10 @@ export async function ensureLs(proxy = null) {
       }
     }
 
+    // The boundary may have opened while the port probe was in flight. Nothing
+    // between this check and spawn() awaits, so a passed check means the spawn
+    // happens under the generation it was admitted in.
+    assertStartCurrent(key, startEpoch);
     const dataDir = dataDirForKey(key);
     // The directory name embeds the raw pool key (`…_u<username>`), so the
     // operator-facing failure names the public projection and the errno only.
@@ -1451,27 +1539,34 @@ export async function ensureLs(proxy = null) {
 
       try {
         await waitPortReadyOrProcessExit(proc, port, 25000);
+        if (startEpoch !== _stopEpoch) throw lsStartInvalidatedError(key);
         entry.ready = true;
         entry.readyAt = Date.now();
         touchEntry(entry);
         recordStartSuccess(key, { port, pid: proc.pid || null, readyMs: entry.readyAt - entry.startedAt });
         log.info(`LS instance ${publicLsKey(key)} ready on port ${port}`);
       } catch (err) {
-        log.error(`LS instance ${publicLsKey(key)} failed to become ready: ${err.message}`);
+        const invalidated = startEpoch !== _stopEpoch;
+        if (!invalidated) log.error(`LS instance ${publicLsKey(key)} failed to become ready: ${err.message}`);
       try { proc.kill('SIGKILL'); } catch {}
       if (_pool.get(key)?.process === proc) {
         _pool.delete(key);
         _maintenanceUses.delete(key);
       }
-      _stopping.delete(key);
-      throw err;
+      // No `_stopping.delete(key)` here: that record (if any) belongs to the
+      // stop/eviction/restart that created it and is released by its owner.
+      throw invalidated ? lsStartInvalidatedError(key) : err;
       }
     return entry;
     } catch (err) {
       if (reservedByThisCall && _pool.get(key) === entry && !entry?.process) {
         _pool.delete(key);
       }
-      if (attemptedStart) recordStartFailure(key, err, { port: entry?.port || null, pid: entry?.process?.pid || null });
+      // An invalidation is a cancellation, not a spawn failure: keep the
+      // admission counters honest.
+      if (attemptedStart && err?.code !== 'LS_START_INVALIDATED') {
+        recordStartFailure(key, err, { port: entry?.port || null, pid: entry?.process?.pid || null });
+      }
       throw err;
     }
   })();
@@ -1480,8 +1575,10 @@ export async function ensureLs(proxy = null) {
   try {
     return await promise;
   } finally {
-    _pending.delete(key);
-    _pendingStartSeq.delete(key);
+    // A stop opens a new boundary and replaces both maps entries; only the
+    // entries this call created may be removed.
+    if (_pending.get(key) === promise) _pending.delete(key);
+    if (_pendingStartSeq.get(key) === pendingStartSeq) _pendingStartSeq.delete(key);
   }
 }
 
@@ -1494,7 +1591,11 @@ export async function restartLsForProxy(proxy) {
   const entry = _pool.get(key);
   if (!entry) return ensureLs(proxy);
   markIntentionalShutdown(entry);  // prevent auto-restart
+  // Text-pinned by test/langserver-resource.test.js. The record object itself
+  // is the release token: a stop that replaces it under the same key later
+  // means this restart's release is a no-op.
   _stopping.set(key, { at: Date.now(), pid: entry?.process?.pid || null, reason: 'restart' });
+  const stoppingRecord = _stopping.get(key);
   _pool.delete(key);
   _maintenanceUses.delete(key);
   if (entry?.port) {
@@ -1514,7 +1615,7 @@ export async function restartLsForProxy(proxy) {
     try { entry?.process?.kill('SIGKILL'); } catch {}
     how = await waitProcessExit(entry?.process, 500);
   }
-  _stopping.delete(key);
+  releaseStoppingRecord(key, stoppingRecord);
   log.info(`LS instance ${publicLsKey(key)} stopped for restart (${how})`);
   return ensureLs(proxy);
 }
@@ -1691,15 +1792,30 @@ export function cleanupOrphanLanguageServers() {
 }
 
 export function stopLanguageServer() {
+  // Open the boundary BEFORE touching the pool: every queued/reserved start
+  // from an older generation is invalidated and its coalescing promise and
+  // admission reservation are dropped, so a restart after the stop starts a
+  // fresh generation instead of joining a pre-stop promise.
+  const boundary = openStopBoundary();
   // v2.0.25 LOW-1: tear down ALL conversation pool entries pinned to LSes
   // we're about to kill, so the dashboard restart path doesn't leak dead
   // cascade ids into the next LS's session window.
   const portsToClose = [];
   for (const [key, entry] of _pool) {
-    markIntentionalShutdown(entry);  // prevent auto-restart
-    _stopping.set(key, { at: Date.now(), pid: entry?.process?.pid || null, reason: 'stop' });
-    try { entry.process?.kill('SIGTERM'); } catch {}
     if (entry?.port) portsToClose.push({ port: entry.port, generation: entry.generation });
+    // A childless reservation (queued/reserved start) has no OS process to
+    // reap: dropping it from the pool is the whole stop. Never leave a
+    // childless `_stopping` reservation behind.
+    if (!entry?.process) continue;
+    markIntentionalShutdown(entry);  // prevent auto-restart
+    const stoppingRecord = setStoppingRecord(key, { pid: entry.process.pid || null, reason: 'stop' });
+    // Track the child until the OS confirms it is gone; the identity token
+    // means an exit arriving after a newer same-key generation must not clear
+    // that generation's record.
+    try {
+      entry.process.once('exit', () => releaseStoppingRecord(key, stoppingRecord));
+    } catch {}
+    try { entry.process.kill('SIGTERM'); } catch {}
     log.info(`LS instance ${publicLsKey(key)} stopped`);
   }
   _pool.clear();
@@ -1712,9 +1828,11 @@ export function stopLanguageServer() {
       }
     }).catch(() => {});
   }
+  // Bounded backstop for children whose exit never arrives; scoped to the
+  // records this boundary created so a newer stop's records survive.
   setTimeout(() => {
-    for (const [key, entry] of _stopping) {
-      if (entry?.reason === 'stop') _stopping.delete(key);
+    for (const [key, record] of _stopping) {
+      if (record?.boundary === boundary && record?.reason === 'stop') releaseStoppingRecord(key, record);
     }
   }, 2500).unref?.();
 }
@@ -1730,35 +1848,48 @@ export function stopLanguageServer() {
  * Per-process wait cap defaults to 1.5s; total wait for many LSes is
  * bounded by Promise.allSettled. SIGKILL fallback if SIGTERM doesn't
  * land within the cap.
+ *
+ * Opening the boundary makes a concurrent `ensureLs` fail closed with
+ * `LS_STOPPING` for the duration of the drain: the shutdown caller exits the
+ * process right after this resolves, so a child spawned during the drain would
+ * be orphaned. The dashboard restart path starts again after this resolves and
+ * gets a fresh generation.
  */
 export async function stopLanguageServerAndWait({ perProcessTimeoutMs = 1500 } = {}) {
+  openStopBoundary();
+  _stopDrainDepth++;
   const procs = [];
   const portsToClose = [];
-  for (const [key, entry] of _pool) {
-    if (entry?.process) procs.push({ key, proc: entry.process });
-    if (entry?.port) portsToClose.push({ port: entry.port, generation: entry.generation });
-    _stopping.set(key, { at: Date.now(), pid: entry?.process?.pid || null, reason: 'stop_wait' });
-    markIntentionalShutdown(entry);
+  try {
+    for (const [key, entry] of _pool) {
+      if (entry?.port) portsToClose.push({ port: entry.port, generation: entry.generation });
+      if (!entry?.process) continue;
+      const stoppingRecord = setStoppingRecord(key, { pid: entry.process.pid || null, reason: 'stop_wait' });
+      procs.push({ key, proc: entry.process, stoppingRecord });
+      markIntentionalShutdown(entry);
+    }
+    _pool.clear();
+    _maintenanceUses.clear();
+    await Promise.allSettled(procs.map(({ key, proc, stoppingRecord }) => new Promise((resolve) => {
+      let settled = false;
+      const finish = (how) => {
+        if (settled) return;
+        settled = true;
+        releaseStoppingRecord(key, stoppingRecord);
+        log.info(`LS instance ${publicLsKey(key)} stopped (${how})`);
+        resolve();
+      };
+      try { proc.once('exit', () => finish('exited')); } catch {}
+      try { proc.kill('SIGTERM'); } catch (e) { finish(`kill failed: ${e.message}`); return; }
+      setTimeout(() => {
+        if (settled) return;
+        try { proc.kill('SIGKILL'); } catch {}
+        finish(`SIGKILL after ${perProcessTimeoutMs}ms`);
+      }, perProcessTimeoutMs).unref();
+    })));
+  } finally {
+    _stopDrainDepth--;
   }
-  _pool.clear();
-  _maintenanceUses.clear();
-  await Promise.allSettled(procs.map(({ key, proc }) => new Promise((resolve) => {
-    let settled = false;
-    const finish = (how) => {
-      if (settled) return;
-      settled = true;
-      _stopping.delete(key);
-      log.info(`LS instance ${publicLsKey(key)} stopped (${how})`);
-      resolve();
-    };
-    try { proc.once('exit', () => finish('exited')); } catch {}
-    try { proc.kill('SIGTERM'); } catch (e) { finish(`kill failed: ${e.message}`); return; }
-    setTimeout(() => {
-      if (settled) return;
-      try { proc.kill('SIGKILL'); } catch {}
-      finish(`SIGKILL after ${perProcessTimeoutMs}ms`);
-    }, perProcessTimeoutMs).unref();
-  })));
   if (portsToClose.length) {
     try {
       const m = await import('./conversation-pool.js');
