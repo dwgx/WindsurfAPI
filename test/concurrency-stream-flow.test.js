@@ -1282,10 +1282,10 @@ function detachHandlerContext(port, acct, lsFake, overrides = {}) {
       lsFake.beginCalls += 1;
       lsFake.activeRequests += 1;
       lsFake.maxActive = Math.max(lsFake.maxActive, lsFake.activeRequests);
-      return lsFake;
+      return { kind: 'request', entry: lsFake, port, generation: lsFake.generation };
     },
-    endLsUse: (p) => {
-      if (!lsFake || p !== port) return;
+    endLsUse: (lease) => {
+      if (!lsFake || lease?.entry !== lsFake) return;
       lsFake.endCalls += 1;
       lsFake.activeRequests = Math.max(0, lsFake.activeRequests - 1);
     },
@@ -1295,7 +1295,7 @@ function detachHandlerContext(port, acct, lsFake, overrides = {}) {
       if (lsFake.activeRequests > 0) throw new Error('resume acquired a second LS lease');
       lsFake.activeRequests += 1;
       lsFake.maxActive = Math.max(lsFake.maxActive, lsFake.activeRequests);
-      return lsFake;
+      return { kind: 'request', entry: lsFake, port, generation: lsFake.generation };
     },
     WindsurfClient,
     ...overrides,
@@ -1928,14 +1928,14 @@ describe('R10/R11 — POSIX real LS pool', () => {
       } catch (err) {
         red = err;
       } finally {
-        langserver.endLsUse(def.port);
+        langserver.endLsUse(pinB);
       }
       assert.ok(red, 'R10 red arm: C must fail at cap');
       assert.ok(Date.now() - started >= 180, 'R10 red arm: measured wait >=200 ms');
       assert.equal(langserver.getLsStatus().admissionStats.poolExhausted, before + 1,
         'R10 red arm: exactly one capacity failure');
       // Green arm: release non-default A, C evicts it and becomes ready.
-      langserver.endLsUse(a.port);
+      langserver.endLsUse(pinA);
       const c = await langserver.ensureLs(proxyC);
       assert.ok(c?.ready, 'R10 green arm: C becomes ready after A is evictable');
       assert.equal(langserver.getLsStatus().admissionStats.poolExhausted, before + 1,
@@ -1970,6 +1970,7 @@ describe('R10/R11 — POSIX real LS pool', () => {
     const langserver = await import('../src/langserver.js');
     langserver.configureLanguageServer({ binaryPath: launcher });
     try {
+      const exhaustedBefore = langserver.getLsStatus().admissionStats.poolExhausted;
       await langserver.ensureLs(null);
       const a = await langserver.ensureLs({ host: '10.9.2.1', port: 8080 });
       assert.ok(a?.ready);
@@ -1982,7 +1983,7 @@ describe('R10/R11 — POSIX real LS pool', () => {
       assert.equal(langserver.getLsStatus().pool.occupancy, 1, 'R11: one free slot');
       // The detached-entry retry itself is covered by the handler arms in
       // R12/R13; this row's pool transition is the POSIX-specific addition.
-      assert.equal(langserver.getLsStatus().admissionStats.poolExhausted, 0,
+      assert.equal(langserver.getLsStatus().admissionStats.poolExhausted, exhaustedBefore,
         'R11: the free slot keeps the green path free of capacity failures');
     } finally {
       try { await langserver.stopLanguageServerAndWait({ perProcessTimeoutMs: 1000 }); } catch {}
@@ -2059,6 +2060,7 @@ describe('R7 — acquired-but-unattempted failover abort', () => {
       reportDeadToken() {},
       isAccountFailoverError: (code) => code === 'RATE_LIMITED',
       context: {},
+      DEFER_STREAM_DELIVERY: Symbol('deferStreamDelivery'),
       budgetExceededError: (message) => Object.assign(new Error(message), { code: 'DEADLINE_EXCEEDED' }),
       chatStreamError: (message, type, code) => ({ error: { message, type, code } }),
       jsonSchema: null,
@@ -2066,8 +2068,8 @@ describe('R7 — acquired-but-unattempted failover abort', () => {
       log: { info() {}, warn() {}, error() {} },
       AbortController,
     };
-    const body = `${topFunction('acquireConnectFailover')}\n${topFunction('connectFailoverMax')}\nreturn (async () => {
-      const connectParams = {}, connectMeta = {}, reqId = 'r', reqModelName = 'model', selector = 'model', connectDisplayModel = 'model';
+    const body = `${topFunction('acquireConnectFailover')}\n${topFunction('connectFailoverMax')}\n${topFunction('publishStreamDelivery')}\nreturn (async () => {
+      const connectParams = {}, connectMeta = {}, reqId = 'r', reqModelName = 'model', selector = 'model', connectDisplayModel = 'model', freeOnlyDroughtAdmission = false;
       const ccStart = 0, ccAcct = accounts[0], callerKey = 'owner', connectMessages = [], incomingConnectReasoning = '';
       const abortController = __abortController, triedKeys = [], maxHops = connectFailoverMax(env);
       let emitted = false;
