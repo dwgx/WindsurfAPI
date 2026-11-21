@@ -1143,6 +1143,66 @@ describe('thinking-only rescue & promotion', () => {
     assert.equal(message.reasoning_content, undefined, 'the promoted copy must be dropped');
   });
 
+  // A reasoning-only turn that ran out of the caller's output budget is a
+  // TRUNCATED thought, not a whole-think answer — the swe-2-flash-medium audit
+  // at max_tokens=8 hit exactly this shape: upstream spent the whole budget on
+  // thinking and the gateway promoted the fragment into `content`. The honest
+  // shape is finish_reason 'length' with the fragment left in reasoning_content
+  // (non-stream) or simply never emitted as a content delta (stream).
+  for (const [label, run] of [
+    ['non-stream', async (params, opts) => {
+      const { body } = await toChatCompletion(params, opts);
+      const c = body.choices[0];
+      return { content: c.message.content, reasoning: c.message.reasoning_content, finish: c.finish_reason };
+    }],
+    ['stream', async (params, opts) => {
+      const frames = [];
+      const result = await streamChatCompletion(params, (f) => frames.push(f), opts);
+      const deltas = frames
+        .flatMap((f) => f.choices || [])
+        .map((ch) => ch.delta?.content)
+        .filter(Boolean);
+      return { content: result.content, deltas, finish: result.finish_reason };
+    }],
+  ]) {
+    it(`keeps cap-truncated reasoning out of content (${label})`, async () => {
+      __setStreamChatForTest(fakeStream([
+        { type: 'reasoning', text: 'a thought cut mid-senten' },
+        { type: 'finish', reason: 'stop', usage: { completion_tokens: 8 } },
+      ]));
+      const out = await run(
+        { model: 'swe-2-flash-medium', messages: [{ role: 'user', content: 'hi' }], completion: { maxTokens: 8 } },
+        { emulateTools: false },
+      );
+      assert.equal(out.finish, 'length', 'a turn that overran the budget must report truncation');
+      assert.equal(out.content, '', 'a truncated thinking fragment is not the answer');
+      if (label === 'non-stream') {
+        assert.equal(out.reasoning, 'a thought cut mid-senten',
+          'the fragment stays in reasoning_content, where a thinking-aware client can show it');
+      } else {
+        assert.deepEqual(out.deltas, [], 'no content delta may carry the thinking fragment');
+      }
+    });
+
+    it(`keeps descriptor-'length' reasoning out of content (${label})`, async () => {
+      __setStreamChatForTest(fakeStream([
+        { type: 'reasoning', text: 'a thought cut mid-senten' },
+        { type: 'finish', reason: 'length', usage: { completion_tokens: 8 } },
+      ]));
+      const out = await run(
+        { model: 'swe-2-flash-medium', messages: [{ role: 'user', content: 'hi' }] },
+        { emulateTools: false },
+      );
+      assert.equal(out.finish, 'length');
+      assert.equal(out.content, '');
+      if (label === 'non-stream') {
+        assert.equal(out.reasoning, 'a thought cut mid-senten');
+      } else {
+        assert.deepEqual(out.deltas, []);
+      }
+    });
+  }
+
   // A rescue attempt REPLACES the previous one; it must not be appended to it.
   //
   // The rescue loop lives inside streamChatWithEmptyRetry, while the accumulators

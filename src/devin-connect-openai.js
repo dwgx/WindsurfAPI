@@ -771,7 +771,19 @@ export async function toChatCompletion(params, opts = {}) {
   // `<tool_call>` XML to the client as the visible answer with finish_reason='stop'.
   // The agent loop does not advance and the user sees markup, which is worse than
   // the empty turn the promotion exists to prevent.
-  const reasoningOnly = !toolCalls.length && !content && !!reasoning && !stopHit;
+  //
+  // Promotion rescues a turn that FINISHED cleanly with only thinking. A turn
+  // cut short by the caller's output cap is truncated mid-thought — the
+  // reasoning fragment was never the answer, and finish_reason 'length' already
+  // tells the client its budget ran out. Promoting it into `content` would
+  // masquerade truncated thinking as the reply (the "thinking text in the body"
+  // shape observed for swe-2-flash at tiny max_tokens). Two truncation signals
+  // are checked, matching applyOutputCap's own rule: the descriptor may pin
+  // 'length' directly (MAX_TOKENS), and usage>=cap catches clean-stop enums
+  // that still overran the budget.
+  const capReached = applyOutputCap('stop', usage, params.completion?.maxTokens) === 'length';
+  const reasoningOnly = !toolCalls.length && !content && !!reasoning && !stopHit
+    && finishReason === 'stop' && !capReached;
   let promotedReasoning = reasoningOnly && !keepReasoningSeparate;
   if (reasoningOnly && emulateTools) {
     const promotedParse = parseToolCallsFromText(reasoning, {
@@ -1138,7 +1150,15 @@ export async function streamChatCompletion(params, send, opts = {}) {
   // recorded here rather than left to look like an oversight; if a future change
   // can dedupe at the translator layer (messages.js already knows whether the
   // text block equals the thinking block), that is the place to do it.
-  if (!content && !collectedToolCalls.length && !nativeToolCalls.length && reasoning && !stopHit) {
+  //
+  // Same truncation gate as the non-stream twin: a turn cut by the caller's
+  // output cap ('length' — descriptor-pinned or usage-proven) was truncated
+  // mid-thought; the reasoning fragment is not the answer and 'length' already
+  // says the budget ran out. Promotion is for cleanly finished ('stop')
+  // whole-think turns only.
+  const capReached = applyOutputCap('stop', usage, params.completion?.maxTokens) === 'length';
+  if (!content && !collectedToolCalls.length && !nativeToolCalls.length && reasoning && !stopHit
+    && finishReason === 'stop' && !capReached) {
     // Same extraction the content path uses, for the same reason as the non-stream
     // path: the rescue nudge asks for tool markup, so a model that complies while
     // still writing into the reasoning channel would otherwise have raw
