@@ -601,8 +601,12 @@ export function isConnectSelectorCurrentlyFree(selector) {
  * account-scoped: a deployment whose accounts never receive a GetUserStatus rate
  * table still gets the catalog's zero, and account A's zero never admits account B.
  * Absence stays not-free; a nonzero rate (including a discounted-but-paid row)
- * bills. Unknown/stale pricing fails closed here exactly like it does at the gate,
- * so this predicate can only ever NARROW the gate's admission, never widen it.
+ * bills. A stale last-known zero is still trusted: nothing here expires pricing,
+ * so an old zero keeps admitting until the next accepted sync replaces or clears
+ * it — the same behaviour as the rate-table and cost-tier arms above, and the same
+ * at the pool gate. Freshness is reported elsewhere, not enforced by this
+ * predicate; read that way, it can still only ever NARROW the gate's admission,
+ * never widen it.
  *
  * One deliberate exception, and it is not a new fallback: when the pool gate itself
  * fell back to the static FREE_REACHABLE floor (`freeReason === 'fallback_whitelist'`
