@@ -79,6 +79,10 @@ let renderDevinQuota;
 let renderDevinSettings;
 let loadDevin;
 before(() => {
+  for (const name of ['usageRemainingPercentage', 'fmtUsageRemaining']) {
+    const fn = renderer(name);
+    self[name] = (...args) => fn(I18n, self, ...args);
+  }
   renderDevinKpis = renderer('renderDevinKpis');
   renderDevinRuntime = renderer('renderDevinRuntime');
   renderDevinSessions = renderer('renderDevinSessions');

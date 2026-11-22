@@ -3071,7 +3071,7 @@ tbody tr:hover td { background: var(--surface-2); }
       <div class="section-header">
         <div>
           <div class="section-title" data-i18n="section.poolHealth.title">账号池健康</div>
-          <div class="section-desc" data-i18n="section.poolHealth.desc">按最坏优先汇总各账号健康信号</div>
+          <div class="section-desc" data-i18n="section.poolHealth.desc">最近一小时的错误和限流信号</div>
         </div>
         <div class="seg-group" role="radiogroup" data-i18n-aria-label="aria.poolViewGroup" aria-label="账号池视图" id="pool-view-switch">
           <button class="seg-btn pool-view-btn" role="radio" aria-checked="false" data-view="grid" onclick="App.setPoolView('grid')" data-i18n="poolView.grid">发光网格</button>
@@ -4192,7 +4192,7 @@ tbody tr:hover td { background: var(--surface-2); }
         <label><span data-i18n="section.statsLog.filters.account">账号</span>
           <select class="select" id="stats-log-account" onchange="App.setStatsLogFilter('account', this.value)"></select>
         </label>
-        <label><span data-i18n="section.statsLog.filters.status">状态</span>
+        <label><span data-i18n="section.statsLog.filters.status">HTTP 状态</span>
           <select class="select" id="stats-log-status" onchange="App.setStatsLogFilter('status', this.value)"></select>
         </label>
         <button class="btn btn-ghost btn-xs" onclick="App.resetStatsLogFilters()" data-i18n="section.statsLog.filters.reset">清除筛选</button>
@@ -4205,11 +4205,11 @@ tbody tr:hover td { background: var(--surface-2); }
               <th data-i18n="table.header.time">时间</th>
               <th data-i18n="table.header.model">模型</th>
               <th data-i18n="table.header.account">账号</th>
-              <th data-i18n="table.header.status">状态</th>
+              <th data-i18n="section.statsLog.attemptAndHttp">尝试结果 / HTTP</th>
               <th class="numeric" data-i18n="table.header.duration">耗时</th>
               <th class="numeric" data-i18n="table.header.tokensIn">输入 Token</th>
               <th class="numeric" data-i18n="table.header.tokensOut">输出 Token</th>
-              <th class="numeric" data-i18n="table.header.cost">费用 (credits)</th>
+              <th class="numeric" data-i18n="section.statsLog.estimatedCredits">估算费用 (credits)</th>
             </tr></thead>
             <tbody id="stats-log-body">
               <tr class="empty-row"><td colspan="8" data-i18n="table.empty.noRequestData">暂无请求数据</td></tr>
@@ -6987,6 +6987,15 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     );
   },
 
+  usageRemainingPercentage(used) {
+    return Number.isFinite(used) ? 100 - Math.max(0, Math.min(100, used)) : null;
+  },
+
+  fmtUsageRemaining(used) {
+    const remaining = this.usageRemainingPercentage(used);
+    return remaining == null ? '—' : `${Math.round(remaining)}%`;
+  },
+
   renderAcuOrg(org, payload) {
     const T = (k, v) => I18n.t('usage.' + k, v);
     if (!org || org.ok !== true) return this.renderAcuOrgError(org, payload);
@@ -7084,8 +7093,8 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
       <div class="section-body">
         <div class="detail-kv">${rows}</div>
         <div style="margin-top:12px">
-          ${quotaBar(T('dailyQuota'), quota.dailyPercentage, quota.dailyResetAt, T('dailyReset'))}
-          ${quotaBar(T('weeklyQuota'), quota.weeklyPercentage, quota.weeklyResetAt, T('weeklyReset'))}
+          ${quotaBar(T('dailyQuota'), this.usageRemainingPercentage(quota.dailyPercentage), quota.dailyResetAt, T('dailyReset'))}
+          ${quotaBar(T('weeklyQuota'), this.usageRemainingPercentage(quota.weeklyPercentage), quota.weeklyResetAt, T('weeklyReset'))}
         </div>
       </div>
     </div>`;
@@ -7176,11 +7185,12 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     if (!usage?.ok) return '';
     const credits = usage.availableCredits == null ? '—' : usage.availableCredits;
     return `<div class="card info">
-        <div class="card-header"><div class="card-title">Usage</div>
+        <div class="card-header"><div class="card-title">${this.esc(I18n.t('usage.dailyQuota'))}</div>
           <svg class="card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M12 20V10"/><path d="M18 20V4"/><path d="M6 20v-4"/></svg>
         </div>
-        <div class="card-value" style="font-size:20px">${usage.quota?.dailyPercentage ?? '-'}%</div>
-        <div class="card-sub">${this.esc(usage.plan || '-')} · daily · weekly ${usage.quota?.weeklyPercentage ?? '-'}% · ${credits} credits</div>
+        <div class="card-value" style="font-size:20px">${this.fmtUsageRemaining(usage.quota?.dailyPercentage)}</div>
+        <div class="card-sub">${this.esc(usage.plan || '—')} · ${this.esc(I18n.t('usage.weeklyQuota'))} ${this.fmtUsageRemaining(usage.quota?.weeklyPercentage)}</div>
+        <div class="card-sub">${this.esc(I18n.t('usage.availableCredits'))} ${this.esc(credits)} credits</div>
       </div>`;
   },
 
@@ -7581,8 +7591,8 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
           </div>
           <div class="detail-kv">
             ${kv(I18n.t('usage.cycleEnd'), cycle.end ? this.fmtUsageDate(cycle.end) : I18n.t('usage.notReported'))}
-            ${kv(I18n.t('usage.dailyQuota'), quota.dailyPercentage == null ? '—' : `${Math.round(quota.dailyPercentage)}%`)}
-            ${kv(I18n.t('usage.weeklyQuota'), quota.weeklyPercentage == null ? '—' : `${Math.round(quota.weeklyPercentage)}%`)}
+            ${kv(I18n.t('usage.dailyQuota'), this.fmtUsageRemaining(quota.dailyPercentage))}
+            ${kv(I18n.t('usage.weeklyQuota'), this.fmtUsageRemaining(quota.weeklyPercentage))}
             ${kv(I18n.t('usage.dailyReset'), quota.dailyResetAt ? this.fmtUsageDateTime(quota.dailyResetAt) : '—')}
             ${kv(I18n.t('usage.weeklyReset'), quota.weeklyResetAt ? this.fmtUsageDateTime(quota.weeklyResetAt) : '—')}
           </div>
@@ -7827,7 +7837,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
       </div>` : '';
     const usageCard = this.renderUsageCard(usage);
     document.getElementById('overview-cards').innerHTML = `
-      <div class="card success">
+      <div class="card info">
         <div class="card-header"><div class="card-title">${I18n.t('card.activeAccounts.title')}</div>
           <svg class="card-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/></svg>
         </div>
@@ -12688,16 +12698,19 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     body.innerHTML = items.map((r) => {
       const when = new Date(Number(r.ts) || 0);
       const status = Number(r.status);
-      const hasStatus = Number.isFinite(status);
-      const badge = hasStatus ? (status < 400 ? 'success' : 'error') : 'muted';
+      const hasStatus = r.status != null && Number.isInteger(status) && status >= 100 && status <= 599;
+      const [badge, outcome] = r.success === true ? ['success', 'attemptSucceeded']
+        : r.success === false ? ['error', 'attemptFailed'] : ['muted', 'attemptUnknown'];
+      const hasUsage = Number(r.tokensIn) > 0 || Number(r.tokensOut) > 0;
+      const tokenTitle = hasUsage ? this._statsTokenTitle(r) : I18n.t('section.statsLog.usageMissing');
       return `<tr>`
         + `<td class="text-sm" title="${this.esc(when.toLocaleString())}">${this.esc(when.toLocaleString())}</td>`
         + `<td class="text-sm"><span class="cell-ellipsis" title="${this.esc(r.model || '')}">${this.esc(r.model || '-')}</span></td>`
         + `<td class="text-sm"><code>${this.esc(r.account || '-')}</code></td>`
-        + `<td><span class="badge ${badge} no-dot">${this.esc(hasStatus ? status : '-')}</span></td>`
+        + `<td><span class="badge ${badge} no-dot">${this.esc(I18n.t('section.statsLog.' + outcome))}</span> ${hasStatus ? `<small class="text-muted">HTTP ${status}</small>` : ''}</td>`
         + `<td class="text-sm numeric">${this.esc(this.fmtMs(r.ms))}</td>`
-        + `<td class="text-sm numeric" title="${this.esc(this._statsTokenTitle(r))}">${this.esc(this.fmtTokenCount(r.tokensIn))}</td>`
-        + `<td class="text-sm numeric">${this.esc(this.fmtTokenCount(r.tokensOut))}</td>`
+        + `<td class="text-sm numeric" title="${this.esc(tokenTitle)}">${hasUsage ? this.esc(this.fmtTokenCount(r.tokensIn)) : '—'}</td>`
+        + `<td class="text-sm numeric">${hasUsage ? this.esc(this.fmtTokenCount(r.tokensOut)) : '—'}</td>`
         + `<td class="text-sm numeric">${this.esc(this.fmtCredit(r.credit))}</td>`
         + `</tr>`;
     }).join('') || `<tr class="empty-row"><td colspan="8">${I18n.t('section.statsLog.empty')}</td></tr>`;

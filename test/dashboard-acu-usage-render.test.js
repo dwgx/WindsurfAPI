@@ -58,7 +58,7 @@ const self = {
 };
 
 before(() => {
-  for (const name of ['fmtAcu', 'fmtCreditBalance', 'fmtUsageDate', 'fmtUsageDateTime', 'usageReason', 'usageReasonTip', 'renderAcuOrgError']) {
+  for (const name of ['fmtAcu', 'fmtCreditBalance', 'fmtUsageDate', 'fmtUsageDateTime', 'usageRemainingPercentage', 'usageReason', 'usageReasonTip', 'renderAcuOrgError']) {
     self[name] = fn(name);
   }
   self.renderAcuOrg = fn('renderAcuOrg');
@@ -118,6 +118,19 @@ function baseOrg(overrides = {}) {
 const payload = { ok: true, generatedAt: Date.now(), accountsScanned: 2, orgs: [] };
 
 describe('renderAcuOrg — ACU limit / used / remaining', () => {
+  it('shows remaining prompt quota while preserving missing data', () => {
+    const html = self.renderAcuOrg(baseOrg({
+      quota: { dailyPercentage: 68, weeklyPercentage: 34 },
+    }), payload);
+    assert.match(html, /class="bar-pct"[^>]*>32%/);
+    assert.match(html, /class="bar-pct"[^>]*>66%/);
+    const missing = self.renderAcuOrg(baseOrg({
+      quota: { dailyPercentage: 100, weeklyPercentage: null },
+    }), payload);
+    assert.match(missing, /class="bar-pct"[^>]*>0%/);
+    assert.match(missing, /class="bar-pct"[^>]*>—/);
+  });
+
   it('renders the three derived cells and the latest day', () => {
     const html = self.renderAcuOrg(baseOrg(), payload);
     assert.match(html, /i18n:usage\.cards\.limit/);
@@ -164,8 +177,8 @@ describe('renderAcuOrg — ACU limit / used / remaining', () => {
     assert.match(html, /Nov 1[67], 2026/, 'cycle end is formatted');
     assert.match(html, /i18n:usage\.dailyQuota/);
     assert.match(html, /i18n:usage\.weeklyQuota/);
-    assert.match(html, /70%/, 'daily remaining percentage');
-    assert.match(html, /80%/, 'weekly remaining percentage');
+    assert.match(html, /class="bar-pct"[^>]*>30%<\/span>/, 'daily: 100% minus 70% consumed');
+    assert.match(html, /class="bar-pct"[^>]*>20%<\/span>/, 'weekly: 100% minus 80% consumed');
   });
 
   it('renders per-product rows with localized labels and share', () => {

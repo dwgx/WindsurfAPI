@@ -80,6 +80,10 @@ let renderPlanCard;
 let creditText;
 let poolBalanceText;
 before(() => {
+  for (const name of ['usageRemainingPercentage', 'fmtUsageRemaining']) {
+    const fn = renderer(name);
+    self[name] = (...args) => fn(I18n, self, ...args);
+  }
   renderUsageCard = renderer('renderUsageCard');
   renderPlanCard = renderer('renderPlanCard');
   creditText = renderer('creditText');
@@ -142,7 +146,9 @@ describe('overview usage card — plan label', () => {
 
   it('keeps the em-dash fallback for an absent plan', () => {
     const html = renderUsageCard(I18n, self, { ok: true, quota: {}, availableCredits: 0 });
-    assert.match(html, /<div class="card-sub">- · daily/);
+    assert.match(html, /<div class="card-value"[^>]*>—<\/div>/);
+    assert.match(html, /<div class="card-sub">— · .* —<\/div>/);
+    assert.doesNotMatch(html, /—%/);
   });
 });
 

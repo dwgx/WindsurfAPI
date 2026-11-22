@@ -554,7 +554,7 @@
     },
     "poolHealth": {
       "title": "账号池健康",
-      "desc": "按最坏优先汇总各账号健康信号"
+      "desc": "最近一小时的错误和限流信号"
     },
     "connectMetrics": {
       "title": "连接自愈",
@@ -580,23 +580,29 @@
     },
     "statsLog": {
       "title": "请求日志",
-      "desc": "逐请求明细：时间、模型、账号、状态、延迟、Token 与费用。每次上游尝试一行，费用单位为 Devin credits。",
+      "desc": "每行一次网关尝试，分别显示尝试结果和 HTTP 状态。费用按网关费率估算。",
+      "attemptAndHttp": "尝试结果 / HTTP",
+      "attemptSucceeded": "成功",
+      "attemptFailed": "失败",
+      "attemptUnknown": "未记录",
+      "usageMissing": "未记录 Token 用量",
+      "estimatedCredits": "估算费用 (credits)",
       "empty": "当前筛选无请求",
       "unavailable": "请求日志不可用",
       "retention": "保留最近 {{stored}} / {{capacity}} 条",
-      "summary": "{{count}} 条请求 · 输入 {{in}} · 输出 {{out}} · 费用 {{credit}}",
+      "summary": "{{count}} 次尝试 · 已记录输入 {{in}} · 已记录输出 {{out}} · 估算 {{credit}} credits",
       "tokenTitle": "新增输入 {{fresh}} · 缓存读取 {{read}} · 缓存写入 {{write}}",
       "filters": {
         "model": "模型",
         "account": "账号",
-        "status": "状态",
+        "status": "HTTP 状态",
         "all": "全部",
         "reset": "清除筛选"
       }
     },
     "statsAgg": {
       "title": "聚合统计",
-      "desc": "与请求日志同一筛选窗口；表内合计与日志共用同一分母，不做估算。",
+      "desc": "汇总当前请求日志筛选范围内的尝试与已记录用量。",
       "byModel": "按模型",
       "byAccount": "按账号",
       "byDay": "按天",
@@ -808,8 +814,8 @@
   },
   "card": {
     "activeAccounts": {
-      "title": "活跃账号",
-      "subtitle": "{{total}} 个总账号 · {{error}} 异常"
+      "title": "启用中的账号",
+      "subtitle": "{{total}} 个账号 · {{error}} 个标为异常"
     },
     "poolBalance": {
       "title": "账号池余额",
@@ -2019,7 +2025,7 @@
       "highRpm": "高 RPM",
       "verdictAllHealthy": "所有账号健康",
       "verdictDegraded": "{{count}} 个账号需关注",
-      "verdictCritical": "号池降级 — {{count}} 个不可用",
+      "verdictCritical": "{{count}} 个账号有近期异常",
       "empty": "暂无号池遥测",
       "emptyHint": "添加账号并发起请求后，各账号健康信号会显示在这里。",
       "unavailable": "号池遥测暂不可用",

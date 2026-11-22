@@ -6,6 +6,7 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { finalizeStatsScope, getRequestLog, recordRequest, resetStats, withStatsScope } from '../src/dashboard/stats.js';
 
 const HTML = readFileSync(new URL('../src/dashboard/index.html', import.meta.url), 'utf8');
 
@@ -97,4 +98,36 @@ describe('stats aggregates — unattributed footnote', () => {
     assert.equal(note.hidden, true);
     assert.equal(note.textContent, '');
   });
+});
+
+it('renders a failed HTTP 200 attempt and missing usage as separate facts', (t) => {
+  resetStats();
+  t.after(resetStats);
+  recordRequest('normal', true, 5000, null, { usage: { prompt_tokens: 12, completion_tokens: 0 } });
+  withStatsScope((scope) => {
+    recordRequest('timeout', false, 899988, null);
+    scope.status = 200;
+    finalizeStatsScope(scope);
+  });
+  const log = getRequestLog();
+  assert.equal(log.items[0].status, 200);
+  assert.equal(log.items[0].success, false);
+  const { params, body } = methodParts('_renderStatsLog');
+  const fn = new Function('I18n', '...args', 'return (function ' + params + ' ' + body + ').apply(this, args);');
+  fn.call({
+    esc: (value) => String(value ?? ''),
+    fmtMs: (value) => String(value),
+    fmtTokenCount: (value) => String(value),
+    fmtCredit: (value) => String(value),
+    _statsTokenTitle: () => '',
+    _fillStatsLogSelect() {},
+    _renderStatsAgg() {},
+  }, I18n, log);
+  const [failed, succeeded] = element('stats-log-body').innerHTML.split('</tr>');
+  assert.match(failed, /badge error.*statsLog\.attemptFailed/);
+  assert.match(failed, /HTTP 200/);
+  assert.match(failed, /statsLog\.usageMissing[^>]*>—<\/td>/);
+  assert.match(succeeded, /badge success.*statsLog\.attemptSucceeded/);
+  assert.match(succeeded, />12<\/td>/);
+  assert.match(succeeded, />0<\/td>/, 'a recorded input plus a zero output keeps the zero');
 });

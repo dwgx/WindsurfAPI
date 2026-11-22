@@ -171,6 +171,16 @@ describe('deriveAcuCells', () => {
 });
 
 describe('latestDayOf', () => {
+  it('excludes future dates in a cycle from the latest observed day', () => {
+    const day = latestDayOf([
+      { date: '2026-11-22', amount: 1.5 },
+      { date: '2026-11-23', amount: 0 },
+      { date: '2026-12-18', amount: 0 },
+    ], Date.parse('2026-11-23T12:00:00Z'));
+    assert.equal(day.date, '2026-11-23');
+    assert.equal(day.amount, 0);
+  });
+
   it('picks the latest date, not the last array slot', () => {
     const day = latestDayOf([
       { date: '2026-10-21', amount: 1 },

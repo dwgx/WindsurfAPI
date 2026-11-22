@@ -554,7 +554,7 @@
     },
     "poolHealth": {
       "title": "Account Pool Health",
-      "desc": "Worst-first summary of per-account health signals"
+      "desc": "Errors and rate limits over the past hour"
     },
     "connectMetrics": {
       "title": "Connection Self-Healing",
@@ -580,23 +580,29 @@
     },
     "statsLog": {
       "title": "Request log",
-      "desc": "Per-request detail: time, model, account, status, latency, tokens and cost. One row per upstream attempt; cost is in Devin credits.",
+      "desc": "One row per gateway attempt, with separate attempt and HTTP results. Credits are estimates from gateway rates.",
+      "attemptAndHttp": "Attempt result / HTTP",
+      "attemptSucceeded": "Succeeded",
+      "attemptFailed": "Failed",
+      "attemptUnknown": "Unrecorded",
+      "usageMissing": "Token usage was not recorded",
+      "estimatedCredits": "Estimated credits",
       "empty": "No requests match these filters",
       "unavailable": "Request log unavailable",
       "retention": "Retaining the latest {{stored}} of {{capacity}} rows",
-      "summary": "{{count}} requests · in {{in}} · out {{out}} · cost {{credit}}",
+      "summary": "{{count}} attempts · recorded in {{in}} · recorded out {{out}} · estimated {{credit}} credits",
       "tokenTitle": "fresh {{fresh}} · cache read {{read}} · cache write {{write}}",
       "filters": {
         "model": "Model",
         "account": "Account",
-        "status": "Status",
+        "status": "HTTP status",
         "all": "All",
         "reset": "Clear filters"
       }
     },
     "statsAgg": {
       "title": "Aggregates",
-      "desc": "Same filtered window as the request log; table and totals share one denominator — no estimates.",
+      "desc": "Totals for attempts and recorded usage in the current request log filter.",
       "byModel": "By model",
       "byAccount": "By account",
       "byDay": "By day",
@@ -808,8 +814,8 @@
   },
   "card": {
     "activeAccounts": {
-      "title": "Active Accounts",
-      "subtitle": "{{total}} total · {{error}} abnormal"
+      "title": "Active account status",
+      "subtitle": "{{total}} total · {{error}} marked as errors"
     },
     "poolBalance": {
       "title": "Pool Balance",
@@ -2019,7 +2025,7 @@
       "highRpm": "High RPM",
       "verdictAllHealthy": "All accounts healthy",
       "verdictDegraded": "{{count}} account(s) need attention",
-      "verdictCritical": "Pool degraded — {{count}} unusable",
+      "verdictCritical": "{{count}} account(s) with recent errors",
       "empty": "No pool telemetry",
       "emptyHint": "Add accounts and send a request; health signals show up here.",
       "unavailable": "Pool telemetry unavailable",

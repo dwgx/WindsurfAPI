@@ -98,12 +98,15 @@ export function deriveAcuCells({ limits, cycle } = {}) {
   return { acuLimit, used, remaining };
 }
 
-/** Latest reported day, or null when the upstream returned no rows. */
-export function latestDayOf(days) {
+/** Latest reported day at the supplied UTC clock, or null when none is eligible. */
+export function latestDayOf(days, now) {
   if (!Array.isArray(days) || days.length === 0) return null;
+  const date = new Date(Number.isFinite(now) ? now : NaN);
+  const today = Number.isFinite(date.getTime()) ? date.toISOString().slice(0, 10) : null;
   let latest = null;
   for (const day of days) {
     if (!day || typeof day.date !== 'string') continue;
+    if (today && day.date > today) continue;
     if (!latest || day.date > latest.date) latest = day;
   }
   if (!latest) return null;
@@ -306,7 +309,7 @@ export async function readAcuUsageByOrg({
       serverNow: usage.serverNow,
       derived: {
         ...deriveAcuCells({ limits: usage.limits, cycle: usage.cycle }),
-        latestDay: latestDayOf(usage.days),
+        latestDay: latestDayOf(usage.days, now),
       },
       sources: usage.sources,
     };

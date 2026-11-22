@@ -83,6 +83,8 @@ export function normalizeUsage({ quota, status, limits, dailyUsage, now = Date.n
     quota: {
       isQuotaPlan: bool(q.is_quota_plan),
       hasAllocation: bool(q.has_quota_allocation),
+      // Devin's usage endpoint reports consumed percentages. Account status
+      // carries separate remaining percentages from the plan-status endpoint.
       dailyPercentage: clampPercent(q.daily_percentage),
       weeklyPercentage: clampPercent(q.weekly_percentage),
       dailyResetAt: str(q.daily_reset_at),
