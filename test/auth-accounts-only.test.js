@@ -57,9 +57,11 @@ describe('WAPI_ACCOUNTS_ONLY', () => {
       ]));
       const script = `
         const auth = await import(${JSON.stringify(AUTH_URL)});
+        auth.__setModelCatalogDeps({ disableConnectSync: true, getCascadeModelConfigs: async () => ({ configs: [] }) });
         auth.__loadAccountsForTest();
         auth.addAccountByKey('sk-new', 'new');
         auth.saveAccountsSync();
+        await auth.__waitForModelCatalogSync();
         process.stdout.write('RESULT:' + JSON.stringify(auth.__serializeAccounts().map(a => a.apiKey)));
       `;
       const child = spawnSync(process.execPath, ['--input-type=module', '-e', script], {
