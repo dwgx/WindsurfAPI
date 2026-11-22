@@ -2582,13 +2582,15 @@ describe('R5 — abort half of N after emitted content', () => {
     for (let iter = 1; iter <= ITERATIONS; iter += 1) {
       await t.test(`iteration ${iter}`, async () => {
         // Connect: S0/S1 abort after A; S2/S3 survive; S4 is a hung upstream.
+        const responses = [];
+        const runs = [];
+        let release;
+        const gate = new Promise((resolve) => { release = resolve; });
         try {
           const accounts = Array.from({ length: 5 }, (_, i) => seedAccount(`R5-connect-${iter}-${i}`));
           const ids = accounts.map((a) => a.id);
           const before = baselineCounters();
           let started = 0;
-          let release;
-          const gate = new Promise((resolve) => { release = resolve; });
           const aborted = new Set();
           installConnectUpstream({
             gateAfterA: gate,
@@ -2603,11 +2605,11 @@ describe('R5 — abort half of N after emitted content', () => {
               callerKey: `session:${body}`,
             }));
           }
-          const responses = results.map(() => controlledRes());
-          const runs = results.map((r, i) => {
-            assert.equal(r.status, 200);
-            return r.handler(responses[i]);
-          });
+          responses.push(...results.map(() => controlledRes()));
+          for (const [i, result] of results.entries()) {
+            assert.equal(result.status, 200);
+            runs.push(result.handler(responses[i]));
+          }
           await eventually(() => started === 4, { label: 'R5 Connect: 4 producers admitted' });
           await eventually(() => bodies.every((b, i) => wireText(responses[i]).includes(`${b}-A`)), {
             label: 'R5 Connect: every stream emitted A',
@@ -2639,6 +2641,8 @@ describe('R5 — abort half of N after emitted content', () => {
           assert.equal(hung.status, 200);
           const hungRes = controlledRes();
           const hungRun = hung.handler(hungRes);
+          responses.push(hungRes);
+          runs.push(hungRun);
           await eventually(() => started === 5, { label: 'R5 hung upstream started' });
           hungRes.emit('close');
           await withWatchdog(hungRun, 2000, 'R5 hung handler');
@@ -2647,7 +2651,15 @@ describe('R5 — abort half of N after emitted content', () => {
           assert.equal(totalInflight(ids), 0, 'R5 Connect: every account released');
           await assertCleanBaseline(before, `R5 Connect i${iter}`);
         } finally {
-          removeSeeded();
+          release();
+          for (const response of responses) {
+            if (!response.closed && !response.writableEnded) response.emit('close');
+          }
+          try {
+            await withWatchdog(Promise.allSettled(runs), 2000, 'R5 Connect fixture cleanup');
+          } finally {
+            removeSeeded();
+          }
         }
 
         // Cascade: S0/S1 abort after A; S2/S3 survive; aborted turns do no metadata RPC.
