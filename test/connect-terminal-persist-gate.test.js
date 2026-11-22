@@ -21,7 +21,7 @@ const { addAccountByKey, removeAccount, getAccountInternal, getApiKey,
   __setModelCatalogDeps, __waitForModelCatalogSync } = await import('../src/auth.js');
 const { handleChatCompletions, __setConnectDeps, __resetConnectDeps } = await import('../src/handlers/chat.js');
 const { __setStreamChatForTest } = await import('../src/devin-connect-openai.js');
-const { cacheClear } = await import('../src/cache.js');
+const { cacheClear, cacheStats } = await import('../src/cache.js');
 
 const caller = 'api:00112233445566778899aabbccddeeff:user:b2-fixture';
 const selector = 'swe-2-medium';
@@ -146,9 +146,10 @@ describe('B2: a failed Connect terminal is never persisted', () => {
 describe('C1: Cascade caches and replays the real terminal', () => {
   const CASCADE_MODEL = 'gemini-2.5-flash';
 
-  function cascadeDeps(text) {
+  function cascadeDeps(text, onDispatch = () => {}) {
     class FakeClient {
       async cascadeChat(_messages, _modelEnum, _modelUid, opts = {}) {
+        onDispatch();
         const chunks = opts.onChunk ? [] : [{ text, thinking: '', isError: false }];
         if (opts.onChunk) await opts.onChunk({ text, thinking: '', isError: false });
         chunks.toolCalls = [];
@@ -191,5 +192,41 @@ describe('C1: Cascade caches and replays the real terminal', () => {
     assert.equal(first.body.choices[0].finish_reason, 'stop');
     const second = await handleChatCompletions(body, deps);
     assert.equal(second.body.choices[0].finish_reason, 'stop');
+  });
+
+  it('a streamed cache hit preserves text and length with one upstream dispatch', async () => {
+    delete process.env.DEVIN_CONNECT;
+    seedConnectAccount();
+    const body = {
+      model: CASCADE_MODEL,
+      messages: [{ role: 'user', content: 'long streamed answer' }],
+      max_tokens: 1,
+      stream: true,
+    };
+    let dispatches = 0;
+    const deps = cascadeDeps('x'.repeat(4000), () => { dispatches++; });
+    async function capture() {
+      const result = await handleChatCompletions(body, deps);
+      assert.equal(result.status, 200);
+      assert.equal(result.stream, true);
+      const res = fakeRes();
+      await result.handler(res);
+      const data = res.body.split(/\r?\n/).filter(line => line.startsWith('data: ')).map(line => line.slice(6));
+      assert.equal(data.at(-1), '[DONE]');
+      const choices = data.slice(0, -1).flatMap(frame => JSON.parse(frame).choices || []);
+      return {
+        text: choices.map(choice => choice.delta?.content || '').join(''),
+        terminals: choices.map(choice => choice.finish_reason).filter(reason => reason != null),
+      };
+    }
+
+    const first = await capture();
+    assert.ok(first.text.length > 0);
+    assert.deepEqual(first.terminals, ['length']);
+    const hits = cacheStats().hits;
+    const replay = await capture();
+    assert.deepEqual(replay, first);
+    assert.equal(cacheStats().hits, hits + 1);
+    assert.equal(dispatches, 1, 'replay must not dispatch again');
   });
 });
