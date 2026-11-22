@@ -107,7 +107,7 @@ describe('Connect continuity follows the caller scope at dispatch and completion
           evict(params);
           await send('data: {"choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\n');
           await send('data: [DONE]\n\n');
-          return { content: 'ok' };
+          return { content: 'ok', finish_reason: 'stop' };
         },
       });
       const result = await chat.handleChatCompletions(
@@ -168,7 +168,7 @@ describe('Connect continuity follows the caller scope at dispatch and completion
             calls.push(params);
             await send('data: {"choices":[{"index":0,"delta":{"content":"ok"},"finish_reason":"stop"}]}\n\n');
             await send('data: [DONE]\n\n');
-            return { content: 'ok' };
+            return { content: 'ok', finish_reason: 'stop' };
           },
         });
         const image = { type: 'image_url', image_url: { url: 'https://fixture.invalid/image' } };
@@ -249,7 +249,7 @@ describe('session-continuity T2: commit fallback to inbound captured thinking', 
         send('data: [DONE]\n\n');
         // No reasoning on the outbound stream record — the fallback must fire.
         // (attemptStream wraps this into { kind:'ok', sr } itself.)
-        return { content: 'ok', usage: { prompt_tokens: 1, completion_tokens: 1 } };
+        return { content: 'ok', finish_reason: 'stop', usage: { prompt_tokens: 1, completion_tokens: 1 } };
       },
     });
     const { handler } = await handleChatCompletions(

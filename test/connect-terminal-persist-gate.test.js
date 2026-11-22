@@ -20,6 +20,7 @@ const sticky = await import('../src/account/sticky-session.js');
 const { addAccountByKey, removeAccount, getAccountInternal, getApiKey,
   __setModelCatalogDeps, __waitForModelCatalogSync } = await import('../src/auth.js');
 const { handleChatCompletions, __setConnectDeps, __resetConnectDeps } = await import('../src/handlers/chat.js');
+const { __setStreamChatForTest } = await import('../src/devin-connect-openai.js');
 const { cacheClear } = await import('../src/cache.js');
 
 const caller = 'api:00112233445566778899aabbccddeeff:user:b2-fixture';
@@ -63,6 +64,7 @@ beforeEach(() => {
 });
 afterEach(() => {
   __resetConnectDeps();
+  __setStreamChatForTest(null);
   __setModelCatalogDeps(null);
   if (savedDevinConnect === undefined) delete process.env.DEVIN_CONNECT;
   else process.env.DEVIN_CONNECT = savedDevinConnect;
@@ -101,13 +103,10 @@ describe('B2: a failed Connect terminal is never persisted', () => {
     const live = getAccountInternal(account.id);
     live.tier = 'pro'; live.credits = { weeklyPercent: 80, dailyPercent: 80 };
     let requests = 0;
-    __setConnectDeps({
-      async toChatCompletion() { throw new Error('non-stream stub unused'); },
-      async streamChatCompletion(params, send) {
-        requests++;
-        await send({ choices: [{ index: 0, delta: { content: 'half' } }] });
-        return { delivered: true, content: 'half', finish_reason: 'error', usage: usage() };
-      },
+    __setStreamChatForTest(async function* () {
+      requests++;
+      yield { type: 'content', text: 'half' };
+      yield { type: 'finish', reason: 'error', usage: usage() };
     });
     for (let i = 0; i < 2; i++) {
       const r = await handleChatCompletions({ ...request(), stream: true }, { callerKey: caller });

@@ -29,7 +29,7 @@ async function run(pattern, env = {}, emittedInitially = false, freeOnlyDroughtA
       const n = attempts.length; attempts.push({ token: params.token, at: now });
       const code = typeof pattern === 'function' ? pattern(n) : pattern[n];
       if (code) throw Object.assign(new Error(code), { code });
-      return { content: 'ok', toolCalls: [] };
+      return { content: 'ok', toolCalls: [], finish_reason: 'stop' };
     },
     ensureDeviceSeed: () => undefined, recordTokenUsage() {}, recordAccountSpend() {}, connectSpendOpts: () => ({}),
     finalizeConnectAccount: (a, result) => finalized.push({ id: a?.id, err: result.err?.code }),

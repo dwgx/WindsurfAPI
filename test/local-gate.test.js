@@ -230,3 +230,18 @@ it('release evidence rejects a receipt that disagrees with the visible summary',
     + evidenceReceipt(file, evidenceCounts(1, 0, 1, 0, 0, 0));
   assert.throws(() => releaseEvidence(output), /disagrees/);
 });
+
+it('release evidence keeps the file failure when its diagnostic includes an indented child summary', () => {
+  const file = 'test/smoke-matrix.test.js';
+  const counts = evidenceCounts(1, 0, 1, 0, 0, 0);
+  const plan = evidencePlan(file);
+  const outer = evidenceRows(file, counts);
+  const receipt = evidenceReceipt(file, counts, { ok: false, problem: 'exit 1; 1 failed' });
+  const nested = `[${file}]   ℹ tests 47\n[${file}]   ℹ pass 46\n[${file}]   ℹ fail 1\n`;
+  const evidence = releaseEvidence(plan + outer + nested + receipt);
+  assert.equal(evidence.tests, 1);
+  assert.equal(evidence.fail, 1);
+  assert.deepEqual(evidence.failedFiles, [file]);
+  assert.throws(() => releaseEvidence(plan + nested + receipt), /parsed 0\/1 files/);
+  assert.throws(() => releaseEvidence(plan + outer + outer + receipt), /duplicate release summary/);
+});

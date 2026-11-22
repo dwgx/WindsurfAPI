@@ -16,7 +16,9 @@ export function releaseEvidence(output) {
   // shape (see parseFileSummary); the gate must accept exactly the same shape or
   // the gate can never pass on a suite that contains such a file.
   const suiteRows = new Map();
-  for (const m of text.matchAll(/^((?:\[[^\]]+\]\s+)+)(?:#|ℹ) (tests|pass|fail|skipped|cancelled|todo|suites) (\d+)$/gm)) {
+  // The shard adds one space after each prefix. Extra indentation belongs to
+  // a child diagnostic, outside the shard's summary.
+  for (const m of text.matchAll(/^((?:\[[^\]\r\n]+\] )+)(?:#|ℹ) (tests|pass|fail|skipped|cancelled|todo|suites) (\d+)$/gm)) {
     const names = [...m[1].matchAll(/\[([^\]]+)\]/g)].map(x => x[1].replace(/\\/g, '/'));
     const file = names[0];
     if (!names.every(name => name === file) || !files.includes(file)) throw new Error('unexpected release file');

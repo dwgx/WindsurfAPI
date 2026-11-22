@@ -50,7 +50,7 @@ function seed(label) {
 const unauthorized = () => Object.assign(new Error('invalid token'), { code: 'UNAUTHORIZED' });
 
 function okBody(text) {
-  return { status: 200, body: { id: 'x', choices: [{ message: { role: 'assistant', content: text } }] } };
+  return { status: 200, body: { id: 'x', choices: [{ message: { role: 'assistant', content: text }, finish_reason: 'stop' }] } };
 }
 
 beforeEach(() => {
