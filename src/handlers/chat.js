@@ -1507,11 +1507,16 @@ function cacheKey(body, callerKey, identity, keepReasoningSeparate = false) {
 // pre-rewrite key and the inner's post-rewrite key for the same body agree by
 // construction, which keeps the H-3 original/fallback slot roles intact.
 // Exported for tests that pre-seed a cache slot the real handler will look up.
-export function cascadeCacheIdentity(body) {
+export function cascadeCacheIdentity(body, resolvedModel = undefined) {
   const reqModel = mergeReasoningEffortIntoModel(body.model, body);
   const wantThinking = isThinkingRequested(body);
   return {
-    model: resolveEffectiveModelKey(resolveModel(reqModel || config.defaultModel), wantThinking),
+    // B1: bind the policy-resolved generation — when the access fallback
+    // retargets a blocked request to the operator's default model, the cache
+    // key must describe the model that actually serves it, not the blocked
+    // spelling (otherwise a policy switch replays stale answers). The outer
+    // pre-policy key stays caller-derived and is not reused in that case.
+    model: resolvedModel ?? resolveEffectiveModelKey(resolveModel(reqModel || config.defaultModel), wantThinking),
     thinking: wantThinking,
     effort: normalizeReasoningEffortValue(body),
   };
@@ -1527,8 +1532,13 @@ export function cascadeCacheIdentity(body) {
 // (the exact expression below mirrors devin-connect.js buildGetChatMessageRequest).
 // With the switch off the field is dropped, so opposite preferences are
 // default-equivalent and must keep sharing one slot.
-function connectCacheIdentity(body) {
+function connectCacheIdentity(body, selector = undefined) {
   return {
+    // B1: the resolved upstream selector is the generation's identity. When the
+    // access policy retargets a blocked request to the default model, keying
+    // the raw request spelling would replay the retargeted answer under the
+    // original name after the policy changes back.
+    model: selector,
     effort: normalizeReasoningEffortValue(body),
     connectSequential: isToolChoicePassthroughEnabled() && body.parallel_tool_calls === false,
   };
@@ -4484,7 +4494,7 @@ async function _handleChatCompletionsInner(body, context, captureCacheGeneration
     let __sHit = null;
     let cacheWriteGeneration = null;
     try {
-      __sCkey = cacheKey(body, callerKey, connectCacheIdentity(body), keepReasoningSeparate);
+      __sCkey = cacheKey(body, callerKey, connectCacheIdentity(body, selector), keepReasoningSeparate);
       if (__sCkey) {
         cacheWriteGeneration = captureCacheGeneration();
         __sHit = cacheGet(__sCkey);
@@ -5281,6 +5291,16 @@ async function _handleChatCompletionsInner(body, context, captureCacheGeneration
                     r.frames.length = 0;
                   }
                   publishStreamDelivery(context, () => {
+                  // B2: only a legal terminal may be cached/committed/pinned. A
+                  // turn the upstream ended in error — or one that never named a
+                  // terminal — already spent its quota in attemptStream, but its
+                  // partial answer must not be replayed or chain-bound.
+                  const streamTerminalOk = ['stop', 'length', 'tool_calls', 'content_filter', 'refusal']
+                    .includes(r.sr?.finish_reason);
+                  if (!streamTerminalOk) {
+                    log.warn(`Chat[${reqId}]: DEVIN_CONNECT stream finished ${r.sr?.finish_reason || 'with no terminal'} — keeping usage, skipping cache/affinity/session commit`);
+                    return;
+                  }
                   // Pin this conversation to the account that just served it, so the
                   // next turn reads the prompt cache back instead of re-writing it.
                   // Complementary to the pair-chain commit below: that keeps the
@@ -5551,6 +5571,17 @@ async function _handleChatCompletionsInner(body, context, captureCacheGeneration
         if (connectViolation) {
           log.warn(`Chat[${reqId}]: structured output ${connectViolation.unable ? 'could not be validated' : 'does not conform'} (${connectViolation.path}: ${connectViolation.message}) — returning a typed failure`);
           return structuredOutputError(connectViolation);
+        }
+        // B2: "upstream billed us" and "the answer is reusable" are different
+        // verdicts. A turn that ended in error (or never named a terminal at
+        // all) keeps its usage/spend above but must not be cached, committed
+        // to the session chain, or pinned as affinity — a retry has to reach
+        // the upstream again instead of replaying the failed half-answer.
+        const connectTerminalOk = ['stop', 'length', 'tool_calls', 'content_filter', 'refusal']
+          .includes(r.out?.body?.choices?.[0]?.finish_reason);
+        if (!connectTerminalOk) {
+          log.warn(`Chat[${reqId}]: DEVIN_CONNECT turn finished ${r.out?.body?.choices?.[0]?.finish_reason || 'with no terminal'} — keeping usage, skipping cache/affinity/session commit`);
+          return restoreOutToolNames(r.out);
         }
         // Same cache-affinity pin as the streaming path above.
         bindConnectSticky(callerKey, acct, selector, r.out?.body?.usage ?? null);
@@ -6137,12 +6168,15 @@ async function _handleChatCompletionsInner(body, context, captureCacheGeneration
   // Anything else computes fresh. This is an optimisation, never a behaviour change.
   const reuseOriginalCkey = typeof context.__originalCkey === 'string'
     && context.__originalCkey
-    && !context.__fallbackAttempt;
+    && !context.__fallbackAttempt
+    // B1: an access-policy retarget happens after the outer key was computed,
+    // so that key describes the BLOCKED spelling, not the served generation.
+    && !accessFallbackModel;
   // BLUE-CACHE P2: a fresh computation carries the effective routed identity so
   // lookup and store describe the generation this (possibly fallback-rewritten)
   // body dispatches to. The reused outer key was computed from the SAME body by
   // cascadeCacheIdentity, so the two agree for non-fallback requests.
-  const ckey = reuseOriginalCkey ? context.__originalCkey : cacheKey(body, callerKey, cascadeCacheIdentity(body), context.keepReasoningSeparate === true);
+  const ckey = reuseOriginalCkey ? context.__originalCkey : cacheKey(body, callerKey, cascadeCacheIdentity(body, routingModelKey), context.keepReasoningSeparate === true);
   // SEC-W2: only share the response cache ACROSS requests when the caller has a
   // trustworthy per-user scope. A guessed `:client:` bucket (shared key behind a
   // proxy) must never serve one user's cached answer to another — treat it as
@@ -6243,7 +6277,9 @@ async function _handleChatCompletionsInner(body, context, captureCacheGeneration
     const cachedText = replayed.hit ? replayed.text : (cached.text || '');
     const message = { role: 'assistant', content: cachedText || null };
     if (cached.thinking) message.reasoning_content = cached.thinking;
-    const choice = { index: 0, message, finish_reason: 'stop' };
+    // C1: replay the recorded terminal — a stored `length` truncation is not a
+    // clean `stop`.
+    const choice = { index: 0, message, finish_reason: cached.finishReason || 'stop' };
     if (context.__messagesStopCarrier === true && cachedStop) choice._windsurf_stop_sequence = cachedStop;
     return {
       status: 200,
@@ -7354,13 +7390,16 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
       };
     }
 
+    const finishReason = outputCapReached ? 'length' : (toolCalls.length ? 'tool_calls' : 'stop');
     if (ckey && !toolCalls.length) {
       // SEED-C3b: cache the VISIBLE (post-stop) text together with the local stop
       // cause, so a replay reproduces both the truncated answer and the
       // `stop_sequence` metadata the Messages route derives from it.
-      cacheSet(ckey, { text: allText, thinking: allThinking, stop: localStop }, cacheWriteGeneration);
+      // C1: store the real terminal with the text — a `length` truncation must
+      // replay as `length`, not as a fabricated `stop`.
+      cacheSet(ckey, { text: allText, thinking: allThinking, stop: localStop, finishReason }, cacheWriteGeneration);
       if (aliasCkey && aliasCkey !== ckey) {
-        cacheSet(aliasCkey, { text: allText, thinking: allThinking, stop: localStop }, cacheWriteGeneration);
+        cacheSet(aliasCkey, { text: allText, thinking: allThinking, stop: localStop, finishReason }, cacheWriteGeneration);
       }
     }
 
@@ -7399,7 +7438,6 @@ async function nonStreamResponse(client, id, created, model, modelKey, messages,
     // owns the row; apiKey is only the credential the attempt presented and may
     // have rotated while this turn was in flight (review #3).
     try { recordAccountSpend({ accountId, apiKey }, usage); } catch {}
-    const finishReason = outputCapReached ? 'length' : (toolCalls.length ? 'tool_calls' : 'stop');
     const choice = { index: 0, message, finish_reason: finishReason };
     // SEED-C3a carrier on the internal Messages route only (same contract as the
     // Connect adapter): the exact sequence that truncated the visible prose. A
@@ -7856,7 +7894,7 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
             await send({ id, object: 'chat.completion.chunk', created, model,
               choices: [{ index: 0, delta: { content: replayedText }, finish_reason: null }] });
           }
-          const replayChoice = { index: 0, delta: {}, finish_reason: 'stop' };
+          const replayChoice = { index: 0, delta: {}, finish_reason: cached.finishReason || 'stop' };
           if (deps.context?.__messagesStopCarrier === true && cachedStop) replayChoice._windsurf_stop_sequence = cachedStop;
           await send({ id, object: 'chat.completion.chunk', created, model,
             choices: [replayChoice] });
@@ -9276,7 +9314,10 @@ function streamResponse(id, created, model, modelKey, provider, messages, cascad
               // A capped turn caches what was DELIVERED, exactly like a stopped
               // one: replaying bytes the client never received would change the
               // answer between the first and second identical request.
-              const completedCacheEntry = { text: (stopMatched || outputCapReached) ? visibleText : accText, thinking: accThinking, stop: stopMatched };
+              const completedCacheEntry = { text: (stopMatched || outputCapReached) ? visibleText : accText, thinking: accThinking, stop: stopMatched,
+                // C1: keep the real terminal — a capped turn replays as `length`,
+                // not as a fabricated `stop`.
+                finishReason: outputCapReached ? 'length' : (collectedToolCalls.length ? 'tool_calls' : 'stop') };
               publishStreamDelivery(deps.context, () => cacheSet(ckey, completedCacheEntry, cacheWriteGeneration));
             }
             return;

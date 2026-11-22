@@ -15,7 +15,7 @@
     {
       "name": "Unapproved skipped assertions are accepted",
       "file": "scripts/spec-baseline-evidence.mjs",
-      "anchor": "    if (row.type !== 'test' || !approved.has(key) || row.skip !== policyForPlatform.reason\n        || skippedNames.has(key)) fail(`unapproved or duplicate platform skip: ${file}: ${row.name}`);",
+      "anchor": "    if (row.type !== 'test' || !approved.has(key) || row.skip !== approved.get(key)\n        || skippedNames.has(key)) fail(`unapproved or duplicate platform skip: ${file}: ${row.name}`);",
       "replacement": "    if (false) fail(`unapproved or duplicate platform skip: ${file}: ${row.name}`);",
       "expectCaught": true
     },
@@ -36,8 +36,8 @@
     {
       "name": "A named platform guard may disappear",
       "file": "scripts/spec-baseline-evidence.mjs",
-      "anchor": "  for (const key of approved) if (!seenNames.has(key)) fail('a named machine-gated test disappeared');",
-      "replacement": "  for (const key of approved) if (false) fail('a named machine-gated test disappeared');",
+      "anchor": "  for (const key of approved.keys()) if (!seenNames.has(key)) fail('a named machine-gated test disappeared');",
+      "replacement": "  for (const key of approved.keys()) if (false) fail('a named machine-gated test disappeared');",
       "expectCaught": true
     },
     {

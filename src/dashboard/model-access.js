@@ -7,6 +7,7 @@ import { readFileSync, existsSync } from 'fs';
 import { writeJsonAtomic } from '../fs-atomic.js';
 import { join } from 'path';
 import { config, log } from '../config.js';
+import { cacheClear } from '../cache.js';
 import { getBackendSwitch } from '../runtime-config.js';
 
 const ACCESS_FILE = join(config.dataDir, 'model-access.json');
@@ -176,6 +177,11 @@ export function updateModelAccess(patch = {}) {
   _config.mode = candidate.mode;
   _config.list = candidate.list;
   _config.defaultModel = candidate.defaultModel;
+  // B1: the response cache keys the routed generation; a policy change re-roots
+  // or unblocks models, so entries captured against the old policy must neither
+  // be served nor be backfilled by in-flight writes. Bumping the generation
+  // (cacheClear) also drops the stale entries.
+  cacheClear();
   return {
     config: getModelAccessConfig(),
     applied: true,

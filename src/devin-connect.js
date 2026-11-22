@@ -2997,7 +2997,7 @@ const _unknownStopReasonsLogged = new Set();
 function noteUnknownStopReason(n) {
   if (_unknownStopReasonsLogged.has(n) || _unknownStopReasonsLogged.size >= MAX_UNKNOWN_STOP_REASON_LOGS) return;
   _unknownStopReasonsLogged.add(n);
-  log.warn(`devin-connect: unknown StopReason ${String(n)}; reporting finish_reason 'stop'`);
+  log.warn(`devin-connect: unknown StopReason ${String(n)}`);
 }
 
 let _stopReasonMapCache = null;
@@ -3160,15 +3160,20 @@ export function applyOutputCap(finishReason, usage, maxTokens) {
  * @param {number|null} maxTokens     output cap the caller requested, if any
  */
 export function resolveFinishReason(finish, usage, maxTokens, env = process.env) {
-  const mapped = mapFinishReason(finish, env);
+  const { map, overrides } = stopReasonMapAndOverrides(env);
+  const key = typeof finish === 'bigint' ? Number(finish) : finish;
+  // An unrecognized reason does not prove successful turn completion.
+  if (finish != null && !Object.hasOwn(map, key)) {
+    noteUnknownStopReason(key);
+    return 'error';
+  }
+  const mapped = finish == null ? null : map[key];
   // A calibrated override for THIS value takes precedence over the inference.
   //
   // It must consult the keys the operator actually PINNED, not the built-in table:
   // the defaults already cover 0..6, so an `Object.hasOwn(map, n)` test made any
   // single unrelated override (e.g. "7=length") read as "value 2 is calibrated" and
   // silently disabled the usage-based truncation inference for every real turn.
-  const { overrides } = stopReasonMapAndOverrides(env);
-  const key = typeof finish === 'bigint' ? Number(finish) : finish;
   if (finish != null && overrides.has(key)) return mapped;
   return applyOutputCap(mapped, usage, maxTokens);
 }

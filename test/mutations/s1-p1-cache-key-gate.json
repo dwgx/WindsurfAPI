@@ -28,8 +28,8 @@
     {
       "name": "P1 mutation 4",
       "file": "src/handlers/chat.js",
-      "anchor": "    && !context.__fallbackAttempt;",
-      "replacement": "    && true;",
+      "anchor": "    && !context.__fallbackAttempt\n",
+      "replacement": "    && true\n",
       "expectCaught": true
     }
   ]

@@ -66,7 +66,13 @@ function keyHarness({ baseline = false, singleTenant = false, enabled = '1', ali
     // identity-less key format against the pinned 014204f cache — both are
     // identity-neutral, so the routing identity itself is stubbed out here.
     // Its derivation is behaviorally covered by cache-routing-identity.test.js.
-    cascadeCacheIdentity: () => undefined };
+    cascadeCacheIdentity: () => undefined,
+    // The B1 additions to the real statement: `routingModelKey` is the routed
+    // generation the fresh key describes, `accessFallbackModel` says the
+    // access policy retargeted the request (so the original outer key no
+    // longer describes it). The sandbox pins gate mechanics, not routing, so
+    // both stay inert here.
+    routingModelKey: undefined, accessFallbackModel: false };
   const api = evaluate(singleTenantDeclaration + '\n' + scope + gated +
     '\nfunction innerKey(body, callerKey, context) {\n' + inner + '\nreturn ckey;\n}\n',
     ['cacheKey', 'hasPerUserScope', 'innerKey'], globals);
