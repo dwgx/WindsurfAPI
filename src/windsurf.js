@@ -951,6 +951,33 @@ export function buildGetGeneratorMetadataRequest(cascadeId, offset = 0) {
   return Buffer.concat(parts);
 }
 
+const CASCADE_USAGE_FIELDS = [
+  [2, 'inputTokens'], [3, 'outputTokens'], [4, 'cacheWriteTokens'], [5, 'cacheReadTokens'],
+];
+
+function readCascadeUsage(buf) {
+  const fields = parseFields(buf);
+  const counts = {};
+  for (const [tag, key] of CASCADE_USAGE_FIELDS) {
+    const field = getField(fields, tag, 0);
+    if (field) counts[key] = Number(field.value);
+  }
+  return Object.keys(counts).length > 0 ? counts : null;
+}
+
+// Sum only reported buckets. The fallback map can also come from a detached
+// turn snapshot, so missing keys must stay missing after a JSON round trip.
+export function sumCascadeUsage(usages) {
+  const sum = {};
+  for (const usage of usages) {
+    for (const [, key] of CASCADE_USAGE_FIELDS) {
+      const count = usage[key];
+      if (Number.isFinite(count) && count >= 0) sum[key] = (sum[key] ?? 0) + count;
+    }
+  }
+  return Object.keys(sum).length > 0 ? sum : null;
+}
+
 /**
  * Parse GetCascadeTrajectoryGeneratorMetadataResponse → aggregated usage.
  *
@@ -975,10 +1002,9 @@ export function buildGetGeneratorMetadataRequest(cascadeId, offset = 0) {
  *
  * Returns null only when the response carries no records at all; otherwise an
  * aggregated {inputTokens, outputTokens, cacheReadTokens, cacheWriteTokens,
- * entryCount, hasUsage} summed across every generator invocation (multi-model
- * trajectories sum). `hasUsage` is false when records came back but none of
- * them carried a usage block — the counts are then zeros, not evidence that the
- * turn was free.
+ * entryCount, hasUsage, reportedUsage} summed across generator invocations.
+ * `hasUsage` keeps the positive-count gate for legacy accounting. The sparse
+ * `reportedUsage` separately preserves real zeros and absent fields.
  *
  * `entryCount` is the number of generator-metadata records returned by this
  * response. On resumed cascades we use it as the next offset so prior-turn
@@ -990,9 +1016,7 @@ export function parseGeneratorMetadata(buf) {
   const metaEntries = getAllFields(fields, 1).filter(f => f.wireType === 2);
   if (metaEntries.length === 0) return null;
 
-  let inputTokens = 0, outputTokens = 0, cacheReadTokens = 0, cacheWriteTokens = 0;
-  let found = false;
-
+  const usages = [];
   for (const entry of metaEntries) {
     const gm = parseFields(entry.value);
     const chatModelField = getField(gm, 1, 2); // chat_model
@@ -1000,35 +1024,23 @@ export function parseGeneratorMetadata(buf) {
     const cm = parseFields(chatModelField.value);
     const usageField = getField(cm, 4, 2); // usage
     if (!usageField) continue;
-    const us = parseFields(usageField.value);
-    const readUint = (fn) => {
-      const f = getField(us, fn, 0);
-      return f ? Number(f.value) : 0;
-    };
-    const inT = readUint(2);
-    const outT = readUint(3);
-    const cacheW = readUint(4);
-    const cacheR = readUint(5);
-    if (inT || outT || cacheW || cacheR) {
-      inputTokens += inT;
-      outputTokens += outT;
-      cacheWriteTokens += cacheW;
-      cacheReadTokens += cacheR;
-      found = true;
-    }
+    const usage = readCascadeUsage(usageField.value);
+    if (usage) usages.push(usage);
   }
+  const reportedUsage = sumCascadeUsage(usages);
+  const { inputTokens = 0, outputTokens = 0, cacheReadTokens = 0, cacheWriteTokens = 0 } = reportedUsage || {};
   // D5/F6: a record without a usage block still occupies a position in the
   // metadata window. Returning null here threw that count away, and the caller's
   // `?.entryCount || 0` then restarted the next window at record 0 — re-summing
-  // every earlier turn's tokens into this turn's usage. The count is reported
-  // either way; `hasUsage` says whether the token figures mean anything.
+  // every earlier turn's tokens into this turn's usage.
   return {
     inputTokens,
     outputTokens,
     cacheReadTokens,
     cacheWriteTokens,
     entryCount: metaEntries.length,
-    hasUsage: found,
+    hasUsage: Boolean(inputTokens || outputTokens || cacheReadTokens || cacheWriteTokens),
+    reportedUsage,
   };
 }
 // ─── Cascade response parsers ──────────────────────────────
@@ -1167,20 +1179,7 @@ export function parseTrajectorySteps(buf) {
     if (stepMetaField) {
       const meta = parseFields(stepMetaField.value);
       const usageField = getField(meta, 9, 2);
-      if (usageField) {
-        const us = parseFields(usageField.value);
-        const readUint = (fn) => {
-          const f = getField(us, fn, 0);
-          return f ? Number(f.value) : 0;
-        };
-        const inputTokens = readUint(2);
-        const outputTokens = readUint(3);
-        const cacheWriteTokens = readUint(4);
-        const cacheReadTokens = readUint(5);
-        if (inputTokens || outputTokens || cacheReadTokens || cacheWriteTokens) {
-          entry.usage = { inputTokens, outputTokens, cacheWriteTokens, cacheReadTokens };
-        }
-      }
+      if (usageField) entry.usage = readCascadeUsage(usageField.value);
     }
 
     // Tool-call / tool-result sub-messages on CortexTrajectoryStep.

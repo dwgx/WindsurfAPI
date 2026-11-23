@@ -46,6 +46,7 @@ import { recordSchemaNormalized } from './handlers/cc-compat.js';
 // Observability only, same rationale as recordSchemaNormalized above: the
 // metrics module has no imports of its own, so it cannot create a cycle.
 import { bumpConnect, CACHE_READ_UNREPORTED } from './devin-connect-metrics.js';
+import { markReportedUsage } from './reported-usage.js';
 // Bounded remote-image fetch (deadline, byte cap, MIME allowlist, per-hop SSRF
 // lookup hook). image.js imports only config/pdf/net-safety/vendor codecs, so this
 // cannot create a cycle back into the connect pipeline.
@@ -2501,7 +2502,7 @@ export function decodeFrame(payload, opts = {}) {
     // completion_tokens only rides the final metadata frame; treat the pair as
     // usage only when the completion count is present.
     if (completion) {
-      usage = { prompt: prompt ? prompt.value : 0, completion: completion.value };
+      usage = { prompt: prompt?.value, completion: completion.value };
     }
     // Billing/usage passthrough: opt-in, only when an operator has pinned the
     // tags. Each is a varint; absent fields (free tier / un-billed / un-cached)
@@ -2524,7 +2525,7 @@ export function decodeFrame(payload, opts = {}) {
         const value = readNumericProtoField(mf, tag);
         if (value == null) continue;
         if (key === 'cache_read_tokens' || key === 'cache_write_tokens') {
-          (usage ||= { prompt: prompt ? prompt.value : 0, completion: completion ? completion.value : 0 })[key] = value;
+          (usage ||= { prompt: prompt?.value, completion: completion?.value })[key] = value;
         } else {
           (billing ||= {})[key] = value;
         }
@@ -2559,8 +2560,8 @@ export function decodeFrame(payload, opts = {}) {
         // prompt_tokens_details.cached_tokens out of usage and silently zero the
         // dashboard's cache split — the exact mis-attribution #220 was about.
         // prompt/completion live inside the `if (meta)` block above, so recompute
-        // the usage defaults here rather than reference block-scoped locals.
-        (usage ||= { prompt: Number(getField(fields, 2, 0)?.value ?? 0), completion: Number(getField(fields, 3, 0)?.value ?? 0) })[key] = value;
+        // their presence here rather than reference block-scoped locals.
+        (usage ||= { prompt: getField(fields, 2, 0)?.value, completion: getField(fields, 3, 0)?.value })[key] = value;
       } else {
         (billing ||= {})[key] = value;
       }
@@ -3083,7 +3084,12 @@ export function normalizeConnectUsage(lastUsage) {
   if (!Number.isSafeInteger(lastUsage.cache_read_tokens) || lastUsage.cache_read_tokens < 0) {
     Object.defineProperty(normalized, CACHE_READ_UNREPORTED, { value: true });
   }
-  return normalized;
+  return markReportedUsage(normalized, {
+    fresh_input_tokens: lastUsage.prompt,
+    output_tokens: lastUsage.completion,
+    cache_read_input_tokens: lastUsage.cache_read_tokens,
+    cache_creation_input_tokens: lastUsage.cache_write_tokens,
+  });
 }
 
 export function mapFinishReason(finish, env = process.env) {

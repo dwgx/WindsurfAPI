@@ -29,7 +29,7 @@ import {
 } from '../src/handlers/chat.js';
 import { addAccountByKey, getAccountInternal, removeAccount } from '../src/auth.js';
 import { cacheClear, cacheStats } from '../src/cache.js';
-import { getStats, recordRequest, resetStats } from '../src/dashboard/stats.js';
+import { getRequestLog, getStats, recordRequest, resetStats } from '../src/dashboard/stats.js';
 
 const CALLER = 'api:d4:user:u1';
 const OTHER_CALLER = 'api:d4:user:u2';
@@ -174,6 +174,7 @@ describe('D4: a Connect cache hit is client traffic, not upstream consumption', 
     assert.equal(row.cacheServed, true, 'the row says it was cache-served');
     assert.equal(row.credit, 0, 'the row charges nothing');
     assert.equal(row.tokensIn, 0, 'the row claims no upstream input tokens');
+    assert.equal(getRequestLog().items[0].reportedUsage, null, 'replayed usage is not a new report');
 
     // Forced-miss control: same body, different caller scope → no shared slot.
     const scoped = await handleChatCompletions(body(), { callerKey: OTHER_CALLER });
@@ -214,6 +215,7 @@ describe('D4: a Connect cache hit is client traffic, not upstream consumption', 
     assert.equal(accountSpend(acct.id), 1, 'the replay must not touch the per-account spend ledger');
     assert.equal(afterHit.requests, afterMiss.requests + 1);
     assert.equal(getStats().recentRequests.at(-1).cacheServed, true);
+    assert.equal(getRequestLog().items[0].reportedUsage, null, 'stream replay is not a new report');
   });
 });
 

@@ -94,12 +94,13 @@ function trajectoryStatusResponse(status) {
   return writeVarintField(2, status);
 }
 
-function trajectoryStepsResponse(text) {
+function trajectoryStepsResponse(text, usage = null) {
   const planner = writeStringField(1, text);
   const step = Buffer.concat([
     writeVarintField(1, 15),
     writeVarintField(4, 3),
     writeMessageField(20, planner),
+    ...(usage ? [writeMessageField(5, writeMessageField(9, usage))] : []),
   ]);
   return writeMessageField(1, step);
 }
@@ -198,11 +199,12 @@ function metadataServer(answer) {
       }
       if (method === 'GetCascadeTrajectorySteps') {
         stepsCalls++;
-        respond(stepsCalls === 1 ? trajectoryStepsResponse('answer') : Buffer.alloc(0));
+        const steps = answer.steps || [trajectoryStepsResponse('answer')];
+        respond(steps[stepsCalls - 1] ?? Buffer.alloc(0));
         return;
       }
       if (method === 'GetCascadeTrajectory') {
-        respond(trajectoryStatusResponse(1));
+        respond(trajectoryStatusResponse(stepsCalls < (answer.steps?.length ?? 1) ? 2 : 1));
         return;
       }
       if (method === 'GetCascadeTrajectoryGeneratorMetadata') {
@@ -262,6 +264,28 @@ describe('D5: the metadata window start survives a turn that reports no usage', 
     assert.equal(withUsage.outputTokens, 3);
 
     assert.equal(parseGeneratorMetadata(Buffer.alloc(0)), null, 'an empty response is still nothing');
+  });
+
+  it('carries explicit zero to the handler without inventing usage on missing turns', async () => {
+    const { chunks } = await runTurn({
+      answer: { records: () => metadataResponse([metadataRecord({ input: 0, output: 0 })]) },
+    });
+    assert.deepEqual(chunks.usage?.reportedUsage, { inputTokens: 0, outputTokens: 0 });
+    assert.equal(chunks.generatorOffset, 1);
+  });
+
+  it('keeps sparse step observations on a reread without replacing the last positive billing reading', async () => {
+    const { chunks } = await runTurn({
+      answer: {
+        steps: [
+          trajectoryStepsResponse('answer', writeVarintField(3, 5)),
+          trajectoryStepsResponse('answer', writeVarintField(2, 0)),
+        ],
+        records: () => metadataResponse([metadataRecord(null)]),
+      },
+    });
+    assert.equal(chunks.usage?.outputTokens, 5);
+    assert.deepEqual(chunks.usage?.reportedUsage, { inputTokens: 0, outputTokens: 5 });
   });
 
   it('control: valid usage bills only the records after the stored offset ([0,1])', async () => {

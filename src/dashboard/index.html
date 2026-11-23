@@ -4233,7 +4233,7 @@ tbody tr:hover td { background: var(--surface-2); }
       <div class="section-header">
         <div>
           <div class="section-title" data-i18n="section.statsAgg.title">聚合统计</div>
-          <div class="section-desc" data-i18n="section.statsAgg.desc">与请求日志同一筛选窗口；表内合计与日志共用同一分母，不做估算。</div>
+          <div class="section-desc" data-i18n="section.statsAgg.desc">汇总同一筛选窗口内的尝试与计账用量（可能含估算）。</div>
         </div>
         <div class="seg-group" role="radiogroup" aria-label="聚合维度" data-i18n-aria-label="aria.statsAggGroup">
           <button class="seg-btn stats-agg-tab active" role="radio" aria-checked="true" data-agg="model" onclick="App.setStatsAggTab('model')" data-i18n="section.statsAgg.byModel">按模型</button>
@@ -12701,16 +12701,20 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
       const hasStatus = r.status != null && Number.isInteger(status) && status >= 100 && status <= 599;
       const [badge, outcome] = r.success === true ? ['success', 'attemptSucceeded']
         : r.success === false ? ['error', 'attemptFailed'] : ['muted', 'attemptUnknown'];
-      const hasUsage = Number(r.tokensIn) > 0 || Number(r.tokensOut) > 0;
-      const tokenTitle = hasUsage ? this._statsTokenTitle(r) : I18n.t('section.statsLog.usageMissing');
+      const { tokensIn, tokensOut, totalTokens } = r.reportedUsage || {};
+      const usageMissing = I18n.t('section.statsLog.usageMissing');
+      const hasBreakdown = tokensIn != null && tokensIn === r.tokensIn;
+      const inputTitle = hasBreakdown ? this._statsTokenTitle(r) : (tokensIn == null ? usageMissing : '');
+      const totalLabel = (tokensIn == null || tokensOut == null) && totalTokens != null
+        ? ` <small class="text-muted">${this.esc(I18n.t('section.statsLog.reportedTotal', { total: this.fmtTokenCount(totalTokens) }))}</small>` : '';
       return `<tr>`
         + `<td class="text-sm" title="${this.esc(when.toLocaleString())}">${this.esc(when.toLocaleString())}</td>`
         + `<td class="text-sm"><span class="cell-ellipsis" title="${this.esc(r.model || '')}">${this.esc(r.model || '-')}</span></td>`
         + `<td class="text-sm"><code>${this.esc(r.account || '-')}</code></td>`
         + `<td><span class="badge ${badge} no-dot">${this.esc(I18n.t('section.statsLog.' + outcome))}</span> ${hasStatus ? `<small class="text-muted">HTTP ${status}</small>` : ''}</td>`
         + `<td class="text-sm numeric">${this.esc(this.fmtMs(r.ms))}</td>`
-        + `<td class="text-sm numeric" title="${this.esc(tokenTitle)}">${hasUsage ? this.esc(this.fmtTokenCount(r.tokensIn)) : '—'}</td>`
-        + `<td class="text-sm numeric">${hasUsage ? this.esc(this.fmtTokenCount(r.tokensOut)) : '—'}</td>`
+        + `<td class="text-sm numeric" title="${this.esc(inputTitle)}">${tokensIn == null ? '—' : this.esc(this.fmtTokenCount(tokensIn))}${totalLabel}</td>`
+        + `<td class="text-sm numeric" title="${tokensOut == null ? this.esc(usageMissing) : ''}">${tokensOut == null ? '—' : this.esc(this.fmtTokenCount(tokensOut))}</td>`
         + `<td class="text-sm numeric">${this.esc(this.fmtCredit(r.credit))}</td>`
         + `</tr>`;
     }).join('') || `<tr class="empty-row"><td colspan="8">${I18n.t('section.statsLog.empty')}</td></tr>`;

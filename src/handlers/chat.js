@@ -16,6 +16,7 @@ import { config, log } from '../config.js';
 import { leakTraceEnabled, thinkMarkersIn, leakSample } from '../leak-trace.js';
 import { safeAccountRef, safeKeyRef, safeLogValue } from '../log-safety.js';
 import { recordRequest, recordTokenUsage, recordPolicyBlocked, recordRateLimited } from '../dashboard/stats.js';
+import { markReportedUsage } from '../reported-usage.js';
 import { extractIntentFromNarrative, detectToolIntentInNarrative, maskNonActionableRegions } from './intent-extractor.js';
 import { isModelAllowed } from '../dashboard/model-access.js';
 import { cacheKey as computeCacheKey, cacheGet, cacheSet, isCacheEnabled } from '../cache.js';
@@ -2574,6 +2575,13 @@ export { strictUsageTotal };
  */
 
 export function buildUsageBody(serverUsage, messages, completionText, thinkingText = '', cachePolicy = null) {
+  const reported = serverUsage && Object.hasOwn(serverUsage, 'reportedUsage') ? serverUsage.reportedUsage : serverUsage;
+  const report = reported && {
+    fresh_input_tokens: reported.inputTokens,
+    output_tokens: reported.outputTokens,
+    cache_read_input_tokens: reported.cacheReadTokens,
+    cache_creation_input_tokens: reported.cacheWriteTokens,
+  };
   if (serverUsage && (serverUsage.inputTokens || serverUsage.outputTokens)) {
     const inputTokens = serverUsage.inputTokens || 0;
     const outputTokens = serverUsage.outputTokens || 0;
@@ -2618,7 +2626,7 @@ export function buildUsageBody(serverUsage, messages, completionText, thinkingTe
       ephemeral_5m_input_tokens: cachePolicy?.has1h ? 0 : cacheWrite,
       ephemeral_1h_input_tokens: cachePolicy?.has1h ? cacheWrite : 0,
     };
-    return {
+    return markReportedUsage({
       prompt_tokens: promptTokens,
       completion_tokens: outputTokens,
       total_tokens: totalTokens,
@@ -2642,11 +2650,11 @@ export function buildUsageBody(serverUsage, messages, completionText, thinkingTe
         cache_write_tokens: cacheWrite,
         output_tokens: outputTokens,
       },
-    };
+    }, report);
   }
   const prompt = estimateTokens(messages);
   const completion = Math.max(1, Math.ceil(((completionText || '').length + (thinkingText || '').length) / 4));
-  return {
+  return markReportedUsage({
     prompt_tokens: prompt,
     completion_tokens: completion,
     total_tokens: prompt + completion,
@@ -2656,7 +2664,7 @@ export function buildUsageBody(serverUsage, messages, completionText, thinkingTe
     // O11: completion here already folds thinkingText into the chars/4 estimate,
     // so reasoning_tokens is the thinking portion of that same total (⊆ completion).
     completion_tokens_details: { reasoning_tokens: estimateReasoningTokens(thinkingText, completion) },
-  };
+  }, report);
 }
 
 // ── DEVIN_CONNECT account lifecycle ──────────────────────────────────
@@ -5127,13 +5135,14 @@ async function _handleChatCompletionsInner(body, context, captureCacheGeneration
               // name the response body/chunks carry and the non-stream arm files
               // under — reqModelName split one conversation across two buckets on
               // a degrade or a router hop (P2-6).
-              try { recordTokenUsage(_sr?.usage, connectDisplayModel); } catch {}
               // K8: attribute the spend to THIS account (per-account lifetime total).
               // Pass the whole reservation, not its apiKey: the credential may have
               // rotated while the stream was in flight, and the ledger belongs to
               // the immutable account id (review #3).
               try { recordAccountSpend(a, _sr?.usage, connectSpendOpts(_sr?.billing)); } catch {}
               finalizeConnectAccount(a, { model: connectDisplayModel, selector, startTime: ccStart, err: null });
+              // Join this attempt's row, not a preceding failover row.
+              try { recordTokenUsage(_sr?.usage, connectDisplayModel); } catch {}
               return { kind: 'ok', sr: _sr, frames: schemaFrames };
             } catch (err) {
               // Client or server-level abort: the caller is gone (or the process
@@ -5172,11 +5181,11 @@ async function _handleChatCompletionsInner(body, context, captureCacheGeneration
                       // the 401; the replay replaces them, never appends.
                       if (schemaFrames) schemaFrames.length = 0;
                       const _sr3 = await streamChatCompletion({ ...connectParams, token: freshKey }, sink, connectMeta);
-                      try { recordTokenUsage(_sr3?.usage, connectDisplayModel); } catch {}
                       // Billing identity is the account, not the credential: the
                       // retry presented freshKey, but the row belongs to a.id.
                       try { recordAccountSpend({ accountId: a.id, apiKey: freshKey, attemptId: a.reservationTimestamp }, _sr3?.usage, connectSpendOpts(_sr3?.billing)); } catch {}
                       finalizeConnectAccount(a, { model: connectDisplayModel, selector, startTime: ccStart, err: null, credentialKey: freshKey });
+                      try { recordTokenUsage(_sr3?.usage, connectDisplayModel); } catch {}
                       return { kind: 'ok', sr: _sr3, frames: schemaFrames };
                     } catch (retryErr) {
                       // Client disconnected while re-login was in flight — stop cleanly.

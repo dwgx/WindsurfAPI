@@ -4,12 +4,14 @@
 
 import { readFileSync, existsSync } from 'fs';
 import { AsyncLocalStorage } from 'node:async_hooks';
+import { randomUUID } from 'node:crypto';
 import { writeJsonAtomic } from '../fs-atomic.js';
 import { join } from 'path';
 import { config } from '../config.js';
 import { getModelInfo, getCloudSelectorPricing, resolveModel } from '../models.js';
 import { resolveConnectSelector } from '../devin-connect-models.js';
 import { accountRef } from '../log-safety.js';
+import { REPORTED_USAGE, tokenCount } from '../reported-usage.js';
 
 const STATS_FILE = join(config.dataDir, 'stats.json');
 
@@ -400,33 +402,61 @@ function nonNeg(value) {
   return Number.isFinite(n) && n > 0 ? n : 0;
 }
 
-/**
- * Normalize an OpenAI-shaped usage block into the four counters the request
- * log stores. `tokensIn` is the full billable input (fresh + cache read +
- * cache write), matching what tokenTotals.total counts, so a row's
- * tokensIn + tokensOut always reconciles with the lifetime token card.
- */
-function usageTokenCounts(usage) {
-  if (!usage || typeof usage !== 'object') return null;
-  const bd = usage.cascade_breakdown || null;
-  const prompt = nonNeg(usage.prompt_tokens);
-  const cacheRead = nonNeg(bd?.cache_read_tokens ?? usage.prompt_tokens_details?.cached_tokens ?? usage.cache_read_input_tokens);
-  const cacheWrite = nonNeg(bd?.cache_write_tokens ?? usage.cache_creation_input_tokens);
+function usageTokenParts(usage, inputAlias) {
+  const bd = usage?.cascade_breakdown;
+  const prompt = tokenCount(usage?.prompt_tokens) ?? inputAlias;
+  const cacheRead = tokenCount(bd?.cache_read_tokens) ?? tokenCount(usage?.prompt_tokens_details?.cached_tokens)
+    ?? tokenCount(usage?.cache_read_input_tokens);
+  const cacheWrite = tokenCount(bd?.cache_write_tokens) ?? tokenCount(usage?.cache_creation_input_tokens);
   // Connect usage carries the fresh bucket explicitly because its prompt_tokens
   // includes cache_write (O2); `prompt - cached` would count the write as fresh.
-  const fresh = nonNeg(bd?.fresh_input_tokens ?? usage.fresh_input_tokens ?? Math.max(0, prompt - cacheRead));
-  const tokensOut = nonNeg(bd?.output_tokens ?? usage.completion_tokens ?? usage.output_tokens);
-  if (!fresh && !cacheRead && !cacheWrite && !tokensOut) return null;
-  return { tokensIn: fresh + cacheRead + cacheWrite, tokensOut, cacheRead, cacheWrite };
+  const fresh = tokenCount(bd?.fresh_input_tokens) ?? tokenCount(usage?.fresh_input_tokens)
+    ?? (prompt === undefined ? undefined : Math.max(0, prompt - (cacheRead ?? 0)));
+  const output = tokenCount(bd?.output_tokens) ?? tokenCount(usage?.completion_tokens) ?? tokenCount(usage?.output_tokens);
+  return { fresh, cacheRead, cacheWrite, output };
 }
 
-function applyUsageToRow(row, usage) {
-  const counts = usageTokenCounts(usage);
-  if (!counts) return;
+function reportedTokenFields(usage) {
+  const tokensIn = tokenCount(usage?.tokensIn);
+  const tokensOut = tokenCount(usage?.tokensOut);
+  const totalTokens = tokenCount(usage?.totalTokens);
+  if (tokensIn === undefined && tokensOut === undefined && totalTokens === undefined) return null;
+  return {
+    ...(tokensIn === undefined ? {} : { tokensIn }),
+    ...(tokensOut === undefined ? {} : { tokensOut }),
+    ...(totalTokens === undefined ? {} : { totalTokens }),
+  };
+}
+
+/**
+ * Keep display evidence separate from the numeric counters used by rollups.
+ * The latter can contain estimates. A missing side, or a cache detail without
+ * an input count, does not establish the full input or output usage.
+ */
+function usageTokenCounts(usage) {
+  if (!usage || typeof usage !== 'object' || Array.isArray(usage)) return null;
+  const parts = usageTokenParts(usage);
+  const raw = Object.hasOwn(usage, REPORTED_USAGE) ? usage[REPORTED_USAGE] : usage;
+  // Accept the input alias for observations without changing the rollup's
+  // established prompt_tokens accounting.
+  const report = usageTokenParts(raw, tokenCount(raw?.input_tokens));
+  const reportedUsage = reportedTokenFields({
+    tokensIn: report.fresh === undefined ? undefined : report.fresh + (report.cacheRead ?? 0) + (report.cacheWrite ?? 0),
+    tokensOut: report.output,
+    totalTokens: raw?.total_tokens,
+  });
+  const { fresh = 0, cacheRead = 0, cacheWrite = 0, output: tokensOut = 0 } = parts;
+  if (!reportedUsage && !fresh && !cacheRead && !cacheWrite && !tokensOut) return null;
+  return { tokensIn: fresh + cacheRead + cacheWrite, tokensOut, cacheRead, cacheWrite, reportedUsage };
+}
+
+function applyUsageToRow(row, counts) {
+  if (!counts || row.cacheServed) return;
   row.tokensIn = counts.tokensIn;
   row.tokensOut = counts.tokensOut;
   row.cacheRead = counts.cacheRead;
   row.cacheWrite = counts.cacheWrite;
+  if (counts.reportedUsage) row.reportedUsage = counts.reportedUsage;
 }
 
 // Load persisted stats. The reviver drops prototype-shaped keys at every
@@ -609,18 +639,19 @@ export function recordRequest(model, success, durationMs, accountId, extra = {})
   if (!Array.isArray(_state.recentRequests)) _state.recentRequests = [];
   const scope = _requestScope.getStore();
   const row = {
+    statsRowId: randomUUID(),
     ts: Date.now(), model, success: !!success, ms: durationMs || 0,
     account,
     credit,
     status: Number.isFinite(extra?.status) ? extra.status : (success ? 200 : 500),
     tokensIn: 0, tokensOut: 0, cacheRead: 0, cacheWrite: 0,
+    reportedUsage: null,
     ...(cacheServed ? { cacheServed: true } : {}),
   };
-  // Usage can legitimately arrive before its row (the DEVIN_CONNECT non-stream
-  // path bills inside the attempt, then finalizes the account). The scope holds
-  // it until the row exists; a usage block handed in directly wins over it.
-  const usage = extra.usage || scope?.pendingUsage || null;
-  if (usage) applyUsageToRow(row, usage);
+  // Usage can arrive before its row. A direct measurement takes precedence
+  // over the pending one, but an empty placeholder must not discard it.
+  const counts = usageTokenCounts(extra?.usage) ?? scope?.pendingUsage;
+  applyUsageToRow(row, counts);
   if (scope) {
     scope.rows.push(row);
     scope.pendingUsage = null;
@@ -784,9 +815,15 @@ function mergeStatsHistory(existing, incoming, identity, cap) {
   return [...entries.values()].sort((a, b) => a.ts - b.ts).slice(-cap);
 }
 
+function requestHistoryKey(row) {
+  return typeof row.statsRowId === 'string' && row.statsRowId
+    ? `id:${row.statsRowId}` : `legacy:${row.ts}|${row.model}`;
+}
+
 // v2.0.148 — Import a previously exported snapshot. MERGE mode (default) adds
 // counts onto current; REPLACE overwrites. Numeric fields are summed, keyed
-// maps merged, recentRequests concatenated + de-duped by ts+model then capped.
+// maps merged, request rows de-duplicated by their private row id (legacy:
+// timestamp and model), then capped.
 export function importStats(snap, { mode = 'merge' } = {}) {
   if (!['merge', 'replace'].includes(mode)) return { ok: false, error: 'invalid mode' };
   let next;
@@ -832,7 +869,7 @@ export function importStats(snap, { mode = 'merge' } = {}) {
     }
     next.hourlyBuckets = [...hours.values()].sort((a, b) => a.hour.localeCompare(b.hour)).slice(-720);
     next.recentRequests = mergeStatsHistory(next.recentRequests, mode === 'merge' ? src.recentRequests : [],
-      r => `${r.ts}|${r.model}`, RECENT_REQ_CAP);
+      requestHistoryKey, RECENT_REQ_CAP);
     next.recentPolicyBlocks = mergeStatsHistory(next.recentPolicyBlocks, mode === 'merge' ? src.recentPolicyBlocks : [],
       r => `${r.ts}|${r.promptHash}`, Number(process.env.POLICY_BLOCK_RING) || 50);
     pruneKeyed(next.creditsByHour, 720);
@@ -840,6 +877,13 @@ export function importStats(snap, { mode = 'merge' } = {}) {
     enforceModelCap(false, next.modelCounts);
     pruneTokensToModelCounts(Object.keys(next.tokensByModel || {}), next.modelCounts, next.tokensByModel);
     next = normalizeStatsSnapshot(next); // Also reject numeric overflow from merging.
+    if (mode === 'merge') {
+      // Keep existing row references so an in-flight scope can still finish
+      // attributing usage and HTTP status after a non-destructive import.
+      const liveRows = new Map(_state.recentRequests.filter(row => typeof row.statsRowId === 'string' && row.statsRowId)
+        .map(row => [row.statsRowId, row]));
+      next.recentRequests = next.recentRequests.map(row => liveRows.get(row.statsRowId) ?? row);
+    }
   } catch {
     return { ok: false, error: 'invalid snapshot' };
   }
@@ -886,13 +930,29 @@ export function resetStats() {
  * includes cache_write and `prompt - cached` would book the write as fresh.
  */
 export function recordTokenUsage(usage, model = null) {
-  if (!usage || typeof usage !== 'object') return;
+  if (!usage || typeof usage !== 'object' || Array.isArray(usage)) return;
+  // Join the display evidence even when the lifetime ledger has nothing to add.
+  // The scope is the only safe join between concurrent calls for the same model.
+  const scope = _requestScope.getStore();
+  const row = scope?.rows.at(-1);
+  if (row?.cacheServed) return;
+  const counts = scope ? usageTokenCounts(usage) : null;
+  if (row) applyUsageToRow(row, counts);
+  else if (counts) scope.pendingUsage = counts;
+
+  // The lifetime ledger keeps its existing alias fallback and positive-count
+  // gate. A displayed zero or a total without a split does not add a charge.
   const bd = usage.cascade_breakdown || null;
-  const fresh = bd?.fresh_input_tokens ?? usage.fresh_input_tokens ?? Math.max(0, (usage.prompt_tokens || 0) - (usage.prompt_tokens_details?.cached_tokens || usage.cache_read_input_tokens || 0));
-  const cacheR = bd?.cache_read_tokens ?? (usage.prompt_tokens_details?.cached_tokens || usage.cache_read_input_tokens || 0);
-  const cacheW = bd?.cache_write_tokens ?? (usage.cache_creation_input_tokens || 0);
-  const output = bd?.output_tokens ?? (usage.completion_tokens || usage.output_tokens || 0);
-  if (!fresh && !cacheR && !cacheW && !output) return;
+  const cacheFallback = tokenCount(usage.prompt_tokens_details?.cached_tokens) || tokenCount(usage.cache_read_input_tokens) || 0;
+  const fresh = tokenCount(bd?.fresh_input_tokens) ?? tokenCount(usage.fresh_input_tokens)
+    ?? Math.max(0, (tokenCount(usage.prompt_tokens) ?? 0) - cacheFallback);
+  const cacheR = tokenCount(bd?.cache_read_tokens) ?? cacheFallback;
+  const cacheW = tokenCount(bd?.cache_write_tokens) ?? tokenCount(usage.cache_creation_input_tokens) ?? 0;
+  const output = tokenCount(bd?.output_tokens) ?? (tokenCount(usage.completion_tokens) || tokenCount(usage.output_tokens) || 0);
+  if (!fresh && !cacheR && !cacheW && !output) {
+    if (row && counts) scheduleSave();
+    return;
+  }
   if (!_state.tokenTotals) {
     _state.tokenTotals = { fresh_input: 0, cache_read: 0, cache_write: 0, output: 0, total: 0, requests_with_usage: 0 };
   }
@@ -923,16 +983,6 @@ export function recordTokenUsage(usage, model = null) {
     tm.output += output;
     tm.total += fresh + cacheR + cacheW + output;
     tm.requests_with_usage += 1;
-  }
-  // Per-request attribution. The scope is the only safe join: a concurrent
-  // request for the same model must never inherit these counts. When the usage
-  // arrives before the attempt row (connect non-stream), hold it until
-  // recordRequest creates that row.
-  const scope = _requestScope.getStore();
-  if (scope) {
-    const row = scope.rows[scope.rows.length - 1];
-    if (row) applyUsageToRow(row, usage);
-    else scope.pendingUsage = usage;
   }
   scheduleSave();
 }
@@ -970,6 +1020,13 @@ function logRowView(row) {
   const status = rawStatus == null || rawStatus === ''
     ? derived
     : (Number.isFinite(Number(rawStatus)) ? Number(rawStatus) : derived);
+  // Legacy rows stored ambiguous zero defaults. Keep their positive sides,
+  // without guessing what a zero meant or relabeling new estimates as reports.
+  const legacyReport = {
+    tokensIn: tokenCount(row?.tokensIn) || undefined,
+    tokensOut: tokenCount(row?.tokensOut) || undefined,
+  };
+  const report = row && Object.hasOwn(row, 'reportedUsage') ? row.reportedUsage : legacyReport;
   return {
     ts: Number.isFinite(ts) ? ts : 0,
     model: typeof row?.model === 'string' ? row.model : '',
@@ -979,6 +1036,7 @@ function logRowView(row) {
     ms: nonNeg(row?.ms),
     tokensIn: nonNeg(row?.tokensIn),
     tokensOut: nonNeg(row?.tokensOut),
+    reportedUsage: row?.cacheServed === true ? null : reportedTokenFields(report),
     cacheRead: nonNeg(row?.cacheRead),
     cacheWrite: nonNeg(row?.cacheWrite),
     credit: nonNeg(row?.credit),

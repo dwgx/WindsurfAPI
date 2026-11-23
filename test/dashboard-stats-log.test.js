@@ -10,8 +10,10 @@ import { afterEach, beforeEach, describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { config } from '../src/config.js';
 import {
+  exportStats,
   finalizeStatsScope,
   getRequestLog,
+  getStats,
   importStats,
   recordRequest,
   recordTokenUsage,
@@ -19,8 +21,12 @@ import {
   withStatsScope,
 } from '../src/dashboard/stats.js';
 import { handleDashboardApi } from '../src/dashboard/api.js';
+import { decodeFrame, normalizeConnectUsage } from '../src/devin-connect.js';
+import { buildUsageBody } from '../src/handlers/chat.js';
 import { accountRef } from '../src/log-safety.js';
+import { writeMessageField, writeVarintField } from '../src/proto.js';
 import { _resetRuntimeConfigForTests } from '../src/runtime-config.js';
+import { parseGeneratorMetadata } from '../src/windsurf.js';
 
 const originalDashboardPassword = config.dashboardPassword;
 const originalApiKey = config.apiKey;
@@ -156,6 +162,129 @@ describe('request log scope join', () => {
   });
 });
 
+describe('reported request usage', () => {
+  it('recognizes only finite, non-negative numbers and keeps the split optional', () => {
+    const cases = [
+      ['absent', undefined, null],
+      ['null', null, null],
+      ['empty', {}, null],
+      ['invalid', { prompt_tokens: '8', completion_tokens: -1, total_tokens: Infinity }, null],
+      ['non-finite', { input_tokens: NaN, output_tokens: null }, null],
+      ['zero', { prompt_tokens: 0, completion_tokens: 0 }, { tokensIn: 0, tokensOut: 0 }],
+      ['input', { input_tokens: 5 }, { tokensIn: 5 }],
+      ['output', { output_tokens: 0 }, { tokensOut: 0 }],
+      ['total', { total_tokens: 9 }, { totalTokens: 9 }],
+      ['total-zero', { total_tokens: 0 }, { totalTokens: 0 }],
+    ];
+    for (const [model, usage, expected] of cases) {
+      recordRequest(model, true, 1, null, { usage });
+      assert.deepEqual(getRequestLog({ model }).items[0].reportedUsage, expected, model);
+    }
+    assert.equal(getRequestLog({ model: 'input' }).summary.tokensIn, 0, 'the input alias is display evidence only');
+  });
+
+  it('joins zero and partial reports on either side of concurrent attempt rows', async () => {
+    await Promise.all([
+      withStatsScope(async () => {
+        recordTokenUsage({ prompt_tokens: 0, completion_tokens: 0 }, 'same-model');
+        await Promise.resolve();
+        recordRequest('same-model', true, 10, 'acct-zero', { usage: {} });
+      }),
+      withStatsScope(async () => {
+        recordRequest('same-model', true, 20, 'acct-partial');
+        await Promise.resolve();
+        recordTokenUsage({ completion_tokens: 7 }, 'same-model');
+        recordTokenUsage({}, 'same-model');
+      }),
+    ]);
+    const { items, summary } = getRequestLog({ model: 'same-model' });
+    const byAccount = Object.fromEntries(items.map(r => [r.account, r.reportedUsage]));
+    assert.deepEqual(byAccount[accountRef('acct-zero')], { tokensIn: 0, tokensOut: 0 });
+    assert.deepEqual(byAccount[accountRef('acct-partial')], { tokensOut: 7 });
+    assert.equal(summary.requests, 2);
+    assert.equal(summary.tokensOut, 7);
+    assert.equal(getStats().tokenTotals.requests_with_usage, 1, 'zero is data, not extra spend');
+    assert.equal(getStats().tokenTotals.total, 7);
+  });
+
+  it('restores the marker through snapshot import, the real save callback and module reload', async (t) => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    recordRequest('reported-zero', true, 1, null, { usage: { prompt_tokens: 0, completion_tokens: 0 } });
+    recordRequest('total-only', true, 1, null, { usage: { total_tokens: 13 } });
+    const snapshot = exportStats();
+    snapshot.recentRequests = [...snapshot.recentRequests,
+      row(0, { model: 'legacy-zero', tokensIn: 0, tokensOut: 0 }),
+      row(1, { model: 'legacy-positive', tokensIn: 0, tokensOut: 3 }),
+    ];
+    resetStats();
+    assert.equal(importStats(snapshot, { mode: 'merge' }).ok, true);
+    t.mock.timers.tick(5000);
+    const restored = await import('../src/dashboard/stats.js?usage-readback');
+    const items = restored.getRequestLog().items;
+    const reports = Object.fromEntries(items.map(r => [r.model, r.reportedUsage]));
+    assert.deepEqual(reports, {
+      'reported-zero': { tokensIn: 0, tokensOut: 0 },
+      'total-only': { totalTokens: 13 },
+      'legacy-zero': null,
+      'legacy-positive': { tokensOut: 3 },
+    });
+  });
+
+  it('keeps same-millisecond rows distinct in merge and replace imports', (t) => {
+    t.mock.timers.enable({ apis: ['Date'], now: 1_700_000_000_000 });
+    withStatsScope(() => recordRequest('tied', true, 1, null, { usage: { completion_tokens: 0 } }));
+    withStatsScope(() => recordRequest('tied', true, 1, null, { usage: { completion_tokens: 9 } }));
+    const snapshot = exportStats();
+    for (const mode of ['merge', 'replace']) {
+      assert.equal(importStats(snapshot, { mode }).ok, true, mode);
+      assert.deepEqual(getRequestLog().items.map(row => row.reportedUsage), [
+        { tokensOut: 9 }, { tokensOut: 0 },
+      ], mode);
+    }
+  });
+
+  it('keeps an in-flight attempt joined to its later usage across a merge import', () => {
+    withStatsScope((scope) => {
+      recordRequest('in-flight', false, 1, null);
+      assert.equal(importStats({ creditsTotal: 0 }).ok, true);
+      recordTokenUsage({ completion_tokens: 0 }, 'in-flight');
+      scope.status = 429;
+      finalizeStatsScope(scope);
+    });
+    const item = getRequestLog().items[0];
+    assert.equal(item.status, 429);
+    assert.equal(item.success, false);
+    assert.deepEqual(item.reportedUsage, { tokensOut: 0 });
+  });
+
+  it('does not count normalized defaults or Cascade estimates as reports', () => {
+    const connectFrame = writeMessageField(7, writeVarintField(3, 0));
+    const connect = normalizeConnectUsage(decodeFrame(connectFrame).usage);
+    assert.equal(connect.prompt_tokens, 0, 'wire shape still supplies its default');
+    recordRequest('connect-output', true, 1, null, { usage: connect });
+
+    const metadata = writeMessageField(1, writeMessageField(1,
+      writeMessageField(4, writeVarintField(2, 0))));
+    const cascade = buildUsageBody(parseGeneratorMetadata(metadata), [], 'example');
+    const estimate = buildUsageBody(null, [], 'example');
+    assert.equal(cascade.completion_tokens, estimate.completion_tokens, 'wire estimates are unchanged');
+    withStatsScope(() => {
+      recordRequest('cascade-partial', true, 1, null);
+      recordTokenUsage(cascade, 'cascade-partial');
+    });
+    withStatsScope(() => {
+      recordRequest('cascade-missing', true, 1, null);
+      recordTokenUsage(estimate, 'cascade-missing');
+    });
+
+    const items = Object.fromEntries(getRequestLog().items.map(r => [r.model, r]));
+    assert.deepEqual(items['connect-output'].reportedUsage, { tokensOut: 0 });
+    assert.deepEqual(items['cascade-partial'].reportedUsage, { tokensIn: 0 });
+    assert.equal(items['cascade-missing'].reportedUsage, null);
+    assert.equal(getStats().tokenTotals.output, estimate.completion_tokens * 2);
+  });
+});
+
 describe('GET /stats/log query', () => {
   beforeEach(() => {
     seed([
@@ -257,6 +386,7 @@ describe('GET /dashboard/api/stats/log', () => {
     assert.equal(body.items.length, 1);
     assert.equal(body.items[0].model, 'alpha');
     assert.equal(body.items[0].tokensIn, 5);
+    assert.deepEqual(body.items[0].reportedUsage, { tokensIn: 5, tokensOut: 1 });
     assert.equal(body.total, 1);
     assert.equal(body.summary.requests, 1);
   });

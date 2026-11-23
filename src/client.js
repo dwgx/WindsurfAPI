@@ -31,11 +31,19 @@ import {
   buildGetTrajectoryRequest,
   parseTrajectoryInfo, buildHandleReadUrlContentInteractionRequest,
   buildGetTrajectoryStepsRequest, parseTrajectorySteps,
-  buildGetGeneratorMetadataRequest, parseGeneratorMetadata,
+  buildGetGeneratorMetadataRequest, parseGeneratorMetadata, sumCascadeUsage,
   buildGetUserStatusRequest, extractUserStatusBytes, parseGetUserStatusResponse,
 } from './windsurf.js';
 
 const LS_SERVICE = '/exa.language_server_pb.LanguageServerService';
+
+function reportedStepUsage(usage) {
+  if (!usage) return {};
+  // Older snapshots kept padded counters. Only their positive values are
+  // evidence; a padded zero cannot be recovered as a real report.
+  return usage.reportedUsage ?? Object.fromEntries(
+    Object.entries(usage).filter(([, value]) => Number.isFinite(value) && value > 0));
+}
 
 // Host the GetUserJwt RPC is minted against. The chat RPCs go through the
 // local LS, whose metadata is forwarded upstream — the JWT must be signed for
@@ -1914,10 +1922,16 @@ export class WindsurfClient {
             }
           }
 
-          // Per-step token usage. Re-reads overwrite with the latest reported
-          // numbers (they grow monotonically as the generator emits more
-          // output). We sum across steps at the end to compute total usage.
-          if (step.usage) usageByStep.set(stepIndex, step.usage);
+          // Keep the old positive reading for billing. The reported view
+          // updates only fields the new poll actually carried.
+          if (step.usage) {
+            const previous = usageByStep.get(stepIndex);
+            const billable = Object.values(step.usage).some(n => n > 0) ? step.usage : previous;
+            usageByStep.set(stepIndex, {
+              ...billable,
+              reportedUsage: { ...reportedStepUsage(previous), ...step.usage },
+            });
+          }
 
           // Collect tool calls — dedupe by id so the same step seen across
           // polls only emits once. A tool call with an existing `result`
@@ -2325,22 +2339,11 @@ export class WindsurfClient {
       // Fallback: if the generator metadata RPC didn't give us anything,
       // check the per-step metadata we collected during polling (some LS
       // versions do populate CortexStepMetadata.model_usage directly).
-      if (!serverUsage && usageByStep.size > 0) {
-        let inT = 0, outT = 0, cacheR = 0, cacheW = 0;
-        for (const u of usageByStep.values()) {
-          inT += u.inputTokens || 0;
-          outT += u.outputTokens || 0;
-          cacheR += u.cacheReadTokens || 0;
-          cacheW += u.cacheWriteTokens || 0;
-        }
-        if (inT || outT || cacheR || cacheW) {
-          serverUsage = {
-            inputTokens: inT,
-            outputTokens: outT,
-            cacheReadTokens: cacheR,
-            cacheWriteTokens: cacheW,
-          };
-        }
+      if (!serverUsage) {
+        const steps = [...usageByStep.values()];
+        const billable = sumCascadeUsage(steps);
+        const reportedUsage = metaResult?.reportedUsage ?? sumCascadeUsage(steps.map(reportedStepUsage));
+        if (billable || reportedUsage) serverUsage = { ...billable, reportedUsage };
       }
 
       // Attach cascade metadata so the caller can check it back into the

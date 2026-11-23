@@ -9,6 +9,7 @@ import { classifyUpstreamError } from '../src/devin-connect.js';
 import {
   handleChatCompletions, __setConnectDeps, __resetConnectDeps,
 } from '../src/handlers/chat.js';
+import { getRequestLog, withStatsScope } from '../src/dashboard/stats.js';
 
 // DEVIN_CONNECT cross-account failover: when a pooled account's session token is
 // dead (UNAUTHORIZED) and same-account re-login can't revive it, the request
@@ -425,19 +426,26 @@ describe('DEVIN_CONNECT cross-account failover — stream', () => {
         if (params.token === a.apiKey) throw Object.assign(new Error('rate limited'), { code: 'RATE_LIMITED' });
         send({ id: 's', object: 'chat.completion.chunk', choices: [{ index: 0, delta: { content: 'OK' }, finish_reason: null }] });
         send({ id: 's', object: 'chat.completion.chunk', choices: [{ index: 0, delta: {}, finish_reason: 'stop' }] });
+        return { usage: { prompt_tokens: 0, completion_tokens: 0 } };
       },
     });
 
-    const result = await handleChatCompletions(
-      { model: 'swe-1-6-slow', stream: true, messages: [{ role: 'user', content: 'hi' }] },
-      { callerKey: '' },
-    );
     const res = fakeRes();
-    await result.handler(res);
+    await withStatsScope(async () => {
+      const result = await handleChatCompletions(
+        { model: 'swe-1-6-slow', stream: true, messages: [{ role: 'user', content: 'hi' }] },
+        { callerKey: '' },
+      );
+      await result.handler(res);
+    });
     const frames = parseFrames(res.body);
     assert.equal(seen.length, 2, 'RATE_LIMITED on account 1 triggered one stream failover hop');
     assert.ok(frames.some(f => f !== '[DONE]' && f.choices?.[0]?.delta?.content === 'OK'), 'streamed from the healthy account');
     assert.ok(!frames.some(f => f !== '[DONE]' && f.error), 'no error frame — the request was recovered');
+    assert.deepEqual(getRequestLog({ limit: 2 }).items.map(row => [row.success, row.reportedUsage]), [
+      [true, { tokensIn: 0, tokensOut: 0 }],
+      [false, null],
+    ], 'the successful attempt owns its report, not the preceding failed attempt');
   });
 
   // R1 guard (stream): once a byte is on the wire, a RATE_LIMITED mid-stream must
