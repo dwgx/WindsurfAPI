@@ -469,15 +469,8 @@ async function route(req, res) {
   // Tolerate a doubled `/v1/v1/` prefix some clients emit.
   if (path.startsWith('/v1/v1/')) path = path.slice(3);
 
-  // Fallback request id for every exit that never reaches a route handler.
-  //
-  // Measured 2026-09-13 (L8 smoke lane): each route generated its own id and set its
-  // own header, so the auth gate (`:412`), every 404 fallback (`:378`, `:397`, `:469`)
-  // and the Gemini branch answered with NO request id. An operator holding only the
-  // client-side error text could not match it to a log line. The per-route sites keep
-  // their own ids (they override this header via writeHead) — this only guarantees the
-  // pre-dispatch paths are never id-less. `x-request-id` is the vendor-neutral name the
-  // other routes already emit; Anthropic's own `request-id` header still wins where set.
+  // Allocate an ID before any early exit. Chat, Responses and Messages also
+  // pass it into their handlers, so the public header can name a routing trace.
   const fallbackRequestId = 'req_' + randomUUID();
   res.setHeader('x-request-id', fallbackRequestId);
 
@@ -924,16 +917,17 @@ async function route(req, res) {
     // route. Layers (queue admission, cascade poll, connect retries) receive
     // the remaining time and may only shorten their own bounds.
     const budget = createRequestBudget({ stream: body.stream === true });
+    const requestId = fallbackRequestId;
     const result = await handleChatCompletions(body, {
       callerKey,
       nativeBridgeCallerKey: nativeBridgeCallerKeyForRequest(req, token, body, callerKey),
       signal: abortController.signal,
       budget,
+      traceId: requestId,
       clineCompat,
       ccCompat,
     });
     const processingMs = Date.now() - reqStartedAt;
-    const requestId = 'req_' + randomUUID();
     const ringRow = recordRequest({
       id: requestId,
       model: body.model,
@@ -1068,6 +1062,7 @@ async function route(req, res) {
     const callerKey = callerKeyFromRequest(req, token, body);
     const abortController = bindClientAbort(res);
     const budget = createRequestBudget({ stream: body.stream === true });
+    const requestId = fallbackRequestId;
     const result = await handleResponses(body, {
       context: {
         callerKey,
@@ -1075,10 +1070,10 @@ async function route(req, res) {
         ccCompat,
         signal: abortController.signal,
         budget,
+        traceId: requestId,
       },
     });
     const processingMs = Date.now() - reqStartedAt;
-    const requestId = 'req_' + randomUUID();
     const ringRow = recordRequest({
       id: requestId,
       model: body.model,
@@ -1275,7 +1270,7 @@ async function route(req, res) {
     // version-gated behavior; the translation layer does not branch on it today.
     const anthropicVersion = resolveAnthropicVersion(req);
     const reqStartedAt = Date.now();
-    const requestId = 'req_' + randomUUID();
+    const requestId = fallbackRequestId;
     const abortController = bindClientAbort(res);
     const budget = createRequestBudget({ stream: body.stream === true });
     const result = await handleMessages(body, {
@@ -1285,6 +1280,7 @@ async function route(req, res) {
       ccCompat,
       signal: abortController.signal,
       budget,
+      traceId: requestId,
     });
     const processingMs = Date.now() - reqStartedAt;
     const ringRow = recordRequest({
