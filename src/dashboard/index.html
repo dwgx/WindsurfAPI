@@ -12711,7 +12711,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
         + `<td class="text-sm" title="${this.esc(when.toLocaleString())}">${this.esc(when.toLocaleString())}</td>`
         + `<td class="text-sm"><span class="cell-ellipsis" title="${this.esc(r.model || '')}">${this.esc(r.model || '-')}</span></td>`
         + `<td class="text-sm"><code>${this.esc(r.account || '-')}</code></td>`
-        + `<td><span class="badge ${badge} no-dot">${this.esc(I18n.t('section.statsLog.' + outcome))}</span> ${hasStatus ? `<small class="text-muted">HTTP ${status}</small>` : ''}</td>`
+        + `<td><span class="badge ${badge} no-dot">${this.esc(I18n.t('section.statsLog.' + outcome))}</span> ${hasStatus ? `<small class="text-muted">HTTP ${this.esc(status)}</small>` : ''}</td>`
         + `<td class="text-sm numeric">${this.esc(this.fmtMs(r.ms))}</td>`
         + `<td class="text-sm numeric" title="${this.esc(inputTitle)}">${tokensIn == null ? '—' : this.esc(this.fmtTokenCount(tokensIn))}${totalLabel}</td>`
         + `<td class="text-sm numeric" title="${tokensOut == null ? this.esc(usageMissing) : ''}">${tokensOut == null ? '—' : this.esc(this.fmtTokenCount(tokensOut))}</td>`

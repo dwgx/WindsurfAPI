@@ -97,13 +97,10 @@ describe('F4 source — request id prefix migrated req- → req_', () => {
   it('no legacy req- prefix remains', () => {
     assert.doesNotMatch(src, /'req-'\s*\+\s*randomUUID/);
   });
-  it('exactly 7 req_ prefixed sites', () => {
-    // The count is the point: it fails when a NEW request-id site is added, forcing
-    // whoever adds it to confirm the prefix is req_ rather than the legacy req-.
-    // Bumped 5 → 6 for POST /v1/completions.
-    // Bumped 6 → 7 for the F4(e) fallback id at the top of route(), which is what
-    // gives the auth gate / 404 fallbacks / Gemini branch a request id at all.
-    assert.equal((src.match(/'req_'\s*\+\s*randomUUID/g) || []).length, 7);
+  it('keeps the four reviewed req_ allocation sites', () => {
+    // The route entry ID also names Chat, Responses and Messages traces.
+    // Legacy completions, stored-response reads/deletes, and Gemini each allocate one separately.
+    assert.equal((src.match(/'req_'\s*\+\s*randomUUID/g) || []).length, 4);
   });
 });
 
