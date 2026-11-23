@@ -24,6 +24,7 @@
 
 /** Rows the panel renders for the fleet turn list (merged, newest first). */
 export const TURN_ROW_CAP = 50;
+export const TURN_PAGE_SIZES = Object.freeze([100, 200, 500, 1000]);
 /** Per-account ring read. ACCOUNT_REQUEST_CAP is 100; read the whole ring so
  *  the last-hour tally is complete for the retained window, then slice for display. */
 export const TURN_PER_ACCOUNT_LIMIT = 100;
@@ -203,6 +204,7 @@ export function buildTurnsSection({
   readRequests = null,
   now = Date.now(),
   rowCap = TURN_ROW_CAP,
+  page = 1,
   perAccount = TURN_PER_ACCOUNT_LIMIT,
   windowMs = TURN_WINDOW_MS,
 } = {}) {
@@ -270,6 +272,11 @@ export function buildTurnsSection({
   }
 
   items.sort((a, b) => b.ts - a.ts);
+  const size = Math.max(0, Math.min(TURN_PAGE_SIZES.at(-1), Math.trunc(Number(rowCap) || 0)));
+  const pages = size > 0 ? Math.max(1, Math.ceil(items.length / size)) : 1;
+  const number = Math.min(pages, Math.max(1, Math.trunc(Number(page) || 1)));
+  const offset = (number - 1) * size;
+  const pageItems = items.slice(offset, offset + size);
   const scanned = scan.length;
   const total = num(totalAccounts);
   return {
@@ -282,10 +289,12 @@ export function buildTurnsSection({
     capped: total != null && total > scanned,
     accountsWithTurns,
     retained,
+    perAccountLimit: perAccount,
     summary: { promptTokens, completionTokens, totalTokens, credit, acu, lastTs: lastTs || null },
     window,
-    shown: Math.min(items.length, Math.max(0, Number(rowCap) || 0)),
-    items: items.slice(0, Math.max(0, Number(rowCap) || 0)),
+    shown: pageItems.length,
+    page: { number, size, pages, offset, total: items.length, sizes: TURN_PAGE_SIZES },
+    items: pageItems,
   };
 }
 

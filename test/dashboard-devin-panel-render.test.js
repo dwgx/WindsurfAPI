@@ -44,6 +44,9 @@ function esc(value) {
 
 const self = {
   esc,
+  _devinModelFilters: { query: '', provider: '', reach: '', price: '' },
+  _devinModelPage: 1,
+  _devinModelSize: 25,
   dmAgo: (ts) => (ts ? '5m' : '—'),
   fmtAcu: (v) => (typeof v === 'number' && Number.isFinite(v) ? String(v) : '—'),
   fmtUsageDate: (v) => (v ? 'date' : '—'),
@@ -79,9 +82,10 @@ let renderDevinQuota;
 let renderDevinSettings;
 let loadDevin;
 before(() => {
-  for (const name of ['usageRemainingPercentage', 'fmtUsageRemaining']) {
+  for (const name of ['usageRemainingPercentage', 'fmtUsageRemaining', 'devinPanelPath',
+    'renderDevinPager', 'renderDevinCatalogRows', 'renderDevinCatalogPrice']) {
     const fn = renderer(name);
-    self[name] = (...args) => fn(I18n, self, ...args);
+    self[name] = function (...args) { return fn(I18n, this, ...args); };
   }
   renderDevinKpis = renderer('renderDevinKpis');
   renderDevinRuntime = renderer('renderDevinRuntime');
@@ -89,7 +93,12 @@ before(() => {
   renderDevinCatalog = renderer('renderDevinCatalog');
   renderDevinQuota = renderer('renderDevinQuota');
   renderDevinSettings = renderer('renderDevinSettings');
-  loadDevin = asyncRenderer('loadDevin');
+  const load = asyncRenderer('loadDevin');
+  loadDevin = function (...args) {
+    Object.assign(this, { _devinPanelRequest: 0, _devinTurnPage: 1, _devinTurnSize: 100,
+      devinPanelPath: self.devinPanelPath });
+    return load.apply(this, args);
+  };
 });
 
 describe('panel snapshot acceptance', () => {
@@ -130,7 +139,7 @@ describe('panel snapshot acceptance', () => {
 
   it('accepts the real snapshot and keeps the on-demand reads null', async () => {
     const ctx = {
-      api: async (method, path) => (path === '/devin/panel'
+      api: async (method, path) => (path === '/devin/panel?turnPage=1&turnPageSize=100'
         ? okPanel
         : path === '/models' ? { models: [{ id: 'swe-2' }] } : { synced: true }),
       renderDevin() {},
@@ -303,6 +312,19 @@ describe('sessions section', () => {
     assert.match(html, /i18n:devin\.sessions\.scanCapped\|scanned=2,total=600/);
   });
 
+  it('keeps the source disclosure closed and offers all supported turn sizes', () => {
+    const panel = structuredClone(base);
+    panel.sessions.turns.page = { number: 2, size: 100, pages: 2, offset: 100, total: 102, sizes: [100, 200, 500, 1000] };
+    panel.sessions.turns.perAccountLimit = 100;
+    const html = renderDevinSessions(I18n, self, panel);
+    assert.match(html, /<details class="dm-disclosure" id="devin-sessions-sources">/);
+    assert.match(html, /i18n:devin\.sessions\.retentionHint\|limit=100/);
+    assert.match(html, /i18n:devin\.pagination\.range\|from=101,to=102,total=102,page=2,pages=2/);
+    for (const size of [100, 200, 500, 1000]) {
+      assert.ok(html.includes('<option value="' + size + '"'));
+    }
+  });
+
   it('escapes hostile model text', () => {
     const payload = {
       ok: true,
@@ -354,6 +376,37 @@ describe('catalog section', () => {
     assert.match(html, /i18n:model\.paidBadge/);
     assert.match(html, /i18n:model\.dailyExhaustedBadge/);
     assert.match(html, /i18n:model\.notInCatalogBadge/);
+  });
+
+  it('can navigate to catalog row 451 and filter on the actual selector', () => {
+    const rows = Array.from({ length: 451 }, (_, index) => ({
+      id: 'model-' + String(index + 1).padStart(3, '0'), name: 'Model ' + (index + 1),
+      connectSelector: 'upstream-' + (index + 1), provider: 'provider-x', reachable: true, freeNow: null,
+    }));
+    const tail = renderDevinCatalog(I18n, { ...self, _devinModelPage: 19 }, rows, null, null);
+    assert.match(tail, /<code>model-451<\/code>/);
+    assert.doesNotMatch(tail, /<code>model-450<\/code>/);
+    assert.match(tail, /i18n:devin\.pagination\.range\|from=451,to=451,total=451,page=19,pages=19/);
+    const filters = { query: 'UPSTREAM-451', provider: 'provider-x', reach: 'reachable', price: 'unknown' };
+    const result = renderDevinCatalog(I18n, { ...self, _devinModelFilters: filters }, rows, null, null);
+    assert.match(result, /<code>model-451<\/code>/);
+    assert.match(result, /i18n:devin\.pagination\.range\|from=1,to=1,total=1,page=1,pages=1/);
+    const empty = renderDevinCatalog(I18n, { ...self, _devinModelFilters: { ...filters, price: 'paid' } }, rows, null, null);
+    assert.match(empty, /i18n:devin\.catalog\.noMatch/);
+    assert.doesNotMatch(empty, /<table id="devin-model-table"/);
+  });
+
+  it('keeps a cached rate visible when quota blocks the row and leaves unknown rates blank', () => {
+    const quoted = { id: 'quoted', provider: 'test', reachable: false, freeNow: false, quotaState: 'blocked_daily',
+      creditRate: 2.125, creditRateFetchedAt: 12, creditRateStale: true };
+    const unknown = { id: 'unreported', provider: 'test', reachable: true, freeNow: false, credit: 99, creditRate: null };
+    const html = renderDevinCatalog(I18n, { ...self }, [quoted, unknown], null, null);
+    assert.match(html, /i18n:devin\.catalog\.pricing\.rate\|rate=2[.,]125/);
+    assert.match(html, /i18n:devin\.catalog\.pricing\.cachedAt\|date=datetime/);
+    assert.match(html, /i18n:devin\.catalog\.pricing\.stale/);
+    assert.match(html, /i18n:model\.dailyExhaustedBadge/);
+    assert.match(html, /i18n:devin\.catalog\.pricing\.unreported/);
+    assert.doesNotMatch(html, /rate=99/);
   });
 
   it('renders the catalog diff and the reconcile idle note', () => {

@@ -699,6 +699,26 @@ code {
 @media (max-width: 1100px) { #overview-cards { grid-template-columns: repeat(2, 1fr); } }
 @media (max-width: 560px) { #overview-cards { grid-template-columns: 1fr; } }
 
+#stats-cards { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+#stats-cards > .card, #stats-cards .stats-token-grid > div { min-width: 0; }
+#stats-cards .stats-detail-card { grid-column: span 2; }
+#stats-cards .stats-token-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 8px 12px;
+  margin-top: 8px;
+}
+#devin-kpis { grid-template-columns: repeat(6, minmax(0, 1fr)); }
+#devin-kpis > .card { min-width: 0; }
+@media (max-width: 1300px) { #devin-kpis { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+@media (max-width: 900px) {
+  #stats-cards { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  #stats-cards .stats-detail-card { grid-column: 1 / -1; }
+}
+@media (max-width: 540px) {
+  #devin-kpis, #stats-cards .stats-token-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+
 /* ─── Section Block ───────────────────────────── */
 .section {
   background: var(--surface);
@@ -1212,6 +1232,55 @@ tbody tr:hover td { background: var(--surface-2); }
   min-width: 160px;
   text-align: center;
   color: var(--text-muted);
+}
+
+/* Devin panel lists stay inside their own scroll regions. */
+.dm-panel-body { padding: 14px 16px; }
+#devin-runtime > .dm-grid {
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 9rem), 1fr));
+  gap: 8px;
+}
+.dm-summary-grid, .dm-detail-columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 9rem), 1fr));
+  gap: 8px;
+}
+.dm-detail-columns { grid-template-columns: repeat(auto-fit, minmax(min(100%, 15rem), 1fr)); }
+.dm-detail-columns > div { min-width: 0; }
+.dm-detail-columns .detail-kv { grid-template-columns: minmax(0, max-content) minmax(0, 1fr); }
+.dm-detail-columns .v { overflow-wrap: anywhere; }
+.dm-disclosure { margin-top: 10px; border-top: 1px solid var(--border); padding-top: 8px; }
+.dm-disclosure > summary { cursor: pointer; color: var(--text-muted); font-size: 12px; font-weight: 600; padding: 3px 0; }
+.dm-disclosure[open] > summary { margin-bottom: 8px; }
+.dm-list-header { margin: 10px 0 6px; display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 12px; }
+.dm-list-header strong { font-size: 13px; }
+.dm-paged-table { overflow: auto; max-height: min(46vh, 25rem); overscroll-behavior: contain; scrollbar-gutter: stable; }
+.dm-paged-table thead th { position: sticky; top: 0; z-index: 1; background: var(--surface-2); }
+.dm-paged-table th, .dm-paged-table td { padding: 6px 10px; }
+.dm-paged-table code { overflow-wrap: anywhere; }
+.dm-paged-table .dm-numeric { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.dm-pager { justify-content: space-between; padding: 7px 0 0; margin-top: 6px; }
+.dm-pager .page-label { min-width: 0; font-variant-numeric: tabular-nums; }
+.dm-pager-actions, .dm-pager-size { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.dm-pager-size .select { min-width: 70px; }
+.dm-catalog-controls {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) repeat(3, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 10px;
+}
+.dm-catalog-controls label { display: grid; gap: 4px; color: var(--text-muted); font-size: 12px; min-width: 0; }
+.dm-catalog-controls .input, .dm-catalog-controls .select { width: 100%; min-width: 0; }
+.dm-catalog-chips { display: flex; flex-wrap: wrap; gap: 4px 6px; margin: 0 0 8px; }
+.dm-catalog-selector, .dm-catalog-price-note { display: block; margin-top: 2px; }
+.dm-catalog-selector { overflow-wrap: anywhere; }
+.dm-catalog-price { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; }
+@media (max-width: 970px) {
+  .dm-catalog-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 560px) {
+  .dm-paged-table th, .dm-paged-table td { padding: 6px 8px; }
+  .dm-pager { justify-content: flex-start; }
 }
 
 /* ─── Account detail (drawer body) ──────────────────── */
@@ -4059,7 +4128,7 @@ tbody tr:hover td { background: var(--surface-2); }
           <div class="section-desc" data-i18n="section.devin.runtime.desc">语言服务器进程、准入计数与断连续传缓存。全部来自本进程状态，打开页面不产生上游调用。</div>
         </div>
       </div>
-      <div class="section-body" id="devin-runtime"><div class="text-sm text-muted" data-i18n="settings.loading">加载中…</div></div>
+      <div class="section-body dm-panel-body" id="devin-runtime"><div class="text-sm text-muted" data-i18n="settings.loading">加载中…</div></div>
     </div>
 
     <div class="section">
@@ -4069,7 +4138,7 @@ tbody tr:hover td { background: var(--surface-2); }
           <div class="section-desc" data-i18n="section.devin.sessions.desc">代理侧已计费轮次（按账号去重合并）。Cascade 轨迹与 ACP 会话不在代理可见范围内，原因写在来源表里。</div>
         </div>
       </div>
-      <div class="section-body" id="devin-sessions"><div class="text-sm text-muted" data-i18n="settings.loading">加载中…</div></div>
+      <div class="section-body dm-panel-body" id="devin-sessions"><div class="text-sm text-muted" data-i18n="settings.loading">加载中…</div></div>
     </div>
 
     <div class="section">
@@ -4082,7 +4151,40 @@ tbody tr:hover td { background: var(--surface-2); }
           <button class="btn btn-outline btn-sm" id="devin-reconcile-btn" onclick="App.loadDevinReconcile()" data-i18n="devin.catalog.reconcile.run">上游对账</button>
         </div>
       </div>
-      <div class="section-body" id="devin-catalog"><div class="text-sm text-muted" data-i18n="settings.loading">加载中…</div></div>
+      <div class="section-body dm-panel-body">
+        <div class="dm-catalog-controls">
+          <label>
+            <span data-i18n="devin.catalog.filters.search">搜索模型</span>
+            <input type="search" class="input" id="devin-model-search" autocomplete="off" maxlength="160"
+              data-i18n-placeholder="devin.catalog.filters.searchPlaceholder" placeholder="输入模型名、别名或 selector"
+              oninput="App.setDevinCatalogFilter('query', this.value)">
+          </label>
+          <label>
+            <span data-i18n="devin.catalog.col.provider">供应商</span>
+            <select class="select" id="devin-model-provider" data-enhanced="native" onchange="App.setDevinCatalogFilter('provider', this.value)">
+              <option value="" data-i18n="devin.catalog.filters.allProviders">全部供应商</option>
+            </select>
+          </label>
+          <label>
+            <span data-i18n="devin.catalog.col.reachable">可达性</span>
+            <select class="select" id="devin-model-reach" data-enhanced="native" onchange="App.setDevinCatalogFilter('reach', this.value)">
+              <option value="" data-i18n="devin.catalog.filters.all">全部</option>
+              <option value="reachable" data-i18n="devin.catalog.reachable">可达</option>
+              <option value="unreachable" data-i18n="devin.catalog.unreachable">不可达</option>
+            </select>
+          </label>
+          <label>
+            <span data-i18n="devin.catalog.col.price">价格</span>
+            <select class="select" id="devin-model-price" data-enhanced="native" onchange="App.setDevinCatalogFilter('price', this.value)">
+              <option value="" data-i18n="devin.catalog.filters.all">全部</option>
+              <option value="free" data-i18n="model.freeBadge">免费</option>
+              <option value="paid" data-i18n="model.paidBadge">计费</option>
+              <option value="unknown" data-i18n="devin.catalog.chip.unknownPrice">价格未知</option>
+            </select>
+          </label>
+        </div>
+        <div id="devin-catalog"><div class="text-sm text-muted" data-i18n="settings.loading">加载中…</div></div>
+      </div>
     </div>
 
     <div class="section">
@@ -4882,7 +4984,7 @@ const App = {
     const loaders = {
       overview: 'loadOverview',
       accounts: 'loadAccounts', models: 'loadModels', proxy: 'loadProxy',
-      logs: 'loadLogs', stats: 'loadStats', usage: 'loadUsage',
+      logs: 'loadLogs', stats: 'loadStats', usage: 'loadUsage', devin: 'renderDevin',
       experimental: 'loadExperimental', credits: 'loadCredits', settings: 'loadSettings',
     };
     const loader = loaders[activePanelId];
@@ -7219,13 +7321,28 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
   _devinAcu: null,
   _devinAcuLoading: false,
   _devinReconcileLoading: false,
+  _devinPanelRequest: 0,
+  _devinTurnPage: 1,
+  _devinTurnSize: 100,
+  _devinTurnError: false,
+  _devinModelPage: 1,
+  _devinModelSize: 25,
+  _devinModelFilters: { query: '', provider: '', reach: '', price: '' },
+
+  devinPanelPath(page, size) {
+    const query = new URLSearchParams({ turnPage: page, turnPageSize: size });
+    return '/devin/panel?' + query;
+  },
 
   async loadDevin(force = false) {
+    const seq = ++this._devinPanelRequest;
     const [panel, models, catalog] = await Promise.all([
-      this.api('GET', '/devin/panel').catch(() => null),
+      this.api('GET', this.devinPanelPath(this._devinTurnPage, this._devinTurnSize)).catch(() => null),
       this.api('GET', '/models').catch(() => null),
       this.api('GET', '/models/catalog').catch(() => null),
     ]);
+    if (seq !== this._devinPanelRequest) return;
+    this._devinTurnError = false;
     // Only the builder's `ok:true` snapshot is a snapshot. A dashboard 500
     // envelope is `{error:{message}}` with `success:false` forced by _apiRaw;
     // accepting it painted an empty-but-healthy panel with no reason.
@@ -7236,6 +7353,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     this._devinPanel = panel && typeof panel === 'object' && panel.ok === true && panel.success !== false
       ? panel
       : { ok: false, error: panelReason };
+    this._devinTurnPage = this._devinPanel.sessions?.turns?.page?.number ?? this._devinTurnPage;
     this._devinModels = models && Array.isArray(models.models) ? models.models : null;
     this._devinCatalog = catalog && typeof catalog === 'object' && 'synced' in catalog ? catalog : null;
     if (force) {
@@ -7247,15 +7365,96 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     this.renderDevin();
   },
 
+  replaceDevinBody(id, html) {
+    const region = document.getElementById(id);
+    if (!region) return;
+    const opened = new Set(Array.from(region.querySelectorAll('.dm-disclosure[open]'), el => el.id));
+    const action = region.contains(document.activeElement) ? document.activeElement.dataset.pageAction : null;
+    region.innerHTML = html;
+    for (const detail of region.querySelectorAll('.dm-disclosure')) {
+      if (opened.has(detail.id)) detail.open = true;
+    }
+    if (action) {
+      const target = Array.from(region.querySelectorAll('[data-page-action]')).find(el => el.dataset.pageAction === action && !el.disabled);
+      (target || region.querySelector('.page-label'))?.focus({ preventScroll: true });
+    }
+  },
+
   renderDevin() {
     const P = this._devinPanel;
-    const set = (id, html) => { const el = document.getElementById(id); if (el) el.innerHTML = html; };
-    set('devin-kpis', this.renderDevinKpis(P, this._devinModels, this._devinCatalog));
-    set('devin-runtime', this.renderDevinRuntime(P));
-    set('devin-sessions', this.renderDevinSessions(P));
-    set('devin-catalog', this.renderDevinCatalog(this._devinModels, this._devinCatalog, this._devinReconcile));
-    set('devin-quota', this.renderDevinQuota(P, this._devinAcu));
-    set('devin-settings', this.renderDevinSettings(P));
+    this.replaceDevinBody('devin-kpis', this.renderDevinKpis(P, this._devinModels, this._devinCatalog));
+    this.replaceDevinBody('devin-runtime', this.renderDevinRuntime(P));
+    this.replaceDevinBody('devin-sessions', this.renderDevinSessions(P));
+    this.syncDevinCatalogProviders();
+    this.replaceDevinBody('devin-catalog', this.renderDevinCatalog(this._devinModels, this._devinCatalog, this._devinReconcile));
+    this.replaceDevinBody('devin-quota', this.renderDevinQuota(P, this._devinAcu));
+    this.replaceDevinBody('devin-settings', this.renderDevinSettings(P));
+  },
+
+  async setDevinTurnPage(number, size) {
+    const current = this._devinPanel?.sessions?.turns?.page;
+    const section = document.getElementById('devin-sessions');
+    if (!current?.sizes?.includes(size) || section?.getAttribute('aria-busy') === 'true') return;
+    section?.setAttribute('aria-busy', 'true');
+    const seq = ++this._devinPanelRequest;
+    const panel = await this.api('GET', this.devinPanelPath(number, size)).catch(() => null);
+    section?.removeAttribute('aria-busy');
+    if (seq !== this._devinPanelRequest) return;
+    this._devinTurnError = !(panel?.ok === true && panel.sessions?.turns?.page);
+    if (!this._devinTurnError) {
+      this._devinTurnPage = panel.sessions.turns.page.number;
+      this._devinTurnSize = panel.sessions.turns.page.size;
+      this._devinPanel = { ...this._devinPanel, sessions: panel.sessions };
+    }
+    this.replaceDevinBody('devin-sessions', this.renderDevinSessions(this._devinPanel));
+  },
+
+  syncDevinCatalogProviders() {
+    const select = document.getElementById('devin-model-provider');
+    if (!select || !Array.isArray(this._devinModels)) return;
+    const providers = [...new Set(this._devinModels.map(model => model.provider).filter(Boolean))].sort();
+    const filters = this._devinModelFilters;
+    if (filters.provider && !providers.includes(filters.provider)) filters.provider = '';
+    select.replaceChildren(new Option(I18n.t('devin.catalog.filters.allProviders'), ''),
+      ...providers.map(provider => new Option(provider, provider)));
+    select.value = filters.provider;
+  },
+
+  setDevinCatalogFilter(key, value) {
+    if (!Object.hasOwn(this._devinModelFilters, key)) return;
+    this._devinModelFilters[key] = value;
+    this.setDevinCatalogPage(1, this._devinModelSize);
+  },
+
+  setDevinCatalogPage(number, size) {
+    this._devinModelPage = Math.max(1, number);
+    this._devinModelSize = size;
+    if (Array.isArray(this._devinModels)) {
+      this.replaceDevinBody('devin-catalog-results', this.renderDevinCatalogRows(this._devinModels));
+    }
+  },
+
+  renderDevinPager(kind, info) {
+    const T = (key, values) => I18n.t('devin.pagination.' + key, values);
+    const { number, size, pages, offset, total, sizes } = info;
+    const action = kind === 'turns' ? 'setDevinTurnPage' : 'setDevinCatalogPage';
+    const range = T('range', { from: total ? offset + 1 : 0, to: Math.min(offset + size, total), total, page: number, pages });
+    const button = (key, label, page, disabled) => `<button type="button" class="btn btn-ghost btn-xs"
+      data-page-action="${this.esc(key)}" onclick="App.${action}(${this.esc(page)}, ${this.esc(size)})" ${disabled ? 'disabled' : ''}>${this.esc(label)}</button>`;
+    return `<div class="table-pagination dm-pager">
+      <label class="dm-pager-size">${this.esc(T('perPage'))}
+        <select class="select" data-enhanced="native" data-page-action="size" onchange="App.${action}(1, Number(this.value))">
+          ${sizes.map(value => `<option value="${this.esc(value)}" ${size === value ? 'selected' : ''}>${this.esc(value)}</option>`).join('')}
+        </select>
+      </label>
+      <span class="page-label" tabindex="-1" aria-live="polite">${this.esc(range)}</span>
+      <div class="dm-pager-actions">
+        ${button('first', T('first'), 1, number <= 1)}
+        ${button('prev', I18n.t('action.prev'), number - 1, number <= 1)}
+        ${button('next', I18n.t('action.next'), number + 1, number >= pages)}
+        ${button('last', T('last'), pages, number >= pages)}
+      </div>
+    </div>`;
   },
 
   devinReason(kind) {
@@ -7358,25 +7557,37 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
         <div class="dm-stat"><span class="dm-stat-value">${this.esc(num(ls.activeRequests))}</span><span class="dm-stat-label">${this.esc(T('activeRequests'))}</span></div>
         <div class="dm-stat"><span class="dm-stat-value">${this.esc(bytes(ls.totalRssBytes))}</span><span class="dm-stat-label">${this.esc(T('rss'))}</span></div>
       </div>
-      <div class="detail-kv">
-        ${kv(T('pid'), num(ls.pid))}
-        ${kv(T('port'), num(ls.port))}
-        ${kv(T('uptime'), uptime(rt.uptimeSec))}
-        ${kv(T('credStore'), cred.credStoreEnabled ? T('enabled') : T('disabled'))}
-        ${kv(T('remoteCredStore'), cred.remoteCredStore ? T('enabled') : T('disabled'))}
-      </div>
-      <div class="dm-subhead">${this.esc(T('admission'))}</div>
-      <div class="detail-kv">${admRows}</div>
-      <div class="dm-subhead">${this.esc(T('detach'))}</div>
-      <div class="detail-kv">
-        ${kv(T('detachState'), det.enabled ? T('enabled') : T('disabled'))}
-        ${kv(T('detachEntries'), num(det.entries))}
-        ${kv(T('detachBytes'), bytes(det.bytes))}
-        ${counters ? kv(T('admit'), num(counters.admit)) : ''}
-        ${counters ? kv(T('serve'), num(counters.serve)) : ''}
-        ${counters ? kv(T('reDetach'), num(counters.re_detach)) : ''}
-      </div>
-      <div class="dm-note">${this.esc(T('note'))}</div>`;
+      <details class="dm-disclosure" id="devin-runtime-details">
+        <summary>${this.esc(T('details'))}</summary>
+        <div class="dm-detail-columns">
+          <div>
+            <div class="dm-list-header"><strong>${this.esc(T('langServer'))}</strong></div>
+            <div class="detail-kv">
+              ${kv(T('pid'), num(ls.pid))}
+              ${kv(T('port'), num(ls.port))}
+              ${kv(T('uptime'), uptime(rt.uptimeSec))}
+              ${kv(T('credStore'), cred.credStoreEnabled ? T('enabled') : T('disabled'))}
+              ${kv(T('remoteCredStore'), cred.remoteCredStore ? T('enabled') : T('disabled'))}
+            </div>
+          </div>
+          <div>
+            <div class="dm-list-header"><strong>${this.esc(T('admission'))}</strong></div>
+            <div class="detail-kv">${admRows}</div>
+          </div>
+          <div>
+            <div class="dm-list-header"><strong>${this.esc(T('detach'))}</strong></div>
+            <div class="detail-kv">
+              ${kv(T('detachState'), det.enabled ? T('enabled') : T('disabled'))}
+              ${kv(T('detachEntries'), num(det.entries))}
+              ${kv(T('detachBytes'), bytes(det.bytes))}
+              ${counters ? kv(T('admit'), num(counters.admit)) : ''}
+              ${counters ? kv(T('serve'), num(counters.serve)) : ''}
+              ${counters ? kv(T('reDetach'), num(counters.re_detach)) : ''}
+            </div>
+          </div>
+        </div>
+        <div class="dm-note">${this.esc(T('note'))}</div>
+      </details>`;
   },
 
   renderDevinSessions(P) {
@@ -7394,7 +7605,9 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
       : (Number(n) > 0 && Number(n) < 0.01
         ? Number(n).toLocaleString(undefined, { maximumSignificantDigits: 4 })
         : Number(n).toLocaleString(undefined, { maximumFractionDigits: 2 })));
-    const kv = (label, value) => `<span class="k">${this.esc(label)}</span><span class="v">${this.esc(value)}</span>`;
+    const metric = (label, value) => `<div class="dm-stat">
+      <span class="dm-stat-label">${this.esc(label)}</span><span class="dm-stat-value">${this.esc(value)}</span>
+    </div>`;
     const sourceRows = sources.map((src) => {
       const id = (src && src.id) || 'unknown';
       const available = src && src.available === true;
@@ -7412,90 +7625,157 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
         <td title="${this.esc(r.ts ? new Date(r.ts).toLocaleString() : '')}">${this.esc(this.dmAgo(r.ts))}</td>
         <td><code>${this.esc(r.accountRef || '—')}</code></td>
         <td>${this.esc(r.model || '—')}</td>
-        <td class="text-sm">${this.esc(`${num(r.promptTokens)} / ${num(r.completionTokens)}`)}</td>
-        <td class="text-sm">${this.esc(num(r.totalTokens))}</td>
-        <td class="text-sm">${this.esc(frac(r.credit))}</td>
-        <td class="text-sm">${this.esc(acu(r.acu))}</td>
+        <td class="text-sm dm-numeric">${this.esc(`${num(r.promptTokens)} / ${num(r.completionTokens)}`)}</td>
+        <td class="text-sm dm-numeric">${this.esc(num(r.totalTokens))}</td>
+        <td class="text-sm dm-numeric">${this.esc(frac(r.credit))}</td>
+        <td class="text-sm dm-numeric">${this.esc(acu(r.acu))}</td>
       </tr>`).join('');
-    return `<div class="detail-kv">
-        ${kv(T('scanned'), turns.capped ? `${num(turns.scanned)} / ${num(turns.totalAccounts)}` : num(turns.scanned))}
-        ${kv(T('withTurns'), num(turns.accountsWithTurns))}
-        ${kv(T('retained'), num(turns.retained))}
-        ${kv(T('lastHour'), num(win.turns))}
-        ${kv(T('tokens'), num(summary.totalTokens))}
-        ${kv(T('credit'), frac(summary.credit))}
-        ${kv(T('acu'), acu(summary.acu))}
+    const page = turns.page;
+    return `<div class="dm-summary-grid">
+        ${metric(T('scanned'), turns.capped ? `${num(turns.scanned)} / ${num(turns.totalAccounts)}` : num(turns.scanned))}
+        ${metric(T('withTurns'), num(turns.accountsWithTurns))}
+        ${metric(T('retained'), num(turns.retained))}
+        ${metric(T('lastHour'), num(win.turns))}
+        ${metric(T('tokens'), num(summary.totalTokens))}
+        ${metric(T('credit'), frac(summary.credit))}
+        ${metric(T('acu'), acu(summary.acu))}
       </div>
       ${turns.capped ? `<div class="dm-note" style="color: var(--warn-text)">${this.esc(T('scanCapped', { scanned: num(turns.scanned), total: num(turns.totalAccounts) }))}</div>` : ''}
-      <div class="dm-subhead">${this.esc(T('sources'))}</div>
-      <div class="table-wrap" tabindex="0" role="region" aria-label="可滚动表格" data-i18n-aria-label="aria.scrollableTable"><table><thead><tr>
-        <th>${this.esc(T('source'))}</th><th>${this.esc(T('state'))}</th><th>${this.esc(T('detail'))}</th>
-      </tr></thead><tbody>${sourceRows}</tbody></table></div>
-      <div class="dm-subhead">${this.esc(T('turns'))}<span class="dm-subhead-count">${this.esc(T('shown', { shown: items.length, retained: num(turns.retained) }))}</span></div>
+      <div class="dm-list-header"><strong>${this.esc(T('turns'))}</strong>
+        ${page ? `<span class="text-sm text-muted">${this.esc(T('retentionHint', { limit: num(turns.perAccountLimit) }))}</span>`
+          : `<span class="text-sm text-muted">${this.esc(T('shown', { shown: items.length, retained: num(turns.retained) }))}</span>`}
+      </div>
+      ${this._devinTurnError ? `<div class="dm-note" role="status">${this.esc(T('pageError'))}</div>` : ''}
       ${items.length
-        ? `<div class="table-wrap" tabindex="0" role="region" aria-label="可滚动表格" data-i18n-aria-label="aria.scrollableTable"><table><thead><tr>
+        ? `<div class="table-wrap dm-paged-table" tabindex="0" role="region" aria-label="${this.esc(T('turns'))}"><table id="devin-turns-table"><thead><tr>
             <th>${this.esc(I18n.t('table.header.time'))}</th>
             <th>${this.esc(T('account'))}</th>
             <th>${this.esc(I18n.t('table.header.model'))}</th>
-            <th>${this.esc(T('promptCompletion'))}</th>
-            <th>${this.esc(T('tokens'))}</th>
-            <th>${this.esc(T('credit'))}</th>
-            <th>${this.esc(T('acu'))}</th>
+            <th class="dm-numeric">${this.esc(T('promptCompletion'))}</th>
+            <th class="dm-numeric">${this.esc(T('tokens'))}</th>
+            <th class="dm-numeric">${this.esc(T('credit'))}</th>
+            <th class="dm-numeric">${this.esc(T('acu'))}</th>
           </tr></thead><tbody>${rows}</tbody></table></div>`
         : `<div class="dm-empty">${this.esc(T('empty'))}</div>`}
-      <div class="dm-note">${this.esc(T('note'))}</div>`;
+      ${page ? this.renderDevinPager('turns', page) : ''}
+      <details class="dm-disclosure" id="devin-sessions-sources">
+        <summary>${this.esc(T('sources'))}</summary>
+        <div class="table-wrap" tabindex="0" role="region" aria-label="${this.esc(T('sources'))}"><table><thead><tr>
+          <th>${this.esc(T('source'))}</th><th>${this.esc(T('state'))}</th><th>${this.esc(T('detail'))}</th>
+        </tr></thead><tbody>${sourceRows}</tbody></table></div>
+        <div class="dm-note">${this.esc(T('note'))}</div>
+      </details>`;
+  },
+
+  renderDevinCatalogRows(rows) {
+    const T = (key, values) => I18n.t('devin.catalog.' + key, values);
+    const filters = this._devinModelFilters;
+    const query = filters.query.trim().toLowerCase();
+    const matching = rows.filter(model => {
+      const { id, name, connectSelector, provider, reachable, freeNow } = model;
+      if (query && ![id, name, connectSelector, provider].some(value => String(value || '').toLowerCase().includes(query))) return false;
+      if (filters.provider && provider !== filters.provider) return false;
+      if (filters.reach === 'reachable' && reachable !== true) return false;
+      if (filters.reach === 'unreachable' && reachable !== false) return false;
+      const price = freeNow === true ? 'free' : freeNow === false ? 'paid' : 'unknown';
+      return !filters.price || filters.price === price;
+    }).sort((a, b) => Number(b.reachable === true) - Number(a.reachable === true) || String(a.id).localeCompare(String(b.id)));
+
+    const sizes = [25, 50, 100];
+    const size = sizes.includes(this._devinModelSize) ? this._devinModelSize : sizes[0];
+    const pages = Math.max(1, Math.ceil(matching.length / size));
+    const number = Math.min(Math.max(this._devinModelPage, 1), pages);
+    this._devinModelPage = number;
+    this._devinModelSize = size;
+    const offset = (number - 1) * size;
+    const pageRows = matching.slice(offset, offset + size);
+    const chip = (label, value, cls) => `<span class="badge ${cls} no-dot">${this.esc(label)} ${this.esc(value)}</span>`;
+    const count = (fn) => rows.filter(fn).length;
+    const tiers = { MODEL_COST_TIER_FREE: 'free', MODEL_COST_TIER_LOW: 'low', MODEL_COST_TIER_MEDIUM: 'medium', MODEL_COST_TIER_HIGH: 'high' };
+    const tableRows = pageRows.map(model => {
+      const reachable = model.reachable === true;
+      const reachLabel = reachable ? T('reachable') : model.reachable === false ? T('unreachable') : I18n.t('devin.unknown');
+      const tier = Object.hasOwn(tiers, model.costTier) ? T('tier.' + tiers[model.costTier]) : '—';
+      const promoDate = model.promoEndsAt ? this.fmtUsageDate(model.promoEndsAt) : '—';
+      return `<tr>
+        <td><code>${this.esc(model.id)}</code>
+          ${model.connectSelector && model.connectSelector !== model.id
+            ? `<small class="dm-catalog-selector text-muted">${this.esc(model.connectSelector)}</small>` : ''}
+        </td>
+        <td class="text-sm">${this.esc(model.provider || '—')}</td>
+        <td><span class="badge ${reachable ? 'success' : 'muted'} no-dot">${this.esc(reachLabel)}</span></td>
+        <td>${this.renderDevinCatalogPrice(model)}</td>
+        <td class="text-sm" title="${this.esc(model.costTier || '')}">${this.esc(tier)}</td>
+        <td class="text-sm">${this.esc(promoDate)}</td>
+      </tr>`;
+    }).join('');
+    return `<div class="dm-catalog-chips">
+        ${chip(T('chip.total'), rows.length, 'info')}
+        ${chip(T('chip.reachable'), count(model => model.reachable === true), 'success')}
+        ${chip(T('chip.free'), count(model => model.freeNow === true), 'success')}
+        ${chip(T('chip.daily'), count(model => model.quotaState === 'blocked_daily'), 'warn')}
+        ${chip(T('chip.weekly'), count(model => model.quotaState === 'blocked_weekly'), 'warn')}
+        ${chip(T('chip.notInCatalog'), count(model => model.quotaState === 'not_in_catalog'), 'muted')}
+        ${chip(T('chip.unknownPrice'), count(model => model.freeNow == null), 'muted')}
+        ${chip(T('chip.stale'), count(model => model.creditRateStale ?? model.pricingStale ?? false), 'warn')}
+      </div>
+      ${pageRows.length ? `<div class="table-wrap dm-paged-table" tabindex="0" role="region"
+        aria-label="${this.esc(I18n.t('section.devin.catalog.title'))}"><table id="devin-model-table"><thead><tr>
+        <th>${this.esc(I18n.t('table.header.model'))}</th>
+        <th>${this.esc(T('col.provider'))}</th>
+        <th>${this.esc(T('col.reachable'))}</th>
+        <th>${this.esc(T('col.price'))}</th>
+        <th>${this.esc(T('col.tier'))}</th>
+        <th>${this.esc(T('col.promo'))}</th>
+      </tr></thead><tbody>${tableRows}</tbody></table></div>` :
+        `<div class="dm-empty" role="status">${this.esc(T('noMatch'))}</div>`}
+      ${this.renderDevinPager('catalog', { number, size, pages, offset, total: matching.length, sizes })}`;
+  },
+
+  renderDevinCatalogPrice(model) {
+    const T = (key, values) => I18n.t('devin.catalog.pricing.' + key, values);
+    const free = model.freeNow === true;
+    const paid = model.freeNow === false;
+    const freeReason = free && model.freeReason ? I18n.t('model.freeReason.' + model.freeReason) : '';
+    const label = free ? I18n.t('model.freeBadge') : paid ? I18n.t('model.paidBadge') : I18n.t('devin.catalog.chip.unknownPrice');
+    const quoted = Number.isFinite(model.creditRate) && model.creditRate >= 0;
+    const evidenceOfFree = model.freeReason === 'rate_zero' || model.freeReason === 'cost_tier_free';
+    const rate = free ? (evidenceOfFree ? 0 : null) : quoted ? model.creditRate : null;
+    const stale = free ? model.pricingStale === true : (model.creditRateStale ?? model.pricingStale) === true;
+    const observedAt = model.creditRateFetchedAt ? this.fmtUsageDateTime(model.creditRateFetchedAt) : null;
+    const rateSource = free ? freeReason : observedAt ? T('cachedAt', { date: observedAt }) : T('cached');
+    const quota = {
+      blocked_daily: { label: I18n.t('model.dailyExhaustedBadge'), hint: I18n.t('model.dailyExhaustedHint'), tone: 'warn' },
+      blocked_weekly: { label: I18n.t('model.weeklyDroughtBadge'), hint: I18n.t('model.weeklyDroughtHint'), tone: 'warn' },
+      not_in_catalog: { label: I18n.t('model.notInCatalogBadge'), hint: I18n.t('model.notInCatalogHint'), tone: 'muted' },
+    };
+    const gate = Object.hasOwn(quota, model.quotaState) ? quota[model.quotaState] : null;
+    return `<div class="dm-catalog-price">
+        <span class="badge ${free ? 'success' : paid ? 'info' : 'muted'} no-dot"
+          ${freeReason ? `title="${this.esc(freeReason)}"` : ''}>${this.esc(label)}</span>
+        ${rate == null ? (paid ? `<small class="text-muted">${this.esc(T('unreported'))}</small>` : '')
+          : `<span class="text-sm dm-numeric" title="${this.esc(rateSource)}">${this.esc(T('rate', { rate: rate.toLocaleString(undefined, { maximumFractionDigits: 10 }) }))}</span>`}
+        ${stale ? `<span class="badge warn no-dot" title="${this.esc(rateSource)}">${this.esc(T('stale'))}</span>` : ''}
+        ${gate ? `<span class="badge ${gate.tone} no-dot" title="${this.esc(gate.hint)}">${this.esc(gate.label)}</span>` : ''}
+      </div>`;
   },
 
   renderDevinCatalog(models, catalog, reconcile) {
-    const T = (k, v) => I18n.t('devin.catalog.' + k, v);
-    const rows = Array.isArray(models) ? models : null;
-    if (!rows) {
-      return `<div class="dm-empty">${this.esc(I18n.t('error.loadFailed'))}</div>`;
-    }
-    const count = (fn) => rows.filter(fn).length;
-    const chip = (label, value, cls) => `<span class="badge ${cls || 'muted'} no-dot">${this.esc(label)} ${this.esc(String(value))}</span>`;
-    const priceBadge = (m) => {
-      if (m.quotaState === 'blocked_daily') {
-        return `<span class="badge warn no-dot" title="${this.esc(I18n.t('model.dailyExhaustedHint'))}">${this.esc(I18n.t('model.dailyExhaustedBadge'))}</span>`;
-      }
-      if (m.quotaState === 'blocked_weekly') {
-        return `<span class="badge warn no-dot" title="${this.esc(I18n.t('model.weeklyDroughtHint'))}">${this.esc(I18n.t('model.weeklyDroughtBadge'))}</span>`;
-      }
-      if (m.quotaState === 'not_in_catalog') {
-        return `<span class="badge muted no-dot" title="${this.esc(I18n.t('model.notInCatalogHint'))}">${this.esc(I18n.t('model.notInCatalogBadge'))}</span>`;
-      }
-      if (m.freeNow === true) {
-        const tip = m.freeReason ? I18n.t('model.freeReason.' + m.freeReason) : '';
-        return `<span class="badge success no-dot"${tip ? ` title="${this.esc(tip)}"` : ''}>${this.esc(I18n.t('model.freeBadge'))}</span>`;
-      }
-      if (m.freeNow === false) {
-        return `<span class="badge info no-dot">${this.esc(I18n.t('model.paidBadge'))}</span>`;
-      }
-      return `<span class="badge muted no-dot" title="${this.esc(I18n.t('model.costUnknownHint'))}">${this.esc(T('chip.unknownPrice'))}</span>`;
-    };
-    const shown = rows.slice(0, 200);
-    const tableRows = shown.map((m) => `<tr>
-        <td><code>${this.esc(m.id)}</code></td>
-        <td class="text-sm">${this.esc(m.provider || '—')}</td>
-        <td><span class="badge ${m.reachable ? 'success' : 'muted'} no-dot">${this.esc(m.reachable ? T('reachable') : T('unreachable'))}</span></td>
-        <td>${priceBadge(m)}</td>
-        <td class="text-sm">${this.esc(m.costTier || '—')}</td>
-        <td class="text-sm">${this.esc(m.promoEndsAt ? new Date(m.promoEndsAt).toLocaleDateString() : '—')}</td>
-      </tr>`).join('');
+    const T = (key, values) => I18n.t('devin.catalog.' + key, values);
+    if (!Array.isArray(models)) return `<div class="dm-empty">${this.esc(I18n.t('error.loadFailed'))}</div>`;
     const diff = catalog;
     const diffRows = diff
       ? [
           ...(Array.isArray(diff.added) ? diff.added.map((s) => ({ kind: 'added', selector: s })) : []),
           ...(Array.isArray(diff.missing) ? diff.missing.map((s) => ({ kind: 'missing', selector: s })) : []),
-        ].slice(0, 40).map((row) => `<div class="dm-row">
+        ].map((row) => `<div class="dm-row">
           <span class="badge ${row.kind === 'added' ? 'info' : 'warn'} no-dot">${this.esc(T('diff.' + row.kind))}</span>
           <span></span>
           <span class="dm-row-delta">${this.esc(row.selector)}</span>
         </div>`).join('')
       : '';
     const diffHtml = diff
-      ? `<div class="dm-subhead">${this.esc(T('diff.title'))}</div>
-        <div class="detail-kv">
+      ? `<div class="detail-kv">
           <span class="k">${this.esc(T('diff.synced'))}</span><span class="v">${this.esc(diff.synced ? T('yes') : T('diff.notSynced'))}</span>
           <span class="k">${this.esc(T('diff.live'))}</span><span class="v">${this.esc(String(diff.liveCount ?? '—'))}</span>
           <span class="k">${this.esc(T('diff.snapshot'))}</span><span class="v">${this.esc(String(diff.snapshotCount ?? '—'))}</span>
@@ -7521,29 +7801,16 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
             ? `<div class="dm-note" style="color: var(--warn-text)">${this.esc(T('reconcile.degraded', { sources: rec.degraded.map((d) => d.source).join(', ') }))}</div>`
             : ''}`)
       : `<div class="dm-note">${this.esc(T('reconcile.idle'))}</div>`;
-    return `<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:12px">
-        ${chip(T('chip.total'), rows.length, 'info')}
-        ${chip(T('chip.reachable'), count((m) => m.reachable === true), 'success')}
-        ${chip(T('chip.free'), count((m) => m.freeNow === true), 'success')}
-        ${chip(T('chip.daily'), count((m) => m.quotaState === 'blocked_daily'), 'warn')}
-        ${chip(T('chip.weekly'), count((m) => m.quotaState === 'blocked_weekly'), 'warn')}
-        ${chip(T('chip.notInCatalog'), count((m) => m.quotaState === 'not_in_catalog'), 'muted')}
-        ${chip(T('chip.unknownPrice'), count((m) => m.freeNow == null), 'muted')}
-        ${chip(T('chip.stale'), count((m) => m.pricingStale === true), 'warn')}
-      </div>
-      <div class="table-wrap" tabindex="0" role="region" aria-label="可滚动表格" data-i18n-aria-label="aria.scrollableTable"><table><thead><tr>
-        <th>${this.esc(I18n.t('table.header.model'))}</th>
-        <th>${this.esc(T('col.provider'))}</th>
-        <th>${this.esc(T('col.reachable'))}</th>
-        <th>${this.esc(T('col.price'))}</th>
-        <th>${this.esc(T('col.tier'))}</th>
-        <th>${this.esc(T('col.promo'))}</th>
-      </tr></thead><tbody>${tableRows}</tbody></table></div>
-      ${rows.length > shown.length ? `<div class="dm-note">${this.esc(T('truncated', { shown: shown.length, total: rows.length }))}</div>` : ''}
-      ${diffHtml}
-      <div class="dm-subhead">${this.esc(T('reconcile.title'))}</div>
-      ${recHtml}
-      <div class="dm-note">${this.esc(T('note'))}</div>`;
+    return `<div id="devin-catalog-results">${this.renderDevinCatalogRows(models)}</div>
+      <details class="dm-disclosure" id="devin-catalog-diff">
+        <summary>${this.esc(T('diff.title'))}</summary>
+        ${diffHtml}
+      </details>
+      <details class="dm-disclosure" id="devin-reconcile-status" ${rec ? 'open' : ''}>
+        <summary>${this.esc(T('reconcile.title'))}</summary>
+        ${recHtml}
+        <div class="dm-note">${this.esc(T('note'))}</div>
+      </details>`;
   },
 
   renderDevinQuota(P, acu) {
@@ -7705,8 +7972,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
       this._devinReconcileLoading = false;
       if (btn) { btn.disabled = false; btn.textContent = I18n.t('devin.catalog.reconcile.run'); }
     }
-    const el = document.getElementById('devin-catalog');
-    if (el) el.innerHTML = this.renderDevinCatalog(this._devinModels, this._devinCatalog, this._devinReconcile);
+    this.replaceDevinBody('devin-catalog', this.renderDevinCatalog(this._devinModels, this._devinCatalog, this._devinReconcile));
   },
 
   async saveDevinQuota() {
@@ -12924,9 +13190,9 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
       <div class="card success"><div class="card-header"><div class="card-title">${I18n.t('card.success.title')}</div></div><div class="card-value">${d.successCount || 0}</div><div class="card-sub">${I18n.t('card.success.subtitle', { rate: successRate })}</div></div>
       <div class="card error"><div class="card-header"><div class="card-title">${I18n.t('card.errors.title')}</div></div><div class="card-value">${d.errorCount || 0}</div><div class="card-sub">${I18n.t('card.errors.subtitle', { rate: totalReq > 0 ? (100-Number(successRate)).toFixed(1) : '0.0' })}</div></div>
       <div class="card accent"><div class="card-header"><div class="card-title">${I18n.t('card.p95Latency.title')}</div></div><div class="card-value">${avgP95}<span style="font-size:14px;font-weight:400;margin-left:4px">ms</span></div><div class="card-sub">${I18n.t('card.p95Latency.subtitle', { count: allP95.length })}</div></div>
-      <div class="card info" style="grid-column: span 2;">
+      <div class="card info stats-detail-card">
         <div class="card-header"><div class="card-title">${I18n.t('card.tokens.title') || 'Token usage breakdown'}</div></div>
-        <div style="display:grid;grid-template-columns:repeat(4, 1fr);gap:12px;margin-top:8px;">
+        <div class="stats-token-grid">
           <div><div style="font-size: 12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em;">${I18n.t('card.tokens.legend.freshInput')}</div><div style="font-size:18px;font-weight:600;">${fmtTok(tt.fresh_input)}</div></div>
           <div><div style="font-size: 12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em;">${I18n.t('card.tokens.legend.cacheRead')}</div><div style="font-size:18px;font-weight:600;">${fmtTok(tt.cache_read)}</div></div>
           <div><div style="font-size: 12px;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.04em;">${I18n.t('card.tokens.legend.cacheWrite')}</div><div style="font-size:18px;font-weight:600;">${fmtTok(tt.cache_write)}</div></div>
@@ -12955,7 +13221,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
         })()}
         <div class="card-sub" style="margin-top:10px;">${tokensCardSub}</div>
       </div>
-      <div class="card accent" style="grid-column: span 2;">
+      <div class="card accent stats-detail-card">
         <div class="card-header"><div class="card-title">${I18n.t('card.credits.title')}</div></div>
         <div class="card-value" style="text-align:center" title="${fmtCreditsFull(creditsTotal)} ${I18n.t('card.credits.unit')}">${fmtCreditsCompact(creditsTotal)}<span style="font-size:13px;font-weight:400;color:var(--text-muted);margin-left:7px;letter-spacing:.01em">${I18n.t('card.credits.unit')}</span></div>
         <div style="margin-top:12px;">

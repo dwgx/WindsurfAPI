@@ -39,7 +39,7 @@ import {
 import { handleDashboardApi } from '../src/dashboard/api.js';
 import { handleModels, buildConnectReachability } from '../src/handlers/models.js';
 import { setLiveCatalogSelectors, clearLiveCatalogSelectors, resolveConnectSelector, __testing as connectModelsTesting } from '../src/devin-connect-models.js';
-import { mergeCloudModels } from '../src/models.js';
+import { getCloudBillingSyncState, mergeCloudCostTiers, mergeCloudModels } from '../src/models.js';
 import { _resetRuntimeConfigForTests } from '../src/runtime-config.js';
 
 // Written literally rather than imported from FREE_REACHABLE_SELECTORS: importing the set
@@ -465,12 +465,28 @@ describe('dashboard /models agrees with /v1/models on the Connect namespace (#23
       const row = rows.find((r) => r.id === 'swe-2-medium-lightning');
       assert.ok(row);
       assert.equal(row.costTier, 'MODEL_COST_TIER_HIGH');
+      assert.equal(row.creditRate, 12);
+      assert.ok(Number.isFinite(row.creditRateFetchedAt));
+      assert.equal(row.creditRateStale, false);
       assert.equal(row.freeNow, false);
       assert.equal(row.freeReason, null);
       assert.equal(row.promoEndsAt, '2027-01-01T07:59:59.999Z',
         'a discount is not free, but the operator still needs to see when it ends');
       assert.equal(row.quotaState, 'blocked_daily',
         'the account is daily-dry, which is why this selector cannot run right now');
+    });
+
+    it('keeps an older quote stale when a different selector just synced', async () => {
+      await seedLiveProAccount();
+      const now = Date.now();
+      const old = now - getCloudBillingSyncState(now).staleAfterMs - 60_000;
+      mergeCloudCostTiers(COST_CONFIGS, { now: old });
+      mergeCloudCostTiers([{ modelUid: 'swe-2-max', creditMultiplier: 0 }], { accountId: 'fresh-rate-fixture', now });
+      const row = (await dashboardModels()).find(model => model.id === 'swe-2-medium-lightning');
+      assert.equal(row.creditRate, 12);
+      assert.equal(row.creditRateFetchedAt, old);
+      assert.equal(row.creditRateStale, true);
+      assert.equal(row.pricingStale, false);
     });
 
     it('marks the absent phantom not_in_catalog instead of FREE', async () => {
@@ -482,6 +498,7 @@ describe('dashboard /models agrees with /v1/models on the Connect namespace (#23
       assert.equal(phantom.reachable, false,
         'the account live catalog omits it, and it 502s with quota exhausted when called');
       assert.equal(phantom.costTier, null);
+      assert.equal(phantom.creditRate, null);
       assert.equal(phantom.freeNow, false,
         'live pricing data exists and does not name it free — the static floor is not a claim');
       assert.equal(phantom.freeReason, null);

@@ -60,7 +60,10 @@ import { getClineCompatStats } from '../handlers/cline-compat.js';
 import { getCcCompatStats } from '../handlers/cc-compat.js';
 import { getLogs, subscribeToLogs, unsubscribeFromLogs } from './logger.js';
 import { getProxyConfig, getProxyConfigMasked, setGlobalProxy, setAccountProxy, removeProxy, getEffectiveProxy } from './proxy-config.js';
-import { MODELS, MODEL_TIER_ACCESS as _TIER_TABLE, getTierModels as _getTierModels, filterModelKeysByCloudCatalog, resolveModel } from '../models.js';
+import {
+  MODELS, MODEL_TIER_ACCESS as _TIER_TABLE, getTierModels as _getTierModels,
+  filterModelKeysByCloudCatalog, resolveModel, getCloudCreditRate, getCloudBillingSyncState,
+} from '../models.js';
 import { buildConnectReachability } from '../handlers/models.js';
 import { FREE_REACHABLE_SELECTORS, getLiveCatalog, getSnapshotSelectors, resolveConnectSelector } from '../devin-connect-models.js';
 import { buildCatalogDiff } from './catalog-diff.js';
@@ -88,6 +91,8 @@ import {
   buildTurnsSection,
   MAX_SCAN_ACCOUNTS,
   RUNTIME_SWITCH_KEYS,
+  TURN_PAGE_SIZES,
+  TURN_ROW_CAP,
 } from './devin-panel.js';
 import { listRequests, requestRingStats } from './request-ring.js';
 import { windsurfLogin, refreshFirebaseToken, reRegisterWithCodeium, probeLoginMethod, emailLoginStart, emailLoginComplete, checkEmailLocked, assertLoginIdentity } from './windsurf-login.js';
@@ -3506,6 +3511,8 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
     // panel called its only working models paid and a phantom selector free.
     const drought = getDroughtSummary();
     const dailyDry = typeof drought.lowestDailyPercent === 'number' && drought.lowestDailyPercent <= 0;
+    const priceNow = Date.now();
+    const { staleAfterMs } = getCloudBillingSyncState(priceNow);
     // One resolver for every row producer below, so a synthesized row and a MODELS
     // row can never disagree about price or catalog membership.
     //
@@ -3515,6 +3522,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
     // which is why a model the catalog omits (swe-1-6-slow) could read as FREE.
     const pricingFields = (selector) => {
       const pricing = getConnectSelectorPricing(selector);
+      const quote = selector ? getCloudCreditRate(selector) : null;
       let quotaState = null;
       if (!selector) quotaState = null; // not a Connect-namespace row
       else if (pricing.inLiveCatalog === false) quotaState = 'not_in_catalog';
@@ -3526,6 +3534,11 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
         // Upstream cost tier ("MODEL_COST_TIER_FREE" | LOW | MEDIUM | HIGH), null
         // when the account's Cascade catalog has not reported it.
         costTier: pricing.costTier,
+        // The cached catalog quote has its own timestamp. A fresh rate for a
+        // different selector must never make this quote appear fresh.
+        creditRate: quote?.credit ?? null,
+        creditRateFetchedAt: quote?.fetchedAt || null,
+        creditRateStale: quote?.fetchedAt > 0 ? priceNow - quote.fetchedAt > staleAfterMs : null,
         // ISO end of the active promotion, when the upstream sent one.
         promoEndsAt: pricing.promoEndsAt,
         // Tri-state price: true free, false billable, null no data. Never a guess.
@@ -4206,8 +4219,14 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
       langServer: getLsStatus(),
       detach: { enabled: cascadeDetachEnabled(), ...detachedRegistry.stats() },
     });
+    const turnQuery = dashboardUrl(req).searchParams;
+    const turnPageSize = Number(turnQuery.get('turnPageSize'));
     const sessions = buildSessionsSection({
-      turns: buildTurnsSection({ accounts, totalAccounts: allAccounts.length, readRequests: getAccountRequests, now }),
+      turns: buildTurnsSection({
+        accounts, totalAccounts: allAccounts.length, readRequests: getAccountRequests, now,
+        page: parseBoundedInt(turnQuery.get('turnPage'), 1, { min: 1 }),
+        rowCap: TURN_PAGE_SIZES.includes(turnPageSize) ? turnPageSize : TURN_ROW_CAP,
+      }),
     });
     const quota = buildQuotaSection({
       drought: getDroughtSummary(),

@@ -127,6 +127,43 @@ describe('GET /devin/panel', () => {
     assert.ok(!res.body.includes('panel-turn@example.test'), 'the account email must not reach the panel body');
   });
 
+  it('pages beyond the former 50-turn cutoff without changing the totals', async () => {
+    gateOn();
+    const start = Date.now() - 5_000;
+    for (let i = 0; i < 11; i++) {
+      const { account } = addAccount('turn-page-' + i);
+      for (let j = 0; j < 100; j++) {
+        recordAccountRequest(account, { model: 'swe-2', now: start + i * 100 + j, creditCost: 1 });
+      }
+    }
+    const requestPage = async (query = '') => {
+      const res = fakeRes();
+      await handleDashboardApi('GET', '/devin/panel', {}, authed('/devin/panel' + query), res);
+      assert.equal(res.statusCode, 200);
+      return res.json().sessions.turns;
+    };
+    const legacy = await requestPage();
+    assert.equal(legacy.items.length, 50);
+    for (const size of [100, 200, 500, 1000]) {
+      const first = await requestPage('?turnPage=1&turnPageSize=' + size);
+      assert.equal(first.items.length, size);
+      assert.equal(first.page.total, 1100);
+      assert.equal(first.page.size, size);
+      assert.equal(first.retained, 1100);
+      assert.equal(first.summary.credit, 1100);
+      const next = await requestPage('?turnPage=2&turnPageSize=' + size);
+      assert.equal(next.items.length, Math.min(size, 1100 - size));
+      assert.equal(next.items[0].ts, first.items.at(-1).ts - 1);
+      assert.deepEqual(next.summary, first.summary);
+    }
+    const tail = await requestPage('?turnPage=9999&turnPageSize=500');
+    assert.equal(tail.page.number, 3);
+    assert.equal(tail.items.length, 100);
+    const unsupported = await requestPage('?turnPage=0&turnPageSize=10000');
+    assert.equal(unsupported.page.number, 1);
+    assert.equal(unsupported.items.length, 50);
+  });
+
   it('serves the snapshot without touching the network', async () => {
     gateOn();
     const original = globalThis.fetch;

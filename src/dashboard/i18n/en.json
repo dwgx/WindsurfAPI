@@ -2275,6 +2275,7 @@
       "off": "Off"
     },
     "runtime": {
+      "details": "Process, admission and continuation details",
       "running": "Running",
       "stopped": "Stopped",
       "langServer": "Language server",
@@ -2306,6 +2307,8 @@
       "note": "Counters are process-lifetime and reset on restart. The credential-store switches are env-only and read-only here."
     },
     "sessions": {
+      "retentionHint": "Up to {{limit}} rows per account · current process",
+      "pageError": "Could not load that page. The previous results are still shown.",
       "available": "Available",
       "unavailable": "Unavailable",
       "scanned": "Accounts scanned",
@@ -2327,7 +2330,33 @@
       "empty": "No billed turns in the retained window.",
       "note": "Rows are billed successes from the per-account rings (100 per account, process-local). Aborted or rejected requests never appear here, so an empty list is not proof that no traffic arrived."
     },
+    "pagination": {
+      "perPage": "Rows per page",
+      "range": "{{from}}–{{to}} of {{total}} · Page {{page}} / {{pages}}",
+      "first": "First",
+      "last": "Last"
+    },
     "catalog": {
+      "noMatch": "No models match these filters.",
+      "filters": {
+        "search": "Search models",
+        "searchPlaceholder": "Model name, alias or selector",
+        "allProviders": "All providers",
+        "all": "All"
+      },
+      "tier": {
+        "free": "Free",
+        "low": "Low",
+        "medium": "Medium",
+        "high": "High"
+      },
+      "pricing": {
+        "rate": "{{rate}} credits / turn",
+        "unreported": "Amount unreported",
+        "cached": "Cached upstream catalog rate",
+        "cachedAt": "Upstream catalog rate cached {{date}}",
+        "stale": "Stale cache"
+      },
       "reachable": "Reachable",
       "unreachable": "Not reachable",
       "yes": "Yes",

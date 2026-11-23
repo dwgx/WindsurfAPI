@@ -2275,6 +2275,7 @@
       "off": "关"
     },
     "runtime": {
+      "details": "进程、准入与续传明细",
       "running": "运行中",
       "stopped": "未运行",
       "langServer": "语言服务器",
@@ -2306,6 +2307,8 @@
       "note": "计数为进程生命周期，重启归零。凭证存储开关只由环境变量控制，此处只读。"
     },
     "sessions": {
+      "retentionHint": "当前进程 · 每账号最多保留 {{limit}} 条",
+      "pageError": "该页加载失败，仍显示上一份结果。",
       "available": "可用",
       "unavailable": "不可用",
       "scanned": "已扫描账号",
@@ -2327,7 +2330,33 @@
       "empty": "保留窗口内没有计费轮次。",
       "note": "数据来自各账号的计费环（每账号 100 条，进程内）。中断或被拒的请求不会出现在这里，所以空列表不等于没有流量。"
     },
+    "pagination": {
+      "perPage": "每页条数",
+      "range": "{{from}}–{{to}} / {{total}} 条 · 第 {{page}} / {{pages}} 页",
+      "first": "首页",
+      "last": "末页"
+    },
     "catalog": {
+      "noMatch": "没有符合筛选条件的模型。",
+      "filters": {
+        "search": "搜索模型",
+        "searchPlaceholder": "输入模型名、别名或 selector",
+        "allProviders": "全部供应商",
+        "all": "全部"
+      },
+      "tier": {
+        "free": "免费档",
+        "low": "低",
+        "medium": "中",
+        "high": "高"
+      },
+      "pricing": {
+        "rate": "{{rate}} credits / 轮",
+        "unreported": "金额未上报",
+        "cached": "上游目录缓存的费率",
+        "cachedAt": "上游目录费率缓存于 {{date}}",
+        "stale": "旧缓存"
+      },
       "reachable": "可达",
       "unreachable": "不可达",
       "yes": "是",
