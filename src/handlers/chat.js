@@ -4907,6 +4907,7 @@ async function _handleChatCompletionsInner(body, context, captureCacheGeneration
     // O1: honor stream_options.include_usage on the connect path too — the
     // trailing usage frame is emitted only when the caller opted in.
     const connectMeta = { id: ccId, created: ccCreated, displayModel: connectDisplayModel, emulateTools, includeUsage: body.stream_options?.include_usage === true, stop: body.stop ?? null, clineCompat: clineCompatActive, reqId, account: ccAcct ? safeAccountRef(ccAcct) : null,
+      onDispatch: context.onConnectDispatch,
       // Route-owned request budget: the adapter consumes one upstream turn per
       // internal attempt (empty/rescue/outer retry) and clamps its backoffs to
       // the remaining deadline. See src/request-budget.js.

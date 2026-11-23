@@ -2175,6 +2175,12 @@ tbody tr:hover td { background: var(--surface-2); }
 }
 .stats-filter-bar label { display: flex; align-items: center; gap: 6px; font-size: 12px; color: var(--text-muted); white-space: nowrap; }
 .stats-filter-bar .select { width: auto; min-width: 140px; max-width: 260px; }
+.stats-request-search, .stats-request-ref { display: flex; align-items: center; gap: 6px; }
+.stats-request-search .input { width: 15rem; max-width: 100%; }
+.stats-request-ref, .stats-request-detail { margin-top: 4px; }
+.stats-request-ref code, .stats-request-detail { font-size: 11px; white-space: nowrap; }
+.stats-request-detail { color: var(--text-muted); }
+.stats-request-dispatches { margin: 0; padding-left: 1.25em; }
 #stats-log-table .numeric, .stats-agg-table .numeric { text-align: right; font-variant-numeric: tabular-nums; }
 .cell-ellipsis { display: inline-block; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
 
@@ -4186,6 +4192,11 @@ tbody tr:hover td { background: var(--surface-2); }
         </div>
       </div>
       <div class="stats-filter-bar">
+        <form class="stats-request-search" onsubmit="event.preventDefault(); App.findStatsRequest(this.elements.requestId.value)">
+          <label for="stats-log-request-id" data-i18n="section.statsLog.requestId">请求 ID</label>
+          <input id="stats-log-request-id" name="requestId" class="input" type="search" maxlength="64" placeholder="req_…" autocomplete="off" spellcheck="false">
+          <button class="btn btn-ghost btn-xs" type="submit" data-i18n="section.statsLog.findRequest">查找</button>
+        </form>
         <label><span data-i18n="section.statsLog.filters.model">模型</span>
           <select class="select" id="stats-log-model" onchange="App.setStatsLogFilter('model', this.value)"></select>
         </label>
@@ -4202,8 +4213,8 @@ tbody tr:hover td { background: var(--surface-2); }
         <div class="table-wrap" tabindex="0" role="region" aria-label="可滚动表格" data-i18n-aria-label="aria.scrollableTable">
           <table id="stats-log-table" aria-label="请求日志表格" data-i18n-aria-label="aria.statsLog">
             <thead><tr>
-              <th data-i18n="table.header.time">时间</th>
-              <th data-i18n="table.header.model">模型</th>
+              <th data-i18n="section.statsLog.timeAndRequest">时间 / 请求 ID</th>
+              <th data-i18n="section.statsLog.modelAndDispatch">请求模型 / 派发</th>
               <th data-i18n="table.header.account">账号</th>
               <th data-i18n="section.statsLog.attemptAndHttp">尝试结果 / HTTP</th>
               <th class="numeric" data-i18n="table.header.duration">耗时</th>
@@ -5140,6 +5151,7 @@ const App = {
   async init() {
     // Initialize i18n first
     await I18n.init();
+    try { this.statsLogRequestId = sessionStorage.getItem('stats-log-request-id') || ''; } catch {}
     this.initTheme();
     this.lang = I18n.locale === 'zh-CN' ? 'zh' : 'en';
     const auth = await this.api('GET', '/auth');
@@ -12443,6 +12455,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
   statsLogModel: '',
   statsLogAccount: '',
   statsLogStatus: '',
+  statsLogRequestId: '',
   statsAggTab: 'model',
   _statsLogSeq: 0,
   _lastStatsLog: null,
@@ -12553,18 +12566,28 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
 
   statsLogUrl() {
     const qs = new URLSearchParams();
-    const { from, to } = this.statsLogWindow();
-    if (from != null) qs.set('from', String(from));
-    if (to != null) qs.set('to', String(to));
-    if (this.statsLogModel) qs.set('model', this.statsLogModel);
-    if (this.statsLogAccount) qs.set('account', this.statsLogAccount);
-    if (this.statsLogStatus !== '') qs.set('status', String(this.statsLogStatus));
+    if (this.statsLogRequestId) {
+      qs.set('requestId', this.statsLogRequestId);
+    } else {
+      const { from, to } = this.statsLogWindow();
+      if (from != null) qs.set('from', String(from));
+      if (to != null) qs.set('to', String(to));
+      if (this.statsLogModel) qs.set('model', this.statsLogModel);
+      if (this.statsLogAccount) qs.set('account', this.statsLogAccount);
+      if (this.statsLogStatus !== '') qs.set('status', String(this.statsLogStatus));
+    }
     qs.set('limit', String(this.statsLogPageSize));
     qs.set('offset', String((this.statsLogPage - 1) * this.statsLogPageSize));
     return `/stats/log?${qs.toString()}`;
   },
 
   async loadStatsLog() {
+    const requestInput = document.getElementById('stats-log-request-id');
+    if (requestInput && requestInput !== document.activeElement) requestInput.value = this.statsLogRequestId;
+    for (const filter of ['stats-log-model', 'stats-log-account', 'stats-log-status']) {
+      const control = document.getElementById(filter);
+      if (control) control.disabled = Boolean(this.statsLogRequestId);
+    }
     const seq = ++this._statsLogSeq;
     const d = await this.api('GET', this.statsLogUrl()).catch(() => null);
     // A newer range/filter/page request has been issued; drop this response so
@@ -12594,12 +12617,50 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     this.loadStatsLog();
   },
 
+  findStatsRequest(value) {
+    this.statsLogRequestId = value.trim();
+    try {
+      if (this.statsLogRequestId) sessionStorage.setItem('stats-log-request-id', this.statsLogRequestId);
+      else sessionStorage.removeItem('stats-log-request-id');
+    } catch {}
+    this.statsLogPage = 1;
+    this.loadStatsLog();
+  },
+
+  async copyStatsRequestId(button) {
+    const reference = button.previousElementSibling;
+    const requestId = reference?.textContent;
+    if (!requestId) return;
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(requestId);
+        this.toast(I18n.t('section.statsLog.requestIdCopied'), 'success');
+        return;
+      }
+    } catch {}
+    // LAN dashboards can be served over plain HTTP. Select the visible value
+    // for a legacy copy command or for the operator to copy manually.
+    const selection = window.getSelection();
+    if (!selection) return;
+    const range = document.createRange();
+    range.selectNodeContents(reference);
+    selection.removeAllRanges();
+    selection.addRange(range);
+    try {
+      if (document.execCommand('copy')) {
+        selection.removeAllRanges();
+        this.toast(I18n.t('section.statsLog.requestIdCopied'), 'success');
+        return;
+      }
+    } catch {}
+    this.toast(I18n.t('section.statsLog.requestIdSelected'), 'info');
+  },
+
   resetStatsLogFilters() {
     this.statsLogModel = '';
     this.statsLogAccount = '';
     this.statsLogStatus = '';
-    this.statsLogPage = 1;
-    this.loadStatsLog();
+    this.findStatsRequest('');
   },
 
   setStatsLogPage(page) {
@@ -12697,8 +12758,22 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     const items = d.items.filter(r => r && typeof r === 'object');
     body.innerHTML = items.map((r) => {
       const when = new Date(Number(r.ts) || 0);
-      const status = Number(r.status);
-      const hasStatus = r.status != null && Number.isInteger(status) && status >= 100 && status <= 599;
+      const http = r.requestId ? r.requestHttpStatus : r.status;
+      const status = Number(http);
+      const hasStatus = http != null && Number.isInteger(status) && status >= 100 && status <= 599;
+      const requestedModel = r.requestId ? r.requestedModel : r.model;
+      const dispatches = r.requestDispatches || [];
+      const unknownDispatch = I18n.t('section.statsLog.dispatchUnknown');
+      const dispatchLabels = dispatches.map(selector => `<li><code>${this.esc(selector || unknownDispatch)}</code></li>`).join('');
+      const extraDispatches = r.requestDispatchCount - dispatches.length;
+      const dispatchDetails = r.requestId ? `<div class="stats-request-detail" data-dispatch-details>
+        ${dispatchLabels ? `<ol class="stats-request-dispatches">${dispatchLabels}</ol>` : this.esc(unknownDispatch)}
+        ${extraDispatches > 0 ? this.esc(I18n.t('section.statsLog.moreDispatches', { count: extraDispatches })) : ''}
+      </div>` : '';
+      const requestRef = r.requestId ? `<div class="stats-request-ref"><code>${this.esc(r.requestId)}</code><button
+        type="button" class="btn btn-ghost btn-xs" onclick="App.copyStatsRequestId(this)"
+        aria-label="${this.esc(I18n.t('section.statsLog.copyRequestId'))}">${this.esc(I18n.t('action.copy'))}</button></div>` : '';
+      const failure = r.requestId && r.success === false ? `<div class="stats-request-detail" data-failure-reason title="${this.esc(I18n.t('section.statsLog.failureReason'))}">${this.esc(r.requestFailureCode || I18n.t('section.statsLog.failureUnknown'))}</div>` : '';
       const [badge, outcome] = r.success === true ? ['success', 'attemptSucceeded']
         : r.success === false ? ['error', 'attemptFailed'] : ['muted', 'attemptUnknown'];
       const { tokensIn, tokensOut, totalTokens } = r.reportedUsage || {};
@@ -12708,16 +12783,16 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
       const totalLabel = (tokensIn == null || tokensOut == null) && totalTokens != null
         ? ` <small class="text-muted">${this.esc(I18n.t('section.statsLog.reportedTotal', { total: this.fmtTokenCount(totalTokens) }))}</small>` : '';
       return `<tr>`
-        + `<td class="text-sm" title="${this.esc(when.toLocaleString())}">${this.esc(when.toLocaleString())}</td>`
-        + `<td class="text-sm"><span class="cell-ellipsis" title="${this.esc(r.model || '')}">${this.esc(r.model || '-')}</span></td>`
+        + `<td class="text-sm"><time>${this.esc(when.toLocaleString())}</time>${requestRef}</td>`
+        + `<td class="text-sm"><span class="cell-ellipsis" title="${this.esc(requestedModel || '')}">${this.esc(requestedModel || '—')}</span>${dispatchDetails}</td>`
         + `<td class="text-sm"><code>${this.esc(r.account || '-')}</code></td>`
-        + `<td><span class="badge ${badge} no-dot">${this.esc(I18n.t('section.statsLog.' + outcome))}</span> ${hasStatus ? `<small class="text-muted">HTTP ${this.esc(status)}</small>` : ''}</td>`
+        + `<td><span class="badge ${badge} no-dot">${this.esc(I18n.t('section.statsLog.' + outcome))}</span> ${hasStatus ? `<small class="text-muted">HTTP ${this.esc(status)}</small>` : ''}${failure}</td>`
         + `<td class="text-sm numeric">${this.esc(this.fmtMs(r.ms))}</td>`
         + `<td class="text-sm numeric" title="${this.esc(inputTitle)}">${tokensIn == null ? '—' : this.esc(this.fmtTokenCount(tokensIn))}${totalLabel}</td>`
         + `<td class="text-sm numeric" title="${tokensOut == null ? this.esc(usageMissing) : ''}">${tokensOut == null ? '—' : this.esc(this.fmtTokenCount(tokensOut))}</td>`
         + `<td class="text-sm numeric">${this.esc(this.fmtCredit(r.credit))}</td>`
         + `</tr>`;
-    }).join('') || `<tr class="empty-row"><td colspan="8">${I18n.t('section.statsLog.empty')}</td></tr>`;
+    }).join('') || `<tr class="empty-row"><td colspan="8">${this.esc(I18n.t(this.statsLogRequestId ? 'section.statsLog.requestNotFound' : 'section.statsLog.empty'))}</td></tr>`;
 
     const total = Number(d.total) || 0;
     const offset = Number(d.offset) || 0;

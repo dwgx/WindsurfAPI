@@ -19,7 +19,7 @@ const {
   addAccountByKey, removeAccount, getAccountInternal, __setModelCatalogDeps, __waitForModelCatalogSync,
 } = await import('../src/auth.js');
 const { __setStreamChatForTest } = await import('../src/devin-connect-openai.js');
-const { getRequestLog, resetStats } = await import('../src/dashboard/stats.js');
+const { exportStats, getRequestLog, importStats, resetStats } = await import('../src/dashboard/stats.js');
 
 const API_KEY = 'local-route-fixture-authorization';
 const MODEL = 'gpt-5.5';
@@ -205,6 +205,23 @@ test('Chat carries alias, effort, request identity, tool result and final artifa
   assert.equal(route.dispatches[1].toolCallId, call.id);
   assert.equal(route.dispatches[1].toolDigest, digest(toolOutput));
   assert.equal(toolReads, 1);
+  for (const reply of [first, second]) {
+    const rows = getRequestLog({ requestId: reply.requestId });
+    assert.equal(rows.total, 1, 'lookup must isolate this HTTP root');
+    const [row] = rows.items;
+    assert.equal(row.requestId, reply.requestId);
+    assert.equal(row.requestedModel, MODEL);
+    assert.equal(row.requestHttpStatus, 200);
+    assert.deepEqual(row.requestDispatches, [SELECTOR]);
+    assert.equal(row.requestDispatchCount, 1);
+    assert.equal(row.requestFailureCode, null);
+  }
+  const saved = exportStats().recentRequests;
+  assert.equal(new Set(saved.map(row => row.statsRowId)).size, 2);
+  assert.ok(saved.every(row => row.requestId && row.requestId !== row.statsRowId));
+  assert.equal(importStats(exportStats()).ok, true);
+  assert.equal(getRequestLog({ requestId: first.requestId }).total, 1);
+  assert.equal(getRequestLog({ requestId: second.requestId }).total, 1);
   await assert.rejects(requireArtifact(final, expected), err => err.code === 'ENOENT');
   await writeFile(final, secondParts.text, { encoding: 'utf8', flag: 'wx' });
   await requireArtifact(final, expected);
@@ -231,14 +248,44 @@ test('acceptance rejects a real different selector and a post-commit deadline de
   assert.equal(parts.errors[0].code, 'DEADLINE_EXCEEDED');
   assert.deepEqual(parts.terminals, []);
   assert.throws(() => requireChatTerminal(response, parts, 'stop'), /HTTP 200 carried a stream error/);
-  const stats = getRequestLog({ limit: 1 }).items[0];
-  assert.equal(stats.status, 200);
+  const stats = getRequestLog({ requestId: response.requestId }).items[0];
+  assert.equal(stats.requestId, response.requestId);
+  assert.equal(stats.requestedModel, 'gpt-5.5-high');
+  assert.equal(stats.requestHttpStatus, 200);
   assert.equal(stats.success, false);
+  assert.equal(stats.requestFailureCode, 'DEADLINE_EXCEEDED');
+  assert.deepEqual(stats.requestDispatches, ['gpt-5-5-high']);
   t.diagnostic(JSON.stringify({
     requestedModel: 'gpt-5.5-high', selector: route.dispatches[0].selector, http: response.status,
     requestId: response.requestId, terminal: null, streamError: parts.errors[0].code ?? parts.errors[0].type,
     attemptSucceeded: stats.success,
   }));
+});
+
+test('concurrent HTTP roots retain the selectors and retries actually dispatched for each', async t => {
+  let xhighCalls = 0;
+  const route = await harness(t, async function* (_messages, observation) {
+    if (observation.selector === SELECTOR && ++xhighCalls === 1) {
+      throw Object.assign(new Error('synthetic reset before delivery'), { code: 'ECONNRESET' });
+    }
+    yield { type: 'content', text: 'synthetic result' };
+    yield { type: 'finish', reason: 'stop', usage: USAGE };
+  });
+  const user = { role: 'user', content: 'Synthetic independent request' };
+  const [retried, distinct] = await Promise.all([
+    route.post('/v1/chat/completions', chatRequest([user])),
+    route.post('/v1/chat/completions', chatRequest([user], { model: 'gpt-5.5-high' })),
+  ]);
+  assert.notEqual(retried.requestId, distinct.requestId);
+  for (const [reply, expected] of [[retried, [SELECTOR, SELECTOR]], [distinct, ['gpt-5-5-high']]]) {
+    requireChatTerminal(reply, chatParts(reply), 'stop');
+    const { items } = getRequestLog({ requestId: reply.requestId });
+    assert.equal(items.length, 1);
+    assert.deepEqual(items[0].requestDispatches, expected);
+    assert.equal(items[0].requestDispatchCount, expected.length);
+    assert.deepEqual(route.dispatches.filter(call => call.traceId === reply.requestId).map(call => call.selector), expected);
+  }
+  assert.equal(getRequestLog({ requestId: retried.requestId.slice(0, -1) }).total, 0);
 });
 
 for (const [name, path, body, terminal] of [

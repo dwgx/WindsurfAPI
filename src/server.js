@@ -38,7 +38,7 @@ import { isExperimentalEnabled, getBackendSwitch } from './runtime-config.js';
 import { resolveModel, getModelInfo } from './models.js';
 import { handleDashboardApi, preflightDashboardRequest, parseProxyUrl, validateProxyHost, verifyAdminRequest, validateDashboardRequestHost, credStoreGateOpen } from './dashboard/api.js';
 import { recordRequest, updateRequest } from './dashboard/request-ring.js';
-import { withStatsScope, finalizeStatsScope } from './dashboard/stats.js';
+import { beginChatRequestLog, withStatsScope, finalizeStatsScope } from './dashboard/stats.js';
 import { setAccountProxy } from './dashboard/proxy-config.js';
 import { config, log } from './config.js';
 import { getVersionInfo } from './version.js';
@@ -463,7 +463,7 @@ export async function serveChatStream(res, result, {
   }
 }
 
-async function route(req, res) {
+async function route(req, res, scope) {
   const { method } = req;
   let path = req.url.split('?')[0];
   // Tolerate a doubled `/v1/v1/` prefix some clients emit.
@@ -918,12 +918,14 @@ async function route(req, res) {
     // the remaining time and may only shorten their own bounds.
     const budget = createRequestBudget({ stream: body.stream === true });
     const requestId = fallbackRequestId;
+    const onConnectDispatch = beginChatRequestLog(scope, requestId, body.model);
     const result = await handleChatCompletions(body, {
       callerKey,
       nativeBridgeCallerKey: nativeBridgeCallerKeyForRequest(req, token, body, callerKey),
       signal: abortController.signal,
       budget,
       traceId: requestId,
+      onConnectDispatch,
       clineCompat,
       ccCompat,
     });
@@ -957,13 +959,18 @@ async function route(req, res) {
       // by the wrapper) and flushed with the first real frame.
       const commitMs = resolveStreamCommitMs();
       const streamHeaders = { 'Access-Control-Allow-Origin': '*', ...modelHeaders, ...result.headers };
+      const updateRing = streamRingDone(ringRow, reqStartedAt, res);
       await serveChatStream(res, result, {
         headers: streamHeaders,
         requestId,
         commitMs,
-        onDone: streamRingDone(ringRow, reqStartedAt, res),
+        onDone(stream) {
+          if (stream?.failure) scope.chatLog.failureCode = streamFailureClass(stream.failure);
+          updateRing(stream);
+        },
       });
     } else {
+      if (result.status >= 400) scope.chatLog.failureCode = streamFailureClass(result.body?.error);
       for (const [k, v] of Object.entries(modelHeaders)) res.setHeader(k, v);
       if (result.headers) {
         for (const [k, v] of Object.entries(result.headers)) res.setHeader(k, v);
@@ -1447,7 +1454,7 @@ export function startServer() {
       // the last attempt before the scope closes.
       await withStatsScope(async (scope) => {
         try {
-          await route(req, res);
+          await route(req, res, scope);
         } finally {
           // A throw before headers is answered by the outer catch below; only a
           // response that actually went out carries a status worth recording.

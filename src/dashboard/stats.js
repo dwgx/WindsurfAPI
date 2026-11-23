@@ -371,6 +371,26 @@ function adoptCreditsByModel(source) {
 // their pre-existing aggregate-only behaviour and the log row gets the
 // success-derived status.
 const _requestScope = new AsyncLocalStorage();
+const REQUEST_ID_RE = /^req_[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
+const REQUEST_DISPATCH_CAP = 8;
+
+function requestLogModel(model) {
+  return typeof model === 'string' && model.length > 0 ? model.slice(0, 160) : null;
+}
+
+function requestLogFailureCode(code) {
+  return typeof code === 'string' && code !== 'error' && /^[a-zA-Z0-9_-]{1,64}$/.test(code) ? code : null;
+}
+
+/** Track the Connect dispatch boundary under the public Chat request ID. */
+export function beginChatRequestLog(scope, requestId, requestedModel) {
+  const chatLog = { requestId, requestedModel: requestLogModel(requestedModel), dispatches: [], dispatchCount: 0 };
+  scope.chatLog = chatLog;
+  return (selector) => {
+    chatLog.dispatchCount++;
+    if (chatLog.dispatches.length < REQUEST_DISPATCH_CAP) chatLog.dispatches.push(requestLogModel(selector));
+  };
+}
 
 /**
  * Run `fn` inside a per-request accounting scope. Returns fn's own result.
@@ -393,7 +413,17 @@ export function withStatsScope(fn) {
 export function finalizeStatsScope(scope) {
   if (!scope) return;
   const row = scope.rows[scope.rows.length - 1];
-  if (row && Number.isFinite(scope.status)) row.status = scope.status;
+  if (!row) return;
+  if (Number.isFinite(scope.status)) row.status = scope.status;
+  if (scope.chatLog) {
+    // Keep the HTTP outcome and dispatch history on the last accounting row.
+    // All attempts retain their own statsRowId and point to the same HTTP root.
+    row.requestHttpStatus = scope.status;
+    row.requestFailureCode = requestLogFailureCode(scope.chatLog.failureCode);
+    row.requestDispatches = scope.chatLog.dispatches.slice();
+    row.requestDispatchCount = scope.chatLog.dispatchCount;
+    scheduleSave();
+  }
 }
 
 /** Non-negative finite number or 0 — rows come from persisted JSON too. */
@@ -640,6 +670,7 @@ export function recordRequest(model, success, durationMs, accountId, extra = {})
   const scope = _requestScope.getStore();
   const row = {
     statsRowId: randomUUID(),
+    ...(scope?.chatLog ? { requestId: scope.chatLog.requestId, requestedModel: scope.chatLog.requestedModel } : {}),
     ts: Date.now(), model, success: !!success, ms: durationMs || 0,
     account,
     credit,
@@ -1013,6 +1044,22 @@ export function recordRateLimited() {
 // window instead of implying full history.
 const LOG_PAGE_MAX = 200;
 
+function requestLogDetails(row) {
+  if (typeof row?.requestId !== 'string' || !REQUEST_ID_RE.test(row.requestId)) return null;
+  const dispatches = Array.isArray(row.requestDispatches)
+    ? row.requestDispatches.slice(0, REQUEST_DISPATCH_CAP).map(requestLogModel) : [];
+  const count = row.requestDispatchCount;
+  const httpStatus = row.requestHttpStatus;
+  return {
+    requestId: row.requestId,
+    requestedModel: requestLogModel(row.requestedModel),
+    requestHttpStatus: Number.isInteger(httpStatus) && httpStatus >= 100 && httpStatus <= 599 ? httpStatus : null,
+    requestFailureCode: requestLogFailureCode(row.requestFailureCode),
+    requestDispatches: dispatches,
+    requestDispatchCount: Number.isSafeInteger(count) && count >= dispatches.length ? count : dispatches.length,
+  };
+}
+
 function logRowView(row) {
   const ts = Number(row?.ts);
   const rawStatus = row?.status;
@@ -1028,6 +1075,7 @@ function logRowView(row) {
   };
   const report = row && Object.hasOwn(row, 'reportedUsage') ? row.reportedUsage : legacyReport;
   return {
+    ...requestLogDetails(row),
     ts: Number.isFinite(ts) ? ts : 0,
     model: typeof row?.model === 'string' ? row.model : '',
     account: normalizeAccountRef(row?.account),
@@ -1085,10 +1133,10 @@ function percentileOf(values, p) {
 /**
  * Newest-first page of request-log rows plus aggregates over the whole
  * filtered window (not just the page). Filters: `from`/`to` epoch ms, exact
- * `model`/`account`, numeric `status`.
+ * `model`/`account`/`requestId`, numeric `status`.
  */
 export function getRequestLog({
-  from = null, to = null, model = null, account = null, status = null,
+  from = null, to = null, model = null, account = null, status = null, requestId = null,
   limit = 50, offset = 0,
 } = {}) {
   const rows = Array.isArray(_state.recentRequests) ? _state.recentRequests : [];
@@ -1099,11 +1147,13 @@ export function getRequestLog({
   const statusNum = status == null || status === '' ? null : Number(status);
   const modelFilter = typeof model === 'string' && model ? model : null;
   const accountFilter = typeof account === 'string' && account ? account : null;
+  const requestFilter = typeof requestId === 'string' ? requestId.trim() : '';
 
   const filtered = [];
   for (const raw of rows) {
     if (!raw || typeof raw !== 'object') continue;
     const row = logRowView(raw);
+    if (requestFilter && row.requestId !== requestFilter) continue;
     if (fromMs != null && row.ts < fromMs) continue;
     if (toMs != null && row.ts > toMs) continue;
     if (modelFilter && row.model !== modelFilter) continue;

@@ -2716,6 +2716,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
       to: num('to'),
       model: u.searchParams.get('model') || null,
       account: u.searchParams.get('account') || null,
+      requestId: u.searchParams.get('requestId'),
       status: u.searchParams.has('status') ? num('status') : null,
       limit: num('limit') ?? 50,
       offset: num('offset') ?? 0,
