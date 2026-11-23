@@ -2247,7 +2247,7 @@ tbody tr:hover td { background: var(--surface-2); }
 .stats-request-search, .stats-request-ref { display: flex; align-items: center; gap: 6px; }
 .stats-request-search .input { width: 15rem; max-width: 100%; }
 .stats-request-ref, .stats-request-detail { margin-top: 4px; }
-.stats-request-ref code, .stats-request-detail { font-size: 11px; white-space: nowrap; }
+.stats-request-ref code, .stats-request-detail { font-size: 12px; white-space: nowrap; }
 .stats-request-detail { color: var(--text-muted); }
 .stats-request-dispatches { margin: 0; padding-left: 1.25em; }
 #stats-log-table .numeric, .stats-agg-table .numeric { text-align: right; font-variant-numeric: tabular-nums; }
@@ -7647,7 +7647,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
       </div>
       ${this._devinTurnError ? `<div class="dm-note" role="status">${this.esc(T('pageError'))}</div>` : ''}
       ${items.length
-        ? `<div class="table-wrap dm-paged-table" tabindex="0" role="region" aria-label="${this.esc(T('turns'))}"><table id="devin-turns-table"><thead><tr>
+        ? `<div class="table-wrap dm-paged-table" tabindex="0" role="region" aria-label="${this.esc(T('turns'))}" data-i18n-aria-label="aria.scrollableTable"><table id="devin-turns-table"><thead><tr>
             <th>${this.esc(I18n.t('table.header.time'))}</th>
             <th>${this.esc(T('account'))}</th>
             <th>${this.esc(I18n.t('table.header.model'))}</th>
@@ -7660,7 +7660,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
       ${page ? this.renderDevinPager('turns', page) : ''}
       <details class="dm-disclosure" id="devin-sessions-sources">
         <summary>${this.esc(T('sources'))}</summary>
-        <div class="table-wrap" tabindex="0" role="region" aria-label="${this.esc(T('sources'))}"><table><thead><tr>
+        <div class="table-wrap" tabindex="0" role="region" aria-label="${this.esc(T('sources'))}" data-i18n-aria-label="aria.scrollableTable"><table><thead><tr>
           <th>${this.esc(T('source'))}</th><th>${this.esc(T('state'))}</th><th>${this.esc(T('detail'))}</th>
         </tr></thead><tbody>${sourceRows}</tbody></table></div>
         <div class="dm-note">${this.esc(T('note'))}</div>

@@ -31,9 +31,11 @@ import { dirname, join } from 'node:path';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const SRC = readFileSync(join(__dirname, '..', 'src', 'server.js'), 'utf-8');
 const ROUTE = (() => {
-  const start = SRC.indexOf('async function route(req, res)');
-  assert.notEqual(start, -1, 'route() not found in server.js');
-  return SRC.slice(start, SRC.indexOf('\nexport function startServer'));
+  const start = /^async function route\(/m.exec(SRC);
+  assert.ok(start, 'route() declaration not found in server.js');
+  const end = SRC.indexOf('\nexport function startServer(', start.index);
+  assert.ok(end > start.index, 'startServer() must follow route() in server.js');
+  return SRC.slice(start.index, end);
 })();
 
 describe('router: the path is never decoded before the route decision', () => {

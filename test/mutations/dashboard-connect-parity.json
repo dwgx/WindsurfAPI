@@ -6,7 +6,7 @@
     "test/models-live-catalog.test.js",
     "test/connect-cost-tier-free-list.test.js"
   ],
-  "expectBaselinePass": 49,
+  "expectBaselinePass": 50,
   "mutations": [
     {
       "name": "the original defect: dashboard stops annotating and reports everything reachable",
