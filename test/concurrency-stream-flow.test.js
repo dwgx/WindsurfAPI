@@ -899,12 +899,15 @@ describe('R9 — account-pool saturation and recovery with live streams', () => 
           DEVIN_CONNECT_MAX_INFLIGHT_PER_ACCOUNT: '1',
           DEVIN_CONNECT_TOKEN: 'env-token-must-not-serve',
         }, async () => {
+          const releases = [];
+          const streams = [];
           try {
             const acct = seedAccount(`R9-i${iter}`);
             const before = baselineCounters();
             let started = 0;
             let release;
             const gate = new Promise((resolve) => { release = resolve; });
+            releases.push(release);
             installConnectUpstream({
               gate,
               onStart: () => { started += 1; },
@@ -916,6 +919,7 @@ describe('R9 — account-pool saturation and recovery with live streams', () => 
             assert.equal(s0.status, 200);
             const res0 = controlledRes();
             const run0 = s0.handler(res0);
+            streams.push({ response: res0, completion: run0 });
             await eventually(() => started === 1, { label: `R9 i${iter}: S0 upstream admitted` });
             assert.equal(inflightOf(acct.id), 1, 'S0 holds the only slot');
 
@@ -948,7 +952,9 @@ describe('R9 — account-pool saturation and recovery with live streams', () => 
               assert.equal(again.status, 200, `retry ${s} must be admitted after release`);
               const res = controlledRes();
               retryResponses.push({ s, res });
-              await withWatchdog(again.handler(res), 2000, `R9 i${iter}: retry ${s}`);
+              const completion = again.handler(res);
+              streams.push({ response: res, completion });
+              await withWatchdog(completion, 2000, `R9 i${iter}: retry ${s}`);
             }
             for (const { s, res } of retryResponses) {
               assertOpenAISuccess(res, `R9-${s}-AR9-${s}-B`, `R9 i${iter}: retry ${s}`);
@@ -966,6 +972,7 @@ describe('R9 — account-pool saturation and recovery with live streams', () => 
               let markCoolStarted;
               const allCoolStarted = new Promise((resolve) => { markCoolStarted = resolve; });
               const coolGate = new Promise((resolve) => { coolRelease = resolve; });
+              releases.push(coolRelease);
               installConnectUpstream({
                 gate: coolGate,
                 onStart: () => {
@@ -980,7 +987,12 @@ describe('R9 — account-pool saturation and recovery with live streams', () => 
                 }));
               }
               const responses = results.map(() => controlledRes());
-              const runs = results.map((r, i) => r.handler(responses[i]));
+              const runs = results.map((result, index) => {
+                const response = responses[index];
+                const completion = result.handler(response);
+                streams.push({ response, completion });
+                return completion;
+              });
               await eventually(() => coolStarted === 4, { label: 'R9 mid-flight: 4 admitted' });
               assert.equal(totalInflight([a.id, b.id]), 4, 'all four streams are live before cooling');
               auth.markRateLimited(a.apiKey, 60_000);
@@ -1002,7 +1014,18 @@ describe('R9 — account-pool saturation and recovery with live streams', () => 
             });
             await assertCleanBaseline(before, `R9 i${iter}`);
           } finally {
-            removeSeeded();
+            // An assertion can fail before normal release. Close the owned
+            // responses and drain their handlers before removing the accounts.
+            try {
+              for (const { response } of streams) {
+                if (!response.closed && !response.writableEnded) response.emit('close');
+              }
+              for (const release of releases) release();
+              await withWatchdog(Promise.allSettled(streams.map(({ completion }) => completion)),
+                2000, `R9 i${iter}: fixture cleanup`);
+            } finally {
+              removeSeeded();
+            }
           }
         });
       });
