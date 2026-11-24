@@ -13303,19 +13303,32 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
       const origin = r.requestId ? `<div class="stats-request-detail" data-request-origin title="${this.esc(r.requestBootId || '')}">${this.esc([bootLabel, build].filter(Boolean).join(' · '))}</div>` : '';
       const reason = admissionRejected ? I18n.t('section.statsLog.noActiveAccounts') : r.requestFailureCode;
       const disconnected = r.requestLifecycle?.clientDisconnected === true;
-      const timing = r.requestId && (r.requestTiming || this.statsLogRequestId)
+      const step = r.requestResponses;
+      const showMissingDetails = this.statsLogRequestId && !step;
+      const timing = r.requestId && (r.requestTiming || showMissingDetails)
         ? this.renderStatsRequestTiming(r.requestTiming, disconnected) : '';
       const timeline = timing && !this.statsLogRequestId
         ? `<details class="stats-request-detail"><summary>${this.esc(I18n.t('section.statsLog.timing.details'))}</summary>${timing}</details>`
         : timing;
-      const lifecycle = r.requestId && (r.requestLifecycle || this.statsLogRequestId)
+      const lifecycle = r.requestId && (r.requestLifecycle || showMissingDetails)
         ? this.renderStatsRequestLifecycle(r.requestLifecycle) : '';
       const details = lifecycle && !this.statsLogRequestId
         ? `<details class="stats-request-detail"><summary>${this.esc(I18n.t('section.statsLog.lifecycle.details'))}</summary>${lifecycle}</details>`
         : lifecycle;
       const failure = r.requestId && r.success === false && (!disconnected || reason) ? `<div class="stats-request-detail" data-failure-reason title="${this.esc(r.requestFailureCode || I18n.t('section.statsLog.failureReason'))}">${this.esc(reason || I18n.t('section.statsLog.failureUnknown'))}</div>` : '';
+      const responses = step ? `<div class="stats-request-detail" data-responses-step>
+        ${step.inputToolResults == null ? '' : `<div>${this.esc(I18n.t('section.statsLog.responses.inputToolResults', { count: step.inputToolResults }))}</div>`}
+        ${step.outputToolCalls > 0 ? `<div>${this.esc(I18n.t('section.statsLog.responses.outputToolCalls', { count: step.outputToolCalls }))}</div>` : ''}
+        ${step.outputText ? `<div>${this.esc(I18n.t('section.statsLog.responses.outputText'))}</div>` : ''}
+        <div>${this.esc(step.terminal ? 'response.' + step.terminal : I18n.t('section.statsLog.responses.terminalUnknown'))}</div>
+      </div>` : '';
+      const responseEnded = step?.terminal === 'completed' && r.success !== false;
       const [badge, outcome] = disconnected ? ['muted', 'clientDisconnected']
         : admissionRejected ? ['error', 'admissionRejected']
+        : step?.terminal === 'incomplete' ? ['warn', 'responses.incomplete']
+        : responseEnded && step.outputToolCalls > 0 ? ['info', 'responses.toolOutput']
+        : responseEnded ? ['success', 'responses.completed']
+        : step && r.success !== false ? ['muted', 'attemptUnknown']
         : r.success === true ? ['success', 'attemptSucceeded']
         : r.success === false ? ['error', 'attemptFailed'] : ['muted', 'attemptUnknown'];
       const { tokensIn, tokensOut, totalTokens } = r.reportedUsage || {};
@@ -13330,7 +13343,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
         + `<td class="text-sm"><time>${this.esc(when.toLocaleString())}</time>${requestRef}${origin}</td>`
         + `<td class="text-sm"><span class="cell-ellipsis" title="${this.esc(requestedModel || '')}">${this.esc(requestedModel || '—')}</span>${dispatchDetails}${timeline}</td>`
         + `<td class="text-sm"><code>${this.esc(r.account || '-')}</code></td>`
-        + `<td><span class="badge ${badge} no-dot">${this.esc(I18n.t('section.statsLog.' + outcome))}</span> ${hasStatus ? `<small class="text-muted">HTTP ${this.esc(status)}</small>` : ''}${failure}${details}</td>`
+        + `<td><span class="badge ${badge} no-dot">${this.esc(I18n.t('section.statsLog.' + outcome))}</span> ${hasStatus ? `<small class="text-muted">HTTP ${this.esc(status)}</small>` : ''}${failure}${responses}${details}</td>`
         + `<td class="text-sm numeric">${this.esc(this.fmtMs(r.ms))}</td>`
         + `<td class="text-sm numeric" title="${this.esc(inputTitle)}">${tokensIn == null ? '—' : this.esc(this.fmtTokenCount(tokensIn))}${totalLabel}</td>`
         + `<td class="text-sm numeric" title="${tokensOut == null ? this.esc(usageMissing) : ''}">${tokensOut == null ? '—' : this.esc(this.fmtTokenCount(tokensOut))}</td>`

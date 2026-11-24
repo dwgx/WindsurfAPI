@@ -620,6 +620,15 @@
       "previousBoot": "历史进程",
       "unknownBoot": "进程未知",
       "clientDisconnected": "客户端断开",
+      "responses": {
+        "inputToolResults": "本次请求携带 {{count}} 条工具结果",
+        "outputToolCalls": "本次响应输出 {{count}} 个工具调用",
+        "outputText": "本次响应含正文",
+        "terminalUnknown": "响应终态未知",
+        "toolOutput": "输出工具调用",
+        "completed": "响应已结束",
+        "incomplete": "响应未完成"
+      },
       "lifecycle": {
         "details": "查看传输和回执",
         "client": "下游客户端",

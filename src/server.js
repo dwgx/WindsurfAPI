@@ -1095,6 +1095,23 @@ async function route(req, res, scope) {
     const abortController = bindClientAbort(res);
     const budget = createRequestBudget({ stream: body.stream === true });
     const requestId = fallbackRequestId;
+    const onConnectDispatch = beginChatRequestLog(scope, requestId, body.model, VERSION_INFO, null, 'responses');
+    const responseLog = {
+      inputToolResults: Array.isArray(body.input)
+        ? body.input.filter(item => item?.type === 'function_call_output' || item?.type === 'custom_tool_call_output').length
+        : 0,
+      outputToolCalls: null,
+      outputText: null,
+      terminal: null,
+    };
+    scope.chatLog.responses = responseLog;
+    const onResponsesTerminal = (status, output) => {
+      if (!['completed', 'incomplete'].includes(status) || !Array.isArray(output)) return;
+      responseLog.terminal = status;
+      responseLog.outputToolCalls = output.filter(item => item?.type === 'function_call' || item?.type === 'custom_tool_call').length;
+      responseLog.outputText = output.some(item => item?.type === 'message' && Array.isArray(item.content)
+        && item.content.some(part => part?.type === 'output_text' && typeof part.text === 'string' && part.text.trim()));
+    };
     const result = await handleResponses(body, {
       context: {
         callerKey,
@@ -1103,6 +1120,8 @@ async function route(req, res, scope) {
         signal: abortController.signal,
         budget,
         traceId: requestId,
+        onConnectDispatch,
+        onResponsesTerminal,
       },
     });
     const processingMs = Date.now() - reqStartedAt;
@@ -1126,6 +1145,7 @@ async function route(req, res, scope) {
     if (result.stream) {
       const commitMs = resolveStreamCommitMs();
       const streamHeaders = { 'Access-Control-Allow-Origin': '*', ...modelHeaders, ...result.headers };
+      const updateRing = streamRingDone(ringRow, reqStartedAt, res);
       await serveChatStream(res, result, {
         headers: streamHeaders,
         requestId,
@@ -1143,9 +1163,13 @@ async function route(req, res, scope) {
             ...(error?.code ? { code: error.code } : {}),
           },
         }),
-        onDone: streamRingDone(ringRow, reqStartedAt, res),
+        onDone(stream) {
+          if (stream?.failure) scope.chatLog.failureCode = streamFailureClass(stream.failure);
+          updateRing(stream);
+        },
       });
     } else {
+      if (result.status >= 400) scope.chatLog.failureCode = streamFailureClass(result.body?.error);
       for (const [k, v] of Object.entries(modelHeaders)) res.setHeader(k, v);
       if (result.headers) {
         for (const [k, v] of Object.entries(result.headers)) res.setHeader(k, v);
@@ -1154,6 +1178,7 @@ async function route(req, res, scope) {
       // request_id injection as /v1/chat/completions.
       normalizeOpenAIErrorBody(result.body, result.status);
       json(res, result.status, withRequestId(result.status, result.body, requestId));
+      if (result.body?.object === 'response') onResponsesTerminal(result.body.status, result.body.output);
     }
     return;
   }

@@ -2687,6 +2687,7 @@ export async function handleResponses(body, deps = {}) {
         && !translator.writer.gone();
       settleDeliveryEffects(terminalDelivered);
       if (terminalDelivered) {
+        context.onResponsesTerminal?.(translator.truncated ? 'incomplete' : 'completed', translator.committedItems);
         // Same as the non-streaming path: persist the status the client was told,
         // so a later retrieval does not report a truncated turn as completed.
         const reason = translator.streamFinishReason;

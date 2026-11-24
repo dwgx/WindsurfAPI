@@ -395,11 +395,11 @@ function requestLogOrigin(build) {
   };
 }
 
-/** Track the Connect dispatch boundary under the public Chat request ID. */
-export function beginChatRequestLog(scope, requestId, requestedModel, build, lifecycle = null) {
+/** Track the Connect dispatch boundary under the public request ID. */
+export function beginChatRequestLog(scope, requestId, requestedModel, build, lifecycle = null, surface = 'chat_completions') {
   const chatLog = {
     requestId, requestedModel: requestLogModel(requestedModel), dispatches: [], dispatchCount: 0,
-    origin: { ...requestLogOrigin(build), requestSurface: 'chat_completions' }, lifecycle,
+    origin: { ...requestLogOrigin(build), requestSurface: surface }, lifecycle,
   };
   scope.chatLog = chatLog;
   return (selector) => {
@@ -468,6 +468,7 @@ export function finalizeStatsScope(scope) {
     row.requestFailureCode = requestLogFailureCode(scope.chatLog.failureCode);
     row.requestDispatches = scope.chatLog.dispatches.slice();
     row.requestDispatchCount = scope.chatLog.dispatchCount;
+    if (scope.chatLog.responses) row.requestResponses = { ...scope.chatLog.responses };
     const lifecycle = scope.chatLog.lifecycle;
     if (lifecycle) {
       row.requestLifecycle = {
@@ -1166,6 +1167,7 @@ function requestLogDetails(row) {
     requestedModel: requestLogModel(row.requestedModel),
     requestHttpStatus: Number.isInteger(httpStatus) && httpStatus >= 100 && httpStatus <= 599 ? httpStatus : null,
     requestFailureCode: requestLogFailureCode(row.requestFailureCode),
+    requestResponses: responsesStepView(row.requestResponses),
     requestLifecycle: requestLifecycleView(row.requestLifecycle),
     requestTiming: requestTimingView(row.requestTiming),
     requestDispatches: dispatches,
@@ -1177,6 +1179,17 @@ function requestLogDetails(row) {
     requestVersion: typeof row.requestVersion === 'string' && /^[A-Za-z0-9.+_-]{1,48}$/.test(row.requestVersion) ? row.requestVersion : null,
     requestCommit: typeof row.requestCommit === 'string' && /^[a-f0-9]{7,40}$/i.test(row.requestCommit) ? row.requestCommit : null,
     requestBuildSource: ['build-env', 'build-git', 'git', 'package'].includes(row.requestBuildSource) ? row.requestBuildSource : null,
+  };
+}
+
+function responsesStepView(value) {
+  if (!value || typeof value !== 'object') return null;
+  const count = n => Number.isSafeInteger(n) && n >= 0 ? n : null;
+  return {
+    inputToolResults: count(value.inputToolResults),
+    outputToolCalls: count(value.outputToolCalls),
+    outputText: typeof value.outputText === 'boolean' ? value.outputText : null,
+    terminal: ['completed', 'incomplete'].includes(value.terminal) ? value.terminal : null,
   };
 }
 

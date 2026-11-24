@@ -620,6 +620,15 @@
       "previousBoot": "Previous process",
       "unknownBoot": "Process unknown",
       "clientDisconnected": "Client disconnected",
+      "responses": {
+        "inputToolResults": "Tool results in this request {{count}}",
+        "outputToolCalls": "Tool calls in this response {{count}}",
+        "outputText": "Response contains text",
+        "terminalUnknown": "Response terminal event unknown",
+        "toolOutput": "Returned tool calls",
+        "completed": "Response ended",
+        "incomplete": "Response incomplete"
+      },
       "lifecycle": {
         "details": "Transport and receipt details",
         "client": "Downstream client",

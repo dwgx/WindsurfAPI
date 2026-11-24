@@ -288,14 +288,16 @@ test('concurrent HTTP roots retain the selectors and retries actually dispatched
   assert.equal(getRequestLog({ requestId: retried.requestId.slice(0, -1) }).total, 0);
 });
 
-for (const [name, path, body, terminal] of [
-  ['Responses', '/v1/responses', { model: MODEL, reasoning: { effort: EFFORT }, input: 'synthetic', stream: true, store: false }, 'response.completed'],
-  ['Messages', '/v1/messages', { model: MODEL + '-xhigh', max_tokens: 128, messages: [{ role: 'user', content: 'synthetic' }], stream: true }, 'message_stop'],
+const responsesBody = { model: MODEL, reasoning: { effort: EFFORT }, input: 'synthetic', stream: true, store: false };
+for (const [name, path, body, finish, terminal] of [
+  ['Responses', '/v1/responses', responsesBody, 'stop', 'response.completed'],
+  ['Capped Responses', '/v1/responses', responsesBody, 'length', 'response.incomplete'],
+  ['Messages', '/v1/messages', { model: MODEL + '-xhigh', max_tokens: 128, messages: [{ role: 'user', content: 'synthetic' }], stream: true }, 'stop', 'message_stop'],
 ]) {
   test(name + ' carries its public request identity through the translated Connect dispatch', async t => {
     const route = await harness(t, async function* () {
       yield { type: 'content', text: 'synthetic result' };
-      yield { type: 'finish', reason: 'stop', usage: USAGE };
+      yield { type: 'finish', reason: finish, usage: USAGE };
     });
     const response = await route.post(path, body);
     assert.equal(response.status, 200);
@@ -305,5 +307,15 @@ for (const [name, path, body, terminal] of [
     assert.equal(route.dispatches[0].traceId, response.requestId);
     if (name === 'Messages') assert.equal(response.anthropicRequestId, response.requestId);
     assert.equal(response.frames.filter(frame => frame.type === terminal).length, 1);
+    if (path === '/v1/responses') {
+      const { items } = getRequestLog({ requestId: response.requestId });
+      assert.equal(items.length, 1);
+      assert.equal(items[0].requestSurface, 'responses');
+      assert.deepEqual(items[0].requestDispatches, [SELECTOR]);
+      assert.equal(items[0].requestDispatchCount, 1);
+      assert.deepEqual(items[0].requestResponses, {
+        inputToolResults: 0, outputToolCalls: 0, outputText: true, terminal: terminal.slice('response.'.length),
+      });
+    }
   });
 }
