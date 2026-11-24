@@ -618,7 +618,30 @@
       "dispatchNone": "0 次派发 · 账号准入拒绝",
       "currentBoot": "当前进程",
       "previousBoot": "历史进程",
-      "unknownBoot": "进程未知"
+      "unknownBoot": "进程未知",
+      "clientDisconnected": "客户端断开",
+      "lifecycle": {
+        "details": "查看传输和回执",
+        "client": "下游客户端",
+        "gateway": "网关中止",
+        "transport": "Connect 传输",
+        "terminal": "上游终态",
+        "usage": "上游用量",
+        "billing": "上游计费字段",
+        "disconnected": "已断开",
+        "writeEnded": "网关已结束写出",
+        "abortEmitted": "已发本地信号",
+        "abortNotEmitted": "未发本地信号",
+        "abortObserved": "观察到本地中止",
+        "abortNotObserved": "未见中止事件",
+        "endFrame": "收到结束帧",
+        "finishMarker": "见结束标记，未见结束帧",
+        "terminalMissing": "未见结束帧",
+        "fieldsReported": "已上报",
+        "fieldsNotObserved": "未见上报",
+        "unknown": "未知",
+        "scope": "Connect 字段仅覆盖最后一次尝试在本地关闭前的观察。服务商是否停止计算与最终账单需另行确认。"
+      }
     },
     "statsAgg": {
       "title": "聚合统计",

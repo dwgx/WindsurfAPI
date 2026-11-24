@@ -3211,6 +3211,7 @@ export async function* streamChat({
   messages, model, sessionId, completion, tools,
   token, signal, timeoutMs, deadlineMs, host, env = process.env, nativeToolCall = false, traceId = null,
   deviceSeed, sessionModelConfig, continuityTrail, toolChoice, parallelToolCalls,
+  onTransportObservation,
 } = {}) {
   if (signal?.aborted) {
     const err = new Error('The operation was aborted');
@@ -3359,6 +3360,7 @@ export async function* streamChat({
   let lastFinish = null;
   let lastUsage = null;
   let lastBilling = null;
+  let transportAbortObserved = false;
   let lastActualModel = null;
   let lastSignature = null;
   const nativeToolCalls = [];
@@ -3577,6 +3579,9 @@ export async function* streamChat({
   });
 
   req.on('error', (err) => {
+    if (signal?.aborted && (err?.name === 'AbortError' || err?.code === 'ABORT_ERR')) {
+      transportAbortObserved = true;
+    }
     if (!streamError) streamError = err;
     done = true;
     pump();
@@ -3735,6 +3740,14 @@ export async function* streamChat({
     // request or leaks. The idle timer is cleared by req.destroy below.
     clearTimeout(deadlineTimer);
     if (!req.destroyed) req.destroy();
+    // This records what the gateway received before closing the HTTP stream.
+    // The local transport's abort event carries no provider cancel receipt.
+    onTransportObservation?.({
+      transportAbortObserved,
+      upstreamTerminal: sawEndOfStream ? 'end_frame' : sawStopReason ? 'finish_marker' : 'not_observed',
+      upstreamUsageReported: lastUsage != null,
+      upstreamBillingReported: lastBilling != null ? true : null,
+    });
   }
 }
 

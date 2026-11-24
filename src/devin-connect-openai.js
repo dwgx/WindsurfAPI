@@ -416,8 +416,10 @@ async function* streamChatWithEmptyRetry(params, { env = process.env } = {}, opt
       }
       : upstreamParams;
     // Observe the final selector after budget admission, for each adapter dispatch.
-    opts.onDispatch?.(callParams.model);
-    for await (const ev of streamChatImpl(callParams)) {
+    const onTransportObservation = opts.onDispatch?.(callParams.model);
+    const observedParams = typeof onTransportObservation === 'function'
+      ? { ...callParams, onTransportObservation } : callParams;
+    for await (const ev of streamChatImpl(observedParams)) {
       if ((ev.type === 'content' || ev.type === 'reasoning') && leakTraceEnabled(env)) {
         log.info('LEAK_TRACE stream-event', {
           channel: ev.type,

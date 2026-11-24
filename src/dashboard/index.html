@@ -2249,6 +2249,12 @@ tbody tr:hover td { background: var(--surface-2); }
 .stats-request-ref, .stats-request-detail { margin-top: 4px; }
 .stats-request-ref code, .stats-request-detail { font-size: 12px; white-space: nowrap; }
 .stats-request-detail { color: var(--text-muted); }
+.stats-request-lifecycle {
+  display: grid; grid-template-columns: max-content 1fr; gap: var(--space-4) var(--space-8);
+  margin: var(--space-8) 0 0; white-space: normal;
+}
+.stats-request-lifecycle dt { color: var(--text-muted); }
+.stats-request-lifecycle dd { margin: 0; }
 .stats-request-dispatches { margin: 0; padding-left: 1.25em; }
 #stats-log-table .numeric, .stats-agg-table .numeric { text-align: right; font-variant-numeric: tabular-nums; }
 .cell-ellipsis { display: inline-block; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
@@ -13164,6 +13170,24 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     return (Number(n) || 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
   },
 
+  renderStatsRequestLifecycle(value) {
+    const state = value || {};
+    const t = key => I18n.t(`section.statsLog.lifecycle.${key}`);
+    const flag = (value, yes, no) => t(value === true ? yes : value === false ? no : 'unknown');
+    const terminals = { end_frame: 'endFrame', finish_marker: 'finishMarker', not_observed: 'terminalMissing' };
+    const rows = [
+      ['client', flag(state.clientDisconnected, 'disconnected', 'writeEnded')],
+      ['gateway', flag(state.gatewayAbortEmitted, 'abortEmitted', 'abortNotEmitted')],
+      ['transport', flag(state.transportAbortObserved, 'abortObserved', 'abortNotObserved')],
+      ['terminal', t(terminals[state.upstreamTerminal] || 'unknown')],
+      ['usage', flag(state.upstreamUsageReported, 'fieldsReported', 'fieldsNotObserved')],
+      ['billing', flag(state.upstreamBillingReported, 'fieldsReported', 'fieldsNotObserved')],
+    ];
+    return `<dl class="stats-request-detail stats-request-lifecycle" data-request-lifecycle title="${this.esc(t('scope'))}">
+      ${rows.map(([name, result]) => `<dt>${this.esc(t(name))}</dt><dd>${this.esc(result)}</dd>`).join('')}
+    </dl>`;
+  },
+
   _statsTokenTitle(row) {
     return I18n.t('section.statsLog.tokenTitle', {
       fresh: this.fmtTokenCount((Number(row.tokensIn) || 0) - (Number(row.cacheRead) || 0) - (Number(row.cacheWrite) || 0)),
@@ -13248,13 +13272,22 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
       const build = [r.requestVersion, r.requestCommit?.slice(0, 7)].filter(Boolean).join(' · ');
       const origin = r.requestId ? `<div class="stats-request-detail" data-request-origin title="${this.esc(r.requestBootId || '')}">${this.esc([bootLabel, build].filter(Boolean).join(' · '))}</div>` : '';
       const reason = admissionRejected ? I18n.t('section.statsLog.noActiveAccounts') : r.requestFailureCode;
-      const failure = r.requestId && r.success === false ? `<div class="stats-request-detail" data-failure-reason title="${this.esc(r.requestFailureCode || I18n.t('section.statsLog.failureReason'))}">${this.esc(reason || I18n.t('section.statsLog.failureUnknown'))}</div>` : '';
-      const [badge, outcome] = admissionRejected ? ['error', 'admissionRejected']
+      const disconnected = r.requestLifecycle?.clientDisconnected === true;
+      const lifecycle = r.requestId && (r.requestLifecycle || this.statsLogRequestId)
+        ? this.renderStatsRequestLifecycle(r.requestLifecycle) : '';
+      const details = lifecycle && !this.statsLogRequestId
+        ? `<details class="stats-request-detail"><summary>${this.esc(I18n.t('section.statsLog.lifecycle.details'))}</summary>${lifecycle}</details>`
+        : lifecycle;
+      const failure = r.requestId && r.success === false && (!disconnected || reason) ? `<div class="stats-request-detail" data-failure-reason title="${this.esc(r.requestFailureCode || I18n.t('section.statsLog.failureReason'))}">${this.esc(reason || I18n.t('section.statsLog.failureUnknown'))}</div>` : '';
+      const [badge, outcome] = disconnected ? ['muted', 'clientDisconnected']
+        : admissionRejected ? ['error', 'admissionRejected']
         : r.success === true ? ['success', 'attemptSucceeded']
         : r.success === false ? ['error', 'attemptFailed'] : ['muted', 'attemptUnknown'];
       const { tokensIn, tokensOut, totalTokens } = r.reportedUsage || {};
       const usageMissing = I18n.t('section.statsLog.usageMissing');
       const hasBreakdown = tokensIn != null && tokensIn === r.tokensIn;
+      const credit = disconnected && r.credit === 0 && r.requestLifecycle.upstreamBillingReported !== true
+        ? '—' : this.fmtCredit(r.credit);
       const inputTitle = hasBreakdown ? this._statsTokenTitle(r) : (tokensIn == null ? usageMissing : '');
       const totalLabel = (tokensIn == null || tokensOut == null) && totalTokens != null
         ? ` <small class="text-muted">${this.esc(I18n.t('section.statsLog.reportedTotal', { total: this.fmtTokenCount(totalTokens) }))}</small>` : '';
@@ -13262,11 +13295,11 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
         + `<td class="text-sm"><time>${this.esc(when.toLocaleString())}</time>${requestRef}${origin}</td>`
         + `<td class="text-sm"><span class="cell-ellipsis" title="${this.esc(requestedModel || '')}">${this.esc(requestedModel || '—')}</span>${dispatchDetails}</td>`
         + `<td class="text-sm"><code>${this.esc(r.account || '-')}</code></td>`
-        + `<td><span class="badge ${badge} no-dot">${this.esc(I18n.t('section.statsLog.' + outcome))}</span> ${hasStatus ? `<small class="text-muted">HTTP ${this.esc(status)}</small>` : ''}${failure}</td>`
+        + `<td><span class="badge ${badge} no-dot">${this.esc(I18n.t('section.statsLog.' + outcome))}</span> ${hasStatus ? `<small class="text-muted">HTTP ${this.esc(status)}</small>` : ''}${failure}${details}</td>`
         + `<td class="text-sm numeric">${this.esc(this.fmtMs(r.ms))}</td>`
         + `<td class="text-sm numeric" title="${this.esc(inputTitle)}">${tokensIn == null ? '—' : this.esc(this.fmtTokenCount(tokensIn))}${totalLabel}</td>`
         + `<td class="text-sm numeric" title="${tokensOut == null ? this.esc(usageMissing) : ''}">${tokensOut == null ? '—' : this.esc(this.fmtTokenCount(tokensOut))}</td>`
-        + `<td class="text-sm numeric">${this.esc(this.fmtCredit(r.credit))}</td>`
+        + `<td class="text-sm numeric">${this.esc(credit)}</td>`
         + `</tr>`;
     }).join('') || `<tr class="empty-row"><td colspan="8">${this.esc(I18n.t(this.statsLogRequestId ? 'section.statsLog.requestNotFound' : 'section.statsLog.empty'))}</td></tr>`;
 

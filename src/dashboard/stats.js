@@ -396,15 +396,21 @@ function requestLogOrigin(build) {
 }
 
 /** Track the Connect dispatch boundary under the public Chat request ID. */
-export function beginChatRequestLog(scope, requestId, requestedModel, build) {
+export function beginChatRequestLog(scope, requestId, requestedModel, build, lifecycle = null) {
   const chatLog = {
     requestId, requestedModel: requestLogModel(requestedModel), dispatches: [], dispatchCount: 0,
-    origin: { ...requestLogOrigin(build), requestSurface: 'chat_completions' },
+    origin: { ...requestLogOrigin(build), requestSurface: 'chat_completions' }, lifecycle,
   };
   scope.chatLog = chatLog;
   return (selector) => {
     chatLog.dispatchCount++;
     if (chatLog.dispatches.length < REQUEST_DISPATCH_CAP) chatLog.dispatches.push(requestLogModel(selector));
+    if (!lifecycle) return;
+    const attempt = chatLog.dispatchCount;
+    lifecycle.connect = null;
+    return observation => {
+      if (chatLog.dispatchCount === attempt) lifecycle.connect = observation;
+    };
   };
 }
 
@@ -459,6 +465,14 @@ export function finalizeStatsScope(scope) {
     row.requestFailureCode = requestLogFailureCode(scope.chatLog.failureCode);
     row.requestDispatches = scope.chatLog.dispatches.slice();
     row.requestDispatchCount = scope.chatLog.dispatchCount;
+    const lifecycle = scope.chatLog.lifecycle;
+    if (lifecycle) {
+      row.requestLifecycle = {
+        clientDisconnected: lifecycle.clientDisconnected,
+        gatewayAbortEmitted: lifecycle.gatewayAbortEmitted,
+        ...lifecycle.connect,
+      };
+    }
     scheduleSave();
   }
 }
@@ -1089,6 +1103,20 @@ export function recordRateLimited() {
 // window instead of implying full history.
 const LOG_PAGE_MAX = 200;
 
+function requestLifecycleView(value) {
+  if (!value || typeof value !== 'object') return null;
+  const bool = flag => typeof flag === 'boolean' ? flag : null;
+  const terminal = value.upstreamTerminal;
+  return {
+    clientDisconnected: bool(value.clientDisconnected),
+    gatewayAbortEmitted: bool(value.gatewayAbortEmitted),
+    transportAbortObserved: bool(value.transportAbortObserved),
+    upstreamTerminal: ['end_frame', 'finish_marker', 'not_observed'].includes(terminal) ? terminal : null,
+    upstreamUsageReported: bool(value.upstreamUsageReported),
+    upstreamBillingReported: bool(value.upstreamBillingReported),
+  };
+}
+
 function requestLogDetails(row) {
   if (typeof row?.requestId !== 'string' || !REQUEST_ID_RE.test(row.requestId)) return null;
   const dispatches = Array.isArray(row.requestDispatches)
@@ -1104,6 +1132,7 @@ function requestLogDetails(row) {
     requestedModel: requestLogModel(row.requestedModel),
     requestHttpStatus: Number.isInteger(httpStatus) && httpStatus >= 100 && httpStatus <= 599 ? httpStatus : null,
     requestFailureCode: requestLogFailureCode(row.requestFailureCode),
+    requestLifecycle: requestLifecycleView(row.requestLifecycle),
     requestDispatches: dispatches,
     requestDispatchCount: admission ? 0 : observedConnect ? count : null,
     requestDispatchCoverage: admission ? 'before_dispatch' : observedConnect ? 'connect_handoff' : null,

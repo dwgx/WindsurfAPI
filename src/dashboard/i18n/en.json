@@ -618,7 +618,30 @@
       "dispatchNone": "0 dispatches · rejected at admission",
       "currentBoot": "Current process",
       "previousBoot": "Previous process",
-      "unknownBoot": "Process unknown"
+      "unknownBoot": "Process unknown",
+      "clientDisconnected": "Client disconnected",
+      "lifecycle": {
+        "details": "Transport and receipt details",
+        "client": "Downstream client",
+        "gateway": "Gateway abort",
+        "transport": "Connect transport",
+        "terminal": "Upstream terminal",
+        "usage": "Upstream usage",
+        "billing": "Upstream billing fields",
+        "disconnected": "Disconnected",
+        "writeEnded": "Gateway write ended",
+        "abortEmitted": "Local signal sent",
+        "abortNotEmitted": "No local signal sent",
+        "abortObserved": "Local abort observed",
+        "abortNotObserved": "Abort event not observed",
+        "endFrame": "End frame received",
+        "finishMarker": "Finish marker seen, no end frame",
+        "terminalMissing": "End frame not observed",
+        "fieldsReported": "Reported",
+        "fieldsNotObserved": "Not observed",
+        "unknown": "Unknown",
+        "scope": "Connect observations cover the last attempt until the gateway closed its side of the stream. Provider processing and the final bill require separate confirmation."
+      }
     },
     "statsAgg": {
       "title": "Aggregates",

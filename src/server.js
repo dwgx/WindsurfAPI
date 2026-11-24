@@ -243,9 +243,16 @@ function contentEncodingErrorStyle(path) {
  * Retry-After / include_usage). Guard on !writableEnded so a normal end is a
  * no-op.
  */
-export function bindClientAbort(res) {
+export function bindClientAbort(res, lifecycle = null) {
   const abortController = new AbortController();
-  res.on('close', () => { if (!res.writableEnded) abortController.abort(); });
+  res.on('close', () => {
+    if (res.writableEnded) return;
+    abortController.abort();
+    if (lifecycle) {
+      lifecycle.clientDisconnected = true;
+      lifecycle.gatewayAbortEmitted = abortController.signal.aborted;
+    }
+  });
   return abortController;
 }
 
@@ -929,13 +936,16 @@ async function route(req, res, scope) {
     // and — on the DEVIN_CONNECT path — stops the failover loop from hopping
     // fresh pooled accounts to a dead socket. Guard on !writableEnded so the
     // normal end-of-response 'close' is a no-op.
-    const abortController = bindClientAbort(res);
+    const lifecycle = body.stream === true
+      ? { clientDisconnected: null, gatewayAbortEmitted: false, connect: null }
+      : null;
+    const abortController = bindClientAbort(res, lifecycle);
     // One absolute deadline + upstream-turn budget per request, owned by the
     // route. Layers (queue admission, cascade poll, connect retries) receive
     // the remaining time and may only shorten their own bounds.
     const budget = createRequestBudget({ stream: body.stream === true });
     const requestId = fallbackRequestId;
-    const onConnectDispatch = beginChatRequestLog(scope, requestId, body.model, VERSION_INFO);
+    const onConnectDispatch = beginChatRequestLog(scope, requestId, body.model, VERSION_INFO, lifecycle);
     const result = await handleChatCompletions(body, {
       callerKey,
       nativeBridgeCallerKey: nativeBridgeCallerKeyForRequest(req, token, body, callerKey),
@@ -1472,6 +1482,8 @@ export function startServer() {
           // A throw before headers is answered by the outer catch below; only a
           // response that actually went out carries a status worth recording.
           if (res.headersSent || res.writableEnded) scope.status = res.statusCode;
+          const lifecycle = scope.chatLog?.lifecycle;
+          if (lifecycle?.clientDisconnected === null && res.writableEnded) lifecycle.clientDisconnected = false;
           finalizeStatsScope(scope);
         }
       });
