@@ -3444,7 +3444,7 @@ tbody tr:hover td { background: var(--surface-2); }
         <div class="text-sm" id="add-reauth-banner-text"></div>
         <button class="btn btn-outline btn-sm" onclick="App.clearReauthBinding()" data-i18n="accounts.reauth.cancelBinding">取消绑定</button>
       </div>
-      <div class="add-tabs" role="tablist" data-i18n-aria-label="accounts.add.tabsLabel" onkeydown="App.onAddTabKeydown(event)">
+      <div class="add-tabs" id="add-account-tabs" role="tablist" data-i18n-aria-label="accounts.add.tabsLabel" onkeydown="App.onAddTabKeydown(event)">
         <button class="add-tab active" role="tab" id="add-tab-login" aria-selected="true" aria-controls="add-panel-login" onclick="App.switchAddTab('login')" data-i18n="accounts.add.tab.login">登录</button>
         <button class="add-tab" role="tab" id="add-tab-paste" aria-selected="false" aria-controls="add-panel-paste" tabindex="-1" onclick="App.switchAddTab('paste')" data-i18n="accounts.add.tab.paste">粘贴凭证</button>
         <button class="add-tab" role="tab" id="add-tab-import" aria-selected="false" aria-controls="add-panel-import" tabindex="-1" onclick="App.switchAddTab('import')" data-i18n="accounts.add.tab.import">批量导入</button>
@@ -3485,7 +3485,7 @@ tbody tr:hover td { background: var(--surface-2); }
                   <span data-i18n="oauth.github">GitHub 登录</span>
                 </button>
               </div>
-              <p class="field-hint" data-i18n="oauth.legacyRedirectHelp">若登录页提示 Invalid redirect URI，旧回调已被上游拒绝。请从 Devin 官方入口登录。</p>
+              <p class="field-hint" data-i18n="oauth.legacyRedirectHelp">若提示 Invalid redirect URI，上游在回调前拒绝了旧版流程。已有网关支持的凭据可直接粘贴。自动接入需要上游支持并登记回调。</p>
               <div id="oauth-status" style="margin-top:8px;font-size:12px;color:var(--text-muted)"></div>
               <div id="oauth-token-step" class="login-token-step hidden">
                 <div style="font-weight:600;margin-bottom:6px" data-i18n="oauth.step2Title">粘贴 Windsurf 返回的 Token</div>
@@ -3659,12 +3659,24 @@ tbody tr:hover td { background: var(--surface-2); }
               </div>
             </div>
             <div class="section-body">
-              <div style="padding:8px 12px;margin-bottom:12px;background:var(--surface-2);border-radius:var(--radius);font-size:12px;color:var(--text-muted);line-height:1.6">
+              <div id="connect-recovery-guide" class="reauth-notice hidden">
+                <div class="reauth-notice-title" data-i18n="accounts.reauth.connectGuide">Devin Connect 恢复</div>
+                <ol class="login-steps">
+                  <li>
+                    <a id="connect-recovery-portal" href="https://app.devin.ai/" target="_blank" rel="noopener noreferrer" data-i18n="accounts.login.devinTitle">Devin 官方登录</a>
+                    <span data-i18n="accounts.reauth.connectPortal">可在官网确认账号能登录。网关恢复需要另外提供凭据。</span>
+                  </li>
+                  <li data-i18n="accounts.reauth.connectCredential">向网关管理员取得此连接支持的替换凭据，粘贴到下方并替换原账号。</li>
+                  <li data-i18n="accounts.reauth.connectVerify">保存后，用常用客户端发一条短模型请求，确认这份凭据真的能出结果。</li>
+                </ol>
+                <p class="field-hint" data-i18n="accounts.reauth.connectDependency">如果你只有 Devin 门户登录或 Devin API 密钥，需先由管理员提供受支持的连接凭据。自动接入需要 Devin 支持的授权和已登记的回调。</p>
+              </div>
+              <div id="account-paste-help" style="padding:8px 12px;margin-bottom:12px;background:var(--surface-2);border-radius:var(--radius);font-size:12px;color:var(--text-muted);line-height:1.6">
                 <span data-i18n="help.tokenGuide">请使用此前已取得、此网关支持的凭证。旧版 Windsurf 凭证页</span>
                 <a href="https://windsurf.com/show-auth-token" target="_blank" rel="noopener noreferrer" style="color: var(--accent-text);font-weight:600">windsurf.com/show-auth-token</a>
               </div>
               <div class="field-row">
-                <div class="field" style="max-width:180px">
+                <div id="account-paste-type" class="field" style="max-width:180px">
                   <label class="field-label" data-i18n="field.type.label">类型</label>
                   <select id="acc-type" class="select">
                     <option value="token" selected>Auth Token</option>
@@ -3676,21 +3688,22 @@ tbody tr:hover td { background: var(--surface-2); }
                   <input id="acc-key" type="password" autocomplete="off" spellcheck="false" class="input" aria-describedby="account-paste-hint" data-i18n-placeholder="field.key.placeholder" placeholder="粘贴 Auth Token">
                   <div class="field-hint" id="account-paste-hint" data-i18n="accounts.login.manualPasteHint">按 Ctrl+V 或使用浏览器的粘贴菜单，再点击添加。</div>
                 </div>
-                <div class="field" style="max-width:200px">
+                <div id="account-paste-label" class="field" style="max-width:200px">
                   <label class="field-label" data-i18n="field.label.label">标签</label>
                   <input id="acc-label" class="input" data-i18n-placeholder="field.label.placeholder" placeholder="可选">
                 </div>
               </div>
-              <div class="field-row" style="margin-top:12px">
+              <div id="account-paste-proxy" class="field-row" style="margin-top:12px">
                 <div class="field" style="flex:1">
                   <label class="field-label" data-i18n="field.proxy.label">代理</label>
                   <input id="acc-proxy" class="input" data-i18n-placeholder="field.proxy.placeholder" placeholder="http://proxy:8080 或 socks5://user:pass@host:port（可选）">
                 </div>
               </div>
-              <div class="field-hint" style="margin-top:4px" data-i18n="field.proxy.hint">留空则使用全局代理设置</div>
+              <div id="account-paste-proxy-hint" class="field-hint" style="margin-top:4px" data-i18n="field.proxy.hint">留空则使用全局代理设置</div>
               <div class="field-row-actions">
-                <button class="btn btn-primary" onclick="App.addAccount()" data-i18n="action.add">添加账号</button>
+                <button id="account-credential-submit" class="btn btn-primary" onclick="App.addAccount()" data-i18n="action.add">添加账号</button>
               </div>
+              <div id="account-credential-status" class="field-hint"></div>
             </div>
           </div>
         </div>
@@ -8939,11 +8952,12 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     }
     // The flow is bound to the address it was sent to, whether or not a probe
     // was cached for it.
-    if (this._wlFlow && email !== this._wlFlow.email) {
-      this._wlFlow = null;
+    if ((this._wlFlow && email !== this._wlFlow.email) || (this._wlEmailOp && email !== this._wlEmailOp.email)) {
+      this.resetEmailCodeForm();
       const st = document.getElementById('wl-code-status');
       if (st) st.textContent = I18n.t('emailLogin.emailChanged');
-      document.getElementById('wl-code-login-btn')?.setAttribute('disabled', '');
+    } else {
+      this.updateEmailCodeControls();
     }
   },
 
@@ -9033,42 +9047,74 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     setTimeout(() => document.getElementById('oauth-token-input')?.focus(), 120);
   },
 
-  // Resend countdown lives on the SEND button itself: one control, one state.
-  // The status line carries the "code sent to <address>" sentence; the button
-  // carries the seconds left until another send is allowed.
-  startEmailCodeCooldown(btn, seconds = 30) {
+  updateEmailCodeControls() {
+    const email = document.getElementById('wl-email')?.value.trim().toLowerCase();
+    const cooldown = this._wlCooldown;
+    const remaining = cooldown ? Math.max(0, Math.ceil((cooldown.until - Date.now()) / 1000)) : 0;
+    if (cooldown && remaining === 0) {
+      this._wlCooldown = null;
+      clearInterval(this._wlCooldownTimer);
+      this._wlCooldownTimer = null;
+    }
+    const seconds = cooldown?.email === email ? remaining : 0;
+    const busy = Boolean(this._wlEmailOp);
+    const send = document.getElementById('wl-send-code-btn');
+    const alternate = document.getElementById('wl-devin-code-btn');
     const label = document.getElementById('wl-send-code-label');
-    if (this._wlCooldownTimer) clearInterval(this._wlCooldownTimer);
-    let left = seconds;
-    if (btn) btn.disabled = true;
-    if (label) label.textContent = I18n.t('emailLogin.resendInShort', { seconds: left });
-    this._wlCooldownTimer = setInterval(() => {
-      left -= 1;
-      if (left <= 0) {
-        clearInterval(this._wlCooldownTimer);
-        this._wlCooldownTimer = null;
-        if (btn) btn.disabled = false;
-        if (label) label.textContent = I18n.t('action.sendCode');
-        return;
-      }
-      if (label) label.textContent = I18n.t('emailLogin.resendInShort', { seconds: left });
-    }, 1000);
+    const verify = document.getElementById('wl-code-login-btn');
+    if (send) send.disabled = busy || seconds > 0;
+    if (alternate) alternate.disabled = busy || seconds > 0;
+    if (verify) verify.disabled = busy || !this._wlFlow || this._wlFlow.email.toLowerCase() !== email;
+    if (label) {
+      const text = seconds > 0 ? I18n.t('emailLogin.resendInShort', { seconds }) : I18n.t('action.sendCode');
+      if (text !== label.textContent) label.textContent = text;
+    }
+    const status = document.getElementById('wl-code-status');
+    if (status?.dataset.waiting === '1' && seconds === 0 && !busy) {
+      status.textContent = I18n.t('emailLogin.resendReady');
+      delete status.dataset.waiting;
+    }
+  },
+
+  resetEmailCodeForm() {
+    this._wlEmailOp = null;
+    this._wlFlow = null;
+    const code = document.getElementById('wl-email-code');
+    const status = document.getElementById('wl-code-status');
+    if (code) code.value = '';
+    if (status) {
+      status.textContent = '';
+      delete status.dataset.waiting;
+    }
+    this.updateEmailCodeControls();
+  },
+
+  startEmailCodeCooldown(email, seconds = 30) {
+    this._wlCooldown = { email: email.toLowerCase(), until: Date.now() + seconds * 1000 };
+    if (!this._wlCooldownTimer) this._wlCooldownTimer = setInterval(() => this.updateEmailCodeControls(), 250);
+    this.updateEmailCodeControls();
   },
 
   async windsurfSendEmailCode(opts = {}) {
     const email = document.getElementById('wl-email').value.trim();
+    if (this._connectRecovery || this._wlEmailOp) return;
     if (!email) return this.toast(I18n.t('toast.enterEmailPassword'), 'error');
-    const btn = document.getElementById('wl-send-code-btn');
+    if (this._wlCooldown?.email === email.toLowerCase() && this._wlCooldown.until > Date.now()) return;
+    const operation = { email };
     const status = document.getElementById('wl-code-status');
-    const verifyBtn = document.getElementById('wl-code-login-btn');
     const host = opts.host === 'devin' ? 'devin' : undefined;
-    if (btn) btn.disabled = true;
-    if (status) status.textContent = I18n.t('emailLogin.sendingCode');
+    this._wlEmailOp = operation;
+    if (status) {
+      delete status.dataset.waiting;
+      status.textContent = I18n.t('emailLogin.sendingCode');
+    }
+    this.updateEmailCodeControls();
     try {
       const payload = { email, proxy: this.getWindsurfLoginProxy() };
       if (host) payload.host = host;
       const r = await this.api('POST', '/windsurf-login/email/start', payload, { notify: false });
-      if (r && r.sent && r.flowId) {
+      if (this._wlEmailOp !== operation) return;
+      if (r?.sent && r.flowId) {
         this._wlFlow = { flowId: r.flowId, email, host: r.host || host || 'windsurf' };
         if (status) {
           status.textContent = this._wlFlow.host === 'devin'
@@ -9076,60 +9122,60 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
             : I18n.t('emailLogin.codeSentTo', { email });
         }
         this.toast(I18n.t('emailLogin.codeSent'), 'success');
-        if (verifyBtn) verifyBtn.removeAttribute('disabled');
         document.getElementById('wl-email-code')?.focus();
-        this.startEmailCodeCooldown(btn);
-      } else if (r && r.error === 'ERR_EMAIL_CODE_COOLDOWN') {
-        // A code is already out: that is not a failure, it is the countdown.
-        // Show the remaining seconds on the button instead of a red toast.
-        const secs = Math.max(1, Math.ceil((r.retryAfterMs || 30000) / 1000));
-        if (status) status.textContent = I18n.t('emailLogin.codeSentTo', { email });
-        this.startEmailCodeCooldown(btn, secs);
+        this.startEmailCodeCooldown(email);
+      } else if (r?.error === 'ERR_EMAIL_CODE_COOLDOWN') {
+        const retry = Number(r.retryAfterMs);
+        const seconds = Number.isFinite(retry) && retry > 0 ? Math.ceil(retry / 1000) : 30;
+        if (status) {
+          status.textContent = I18n.t('emailLogin.resendWait');
+          status.dataset.waiting = '1';
+        }
+        this.startEmailCodeCooldown(email, seconds);
       } else {
         this._wlFlow = null;
-        if (verifyBtn) verifyBtn.setAttribute('disabled', '');
-        const msg = this.loginErrorMessage(r);
-        if (status) status.textContent = msg;
-        this.toast(msg, 'error');
-        if (btn) btn.disabled = false;
+        const message = this.loginErrorMessage(r);
+        if (status) status.textContent = message;
+        this.toast(message, 'error');
       }
-    } catch (err) {
-      this._wlFlow = null;
-      if (btn) btn.disabled = false;
-      const msg = this.loginErrorMessage({ error: err.message });
-      if (status) status.textContent = msg;
-      this.toast(msg, 'error');
+    } finally {
+      if (this._wlEmailOp === operation) {
+        this._wlEmailOp = null;
+        this.updateEmailCodeControls();
+      }
     }
   },
 
   async windsurfCompleteEmailCode() {
+    if (this._connectRecovery || this._wlEmailOp) return;
     const codeEl = document.getElementById('wl-email-code');
-    const code = codeEl ? codeEl.value.trim() : '';
+    const code = codeEl?.value.trim();
     const flow = this._wlFlow;
     const typedEmail = document.getElementById('wl-email').value.trim();
     if (!flow) return this.toast(I18n.t('emailLogin.requestCodeFirst'), 'error');
-    // A code is bound to the address it was sent to; a changed address must
-    // request a new one instead of failing upstream with "invalid token".
-    if (typedEmail && typedEmail !== flow.email) {
-      this._wlFlow = null;
-      document.getElementById('wl-code-login-btn')?.setAttribute('disabled', '');
+    if (typedEmail !== flow.email) {
+      this.resetEmailCodeForm();
       return this.toast(I18n.t('emailLogin.emailChanged'), 'error');
     }
     if (!code) return this.toast(I18n.t('emailLogin.enterCode'), 'error');
 
     const autoAdd = document.getElementById('wl-auto-add').checked;
-    const btn = document.getElementById('wl-code-login-btn');
     const status = document.getElementById('wl-code-status');
-    if (btn) btn.disabled = true;
-    const entry = { time: new Date().toISOString(), email: flow.email, proxy: this.getWindsurfProxyLabel(this.getWindsurfLoginProxy()), status: 'pending' };
-
+    const accountId = this._reauthAccountId;
+    const operation = { email: flow.email };
+    this._wlEmailOp = operation;
+    this.updateEmailCodeControls();
+    if (status) delete status.dataset.waiting;
+    const proxy = this.getWindsurfLoginProxy();
+    const entry = { time: new Date().toISOString(), email: flow.email, proxy: this.getWindsurfProxyLabel(proxy), status: 'pending' };
     try {
       const r = await this.api('POST', '/windsurf-login/email/complete', {
-        flowId: flow.flowId, code, autoAdd, proxy: this.getWindsurfLoginProxy(),
-        ...(this._reauthAccountId ? { accountId: this._reauthAccountId } : {}),
+        flowId: flow.flowId, code, autoAdd, proxy,
+        ...(accountId ? { accountId } : {}),
       }, { notify: false });
-      if (r && r.success) {
-        const bound = r.reauthenticated === true || !!this._reauthAccountId;
+      if (this._wlEmailOp !== operation) return;
+      if (r?.success) {
+        const bound = r.reauthenticated === true || Boolean(accountId);
         this._wlFlow = null;
         if (codeEl) codeEl.value = '';
         entry.status = 'success';
@@ -9140,25 +9186,22 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
         this.loadAccounts();
         if (bound) this.closeAddAccountModal();
       } else {
-        const msg = this.loginErrorMessage(r);
-        entry.status = 'error: ' + msg;
-        if (status) status.textContent = msg;
-        this.toast(msg, 'error');
-        // A dead flow needs a fresh code. A wrong code can be corrected.
-        if (r && /ERR_EMAIL_FLOW_(EXPIRED|USED|NOT_FOUND)/.test(r.error || '')) {
+        const message = this.loginErrorMessage(r);
+        entry.status = 'error: ' + message;
+        if (status) status.textContent = message;
+        this.toast(message, 'error');
+        if (/^ERR_EMAIL_FLOW_(EXPIRED|USED|NOT_FOUND)$/.test(r?.error || '')) {
           this._wlFlow = null;
           if (codeEl) codeEl.value = '';
         }
       }
-    } catch (err) {
-      const msg = this.loginErrorMessage({ error: err.message });
-      entry.status = 'error: ' + msg;
-      if (status) status.textContent = msg;
-      this.toast(msg, 'error');
+      this.pushLoginHistory(entry);
+    } finally {
+      if (this._wlEmailOp === operation) {
+        this._wlEmailOp = null;
+        this.updateEmailCodeControls();
+      }
     }
-
-    this.pushLoginHistory(entry);
-    if (btn) btn.disabled = !this._wlFlow;
   },
 
   async windsurfLogin() {
@@ -10412,11 +10455,16 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     if (!overlay) return;
     this._addModalReturnFocus = document.activeElement;
     this._reauthAccountId = accountId || null;
+    const account = this._accountsById?.get(accountId) || this._accountDetails?.get(accountId);
+    this._connectRecovery = Boolean(accountId && account?.credentialKind === 'connect_session');
+    this.resetEmailCodeForm();
+    this._credentialSave = null;
+    const credentialStatus = document.getElementById('account-credential-status');
+    if (credentialStatus) credentialStatus.textContent = '';
     overlay.classList.remove('hidden');
-    this.switchAddTab(tab);
-    // A fresh open starts at the method chooser. A re-auth binding or a
-    // prefilled email goes straight to the email form, because that is the
-    // only path those flows can finish on.
+    this.switchAddTab(this._connectRecovery ? 'paste' : tab);
+    // Connect recovery edits the original row. A Windsurf-bound login can
+    // still start at the email form when the original identity is known.
     if (this._addTab === 'login') this.selectLoginMethod(email || accountId ? 'email' : null);
     const emailInput = document.getElementById('wl-email');
     if (emailInput && (email || accountId)) {
@@ -10454,6 +10502,11 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     if (!overlay) return;
     overlay.classList.add('hidden');
     this._reauthAccountId = null;
+    this._connectRecovery = false;
+    this._credentialSave = null;
+    const secret = document.getElementById('acc-key');
+    if (secret) secret.value = '';
+    this.resetEmailCodeForm();
     this.renderReauthBanner();
     if (this._addModalKeyHandler) document.removeEventListener('keydown', this._addModalKeyHandler, true);
     this._addModalKeyHandler = null;
@@ -10469,7 +10522,20 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     const el = document.getElementById('add-reauth-banner');
     if (!el) return;
     const id = this._reauthAccountId;
+    const connect = this._connectRecovery === true;
     el.classList.toggle('hidden', !id);
+    document.getElementById('connect-recovery-guide')?.classList.toggle('hidden', !connect);
+    for (const extra of [
+      'add-account-tabs', 'account-paste-help', 'account-paste-type', 'account-paste-label',
+      'account-paste-proxy', 'account-paste-proxy-hint',
+    ]) document.getElementById(extra)?.classList.toggle('hidden', connect);
+    const submit = document.getElementById('account-credential-submit');
+    if (submit) {
+      const key = connect ? 'accounts.reauth.replaceCredential' : 'action.add';
+      submit.setAttribute('data-i18n', key);
+      submit.textContent = I18n.t(key);
+      submit.disabled = Boolean(this._credentialSave);
+    }
     if (!id) return;
     const a = this._accountsById?.get(id);
     const text = document.getElementById('add-reauth-banner-text');
@@ -10481,7 +10547,14 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
   },
 
   clearReauthBinding() {
+    if (this._credentialSave) return;
     this._reauthAccountId = null;
+    this._connectRecovery = false;
+    this.resetEmailCodeForm();
+    const secret = document.getElementById('acc-key');
+    const credentialStatus = document.getElementById('account-credential-status');
+    if (secret) secret.value = '';
+    if (credentialStatus) credentialStatus.textContent = '';
     this.renderReauthBanner();
     this.setAddModalTitle();
   },
@@ -10495,7 +10568,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
       ? (this._accountsById?.get(this._reauthAccountId)?.email || '')
       : '';
     if (email) {
-      el.textContent = I18n.t('accounts.add.modalTitle.reauth', { email });
+      el.textContent = I18n.t(this._connectRecovery ? 'accounts.reauth.connectTitle' : 'accounts.add.modalTitle.reauth', { email });
       return;
     }
     el.textContent = I18n.t(`accounts.add.modalTitle.${this._addTab || 'login'}`);
@@ -10507,6 +10580,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
   selectLoginMethod(method) {
     const valid = [null, 'oauth', 'email', 'token'];
     const next = valid.includes(method) ? method : null;
+    if (this._loginMethod === 'email' && next !== 'email' && (this._wlFlow || this._wlEmailOp)) this.resetEmailCodeForm();
     this._loginMethod = next;
     document.getElementById('wl-method-step')?.classList.toggle('hidden', next !== null);
     document.getElementById('wl-panel-oauth')?.classList.toggle('hidden', next !== 'oauth' && next !== 'token');
@@ -10524,7 +10598,8 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
 
   switchAddTab(tab) {
     const valid = ['login', 'paste', 'import', 'local'];
-    const next = valid.includes(tab) ? tab : 'login';
+    const next = this._connectRecovery ? 'paste' : valid.includes(tab) ? tab : 'login';
+    if (this._addTab === 'login' && next !== 'login' && (this._wlFlow || this._wlEmailOp)) this.resetEmailCodeForm();
     this._addTab = next;
     for (const t of valid) {
       const btn = document.getElementById(`add-tab-${t}`);
@@ -11867,6 +11942,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
   },
 
   async addAccount() {
+    if (this._credentialSave) return;
     const type = document.getElementById('acc-type').value;
     const key = document.getElementById('acc-key').value.trim();
     const label = document.getElementById('acc-label').value.trim();
@@ -11874,18 +11950,35 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     if (!key) return this.toast(I18n.t('toast.enterKeyOrToken'), 'error');
     const body = type === 'api_key' ? { api_key: key, label, proxy } : { token: key, label, proxy };
     if (this._reauthAccountId) body.accountId = this._reauthAccountId;
-    const r = await this.api('POST', '/accounts', body, { notify: false });
-    if (r?.success) {
-      const bound = !!this._reauthAccountId;
-      this.toast(I18n.t(bound ? 'accounts.reauth.success' : 'account.addSuccess'));
-      document.getElementById('acc-key').value = '';
-      document.getElementById('acc-label').value = '';
-      document.getElementById('acc-proxy').value = '';
-      this.accountsPage = 1;
-      this._accountDetails?.clear();
-      this.closeAddAccountModal();
-      this.loadAccounts();
-    } else this.toast(this.loginErrorMessage(r, 'toast.addFailed'), 'error');
+    const save = {};
+    this._credentialSave = save;
+    const button = document.getElementById('account-credential-submit');
+    const status = document.getElementById('account-credential-status');
+    if (button) button.disabled = true;
+    if (status) status.textContent = I18n.t('accounts.reauth.savingCredential');
+    try {
+      const r = await this.api('POST', '/accounts', body, { notify: false });
+      if (this._credentialSave !== save) return;
+      if (r?.success) {
+        this.toast(I18n.t(body.accountId ? 'accounts.reauth.credentialSaved' : 'account.addSuccess'));
+        document.getElementById('acc-key').value = '';
+        document.getElementById('acc-label').value = '';
+        document.getElementById('acc-proxy').value = '';
+        this.accountsPage = 1;
+        this._accountDetails?.clear();
+        this.closeAddAccountModal();
+        this.loadAccounts();
+      } else {
+        const message = this.loginErrorMessage(r, 'toast.addFailed');
+        if (status) status.textContent = message;
+        this.toast(message, 'error');
+      }
+    } finally {
+      if (this._credentialSave === save) {
+        this._credentialSave = null;
+        if (button) button.disabled = false;
+      }
+    }
   },
 
   // v2.0.60 — preflight the local-windsurf availability so the dashboard

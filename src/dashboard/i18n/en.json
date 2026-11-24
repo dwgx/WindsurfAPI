@@ -1186,7 +1186,7 @@
       "dontAsk": "Don't ask again (change in Settings)",
       "copyUnavailable": "This browser could not copy the link. Select Open login page."
     },
-    "legacyRedirectHelp": "If the login page says “Invalid redirect URI”, the provider rejected the legacy callback. Use Devin’s official sign-in."
+    "legacyRedirectHelp": "An Invalid redirect URI message means the provider rejected the legacy flow before a callback. Paste an existing gateway-compatible credential if you have one. Automatic enrollment needs a supported and registered callback."
   },
   "update": {
     "checking": "Checking for updates...",
@@ -1407,7 +1407,16 @@
       "probeAlive": "The credential still works — the account is back in rotation",
       "probeDead": "The server still rejects this credential — sign in again for a new one",
       "probeCooldown": "Checked moments ago — try again in a minute",
-      "success": "Account re-authenticated"
+      "success": "Account re-authenticated",
+      "connectTitle": "Replace credential for {{email}}",
+      "connectGuide": "Recover Devin Connect",
+      "connectPortal": "Use the official portal to verify that you can sign in. Gateway recovery also needs a compatible credential.",
+      "connectCredential": "Ask the gateway administrator for a replacement credential supported by this connection. Paste it below to replace the original account’s credential.",
+      "connectVerify": "After saving, send a short request from your usual client to confirm the model responds.",
+      "connectDependency": "If you only have a Devin portal login or Devin API key, ask the gateway administrator for a compatible credential. Automatic enrollment requires a supported authorization flow and a registered callback.",
+      "replaceCredential": "Replace credential",
+      "savingCredential": "Saving credential…",
+      "credentialSaved": "Replacement credential saved. Model access is still unverified."
     },
     "batch": {
       "selectPage": "Select {{count}} on this page",
@@ -1975,9 +1984,9 @@
     "ERR_HTTP_REFERRER_BLOCKED": "Upstream rejected the request: the server's referrer is restricted for this Firebase API key. Check the login proxy / egress IP, or allow it in the Firebase console.",
     "ERR_AUTH1_TOKEN_MISSING": "Auth1 response missing token",
     "ERR_AUTH1_NOT_A_POOL_KEY": "That is an intermediate ticket from the sign-in flow, not an account credential. Finish signing in, then paste the token from the page it lands on.",
-    "ERR_REAUTH_TOKEN_UNCHANGED": "This account's token was retired upstream. Re-authenticate to mint a new one, or force the re-enable if you are certain.",
+    "ERR_REAUTH_TOKEN_UNCHANGED": "The current credential has expired. Paste a new credential for this connection.",
     "ERR_REAUTH_NOT_APPLICABLE": "This action does not apply to a disabled or banned account.",
-    "ERR_REAUTH_TOKEN_INVALID": "That is not a session token. Paste the devin-session-token / show-auth-token value, or use the email-code login.",
+    "ERR_REAUTH_TOKEN_INVALID": "Paste a replacement session credential provided for this gateway connection.",
     "ERR_NO_TOKEN_IN_INPUT": "No token in that paste. Use a session token, an API key, or a show-auth-token URL that includes token=.",
     "ERR_IMPORT_TEXT_EMPTY": "Paste is empty.",
     "ERR_POSTAUTH_FAILED": "Windsurf accepted the login but the session exchange failed. Retry the same code — it stays valid for 2 minutes.",
@@ -2004,7 +2013,11 @@
     "ERR_EMAIL_FLOW_CODE_REQUIRED": "A verification flow and code are required",
     "ERR_LOGIN_PROBE_FAILED": "Could not check the login method. Try again.",
     "ERR_ACCOUNT_CHECK_STATUS_UNAVAILABLE": "The account check could not read upstream status. Retry when the language service is ready.",
-    "ERR_FLEET_JOB_NOT_FOUND": "This check run is no longer available. Start a new check if needed."
+    "ERR_FLEET_JOB_NOT_FOUND": "This check run is no longer available. Start a new check if needed.",
+    "ERR_REAUTH_DEVIN_PORTAL_URL": "This is the Devin portal address. Sign in there if needed, then obtain a compatible replacement credential from the gateway administrator.",
+    "ERR_REAUTH_DEVIN_API_CREDENTIAL": "A Devin API key is for the Devin API. This gateway recovery needs a compatible Connect session credential.",
+    "ERR_REAUTH_REDIRECT_REJECTED": "The provider rejected the legacy callback (Invalid redirect URI). Automatic recovery requires a registered callback. You can paste an existing compatible replacement credential here.",
+    "ERR_REAUTH_CALLBACK_FAILED": "The provider did not complete the callback. Obtain a compatible replacement credential from the gateway administrator."
   },
   "footer": {
     "version": "Version",
@@ -2249,7 +2262,9 @@
     "probeFailedHint": "Could not detect this account's login method. If it has no password (Google/GitHub or email-code signup), request a code below.",
     "tryDevinHost": "Mail not received? Send via app.devin.ai",
     "useCode": "Use an email code instead",
-    "methodNotFound": "No Windsurf account uses this email. Check the address."
+    "methodNotFound": "No Windsurf account uses this email. Check the address.",
+    "resendWait": "Please wait before requesting another code. Use the countdown on the Send code button.",
+    "resendReady": "You can request a new verification code."
   },
   "devin": {
     "unknown": "Unknown",

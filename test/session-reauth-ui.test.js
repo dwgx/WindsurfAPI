@@ -63,7 +63,7 @@ function element(id) {
   if (elements.has(id)) return elements.get(id);
   const classes = new Set();
   const el = {
-    id, textContent: '', innerHTML: '', value: '', hidden: false, disabled: false,
+    id, textContent: '', innerHTML: '', value: '', hidden: false, disabled: false, dataset: {},
     classList: {
       add: (c) => classes.add(c),
       remove: (c) => classes.delete(c),
@@ -104,6 +104,8 @@ function appBase(overrides = {}) {
     reloginAccount: method('reloginAccount'),
     closeAddAccountModal: method('closeAddAccountModal'),
     openAddAccountModal: method('openAddAccountModal'),
+    resetEmailCodeForm: method('resetEmailCodeForm'),
+    updateEmailCodeControls: method('updateEmailCodeControls'),
     closeRowMenu() { this._closed = (this._closed || 0) + 1; },
     closeAccountDrawer() { this._closedDrawer = (this._closedDrawer || 0) + 1; },
     renderAccountDetail: () => '<detail/>',
@@ -210,6 +212,25 @@ describe('row menu', () => {
 
     assert.equal(input.value, '');
     assert.equal(self._reauthAccountId, 'acct-reauth');
+  });
+
+  it('opens the replacement guide for a bound Connect credential', () => {
+    const guide = element('connect-recovery-guide');
+    const tabs = element('add-account-tabs');
+    const self = appBase({
+      _accountsById: new Map([['acct-reauth', { ...reauthRow, credentialKind: 'connect_session' }]]),
+      switchAddTab(tab) { this._addTab = tab; },
+      selectLoginMethod() { assert.fail('Connect recovery should open the paste panel'); },
+      loadWindsurfLogin() {}, checkLocalImportAvailability() {},
+    });
+    self.reloginAccount('acct-reauth');
+    assert.equal(self._addTab, 'paste');
+    assert.equal(self._reauthAccountId, 'acct-reauth');
+    assert.equal(guide.classList.contains('hidden'), false);
+    assert.equal(tabs.classList.contains('hidden'), true);
+    self.closeAddAccountModal();
+    assert.equal(guide.classList.contains('hidden'), true);
+    assert.equal(tabs.classList.contains('hidden'), false);
   });
 });
 

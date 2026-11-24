@@ -222,6 +222,27 @@ describe('POST /accounts/:id/reauth {action:"token"}', () => {
     assert.equal(status, 400);
     assert.equal(body.error, 'ERR_REAUTH_ACTION_INVALID');
   });
+
+  it('classifies recovery failures without replacing the credential or echoing callback data', async () => {
+    const account = benched('recovery-stage');
+    const previous = getAccountInternal(account.id).apiKey;
+    const inputs = [
+      ['https://app.devin.ai/', 'ERR_REAUTH_DEVIN_PORTAL_URL'],
+      ['cog_fixture_public_api', 'ERR_REAUTH_DEVIN_API_CREDENTIAL'],
+      ['https://example.invalid/auth/callback?error=invalid_redirect_uri&state=fixture-hidden', 'ERR_REAUTH_REDIRECT_REJECTED'],
+      ['https://example.invalid/auth/callback?error=access_denied&error_description=fixture-hidden', 'ERR_REAUTH_CALLBACK_FAILED'],
+      ['devin-session-token$', 'ERR_REAUTH_TOKEN_INVALID'],
+    ];
+    for (const [token, expected] of inputs) {
+      const { status, body } = await call('POST', '/accounts', { token, accountId: account.id });
+      assert.equal(status, 400);
+      assert.equal(body.error, expected);
+      assert.doesNotMatch(JSON.stringify(body), /fixture-hidden/);
+      const current = getAccountInternal(account.id);
+      assert.equal(current.status, 'reauth');
+      assert.equal(current.apiKey, previous);
+    }
+  });
 });
 
 describe('POST /accounts/:id/reauth {action:"probe"}', () => {

@@ -5426,6 +5426,7 @@ function publicAccount(a, now, { view = 'full' } = {}) {
     loginEmail: accountLoginIdentity(a),
     label: a.label || '',
     method: a.method,
+    credentialKind: a.apiKey.startsWith('devin-session-token$') ? 'connect_session' : 'other',
     status: a.status,
     state: resolveAccountState(a, now, { rpmUsed, rpmLimit }),
     // Ban metadata is operator-facing only: when it happened, and the

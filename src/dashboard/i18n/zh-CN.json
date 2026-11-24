@@ -1186,7 +1186,7 @@
       "dontAsk": "下次不要问我（可在设置里改回）",
       "copyUnavailable": "浏览器无法自动复制链接，请点「打开登录页」。"
     },
-    "legacyRedirectHelp": "若登录页提示 Invalid redirect URI，旧回调已被上游拒绝。请从 Devin 官方入口登录。"
+    "legacyRedirectHelp": "若提示 Invalid redirect URI，上游在回调前拒绝了旧版流程。已有网关支持的凭据可直接粘贴。自动接入需要上游支持并登记回调。"
   },
   "update": {
     "checking": "正在检查更新...",
@@ -1407,7 +1407,16 @@
       "probeAlive": "登录凭证仍然有效 — 账号已回到轮换",
       "probeDead": "服务端仍然拒绝这份凭证 — 请重新登录换一份新的",
       "probeCooldown": "刚刚检查过 — 请一分钟后再试",
-      "success": "账号已重新授权"
+      "success": "账号已重新授权",
+      "connectTitle": "替换 {{email}} 的凭据",
+      "connectGuide": "Devin Connect 恢复",
+      "connectPortal": "可在官网确认账号能登录。网关恢复需要另外提供凭据。",
+      "connectCredential": "向网关管理员取得此连接支持的替换凭据，粘贴到下方并替换原账号。",
+      "connectVerify": "保存后，用常用客户端发一条短模型请求，确认这份凭据真的能出结果。",
+      "connectDependency": "如果你只有 Devin 门户登录或 Devin API 密钥，需先由管理员提供受支持的连接凭据。自动接入需要 Devin 支持的授权和已登记的回调。",
+      "replaceCredential": "替换凭据",
+      "savingCredential": "正在保存凭据…",
+      "credentialSaved": "替换凭据已保存，模型访问待验证。"
     },
     "batch": {
       "selectPage": "选择本页 {{count}} 项",
@@ -1975,9 +1984,9 @@
     "ERR_HTTP_REFERRER_BLOCKED": "上游拒绝请求：该 Firebase API Key 限制请求来源，服务器的 referrer 不在白名单内。请检查登录代理 / 出口 IP，或在 Firebase 控制台放行。",
     "ERR_AUTH1_TOKEN_MISSING": "Auth1 回应缺少 token",
     "ERR_AUTH1_NOT_A_POOL_KEY": "这是登录过程中的中间凭证，不能直接当账号密钥。请先完成登录，或改贴登录成功后页面上的 Token。",
-    "ERR_REAUTH_TOKEN_UNCHANGED": "该账号的 token 已被上游注销。请重新登录换取新 token；若确认无误，可强制重新启用。",
+    "ERR_REAUTH_TOKEN_UNCHANGED": "当前凭据已失效，请替换为这条连接的新凭据。",
     "ERR_REAUTH_NOT_APPLICABLE": "该操作不适用于已停用或已封禁的账号。",
-    "ERR_REAUTH_TOKEN_INVALID": "这不是会话 token。请贴 devin-session-token / show-auth-token 的值，或改用邮箱验证码登录。",
+    "ERR_REAUTH_TOKEN_INVALID": "请粘贴网关管理员为此连接提供的替换会话凭据。",
     "ERR_NO_TOKEN_IN_INPUT": "这段粘贴里没有 token。请贴 session、API Key，或带 token= 的 show-auth-token 链接。",
     "ERR_IMPORT_TEXT_EMPTY": "粘贴内容为空。",
     "ERR_POSTAUTH_FAILED": "Windsurf 已接受登录，但换取会话失败。请用同一个验证码重试——2 分钟内仍然有效。",
@@ -2004,7 +2013,11 @@
     "ERR_EMAIL_FLOW_CODE_REQUIRED": "缺少验证流程或验证码",
     "ERR_LOGIN_PROBE_FAILED": "无法检测登录方式，请重试。",
     "ERR_ACCOUNT_CHECK_STATUS_UNAVAILABLE": "此次无法取得上游账号状态。等语言服务就绪后重试。",
-    "ERR_FLEET_JOB_NOT_FOUND": "无法读取这次检查记录。需要时重新检查。"
+    "ERR_FLEET_JOB_NOT_FOUND": "无法读取这次检查记录。需要时重新检查。",
+    "ERR_REAUTH_DEVIN_PORTAL_URL": "这是 Devin 门户地址。可在门户登录，再向网关管理员取得兼容的替换凭据。",
+    "ERR_REAUTH_DEVIN_API_CREDENTIAL": "Devin API 密钥用于 Devin API。恢复此网关需要受支持的 Connect 会话凭据。",
+    "ERR_REAUTH_REDIRECT_REJECTED": "上游拒绝了旧回调（Invalid redirect URI）。自动恢复需要登记回调。已有兼容替换凭据可在这里粘贴。",
+    "ERR_REAUTH_CALLBACK_FAILED": "上游没有完成回调。请向网关管理员取得兼容的替换凭据。"
   },
   "footer": {
     "version": "版本",
@@ -2249,7 +2262,9 @@
     "probeFailedHint": "无法检测该账号的登录方式。若该账号没有密码（Google/GitHub 或验证码注册），请在下方获取验证码。",
     "tryDevinHost": "没收到邮件？改用 app.devin.ai 发送",
     "useCode": "改用邮箱验证码",
-    "methodNotFound": "该邮箱没有对应的 Windsurf 账号，请检查地址。"
+    "methodNotFound": "该邮箱没有对应的 Windsurf 账号，请检查地址。",
+    "resendWait": "请稍后再发送验证码，剩余时间见发送按钮。",
+    "resendReady": "现在可以重新请求验证码。"
   },
   "devin": {
     "unknown": "未知",

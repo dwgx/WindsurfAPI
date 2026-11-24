@@ -1103,11 +1103,24 @@ function applyReauthToken(id, rawToken, { via = 'token' } = {}) {
   if (account.status === 'disabled' || account.status === 'banned') {
     throw Object.assign(new Error('ERR_REAUTH_NOT_APPLICABLE'), { code: 'ERR_REAUTH_NOT_APPLICABLE', statusCode: 409 });
   }
-  const token = extractOAuthToken(String(rawToken ?? ''));
-  if (!token) throw Object.assign(new Error('ERR_NO_TOKEN_IN_INPUT'), { code: 'ERR_NO_TOKEN_IN_INPUT', statusCode: 400 });
+  const input = String(rawToken ?? '').trim();
+  const invalid = (code) => Object.assign(new Error(code), { code, statusCode: 400 });
+  let token;
+  try {
+    token = extractOAuthToken(input);
+  } catch (err) {
+    if (err.code !== 'ERR_OAUTH_UPSTREAM') throw err;
+    const rejected = /invalid[ _-]redirect[ _-]uri|redirect_uri_mismatch/i.test(err.message);
+    throw invalid(rejected ? 'ERR_REAUTH_REDIRECT_REJECTED' : 'ERR_REAUTH_CALLBACK_FAILED');
+  }
+  if (!token) {
+    const portal = URL.canParse(input) && new URL(input).origin === 'https://app.devin.ai';
+    throw invalid(portal ? 'ERR_REAUTH_DEVIN_PORTAL_URL' : 'ERR_NO_TOKEN_IN_INPUT');
+  }
+  if (token.startsWith('cog_')) throw invalid('ERR_REAUTH_DEVIN_API_CREDENTIAL');
   const kind = classifyToken(token);
-  if (kind === 'auth1') throw Object.assign(new Error('ERR_AUTH1_NOT_A_POOL_KEY'), { code: 'ERR_AUTH1_NOT_A_POOL_KEY', statusCode: 400 });
-  if (kind !== 'session') throw Object.assign(new Error('ERR_REAUTH_TOKEN_INVALID'), { code: 'ERR_REAUTH_TOKEN_INVALID', statusCode: 400 });
+  if (kind === 'auth1') throw invalid('ERR_AUTH1_NOT_A_POOL_KEY');
+  if (kind !== 'session' || token === 'devin-session-token$') throw invalid('ERR_REAUTH_TOKEN_INVALID');
   // A PASTED token is not proof of anything — unlike a completed login, the
   // operator can paste the very token upstream just retired. Installing the
   // same key on a reauth account is refused (409) so the state cannot be
@@ -1116,6 +1129,7 @@ function applyReauthToken(id, rawToken, { via = 'token' } = {}) {
   return {
     success: true,
     reauthenticated: true,
+    modelVerification: 'pending',
     account: { id: account.id, email: account.email, method: account.method, status: account.status },
     apiKey_masked: maskApiKey(account.apiKey),
   };
