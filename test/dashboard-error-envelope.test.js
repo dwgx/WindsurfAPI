@@ -286,23 +286,32 @@ describe('#257 the client fetch wrappers force success:false on non-2xx', () => 
     return { fetch: async () => r };
   }
 
-  async function runApiRaw(html, signature, fetchImpl, extraSelf = {}) {
+  async function runApiRaw(html, signature, fetchImpl, extraSelf = {}, options) {
     const body = extractMethod(html, signature);
     const stripped = signature.replace(/^async\s+/, '');
-    const name = stripped.slice(0, stripped.indexOf('('));
     const dom = makeDom(['login-overlay', 'login-password', 'login-btn']);
     // eslint-disable-next-line no-new-func -- executing the shipped source is the point
     const fn = new Function('document', 'I18n', 'localStorage', 'fetch',
-      `return async function ${name}(method, path, body) ${body};`)(dom.doc, I18nStub, localStorageStub, fetchImpl);
+      `return async function ${stripped} ${body};`)(dom.doc, I18nStub, localStorageStub, fetchImpl);
     // The shipped _apiRaw routes the toast text through translateError so an
     // unmapped ERR_* code never reaches the user; the stub keeps the raw text
     // so the assertions below still see the server's message.
     const self = { _authEpoch: 0, toasts: [], toast(m, t) { self.toasts.push([m, t]); }, password: null, translateError(code, fallback) { return code || fallback; }, ...extraSelf };
-    return { out: await fn.call(self, 'GET', '/x', null), self };
+    return { out: await fn.call(self, 'GET', '/x', null, options), self };
   }
 
+  const mainSignature = 'async _apiRaw(method, path, body, options)';
+  it('hands an action-owned failure back to the caller without a second toast', async () => {
+    const { out, self } = await runApiRaw(MAIN_HTML, mainSignature, withFetch(400, {
+      error: 'ERR_EMAIL_CODE_REJECTED',
+    }).fetch, {}, { notify: false });
+    assert.equal(out.success, false);
+    assert.equal(out.error, 'ERR_EMAIL_CODE_REJECTED');
+    assert.deepEqual(self.toasts, []);
+  });
+
   for (const [label, html, signature] of [
-    ['index.html', MAIN_HTML, 'async _apiRaw(method, path, body)'],
+    ['index.html', MAIN_HTML, mainSignature],
     ['index-sketch.html', SKETCH_HTML, 'async api(method, path, body)'],
   ]) {
     it(`${label}: a 404 body gains success:false and keeps its error`, async () => {

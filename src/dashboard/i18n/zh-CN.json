@@ -369,10 +369,10 @@
     },
     "oauthLogin": {
       "title": "Google / GitHub 登录",
-      "desc": "在 Windsurf 官方页面完成登录，回到这里粘贴 Token。"
+      "desc": "Windsurf 旧版网页登录和手动凭证输入。"
     },
     "emailLogin": {
-      "title": "邮箱登录",
+      "title": "Windsurf 邮箱登录",
       "desc": "有密码的账号用密码登录；没有密码的账号改用邮箱验证码。"
     },
     "loginProxy": {
@@ -646,7 +646,7 @@
   },
   "help": {
     "token": "推荐用 Token 方式添加账号 点 {{link}} 登录后复制 Token 粘贴到下面就行 所有登录方式（邮箱/Google/GitHub）都能用",
-    "tokenGuide": "推荐用 Token 方式添加账号 点 ",
+    "tokenGuide": "请使用已取得、此网关支持的凭证。旧版 Windsurf 凭证页",
     "tokenGuideEnd": " 登录后复制 Token 粘贴到下面就行 所有登录方式（邮箱/Google/GitHub）都能用"
   },
   "skin": {
@@ -1176,8 +1176,10 @@
       "open": "打开登录页",
       "copy": "复制登录 URL",
       "copied": "登录 URL 已复制",
-      "dontAsk": "下次不要问我（可在设置里改回）"
-    }
+      "dontAsk": "下次不要问我（可在设置里改回）",
+      "copyUnavailable": "浏览器无法自动复制链接，请点「打开登录页」。"
+    },
+    "legacyRedirectHelp": "若登录页提示 Invalid redirect URI，旧回调已被上游拒绝。请从 Devin 官方入口登录。"
   },
   "update": {
     "checking": "正在检查更新...",
@@ -1271,9 +1273,14 @@
     },
     "login": {
       "methodsLabel": "选择添加账号的方式",
-      "pasteToken": "粘贴 Token",
+      "pasteToken": "粘贴凭证",
       "back": "换一种方式",
-      "advanced": "高级选项（代理 / 登录历史 / 存储密码）"
+      "advanced": "高级选项（代理 / 登录历史 / 存储密码）",
+      "devinTitle": "Devin 官方登录",
+      "devinHint": "在新标签页完成 Devin 登录。向此网关添加账号需另行提供受支持的凭证。",
+      "legacyWindsurf": "Windsurf 旧版登录",
+      "focusPaste": "定位到粘贴框",
+      "manualPasteHint": "按 Ctrl+V 或使用浏览器的粘贴菜单，再提交。"
     },
     "toolbar": {
       "fleet": "账号池操作",
@@ -1294,7 +1301,7 @@
       "clear": "清除筛选"
     },
     "status": {
-      "active": "正常",
+      "active": "已启用",
       "disabled": "已停用",
       "banned": "已封禁",
       "reauth": "需要重新授权",
@@ -1306,10 +1313,12 @@
       "watch": "有错误",
       "resumesIn": "重置于 {{time}}",
       "errorCount": "错误数",
-      "blockedCount": "已屏蔽模型"
+      "blockedCount": "已屏蔽模型",
+      "routeUnknown": "模型可用性待确认",
+      "routeTip": "实际能否处理请求取决于所选模型、线路、配额和当前容量。"
     },
     "statusTip": {
-      "active": "能接请求：未停用、未限流、配额未耗尽。",
+      "active": "账号已启用，当前本地状态没有告警。",
       "disabled": "你手动停用的账号。启用后即可重新接请求。",
       "banned": "Windsurf 封禁了这个账号；只能删除或换号。",
       "reauth": "登录凭证已失效；重新登录会替换同一行的凭证。",
@@ -1318,24 +1327,24 @@
       "rate_limited": "被服务限流；限流窗口结束后自动恢复。",
       "capacity": "当前模型容量不足；换模型或稍后重试。",
       "near_limit": "每分钟请求用量已接近上限；降速或等待窗口滚动。",
-      "watch": "有历史错误计数，但仍可接请求。"
+      "watch": "账号有近期错误。具体可用性取决于模型和线路。"
     },
     "kpi": {
       "total": "账号总数",
-      "active": "正常",
+      "active": "无状态告警",
       "disabled": "已停用",
       "attention": "需处理",
       "attentionSub": "封禁 {{banned}} · 重登 {{reauth}} · 限流 {{limited}} · 配额耗尽 {{cooled}}",
       "balance": "池余额",
       "balanceSub": "{{count}} 个账号",
       "balanceSubShared": "{{count}} 个账号 · {{shared}} 个共享余额已去重",
-      "totalTip": "账号池里的全部账号，等于“正常 + 已停用 + 需处理”。",
-      "activeTip": "现在能接请求的账号。限流、配额耗尽、接近上限的账号不算正常。",
+      "totalTip": "账号池的全部账号，包含无状态告警、已停用和需处理的账号。",
+      "activeTip": "已启用且本地状态无告警的账号。请求是否可用需看具体模型和线路。",
       "disabledTip": "你手动停用的账号。封禁、需重新授权、异常不在这一格，它们在“需处理”里。",
       "attentionTip": "需要你处理的账号：封禁、需重新授权、异常、配额耗尽、限流、模型繁忙、接近上限、有错误。和“需处理”筛选是同一个数。",
       "balanceTip": "所有账号的按量计费余额之和。同一个团队共享的余额只计一次；识别不到团队的账号按各自余额相加。"
     },
-    "subtitle": "共 {{total}} · 正常 {{active}} · 需处理 {{attention}} · 余额 {{balance}}",
+    "subtitle": "共 {{total}} · 无状态告警 {{active}} · 需处理 {{attention}} · 余额 {{balance}}",
     "method": {
       "api_key": "API Key",
       "token": "登录凭证",
@@ -1344,11 +1353,17 @@
       "unknown": "其他方式"
     },
     "skip": {
-      "ls_not_idle_resident": "语言服务没在运行，先启动它再检查",
-      "account_busy": "账号正在处理请求，稍后再试",
+      "ls_not_idle_resident": "语言服务繁忙或未就绪。空闲后重试。",
+      "account_busy": "账号正在使用中，空闲后重试。",
       "memory_guard": "内存不足，这次跳过",
       "probe_skipped": "这次没有执行检查",
-      "other": "已跳过（原因见提示）"
+      "other": "已跳过（原因见提示）",
+      "can_start": "该检查需要已运行的语言服务，此账号的语言服务尚未启动。",
+      "start_pending": "语言服务正在启动，请等它就绪后重试。",
+      "ls_stopping": "语言服务正在停止，请在就绪后重试。",
+      "ls_memory_guard": "当前内存限制下无法运行该账号的语言服务。",
+      "ls_pool_exhausted": "该账号暂无可用的语言服务实例。",
+      "already_running": "语言服务正忙，请等它空闲后重试。"
     },
     "selectAllPage": "选择本页",
     "selectRow": "选择账号",
@@ -1365,7 +1380,9 @@
       "neverChecked": "尚未检查",
       "skipCheck": "未检查：{{reason}}",
       "retryCheck": "重试",
-      "rename": "编辑名称"
+      "rename": "编辑名称",
+      "checking": "正在检查…",
+      "checkFailed": "本次检查失败"
     },
     "rename": {
       "prompt": "输入新的显示名称",
@@ -1410,12 +1427,12 @@
     },
     "fleet": {
       "cancel": "取消",
-      "busy": "已有一次批量操作在运行，等它结束再开始",
+      "busy": "已有账号操作在进行，请等本次结果。",
       "starting": "正在准备{{action}}…",
       "running": "{{action}} {{done}}/{{total}}",
       "current": "当前：{{email}}",
       "cancelled": "已取消（完成 {{done}}/{{total}}）",
-      "connectionLost": "连接中断，已完成的 {{done}} 项保留",
+      "connectionLost": "进度连接中断，已保留 {{done}} 项结果。可以重新读取进度。",
       "summary": "{{action}} · {{state}}：成功 {{ok}} · 失败 {{fail}} · 跳过 {{skipped}}",
       "stateRunning": "进行中",
       "stateDone": "已完成",
@@ -1428,7 +1445,11 @@
       "resultOk": "成功",
       "resultFail": "失败",
       "resultSkipped": "跳过",
-      "resultExcluded": "未参与"
+      "resultExcluded": "未参与",
+      "reconnect": "重新读取进度",
+      "noTargets": "本次没有符合操作条件的账号。",
+      "stateDisconnected": "进度暂不可读",
+      "stateFailed": "失败"
     },
     "empty": {
       "poolTitle": "还没有账号",
@@ -1966,7 +1987,9 @@
     "ERR_EMAIL_FLOW_USED": "该验证码已被使用，请重新发送。",
     "ERR_EMAIL_FLOW_IN_USE": "该验证码正在校验中。",
     "ERR_EMAIL_FLOW_CODE_REQUIRED": "缺少验证流程或验证码",
-    "ERR_LOGIN_PROBE_FAILED": "无法检测登录方式，请重试。"
+    "ERR_LOGIN_PROBE_FAILED": "无法检测登录方式，请重试。",
+    "ERR_ACCOUNT_CHECK_STATUS_UNAVAILABLE": "此次无法取得上游账号状态。等语言服务就绪后重试。",
+    "ERR_FLEET_JOB_NOT_FOUND": "无法读取这次检查记录。需要时重新检查。"
   },
   "footer": {
     "version": "版本",
@@ -2030,13 +2053,13 @@
     "errorTitle": "概览暂不可用",
     "staleSince": "显示 {{time}} 的最后成功数据。刷新失败：{{error}}",
     "poolHealth": {
-      "healthy": "健康",
+      "healthy": "无本地告警",
       "throttled": "限流中",
       "error": "错误",
       "dead": "失效 token",
       "quotaPressure": "配额压力",
       "highRpm": "高 RPM",
-      "verdictAllHealthy": "所有账号健康",
+      "verdictAllHealthy": "账号池无本地告警",
       "verdictDegraded": "{{count}} 个账号需关注",
       "verdictCritical": "{{count}} 个账号有近期异常",
       "empty": "暂无号池遥测",

@@ -2904,6 +2904,9 @@ tbody tr:hover td { background: var(--surface-2); }
 .login-method-title { font-size: var(--fs-lg); font-weight: 700; }
 .login-method-desc { font-size: var(--fs-sm); color: var(--text-muted); line-height: 1.5; }
 .login-method-token { justify-self: start; }
+.login-method-link { color: inherit; text-decoration: none; }
+.acct-last-check-slot { min-width: 0; }
+.acct-routing-hint { display: block; margin-top: var(--space-4); }
 /* OAuth brand blocks (P2 palette). These were inline `background:#4285F4` with
    white text — 3.56, an AA text failure — plus a hardcoded hex outside the
    theme system. Tokens keep the brand hue while clearing 4.5. */
@@ -3107,7 +3110,7 @@ tbody tr:hover td { background: var(--surface-2); }
     </div>
     <div class="footer-meta">
       <span>© Windsurf</span>
-      <span class="ver" id="sidebar-ver" data-i18n-title="footer.version" title="版本">v1.2.0</span>
+      <span class="ver" id="sidebar-ver" data-i18n-title="footer.version" title="版本">—</span>
     </div>
   </div>
 </aside>
@@ -3293,6 +3296,7 @@ tbody tr:hover td { background: var(--surface-2); }
         <button class="btn btn-outline btn-sm" onclick="App.startFleetRun('probe')" data-i18n="accounts.toolbar.probeAll">全部检查</button>
         <button class="btn btn-outline btn-sm" onclick="App.startFleetRun('refresh')" data-i18n="accounts.toolbar.refreshAll">刷新全部余额</button>
         <button class="btn btn-outline btn-sm" id="accounts-fleet-cancel" onclick="App.cancelFleetRun()" hidden data-i18n="accounts.fleet.cancel">取消</button>
+        <button class="btn btn-outline btn-sm" id="accounts-fleet-retry" onclick="App.reconnectFleetRun()" hidden data-i18n="accounts.fleet.reconnect">重新读取进度</button>
         <button class="btn btn-outline btn-sm" id="accounts-fleet-reopen" onclick="App.reopenFleetPanel()" hidden data-i18n="accounts.fleet.reopen">本次结果</button>
         <button class="btn btn-outline btn-sm" onclick="App.exportAccounts()" data-i18n="accounts.export.label">导出</button>
       </div>
@@ -3453,15 +3457,16 @@ tbody tr:hover td { background: var(--surface-2); }
                so the first screen is two choices plus a secondary token link —
                not four stacked sections competing for attention. -->
           <div class="login-methods" id="wl-method-step" role="group" data-i18n-aria-label="accounts.login.methodsLabel">
-            <button type="button" class="login-method" id="wl-method-oauth-btn" onclick="App.selectLoginMethod('oauth')">
-              <span class="login-method-title" data-i18n="section.oauthLogin.title">Google / GitHub 登录</span>
-              <span class="login-method-desc" data-i18n="section.oauthLogin.desc">在 Windsurf 官方页面完成登录，回到这里粘贴 Token。</span>
-            </button>
+            <a class="login-method login-method-link" id="devin-sign-in" href="https://app.devin.ai/" target="_blank" rel="noopener noreferrer">
+              <span class="login-method-title" data-i18n="accounts.login.devinTitle">Devin 官方登录</span>
+              <span class="login-method-desc" data-i18n="accounts.login.devinHint">在 Devin 完成登录。向此网关添加账号需另行提供受支持的凭证。</span>
+            </a>
             <button type="button" class="login-method" id="wl-method-email-btn" onclick="App.selectLoginMethod('email')">
               <span class="login-method-title" data-i18n="section.emailLogin.title">邮箱登录</span>
               <span class="login-method-desc" data-i18n="section.emailLogin.desc">有密码的账号用密码登录；没有密码的账号改用邮箱验证码。</span>
             </button>
-            <button type="button" class="btn btn-ghost btn-sm login-method-token" id="wl-method-token-btn" onclick="App.selectLoginMethod('token')" data-i18n="accounts.login.pasteToken">粘贴 Token</button>
+            <button type="button" class="btn btn-ghost btn-sm login-method-token" id="wl-method-oauth-btn" onclick="App.selectLoginMethod('oauth')" data-i18n="accounts.login.legacyWindsurf">Windsurf 旧版登录</button>
+            <button type="button" class="btn btn-ghost btn-sm login-method-token" id="wl-method-token-btn" onclick="App.switchAddTab('paste'); App.focusCredentialPaste('acc-key')" data-i18n="accounts.login.pasteToken">粘贴凭证</button>
           </div>
 
           <div class="login-method-panel hidden" id="wl-panel-oauth">
@@ -3480,9 +3485,8 @@ tbody tr:hover td { background: var(--surface-2); }
                   <span data-i18n="oauth.github">GitHub 登录</span>
                 </button>
               </div>
-              <div id="oauth-status" aria-live="polite" style="margin-top:8px;font-size:12px;color:var(--text-muted)"></div>
-              <!-- Three steps, each with its own action button. Step 2 fills the
-                   box and imports; step 3 imports whatever is in the box. -->
+              <p class="field-hint" data-i18n="oauth.legacyRedirectHelp">若登录页提示 Invalid redirect URI，旧回调已被上游拒绝。请从 Devin 官方入口登录。</p>
+              <div id="oauth-status" style="margin-top:8px;font-size:12px;color:var(--text-muted)"></div>
               <div id="oauth-token-step" class="login-token-step hidden">
                 <div style="font-weight:600;margin-bottom:6px" data-i18n="oauth.step2Title">粘贴 Windsurf 返回的 Token</div>
                 <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px" data-i18n="oauth.step2Desc">登录完成后，Windsurf 会显示一串 Token。复制它，或直接复制整条回调地址。</div>
@@ -3493,14 +3497,15 @@ tbody tr:hover td { background: var(--surface-2); }
                   </li>
                   <li>
                     <span data-i18n="oauth.step2">登录完成后页面会显示 Token；点“复制”或直接全选地址栏。</span>
-                    <button class="btn btn-outline btn-sm" onclick="App.pasteOAuthTokenFromClipboard()" id="oauth-paste-btn" data-i18n="oauth.pasteFromClipboard">从剪贴板粘贴</button>
+                    <button type="button" class="btn btn-outline btn-sm" onclick="App.focusCredentialPaste('oauth-token-input')" id="oauth-paste-btn" data-i18n="accounts.login.focusPaste">定位到粘贴框</button>
                   </li>
                   <li>
                     <span data-i18n="oauth.step3">回到这里，粘贴并添加；Token 会立即写入账号池。</span>
                     <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:6px">
-                      <input id="oauth-token-input" type="text" class="input" style="flex:1;min-width:220px" data-i18n-placeholder="oauth.urlOrTokenPlaceholder" placeholder="粘贴回调 URL 或 Auth Token...">
+                      <input id="oauth-token-input" type="password" autocomplete="off" spellcheck="false" class="input" style="flex:1;min-width:220px" data-i18n-aria-label="field.key.label" aria-describedby="oauth-paste-hint" data-i18n-placeholder="oauth.urlOrTokenPlaceholder" placeholder="粘贴回调 URL 或 Auth Token...">
                       <button class="btn btn-primary" onclick="App.submitOAuthToken()" id="oauth-import-btn" data-i18n="oauth.addWithToken">用 Token 添加</button>
                     </div>
+                    <div class="field-hint" id="oauth-paste-hint" data-i18n="accounts.login.manualPasteHint">按 Ctrl+V 或使用浏览器的粘贴菜单，再点击添加。</div>
                   </li>
                 </ol>
                 <a id="oauth-manual-link" href="#" class="hidden" onclick="return App.openWindsurfSignin(event)" style="display:inline-block;margin-top:8px;font-size:12px;color: var(--accent-text)" data-i18n="oauth.openManually">登录页没弹出来？点这里手动打开</a>
@@ -3655,9 +3660,8 @@ tbody tr:hover td { background: var(--surface-2); }
             </div>
             <div class="section-body">
               <div style="padding:8px 12px;margin-bottom:12px;background:var(--surface-2);border-radius:var(--radius);font-size:12px;color:var(--text-muted);line-height:1.6">
-                <span data-i18n="help.tokenGuide">推荐用 Token 方式添加账号 点</span>
-                <a href="https://windsurf.com/show-auth-token" target="_blank" style="color: var(--accent-text);font-weight:600">windsurf.com/show-auth-token</a>
-                <span data-i18n="help.tokenGuideEnd">登录后复制 Token 粘贴到下面就行 所有登录方式（邮箱/Google/GitHub）都能用</span>
+                <span data-i18n="help.tokenGuide">请使用此前已取得、此网关支持的凭证。旧版 Windsurf 凭证页</span>
+                <a href="https://windsurf.com/show-auth-token" target="_blank" rel="noopener noreferrer" style="color: var(--accent-text);font-weight:600">windsurf.com/show-auth-token</a>
               </div>
               <div class="field-row">
                 <div class="field" style="max-width:180px">
@@ -3668,8 +3672,9 @@ tbody tr:hover td { background: var(--surface-2); }
                   </select>
                 </div>
                 <div class="field" style="flex:2">
-                  <label class="field-label" data-i18n="field.key.label">Key / Token</label>
-                  <input id="acc-key" class="input" data-i18n-placeholder="field.key.placeholder" placeholder="粘贴 Auth Token">
+                  <label class="field-label" for="acc-key" data-i18n="field.key.label">Key / Token</label>
+                  <input id="acc-key" type="password" autocomplete="off" spellcheck="false" class="input" aria-describedby="account-paste-hint" data-i18n-placeholder="field.key.placeholder" placeholder="粘贴 Auth Token">
+                  <div class="field-hint" id="account-paste-hint" data-i18n="accounts.login.manualPasteHint">按 Ctrl+V 或使用浏览器的粘贴菜单，再点击添加。</div>
                 </div>
                 <div class="field" style="max-width:200px">
                   <label class="field-label" data-i18n="field.label.label">标签</label>
@@ -3718,9 +3723,9 @@ tbody tr:hover td { background: var(--surface-2); }
               <textarea id="wl-batch-input" class="textarea" rows="6" placeholder="user1@mail.com  pass123&#10;http://proxy:8080 user2@mail.com  pass456&#10;socks5://user:pass@1.2.3.4:1080 user3@mail.com  pass789"></textarea>
               <input id="wl-batch-file" type="file" accept=".json,application/json" class="hidden" onchange="App.handleWindsurfBatchFile(event)">
               <div class="field-row-actions">
-                <button class="btn btn-outline" onclick="App.pasteWindsurfBatch()">
+                <button type="button" class="btn btn-outline" onclick="App.focusCredentialPaste('wl-batch-input')">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1" ry="1"/></svg>
-                  <span data-i18n="action.readClipboard">读取剪贴板</span>
+                  <span data-i18n="accounts.login.focusPaste">定位到粘贴框</span>
                 </button>
                 <button class="btn btn-outline" onclick="App.triggerWindsurfBatchFile()">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
@@ -4825,6 +4830,7 @@ const App = {
   // the literal message or a localized default. Replaces 6+ inline
   // `error.${err.message}` lookups across the dashboard (PR #92, smeinecke).
   translateError(errorCode, fallbackKey = 'error.unknown') {
+    errorCode = String(errorCode?.code || errorCode?.message || errorCode || '');
     const errKey = errorCode ? `error.${errorCode}` : '';
     if (errKey && I18n.t(errKey) !== errKey) return I18n.t(errKey);
     // Some codes carry a detail after a colon (e.g. ERR_OAUTH_UPSTREAM:access_denied).
@@ -5253,6 +5259,7 @@ const App = {
   async init() {
     // Initialize i18n first
     await I18n.init();
+    void this.loadServerVersion();
     try { this.statsLogRequestId = sessionStorage.getItem('stats-log-request-id') || ''; } catch {}
     this.initTheme();
     this.lang = I18n.locale === 'zh-CN' ? 'zh' : 'en';
@@ -5431,21 +5438,22 @@ docker compose up -d --force-recreate</pre>
   // and is discarded so it can't paint data into a freshly-switched session.
   bumpAuthEpoch() { this._authEpoch = (this._authEpoch || 0) + 1; },
 
-  async api(method, path, body) {
+  async api(method, path, body, options) {
     // In-flight GET dedupe: concurrent identical GETs (common when several panel
     // sections mount at once) share ONE fetch instead of hammering the endpoint.
     // Only GETs are deduped — writes must always execute.
-    if (method === 'GET' && !body) {
+    if (method === 'GET' && !body && !options) {
       this._inflightGets ||= new Map();
       if (this._inflightGets.has(path)) return this._inflightGets.get(path);
       const promise = this._apiRaw(method, path, body).finally(() => this._inflightGets.delete(path));
       this._inflightGets.set(path, promise);
       return promise;
     }
-    return this._apiRaw(method, path, body);
+    return this._apiRaw(method, path, body, options);
   },
 
-  async _apiRaw(method, path, body) {
+  async _apiRaw(method, path, body, options) {
+    const notify = options?.notify !== false;
     const epochAtStart = this._authEpoch || 0;
     const opts = { method, headers: { 'Content-Type': 'application/json' } };
     if (this.password) opts.headers['X-Dashboard-Password'] = this.password;
@@ -5509,7 +5517,7 @@ docker compose up -d --force-recreate</pre>
       // where there is nothing to spread (#257).
       if (!r.ok) {
         const rawError = data && data.error && (data.error.message || data.error);
-        this.toast(
+        if (notify) this.toast(
           rawError ? this.translateError(String(rawError), 'error.genericAction') : I18n.t('toast.requestFailed', { status: r.status }),
           'error',
           rawError ? String(rawError) : '',
@@ -5521,7 +5529,7 @@ docker compose up -d --force-recreate</pre>
       return data;
     } catch (e) {
       const msg = e.message || 'network_error';
-      this.toast(msg, 'error');
+      if (notify) this.toast(msg, 'error');
       return { success: false, error: msg };
     }
   },
@@ -5569,18 +5577,34 @@ docker compose up -d --force-recreate</pre>
     }, 1000);
   },
 
-  // `detail` is the raw server code, shown only as the tooltip: the visible
-  // sentence stays human, and support can still read the identifier.
+  noticeText(value) {
+    const text = String(value || '')
+      .replace(/\b(?:https?|windsurf):\/\/[^\s<>"']+/gi, '[link]')
+      .replace(/\b(?:state|code|token|redirect_uri)=[^\s&<>"']+/gi, '[hidden]')
+      .replace(/\b(?:bearer\s+|devin-session-token\$)[^\s<>"']+/gi, '[hidden]')
+      .replace(/\s+/g, ' ').trim();
+    return text.length > 180 ? text.slice(0, 179) + '…' : text;
+  },
+
   toast(msg, type = 'success', detail = '') {
+    const stack = document.getElementById('toast-stack');
+    const text = this.noticeText(msg);
+    if (!stack || !text) return;
+    const code = /^[A-Z][A-Z0-9_]{1,70}$/.test(detail) ? detail : '';
+    const dismissLabel = I18n.t('toast.dismiss');
+    const title = code ? `${code} · ${dismissLabel}` : dismissLabel;
+    if ([...stack.children].some(node =>
+      !node.dataset.dismissing && node.classList.contains(type) && node.textContent === text && node.title === title)) return;
     const t = document.createElement('div');
     t.className = 'toast ' + type;
-    t.textContent = msg;
+    t.textContent = text;
     t.style.cursor = 'pointer';
-    t.title = detail ? `${detail} · ${I18n.t('toast.dismiss')}` : I18n.t('toast.dismiss');
-    document.getElementById('toast-stack').appendChild(t);
+    t.title = title;
+    stack.appendChild(t);
     let done = false;
     const dismiss = () => {
       if (done) return; done = true;
+      t.dataset.dismissing = '1';
       t.style.opacity = '0';
       t.style.transform = 'translateX(20px)';
       t.style.transition = 'all .2s';
@@ -8033,6 +8057,24 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     if (el) { el.classList.add('hidden'); el.innerHTML = ''; }
   },
 
+  async loadServerVersion() {
+    try {
+      const response = await fetch('/health');
+      if (!response.ok) return;
+      const h = await response.json();
+      if (!h?.version) return;
+      const footer = document.getElementById('sidebar-ver');
+      if (!footer) return;
+      const commit = /^[0-9a-f]{7,40}$/i.test(h.commit) ? h.commit.slice(0, 7) : '';
+      footer.textContent = commit ? `v${h.version} · ${commit}` : `v${h.version}`;
+      footer.title = h.commitMessage
+        ? `${h.commitMessage}\n${h.commitDate || ''}${h.branch ? ` (${h.branch})` : ''}`
+        : I18n.t('footer.version') + ' ' + h.version;
+    } catch {
+      // A failed health fetch leaves the version unknown.
+    }
+  },
+
   async loadOverview() {
     const generation = (this._overviewLoadGeneration || 0) + 1;
     this._overviewLoadGeneration = generation;
@@ -8070,26 +8112,6 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     this._overviewFailures = 0;
     this._hideOverviewStale();
     this.renderNativeBridgeTelemetry(d);
-    // Fetch /health (no auth) in parallel for version/commit info
-    try {
-      const h = await fetch('/health').then(r => r.json()).catch(() => null);
-      if (!isCurrent()) return;
-      if (h) {
-        const sv = document.getElementById('sidebar-ver');
-        if (sv) {
-          const shortCommit = h.commit ? String(h.commit).replace(/^[^0-9a-f]*/i, '').slice(0, 7) : '';
-          const label = shortCommit ? `v${h.version} · ${shortCommit}` : `v${h.version}`;
-          sv.textContent = label;
-          sv.title = h.commitMessage
-            ? `${h.commitMessage}\n${h.commitDate || ''}${h.branch ? ` (${h.branch})` : ''}`
-            : I18n.t('footer.version') + ' ' + h.version;
-        }
-        this._versionInfo = h;
-      }
-    } catch {
-      /* keep overview telemetry from /dashboard/api/overview */
-    }
-    if (!isCurrent()) return;
     const uptime = d.uptime ? this.fmtDuration(d.uptime) : '-';
     const ls = d.langServer || {};
     const poolCount = (ls.instances || []).length || (ls.running ? 1 : 0);
@@ -8367,9 +8389,14 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     };
     wrap.querySelector('[data-act=open]').onclick = async () => { await persistSkip(); close(); this.oauthStartAndOpen(provider, { reuse: true }); };
     wrap.querySelector('[data-act=copy]').onclick = async () => {
+      try {
+        await navigator.clipboard.writeText(this._oauthUrl);
+      } catch {
+        this.toast(I18n.t('oauth.chooser.copyUnavailable'), 'info');
+        return;
+      }
       await persistSkip();
-      try { await navigator.clipboard.writeText(this._oauthUrl); this.toast(I18n.t('oauth.chooser.copied'), 'success'); }
-      catch { this.toast(this._oauthUrl, 'info'); }
+      this.toast(I18n.t('oauth.chooser.copied'), 'success');
       close();
       // Reveal step 2 so the user can paste the callback URL back after logging in.
       document.getElementById('oauth-token-step')?.classList.remove('hidden');
@@ -8443,7 +8470,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
       const r = await this.api('POST', '/windsurf-login/token', {
         token: pasted, label,
         ...(this._reauthAccountId ? { accountId: this._reauthAccountId } : {}),
-      });
+      }, { notify: false });
       if (r.success) {
         const email = r.account?.email || label || '';
         const bound = !!this._reauthAccountId;
@@ -8457,13 +8484,13 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
         this.pushLoginHistory({ time: new Date().toISOString(), email, proxy: I18n.t('proxy.direct'), status: 'success', method: label || 'token' });
         if (bound) this.closeAddAccountModal();
       } else {
-        const translatedErr = this.translateError(r.error, 'toast.addFailed');
+        const translatedErr = this.loginErrorMessage(r, 'toast.addFailed');
         status.style.color = '#ef4444';
         status.textContent = I18n.t('oauth.status.loginFailed', { label: label || 'Token', error: translatedErr });
         this.toast(translatedErr, 'error');
       }
     } catch (err) {
-      const translatedErr = this.translateError(err.message, 'error.unknown');
+      const translatedErr = this.loginErrorMessage({ error: err.message }, 'toast.addFailed');
       status.style.color = '#ef4444';
       status.textContent = I18n.t('oauth.status.loginFailed', { label: label || 'Token', error: translatedErr });
       this.toast(translatedErr, 'error');
@@ -8857,30 +8884,16 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     }
   },
 
-  async pasteWindsurfBatch() {
-    const el = document.getElementById('wl-batch-input');
-    if (!navigator.clipboard || !window.isSecureContext) {
-      el?.focus();
-      return this.toast(I18n.t('toast.clipboardUnsupported'), 'info');
-    }
-    try {
-      const text = await navigator.clipboard.readText();
-      if (!text) return this.toast(I18n.t('toast.clipboardEmpty'), 'info');
-      el.value = text;
-      this.toast(I18n.t('toast.clipboardRead'), 'success');
-    } catch (err) {
-      this.toast(I18n.t('toast.clipboardError', { error: err.message }), 'error');
-    }
+  focusCredentialPaste(fieldId) {
+    document.getElementById(fieldId)?.focus();
   },
 
   // Map a dashboard error envelope to a localized message. Keeps the
   // `error.<CODE>` convention the rest of this panel uses.
-  loginErrorMessage(r) {
-    const code = r && r.error;
-    if (!code) return I18n.t('error.unknown');
-    const key = `error.${code}`;
-    const translated = I18n.t(key);
-    return translated !== key ? translated : String(code);
+  loginErrorMessage(r, fallbackKey = 'error.genericAction') {
+    const code = String(r?.error?.code || r?.error?.message || r?.error || '');
+    if (/invalid redirect uri|redirect_uri_mismatch/i.test(code)) return I18n.t('oauth.legacyRedirectHelp');
+    return this.noticeText(this.translateError(code, fallbackKey));
   },
 
   // Login-method probe. The account may have no password at all (OAuth or
@@ -9020,25 +9033,6 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     setTimeout(() => document.getElementById('oauth-token-input')?.focus(), 120);
   },
 
-  // Read the clipboard, put it in the box, and import — one click. Falls back
-  // to a focus + hint when the page is not a secure context (clipboard API is
-  // unavailable on plain http://LAN).
-  async pasteOAuthTokenFromClipboard() {
-    const input = document.getElementById('oauth-token-input');
-    if (!navigator.clipboard || !window.isSecureContext) {
-      input?.focus();
-      return this.toast(I18n.t('toast.clipboardUnsupported'), 'info');
-    }
-    try {
-      const text = String(await navigator.clipboard.readText() || '').trim();
-      if (!text) return this.toast(I18n.t('toast.clipboardEmpty'), 'info');
-      if (input) input.value = text;
-      return this.submitOAuthToken();
-    } catch (err) {
-      this.toast(I18n.t('toast.clipboardError', { error: err.message }), 'error');
-    }
-  },
-
   // Resend countdown lives on the SEND button itself: one control, one state.
   // The status line carries the "code sent to <address>" sentence; the button
   // carries the seconds left until another send is allowed.
@@ -9073,7 +9067,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     try {
       const payload = { email, proxy: this.getWindsurfLoginProxy() };
       if (host) payload.host = host;
-      const r = await this.api('POST', '/windsurf-login/email/start', payload);
+      const r = await this.api('POST', '/windsurf-login/email/start', payload, { notify: false });
       if (r && r.sent && r.flowId) {
         this._wlFlow = { flowId: r.flowId, email, host: r.host || host || 'windsurf' };
         if (status) {
@@ -9102,8 +9096,9 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     } catch (err) {
       this._wlFlow = null;
       if (btn) btn.disabled = false;
-      if (status) status.textContent = err.message;
-      this.toast(err.message, 'error');
+      const msg = this.loginErrorMessage({ error: err.message });
+      if (status) status.textContent = msg;
+      this.toast(msg, 'error');
     }
   },
 
@@ -9132,7 +9127,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
       const r = await this.api('POST', '/windsurf-login/email/complete', {
         flowId: flow.flowId, code, autoAdd, proxy: this.getWindsurfLoginProxy(),
         ...(this._reauthAccountId ? { accountId: this._reauthAccountId } : {}),
-      });
+      }, { notify: false });
       if (r && r.success) {
         const bound = r.reauthenticated === true || !!this._reauthAccountId;
         this._wlFlow = null;
@@ -9145,22 +9140,25 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
         this.loadAccounts();
         if (bound) this.closeAddAccountModal();
       } else {
-        entry.status = 'error: ' + ((r && r.error) || 'unknown');
-        this.renderSingleWindsurfLoginResult(r, autoAdd);
         const msg = this.loginErrorMessage(r);
+        entry.status = 'error: ' + msg;
         if (status) status.textContent = msg;
         this.toast(msg, 'error');
-        // A dead flow cannot be retried; force a fresh code request.
-        if (r && /ERR_EMAIL_FLOW_(EXPIRED|USED|NOT_FOUND|IN_USE)/.test(r.error || '')) this._wlFlow = null;
+        // A dead flow needs a fresh code. A wrong code can be corrected.
+        if (r && /ERR_EMAIL_FLOW_(EXPIRED|USED|NOT_FOUND)/.test(r.error || '')) {
+          this._wlFlow = null;
+          if (codeEl) codeEl.value = '';
+        }
       }
     } catch (err) {
-      entry.status = 'error: ' + err.message;
-      if (status) status.textContent = err.message;
-      this.toast(err.message, 'error');
+      const msg = this.loginErrorMessage({ error: err.message });
+      entry.status = 'error: ' + msg;
+      if (status) status.textContent = msg;
+      this.toast(msg, 'error');
     }
 
     this.pushLoginHistory(entry);
-    if (btn) btn.disabled = false;
+    if (btn) btn.disabled = !this._wlFlow;
   },
 
   async windsurfLogin() {
@@ -9550,6 +9548,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
   _accountsById: new Map(),
   _drawerAccountId: null,
   _batchResults: new Map(),
+  _accountChecks: new Map(),
   // The selection is only valid inside the filter that produced it. `mode` is
   // 'ids' for explicit row/page checks and 'all' for the explicit
   // "select all N matching" scope; `filterKey` is the filter signature at the
@@ -9727,7 +9726,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
       case 'capacity': return { labelKey: 'accounts.status.capacity', cls: 'info', band: 'var(--warn)' };
       case 'near_limit': return { labelKey: 'accounts.status.nearLimit', cls: 'warn', band: 'var(--warn)' };
       case 'watch': return { labelKey: 'accounts.status.watch', cls: 'warn', band: 'var(--warn)' };
-      default: return { labelKey: 'accounts.status.active', cls: 'active', band: 'var(--success)' };
+      default: return { labelKey: 'accounts.status.active', cls: 'info', band: 'var(--text-muted)' };
     }
   },
 
@@ -9818,7 +9817,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     if (!el) return;
     const states = stats.stateCounts || {};
     const n = (v) => Number(v || 0);
-    const healthy = n(states.active);
+    const noWarning = n(states.active);
     const disabled = n(states.disabled);
     const attention = n(stats.attention);
     const cell = (key, labelKey, value, sub, tone, tip) => `
@@ -9843,7 +9842,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
       : '';
     el.innerHTML = [
       cell('total', 'accounts.kpi.total', n(stats.total ?? total), '', '', I18n.t('accounts.kpi.totalTip')),
-      cell('active', 'accounts.kpi.active', healthy, '', 'var(--success)', I18n.t('accounts.kpi.activeTip')),
+      cell('active', 'accounts.kpi.active', noWarning, '', '', I18n.t('accounts.kpi.activeTip')),
       cell('disabled', 'accounts.kpi.disabled', disabled, '', '', I18n.t('accounts.kpi.disabledTip')),
       cell('attention', 'accounts.kpi.attention', attention, attentionSub, 'var(--warn)', I18n.t('accounts.kpi.attentionTip')),
       cell('balance', 'accounts.kpi.balance', this.poolBalanceText(stats), balanceSub, '', I18n.t('accounts.kpi.balanceTip')),
@@ -9931,8 +9930,8 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     }
     const tierTooltip = usTipLines.length ? usTipLines.join('\n') : I18n.t('status.clickToEditTier');
     const isSelected = this._selectedAccounts?.has(a.id);
-    const batch = this._batchResults?.get(a.id);
-    const batchChip = this._batchChipHtml(batch);
+    const batch = this._accountChecks?.get(a.id);
+    const batchChip = this._batchChipHtml(this._batchResults?.get(a.id));
     const label = String(a.label || '').trim();
     const labelChip = label && label !== a.email
       ? `<span class="note-chip" title="${this.esc(label)}">${this.esc(label)}</span>`
@@ -9951,7 +9950,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
           <div class="acct-line2">
             <code class="text-xs">${this.esc(a.id)}</code>
             <code class="acct-key" title="${this.esc(a.apiKey_masked || '')}">${this.esc(a.apiKey_masked || '')}</code>
-            ${this.renderLastCheck(a, batch)}
+            <span class="acct-last-check-slot">${this.renderLastCheck(a, batch)}</span>
           </div>
         </td>
         <td class="acct-tier-cell" data-label="${this.esc(I18n.t('table.header.tier'))}">
@@ -9971,12 +9970,12 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
       </tr>`;
   },
 
-  // The "when was this account last checked, and how did it go" line. It lives
-  // in the account cell's existing second line (not a new row line) so the
-  // 44px row budget from 3.9.50 is preserved. `lastProbed` comes from the
-  // server, so the time survives a page reload; a skip that only happened in
-  // this session says why and offers a retry.
   renderLastCheck(a, batch = null) {
+    const run = this._fleetRun;
+    const single = this._accountSingleOp;
+    const running = (single?.op === 'probe' && single.id === a.id)
+      || (run?.op === 'probe' && run.state === 'running' && !run.pollDisconnected && run.current?.id === a.id);
+    if (running) return `<span class="acct-last-check">${this.esc(I18n.t('accounts.row.checking'))}</span>`;
     if (batch?.skipped) {
       const reason = this.skipReasonText(batch.error) || I18n.t('accounts.skip.other');
       return `<span class="acct-last-check is-skip" title="${this.esc(I18n.t('accounts.row.skipCheck', { reason }))}">
@@ -9984,7 +9983,11 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
         <button type="button" class="acct-last-check-retry" onclick="App.probeAccount('${this.escJsAttr(a.id)}')">${this.esc(I18n.t('accounts.row.retryCheck'))}</button>
       </span>`;
     }
-    const ts = Number(a.lastProbed || a.userStatusLastFetched || 0);
+    if (batch?.ok === false) {
+      const reason = this.noticeText(this.translateError(batch.error, 'error.probeFailed'));
+      return `<span class="acct-last-check" title="${this.esc(reason)}">${this.esc(I18n.t('accounts.row.checkFailed'))}</span>`;
+    }
+    const ts = Number(a.lastProbed || batch?.at || 0);
     if (!ts) return `<span class="acct-last-check">${this.esc(I18n.t('accounts.row.neverChecked'))}</span>`;
     const ago = this.fmtAgoShort(ts);
     const result = batch ? (batch.ok ? I18n.t('accounts.fleet.resultOk') : I18n.t('accounts.fleet.resultFail')) : '';
@@ -10004,11 +10007,14 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     const errors = Number(a.errorCount || 0) > 0
       ? `<span class="acct-error-count" title="${I18n.t('accounts.status.errorCount')}">⚠${Number(a.errorCount)}</span>`
       : '';
+    const routing = state === 'active' || state === 'watch'
+      ? `<span class="acct-routing-hint text-xs text-muted" title="${this.esc(I18n.t('accounts.status.routeTip'))}">${this.esc(I18n.t('accounts.status.routeUnknown'))}</span>`
+      : '';
     return `<div class="acct-state">
       <span class="acct-state-dot" style="background:${meta.band}"></span>
       <span class="badge ${meta.cls}" title="${this.esc(I18n.t(`accounts.statusTip.${state}`))}">${this.accountStateLabel(meta)}</span>
       ${errors}${countdown}${extra}
-    </div>`;
+    </div>${routing}`;
   },
 
   renderQuotaCell(a) {
@@ -11185,21 +11191,27 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
   },
 
   async refreshCredits(id) {
+    if (this.accountOperationsBusy()) return this.toast(I18n.t('accounts.fleet.busy'), 'info');
+    this._accountSingleOp = { op: 'refresh', id };
+    this.setOpStatus(I18n.t('accounts.fleet.starting', { action: I18n.t('accounts.op.refreshVerb') }));
+    let r;
     try {
-      const r = await this.api('POST', `/accounts/${id}/refresh-credits`, {});
-      this._batchResults ||= new Map();
-      this._batchResults.set(id, { ok: !!r.ok, error: r.ok ? undefined : r.error });
-      this._noteSingleResult('refresh', id, { ok: !!r.ok, error: r.error });
-      if (r.ok) {
-        this._accountDetails?.delete(id);
-        this._cardsByAccount?.delete(id);
-        this.toast(I18n.t('toast.credits.refreshed'));
-        this.loadAccounts();
-        this.refreshOpenDrawer(id);
-      } else {
-        this.toast(this.translateError(r.error, 'toast.credits.refreshFailed'), 'error', r.error);
-      }
-    } catch (e) { this.toast(I18n.t('toast.credits.refreshFailed') + ': ' + e.message, 'error'); }
+      r = await this.api('POST', `/accounts/${id}/refresh-credits`, {}, { notify: false });
+    } catch (err) {
+      r = { ok: false, error: err.message };
+    } finally {
+      this._accountSingleOp = null;
+    }
+    this._noteSingleResult('refresh', id, r);
+    if (r?.ok) {
+      this._accountDetails?.delete(id);
+      this._cardsByAccount?.delete(id);
+      this.toast(I18n.t('toast.credits.refreshed'));
+      this.loadAccounts();
+      this.refreshOpenDrawer(id);
+    } else {
+      this.toast(this.translateError(r?.error, 'toast.credits.refreshFailed'), 'error', r?.error);
+    }
   },
 
   // Rename the account's display name. PATCH {label} writes the display email
@@ -11230,18 +11242,25 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
   // cancel, and failures that could only be opened by selecting rows first.
   // Now: start a server-side job, poll it for the delta, cancel between
   // accounts, and keep a result panel that outlives the selection bar.
+  accountOperationsBusy() {
+    return !!(this._accountSingleOp || this._accountBatchActive || this._fleetStarting || this._fleetRun?.state === 'running');
+  },
+
   async startFleetRun(op) {
-    if (this._fleetTimer || this._fleetRun?.state === 'running') {
+    if (this.accountOperationsBusy()) {
       this.toast(I18n.t('accounts.fleet.busy'), 'info');
       return;
     }
+    this._fleetStarting = true;
     const verb = op === 'probe' ? I18n.t('accounts.op.probeVerb') : I18n.t('accounts.op.refreshVerb');
     this.setOpStatus(I18n.t('accounts.fleet.starting', { action: verb }));
     let started;
     try {
-      started = await this.api('POST', '/accounts/fleet-jobs', { op });
+      started = await this.api('POST', '/accounts/fleet-jobs', { op }, { notify: false });
     } catch (e) {
       started = { success: false, error: e.message };
+    } finally {
+      this._fleetStarting = false;
     }
     if (!started?.success || !started.job) {
       const msg = this.translateError(started?.error, 'error.genericAction');
@@ -11253,7 +11272,8 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     this._batchResults = new Map();
     this._fleetRun = { ...started.job, items: [], itemCount: 0, op };
     this._applyFleetSnapshot(started.job, { merge: true });
-    this._pollFleetRun(started.job.id);
+    if (this._fleetRun.state === 'running') this._pollFleetRun(started.job.id);
+    else this._finishFleetRun();
   },
 
   _pollFleetRun(jobId) {
@@ -11264,11 +11284,19 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
       if (!run || run.id !== jobId) return;
       let res;
       try {
-        res = await this.api('GET', `/accounts/fleet-jobs/${jobId}?since=${run.itemCount}`);
+        res = await this.api('GET', `/accounts/fleet-jobs/${jobId}?since=${run.itemCount}`, undefined, { notify: false });
       } catch (e) {
         res = { success: false, error: e.message };
       }
       if (!res?.success || !res.job) {
+        if (res?.error === 'ERR_FLEET_JOB_NOT_FOUND') {
+          run.state = 'failed';
+          run.error = res.error;
+          run.current = null;
+          this._refreshRowChips();
+          this._finishFleetRun();
+          return;
+        }
         this._fleetPollFailures = (this._fleetPollFailures || 0) + 1;
         // A dropped poll is not a failed run: retry a few times before saying
         // so, and never discard the items already collected.
@@ -11276,8 +11304,10 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
           this._pollFleetRun(jobId);
           return;
         }
-        this.setOpStatus(I18n.t('accounts.fleet.connectionLost', { done: Number(run.done || 0) }), 'error');
-        this._setFleetCancelVisible(false);
+        run.pollDisconnected = true;
+        this._refreshRowChips();
+        this.renderFleetProgress();
+        this.renderFleetPanel();
         return;
       }
       this._fleetPollFailures = 0;
@@ -11285,6 +11315,15 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
       if (res.job.state === 'running') this._pollFleetRun(jobId);
       else this._finishFleetRun();
     }, 700);
+  },
+
+  reconnectFleetRun() {
+    const run = this._fleetRun;
+    if (run?.state !== 'running' || !run.pollDisconnected) return;
+    this._fleetPollFailures = 0;
+    run.pollDisconnected = false;
+    this.renderFleetProgress();
+    this._pollFleetRun(run.id);
   },
 
   _applyFleetSnapshot(job, { merge = false } = {}) {
@@ -11310,13 +11349,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
       current: job.current || null,
       error: job.error || null,
     });
-    // Row chips update from the stream, so a running job never re-lists the pool.
-    this._batchResults ||= new Map();
-    for (const item of run.items) {
-      this._batchResults.set(item.id, item.skipped
-        ? { ok: false, skipped: true, error: item.reason || item.error || '' }
-        : { ok: !!item.ok, error: item.ok ? undefined : (item.error || '') });
-    }
+    for (const item of items) this.recordAccountActionResult(run.op, item);
     this._refreshRowChips();
     this.renderFleetProgress();
     this.renderFleetPanel();
@@ -11364,8 +11397,14 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     const total = Number(run.total || 0);
     const done = Number(run.done || 0);
     const verb = run.op === 'probe' ? I18n.t('accounts.op.probeVerb') : I18n.t('accounts.op.refreshVerb');
-    this._setFleetCancelVisible(run.state === 'running');
+    const retry = document.getElementById('accounts-fleet-retry');
+    if (retry) retry.hidden = run.state !== 'running' || !run.pollDisconnected;
+    this._setFleetCancelVisible(run.state === 'running' && !run.pollDisconnected);
     if (run.state === 'running') {
+      if (run.pollDisconnected) {
+        this.setOpStatus(I18n.t('accounts.fleet.connectionLost', { done }), 'error');
+        return;
+      }
       const current = run.current?.email
         ? ` · ${I18n.t('accounts.fleet.current', { email: run.current.email })}`
         : '';
@@ -11377,7 +11416,11 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
       return;
     }
     if (run.state === 'failed') {
-      this.setOpStatus(this.translateError(run.error, 'error.genericAction'), 'error');
+      this.setOpStatus(this.noticeText(this.translateError(run.error, 'error.genericAction')), 'error');
+      return;
+    }
+    if (total === 0) {
+      this.setOpStatus(I18n.t('accounts.fleet.noTargets'));
       return;
     }
     const summary = run.op === 'probe'
@@ -11388,7 +11431,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
         skipped: Number(run.skipped || 0),
       })
       : I18n.t('accounts.op.done', { ok: Number(run.ok || 0), fail: Number(run.fail || 0) });
-    const tone = Number(run.fail || 0) ? 'error' : (Number(run.skipped || 0) ? '' : 'success');
+    const tone = Number(run.fail || 0) ? 'error' : (Number(run.ok || 0) ? 'success' : '');
     this.setOpStatus(summary, tone);
   },
 
@@ -11405,7 +11448,9 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
       return;
     }
     const verb = run.op === 'probe' ? I18n.t('accounts.op.probeVerb') : I18n.t('accounts.op.refreshVerb');
-    const stateLabel = run.state === 'running' ? I18n.t('accounts.fleet.stateRunning')
+    const stateLabel = run.pollDisconnected ? I18n.t('accounts.fleet.stateDisconnected')
+      : run.state === 'failed' ? I18n.t('accounts.fleet.stateFailed')
+        : run.state === 'running' ? I18n.t('accounts.fleet.stateRunning')
       : run.state === 'cancelled' ? I18n.t('accounts.fleet.stateCancelled')
         : I18n.t('accounts.fleet.stateDone');
     summary.textContent = I18n.t('accounts.fleet.summary', {
@@ -11433,12 +11478,12 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
       const resultKey = item.skipped ? 'accounts.fleet.resultSkipped' : (item.ok ? 'accounts.fleet.resultOk' : 'accounts.fleet.resultFail');
       const tone = item.skipped ? 'skip' : (item.ok ? 'ok' : 'fail');
       const when = Number(item.at || 0);
-      const tip = code ? I18n.t('accounts.batch.techDetail', { code }) : '';
+      const tip = code ? I18n.t('accounts.batch.techDetail', { code: this.noticeText(code) }) : '';
       const at = when ? ` · ${this.fmtAgoShort(when)}` : '';
       return `<li class="fleet-item"${tip ? ` title="${this.esc(tip)}"` : ''}>
         <span class="fleet-item-result ${tone}">${this.esc(I18n.t(resultKey))}</span>
         <span class="fleet-item-email">${this.esc(item.email || item.id)}</span>
-        ${human ? ` — ${this.esc(human)}` : ''}${this.esc(at)}
+        ${human ? ` — ${this.esc(this.noticeText(human))}` : ''}${this.esc(at)}
       </li>`;
     }).join('');
     if (items.length === 0) list.hidden = true;
@@ -11517,7 +11562,18 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
       items: [item],
       itemCount: 1,
     };
+    this._batchResults = new Map();
+    this.recordAccountActionResult(op, item);
+    this._refreshRowChips();
+    this.renderFleetProgress();
     this.renderFleetPanel();
+    this.renderBatchFailures();
+  },
+
+  recordAccountActionResult(op, item) {
+    const result = { ok: !!item.ok && !item.skipped, skipped: !!item.skipped, error: item.reason || item.error || '', at: item.at };
+    this._batchResults.set(item.id, result);
+    if (op === 'probe') this._accountChecks.set(item.id, result);
   },
 
   _batchChipHtml(batch) {
@@ -11529,42 +11585,50 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
 
   _refreshRowChips() {
     document.querySelectorAll('#accounts-table tbody tr[data-id]').forEach((tr) => {
-      const cell = tr.querySelector('.acct-state-cell');
+      const id = tr.dataset.id;
+      const account = this._accountsById?.get(id);
+      const check = tr.querySelector('.acct-last-check-slot');
+      if (check && account) {
+        const html = this.renderLastCheck(account, this._accountChecks.get(id));
+        if (check._renderedHtml !== html) {
+          check.innerHTML = html;
+          check._renderedHtml = html;
+        }
+      }
+      const cell = tr.querySelector('.acct-state');
       if (!cell) return;
       const chip = cell.querySelector('.acct-batch-chip');
       if (chip) chip.remove();
-      const html = this._batchChipHtml(this._batchResults?.get(tr.dataset.id));
+      const html = this._batchChipHtml(this._batchResults?.get(id));
       if (html) cell.insertAdjacentHTML('beforeend', html);
     });
   },
 
   async probeAccount(id) {
-    this.toast(I18n.t('toast.probe.doing'), 'info');
+    if (this.accountOperationsBusy()) return this.toast(I18n.t('accounts.fleet.busy'), 'info');
+    this._accountSingleOp = { op: 'probe', id };
+    this.setOpStatus(I18n.t('accounts.row.checking'));
+    this._refreshRowChips();
+    let r;
     try {
-      const r = await this.api('POST', `/accounts/${id}/probe`, {});
-      this._batchResults ||= new Map();
-      if (r.skipped) {
-        // A skip means nothing was probed. Showing "success" here made a cold
-        // pool (LS not resident) look like a healthy sweep.
-        this._batchResults.set(id, { ok: false, skipped: true, error: r.reason || '' });
-        this._noteSingleResult('probe', id, { skipped: true, reason: r.reason || '' });
-        this.renderBatchFailures();
-        this.toast(I18n.t('accounts.op.skipped', { reason: this.skipReasonText(r.reason) || I18n.t('accounts.skip.other') }), 'info');
-        return;
-      }
-      this._batchResults.set(id, { ok: !!r.success, error: r.success ? undefined : r.error });
-      this._noteSingleResult('probe', id, { ok: !!r.success, error: r.error });
-      if (r.success) {
-        const tierLabel = { pro: 'Pro', free: 'Free', expired: I18n.t('tier.expiredLabel'), unknown: I18n.t('tier.unknown') };
-        this._accountDetails?.delete(id);
-        this._cardsByAccount?.delete(id);
-        this.toast(I18n.t('toast.probeComplete', { tier: tierLabel[r.tier] || r.tier }));
-        this.loadAccounts();
-        this.refreshOpenDrawer(id);
-      } else {
-        this.toast(this.translateError(r.error, 'error.probeFailed'), 'error', r.error);
-      }
-    } catch (e) { this.toast(I18n.t('error.probeFailed') + ': ' + e.message, 'error'); }
+      r = await this.api('POST', `/accounts/${id}/probe`, {}, { notify: false });
+    } catch (err) {
+      r = { success: false, error: err.message };
+    } finally {
+      this._accountSingleOp = null;
+    }
+    this._noteSingleResult('probe', id, { ...r, ok: !!r?.success && !r.skipped });
+    if (r?.skipped) {
+      const reason = this.skipReasonText(r.reason) || I18n.t('accounts.skip.other');
+      this.toast(I18n.t('accounts.op.skipped', { reason }), 'info');
+    } else if (r?.success) {
+      this._accountDetails?.delete(id);
+      this._cardsByAccount?.delete(id);
+      this.loadAccounts();
+      this.refreshOpenDrawer(id);
+    } else {
+      this.toast(this.translateError(r?.error, 'error.probeFailed'), 'error', r?.error);
+    }
   },
 
   async openBlockedModal(id) {
@@ -11797,8 +11861,8 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     if (!key) return this.toast(I18n.t('toast.enterKeyOrToken'), 'error');
     const body = type === 'api_key' ? { api_key: key, label, proxy } : { token: key, label, proxy };
     if (this._reauthAccountId) body.accountId = this._reauthAccountId;
-    const r = await this.api('POST', '/accounts', body);
-    if (r.success) {
+    const r = await this.api('POST', '/accounts', body, { notify: false });
+    if (r?.success) {
       const bound = !!this._reauthAccountId;
       this.toast(I18n.t(bound ? 'accounts.reauth.success' : 'account.addSuccess'));
       document.getElementById('acc-key').value = '';
@@ -11808,7 +11872,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
       this._accountDetails?.clear();
       this.closeAddAccountModal();
       this.loadAccounts();
-    } else this.toast(this.translateError(r.error, 'toast.addFailed'), 'error');
+    } else this.toast(this.loginErrorMessage(r, 'toast.addFailed'), 'error');
   },
 
   // v2.0.60 — preflight the local-windsurf availability so the dashboard
@@ -12135,8 +12199,8 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     const item = (row, skipped) => {
       const code = String(row.error || row.reason || '');
       const human = skipped ? this.skipReasonText(code) : this.translateError(code, 'error.genericAction');
-      const tip = code ? I18n.t('accounts.batch.techDetail', { code }) : '';
-      return `<li${tip ? ` title="${this.esc(tip)}"` : ''}>${this.esc(who(row.id))} — ${this.esc(human)}</li>`;
+      const tip = code ? I18n.t('accounts.batch.techDetail', { code: this.noticeText(code) }) : '';
+      return `<li${tip ? ` title="${this.esc(tip)}"` : ''}>${this.esc(who(row.id))} — ${this.esc(this.noticeText(human))}</li>`;
     };
     const list = (rows, label, skipped = false) => (rows.length
       ? `<div style="font-weight:600;margin:6px 0 2px">${label}</div><ul>${rows.map((f) => item(f, skipped)).join('')}</ul>`
@@ -12182,22 +12246,19 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
         });
       if (!ok) return;
     }
+    if (this.accountOperationsBusy()) return this.toast(I18n.t('accounts.fleet.busy'), 'info');
+    this._accountBatchActive = true;
     this._batchResults = new Map();
     this.setBatchProgress(I18n.t('batchOps.running', { count: ids.length }));
     try {
-      const r = await this.api('POST', '/accounts/batch', { ids, op });
+      const r = await this.api('POST', '/accounts/batch', { ids, op }, { notify: false });
       if (r?.success === false) {
         this.setBatchProgress(this.translateError(r.error, 'error.unknown'), 'error');
         return;
       }
       const results = r.results || [];
-      for (const item of results) {
-        this._batchResults.set(item.id, {
-          ok: !!item.ok,
-          skipped: !!item.skipped,
-          error: item.error || item.reason || '',
-        });
-      }
+      const at = Date.now();
+      for (const item of results) this.recordAccountActionResult(op, { ...item, at });
       const skipCount = Number(r.skipCount ?? results.filter((x) => x.skipped).length);
       const okCount = Number(r.okCount ?? results.filter((x) => x.ok).length);
       const failCount = Number(r.failCount ?? (results.length - okCount - skipCount));
@@ -12215,7 +12276,9 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
       this._syncSelectAllState();
       this._updateBatchBar();
     } catch (e) {
-      this.setBatchProgress(e.message || I18n.t('error.unknown'), 'error');
+      this.setBatchProgress(this.noticeText(e.message || I18n.t('error.unknown')), 'error');
+    } finally {
+      this._accountBatchActive = false;
     }
   },
 
@@ -12247,6 +12310,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     this._requestsByAccount?.delete(id);
     this._selectedAccounts?.delete(id);
     this._batchResults?.delete(id);
+    this._accountChecks?.delete(id);
     if (this._drawerAccountId === id) this.closeAccountDrawer();
     this.loadAccounts();
     this.toast(I18n.t('account.deleteSuccess'));

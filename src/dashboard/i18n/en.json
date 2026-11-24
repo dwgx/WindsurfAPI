@@ -369,10 +369,10 @@
     },
     "oauthLogin": {
       "title": "Google / GitHub sign-in",
-      "desc": "Sign in on Windsurf's official page, then come back and paste the token."
+      "desc": "Legacy Windsurf browser sign-in and manual credential entry."
     },
     "emailLogin": {
-      "title": "Email sign-in",
+      "title": "Windsurf email sign-in",
       "desc": "Accounts with a password use the password form; accounts without one use an email code."
     },
     "loginProxy": {
@@ -646,7 +646,7 @@
   },
   "help": {
     "token": "Recommended: Use Token method. Visit {{link}} after logging in, copy the Token and paste below. Works with all login methods (Email/Google/GitHub).",
-    "tokenGuide": "Recommended: Use Token method. Visit ",
+    "tokenGuide": "Paste an existing credential supported by this gateway. Legacy Windsurf credential page",
     "tokenGuideEnd": " after logging in, copy the Token and paste below. Works with all login methods (Email/Google/GitHub)."
   },
   "skin": {
@@ -1176,8 +1176,10 @@
       "open": "Open login page",
       "copy": "Copy login URL",
       "copied": "Login URL copied",
-      "dontAsk": "Don't ask again (change in Settings)"
-    }
+      "dontAsk": "Don't ask again (change in Settings)",
+      "copyUnavailable": "This browser could not copy the link. Select Open login page."
+    },
+    "legacyRedirectHelp": "If the login page says “Invalid redirect URI”, the provider rejected the legacy callback. Use Devin’s official sign-in."
   },
   "update": {
     "checking": "Checking for updates...",
@@ -1271,9 +1273,14 @@
     },
     "login": {
       "methodsLabel": "Choose how to add an account",
-      "pasteToken": "Paste a token",
+      "pasteToken": "Paste a credential",
       "back": "Choose another way",
-      "advanced": "Advanced options (proxy / login history / saved password)"
+      "advanced": "Advanced options (proxy / login history / saved password)",
+      "devinTitle": "Sign in to Devin",
+      "devinHint": "Opens Devin in a new tab. Adding an account here requires a gateway-supported credential.",
+      "legacyWindsurf": "Legacy Windsurf sign-in",
+      "focusPaste": "Focus paste field",
+      "manualPasteHint": "Press Ctrl+V or use the browser paste menu, then submit."
     },
     "toolbar": {
       "fleet": "Pool operations",
@@ -1294,7 +1301,7 @@
       "clear": "Clear filters"
     },
     "status": {
-      "active": "Healthy",
+      "active": "Enabled",
       "disabled": "Switched off",
       "banned": "Banned",
       "reauth": "Needs re-auth",
@@ -1306,10 +1313,12 @@
       "watch": "Has errors",
       "resumesIn": "resumes in {{time}}",
       "errorCount": "Error count",
-      "blockedCount": "Blocked models"
+      "blockedCount": "Blocked models",
+      "routeUnknown": "Model availability unverified",
+      "routeTip": "Whether a request can run depends on the selected model, route, quota and current capacity."
     },
     "statusTip": {
-      "active": "Can take requests: not switched off, not rate limited, quota not exhausted.",
+      "active": "Account is enabled and the local status reports no warning.",
       "disabled": "You switched this account off. Enable it to put it back in rotation.",
       "banned": "Windsurf banned this account; it can only be removed or replaced.",
       "reauth": "The credential is dead; signing in again replaces it on the same row.",
@@ -1318,24 +1327,24 @@
       "rate_limited": "The service is rate limiting; it recovers when the window ends.",
       "capacity": "Model capacity is short right now; switch models or retry later.",
       "near_limit": "Per-minute requests are close to the cap; slow down or wait for the window.",
-      "watch": "There are past errors, but the account can still take requests."
+      "watch": "This account has recent errors. Availability depends on the model and route."
     },
     "kpi": {
       "total": "Accounts",
-      "active": "Healthy",
+      "active": "No status warnings",
       "disabled": "Switched off",
       "attention": "Needs attention",
       "attentionSub": "{{banned}} banned · {{reauth}} re-auth · {{limited}} rate limited · {{cooled}} quota dry",
       "balance": "Pool balance",
       "balanceSub": "{{count}} accounts",
       "balanceSubShared": "{{count}} accounts · {{shared}} shared balances counted once",
-      "totalTip": "Every account in the pool: healthy + switched off + needs attention.",
-      "activeTip": "Accounts that can take a request right now. Rate-limited, quota-dry and near-limit accounts are not healthy.",
+      "totalTip": "Every account in the pool, including accounts with no status warnings, switched-off accounts and those that need attention.",
+      "activeTip": "Enabled accounts with no local status warning. Check the model and route for request availability.",
       "disabledTip": "Accounts you switched off yourself. Banned, re-auth and error accounts are not here — they are under Needs attention.",
       "attentionTip": "Accounts that need you: banned, needs re-auth, error, quota dry, rate limited, model busy, near limit, has errors. Same count as the “Needs attention” filter.",
       "balanceTip": "Sum of on-demand balances. A balance shared by one team is counted once; accounts with no known team are summed individually."
     },
-    "subtitle": "{{total}} total · {{active}} healthy · {{attention}} need attention · balance {{balance}}",
+    "subtitle": "{{total}} total · {{active}} without warnings · {{attention}} need attention · balance {{balance}}",
     "method": {
       "api_key": "API key",
       "token": "Login credential",
@@ -1344,11 +1353,17 @@
       "unknown": "Other"
     },
     "skip": {
-      "ls_not_idle_resident": "The language service is not running — start it, then check again",
-      "account_busy": "This account is handling a request — try again shortly",
+      "ls_not_idle_resident": "The language service is busy or unavailable. Try again when it is idle.",
+      "account_busy": "The account is in use. Try again when it is idle.",
       "memory_guard": "Not enough memory — skipped this time",
       "probe_skipped": "No check was run this time",
-      "other": "Skipped (hover for the reason)"
+      "other": "Skipped (hover for the reason)",
+      "can_start": "This check needs a running language service. It has not started for this account.",
+      "start_pending": "The language service is starting. Try again when it is ready.",
+      "ls_stopping": "The language service is stopping. Try again after it is ready.",
+      "ls_memory_guard": "The language service is unavailable under the current memory limit.",
+      "ls_pool_exhausted": "No language service slot is available for this account.",
+      "already_running": "The language service is busy. Try again when it is idle."
     },
     "selectAllPage": "Select this page",
     "selectRow": "Select account",
@@ -1365,7 +1380,9 @@
       "neverChecked": "Not checked yet",
       "skipCheck": "Not checked: {{reason}}",
       "retryCheck": "Retry",
-      "rename": "Rename"
+      "rename": "Rename",
+      "checking": "Checking…",
+      "checkFailed": "Latest check failed"
     },
     "rename": {
       "prompt": "Enter a new display name",
@@ -1410,12 +1427,12 @@
     },
     "fleet": {
       "cancel": "Cancel",
-      "busy": "A batch operation is already running — wait for it to finish",
+      "busy": "An account action is already in progress. Wait for its result.",
       "starting": "Preparing to {{action}}…",
       "running": "{{action}} {{done}}/{{total}}",
       "current": "Now: {{email}}",
       "cancelled": "Cancelled ({{done}}/{{total}} finished)",
-      "connectionLost": "Connection lost — the {{done}} finished items are kept",
+      "connectionLost": "Progress connection lost. {{done}} results retained. Reconnect to check the current state.",
       "summary": "{{action}} · {{state}}: {{ok}} succeeded · {{fail}} failed · {{skipped}} skipped",
       "stateRunning": "running",
       "stateDone": "done",
@@ -1428,7 +1445,11 @@
       "resultOk": "ok",
       "resultFail": "failed",
       "resultSkipped": "skipped",
-      "resultExcluded": "not run"
+      "resultExcluded": "not run",
+      "reconnect": "Reconnect to progress",
+      "noTargets": "No eligible accounts for this operation.",
+      "stateDisconnected": "Progress unavailable",
+      "stateFailed": "Failed"
     },
     "empty": {
       "poolTitle": "No accounts yet",
@@ -1966,7 +1987,9 @@
     "ERR_EMAIL_FLOW_USED": "This verification code was already used. Request a new one.",
     "ERR_EMAIL_FLOW_IN_USE": "This verification code is already being checked.",
     "ERR_EMAIL_FLOW_CODE_REQUIRED": "A verification flow and code are required",
-    "ERR_LOGIN_PROBE_FAILED": "Could not check the login method. Try again."
+    "ERR_LOGIN_PROBE_FAILED": "Could not check the login method. Try again.",
+    "ERR_ACCOUNT_CHECK_STATUS_UNAVAILABLE": "The account check could not read upstream status. Retry when the language service is ready.",
+    "ERR_FLEET_JOB_NOT_FOUND": "This check run is no longer available. Start a new check if needed."
   },
   "footer": {
     "version": "Version",
@@ -2030,13 +2053,13 @@
     "errorTitle": "Overview unavailable",
     "staleSince": "Showing last-good data from {{time}}. Refresh failed: {{error}}",
     "poolHealth": {
-      "healthy": "Healthy",
+      "healthy": "No local warning",
       "throttled": "Throttled",
       "error": "Error",
       "dead": "Dead token",
       "quotaPressure": "Quota pressure",
       "highRpm": "High RPM",
-      "verdictAllHealthy": "All accounts healthy",
+      "verdictAllHealthy": "No local pool warnings",
       "verdictDegraded": "{{count}} account(s) need attention",
       "verdictCritical": "{{count}} account(s) with recent errors",
       "empty": "No pool telemetry",

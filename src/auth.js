@@ -6156,7 +6156,7 @@ function inferTier(caps, { floorTier = null } = {}) {
  * Fetch authoritative user status from the LS → account fields.
  * Returns the parsed UserStatus object on success, null on failure.
  */
-export async function fetchUserStatus(id, { allowLsStart = true } = {}) {
+export async function fetchUserStatus(id, { allowLsStart = true, residentLease = null } = {}) {
   const account = accounts.find(a => a.id === id);
   if (!account) return null;
   // V-26: a snapshot describes ONE credential at ONE point in time. Capture the
@@ -6166,7 +6166,7 @@ export async function fetchUserStatus(id, { allowLsStart = true } = {}) {
   const { WindsurfClient } = await import('./client.js');
   const { ensureLs, getLsFor } = await import('./langserver.js');
   const proxy = getEffectiveProxy(account.id) || null;
-  if (!allowLsStart) {
+  if (!allowLsStart && !residentLease) {
     const admission = getLsAdmissionForAccount(account.id);
     const skipped = residentProbeSkip(account, admission);
     if (skipped) {
@@ -6174,9 +6174,12 @@ export async function fetchUserStatus(id, { allowLsStart = true } = {}) {
       return null;
     }
   }
-  if (allowLsStart) await ensureLs(proxy);
+  if (allowLsStart && !residentLease) await ensureLs(proxy);
   const ls = getLsFor(proxy);
-  if (!ls) { log.warn(`No LS for GetUserStatus on ${account.id}`); return null; }
+  if (!ls || (residentLease && (ls !== residentLease.entry || !ls.ready))) {
+    log.warn(`No matching LS for GetUserStatus on ${account.id}`);
+    return null;
+  }
 
   // The RPC is sent with the credential captured at entry, so the response and
   // the epoch we validate against describe the same credential.
@@ -6363,20 +6366,25 @@ async function _probeAccountImpl(account, { allowLsStart = true, canary } = {}) 
     }
 
     // ── Step 1: authoritative tier via GetUserStatus ──
-    const status = await fetchUserStatus(account.id, { allowLsStart });
+    // Admission already acquired an exclusive hold. Checking for zero
+    // maintenance users again would reject this probe's own hold.
+    const status = await fetchUserStatus(account.id, { allowLsStart, residentLease: lsMaintenanceToken });
+    if (!status && !runCanary) return { ok: false, error: 'ERR_ACCOUNT_CHECK_STATUS_UNAVAILABLE' };
 
   const { WindsurfClient } = await import('./client.js');
   const { getModelInfo } = await import('./models.js');
   const { ensureLs, getLsFor } = await import('./langserver.js');
 
   const proxy = getEffectiveProxy(account.id) || null;
-  if (!allowLsStart) {
+  if (!allowLsStart && !lsMaintenanceToken) {
     const skipped = residentProbeSkip(account, getLsAdmissionForAccount(account.id));
     if (skipped) return skipped;
   }
-  if (allowLsStart) await ensureLs(proxy);
+  if (allowLsStart && !lsMaintenanceToken) await ensureLs(proxy);
   const ls = getLsFor(proxy);
-  if (!ls) { log.error(`No LS available for account ${account.id}`); return null; }
+  if (!ls || (lsMaintenanceToken && (ls !== lsMaintenanceToken.entry || !ls.ready))) {
+    return { ok: false, error: 'ERR_ACCOUNT_CHECK_STATUS_UNAVAILABLE' };
+  }
   const port = ls.port;
   const csrf = ls.csrfToken;
 

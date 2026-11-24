@@ -44,6 +44,7 @@ export function probeOutcomeEntry(id, result) {
   if (result.skipped) {
     return { id, ok: false, skipped: true, reason: result.reason || 'probe_skipped', tier: result.tier || 'unknown' };
   }
+  if (result.ok === false) return { id, ok: false, error: result.error || 'ERR_ACCOUNT_CHECK_STATUS_UNAVAILABLE' };
   return { id, ok: true, tier: result.tier || 'unknown' };
 }
 

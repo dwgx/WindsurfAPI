@@ -2584,7 +2584,7 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
       const canary = body?.canary === true || body?.deep === true;
       const result = await probeAccount(accountProbe[1], { allowLsStart: force, canary });
       if (!result) return json(res, 404, { error: 'Account not found' });
-      return json(res, 200, { success: true, ...result });
+      return json(res, 200, { success: result.ok !== false, ...result });
     } catch (err) {
       return json(res, 500, { error: err.message });
     }

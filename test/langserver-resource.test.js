@@ -405,7 +405,9 @@ describe('wiring with no reachable seam', () => {
     const auth = readSrc('src/auth.js');
     assert.match(auth, /function residentProbeSkip/);
     assert.match(auth, /if \(!allowLsStart\) \{/);
-    assert.match(auth, /if \(allowLsStart\) await ensureLs\(proxy\)/);
+    assert.match(auth, /if \(!allowLsStart && !residentLease\) \{/);
+    assert.match(auth, /if \(allowLsStart && !residentLease\) await ensureLs\(proxy\)/);
+    assert.match(auth, /if \(allowLsStart && !lsMaintenanceToken\) await ensureLs\(proxy\)/);
     assert.match(auth, /reason: busyReason \|\| admission\.errorType \|\| admission\.reason \|\| 'ls_not_idle_resident'/);
   });
 
