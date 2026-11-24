@@ -42,13 +42,33 @@ test('pool render tears down before committing its new signature', () => {
   assert.doesNotMatch(mount, /this\._teardownFires\(\)/);
 });
 
-test('late overview work cannot remount fires on a hidden panel', () => {
+test('late overview work cannot remount fires on a hidden panel or supersede a newer load', async () => {
   const navigate = section('navigate', 'api');
   const load = section('loadOverview', 'restartLs');
   const mount = section('_mountBarFires', '_poolTierLabel');
   assert.match(navigate, /_overviewLoadGeneration/);
-  assert.match(load, /_overviewLoadGeneration/);
-  assert.ok((load.match(/if \(!isCurrent\(\)\) return;/g) || []).length >= 2);
   assert.match(mount, /p-overview/);
   assert.match(mount, /classList\.contains\('active'\)/);
+  for (const change of ['hidden', 'superseded']) {
+    let active = true;
+    const document = {
+      getElementById(id) {
+        return id === 'p-overview' ? { classList: { contains: () => active } } : null;
+      },
+    };
+    const loadOverview = Function('document', `return ({ ${load} }).loadOverview;`)(document);
+    const reply = Promise.withResolvers();
+    let renders = 0;
+    const holder = {
+      api: () => reply.promise,
+      _hideOverviewStale: () => { renders++; },
+      _renderPoolHealth: () => { renders++; },
+    };
+    const loading = loadOverview.call(holder);
+    if (change === 'hidden') active = false;
+    else holder._overviewLoadGeneration++;
+    reply.resolve({});
+    await loading;
+    assert.equal(renders, 0, `a ${change} overview load must stop before rendering`);
+  }
 });

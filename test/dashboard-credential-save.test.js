@@ -22,6 +22,8 @@ function element() {
   return {
     children: [],
     style: {},
+    dataset: {},
+    get classList() { return { contains: value => (this.className || '').split(/\s+/).includes(value) }; },
     addEventListener() {},
     appendChild(child) { this.children.push(child); },
     querySelector(selector) { return buttons[selector] ?? null; },
@@ -136,7 +138,10 @@ for (const [skin, file] of [['Modern', 'index.html'], ['Sketch', 'index-sketch.h
           return Response.json(result, { status });
         });
         const toast = await page.save(field);
-        const expectedText = messages.map(key => bundle.toast[key].replace('{{error}}', error ?? '')).join(' ');
+        if (skin === 'Modern') assert.equal(page.nodes['toast-stack'].children.length, 1);
+        const presented = skin === 'Modern' && messages.length === 2
+          ? ['credentialsAppliedBothWarnings'] : messages;
+        const expectedText = presented.map(key => bundle.toast[key].replace('{{error}}', error ?? '')).join(' ');
         assert.equal(toast.text, expectedText);
         assert.equal(toast.node.className, messages[0] === 'saved' ? 'toast success' : 'toast error');
         assert.equal(page.nodes[inputIds[field]].value, error ? inputValue : '');

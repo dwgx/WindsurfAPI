@@ -22,7 +22,7 @@ import { safeAccountRef } from '../src/log-safety.js';
 import { sanitizeLabelText } from '../src/auth.js';
 
 const AUTH_JS = readFileSync(new URL('../src/auth.js', import.meta.url), 'utf8');
-const HEAD = 'export async function fetchUserStatus(id, { allowLsStart = true } = {}) {';
+const HEAD = 'export async function fetchUserStatus(id, { allowLsStart = true, residentLease = null } = {}) {';
 
 /** Run the real fetchUserStatus against a fixed GetUserStatus response. */
 function load(status, { account = {}, models = {} } = {}) {

@@ -99,7 +99,12 @@ test('pre-admission HTTP failures have a root request row and no billed attempt'
     assert.equal(response.status, status);
     const id = response.headers.get('x-request-id');
     const body = await response.json();
-    if (surface !== 'gemini') assert.equal(body.request_id, id);
+    if (surface === 'gemini') {
+      assert.equal(body.error.status, 'UNAVAILABLE');
+    } else {
+      assert.equal(body.request_id, id);
+      assert.equal(body.error.type, surface === 'messages' ? 'overloaded_error' : 'api_error');
+    }
     assert.match(id, /^req_[0-9a-f-]{36}$/);
     assert.ok(!seen.has(id));
     seen.add(id);

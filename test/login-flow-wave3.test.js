@@ -454,11 +454,13 @@ describe('secret hygiene', () => {
 describe('dashboard login tab wiring', () => {
   const HTML = readFileSync(new URL('../src/dashboard/index.html', import.meta.url), 'utf8');
 
-  it('offers the "get a token from windsurf.com" flow with a one-click clipboard import', () => {
+  it('opens the sign-in flow and supports explicit paste into the credential field', () => {
     assert.match(HTML, /onclick="App\.fetchWindsurfToken\(\)"[^>]*id="oauth-fetch-token-btn"/);
-    assert.match(HTML, /onclick="App\.pasteOAuthTokenFromClipboard\(\)"/);
+    assert.match(HTML, /onclick="App\.focusCredentialPaste\('oauth-token-input'\)"/);
+    assert.match(HTML, /id="oauth-token-input" type="password"/);
+    assert.match(HTML, /onclick="App\.submitOAuthToken\(\)"/);
     assert.match(HTML, /async fetchWindsurfToken\(\)/);
-    assert.match(HTML, /async pasteOAuthTokenFromClipboard\(\)/);
+    assert.match(HTML, /async submitOAuthToken\(\)/);
     // The import must go through the stateless route, not the state-bound
     // callback that produced ERR_INVALID_STATE for a valid token.
     assert.match(HTML, /this\.api\('POST', '\/windsurf-login\/token'/);
@@ -468,7 +470,7 @@ describe('dashboard login tab wiring', () => {
     assert.match(HTML, /id="wl-email-code-field"/);
     assert.match(HTML, /id="wl-code-status" aria-live="polite"/);
     assert.match(HTML, /id="wl-send-code-label"/);
-    assert.match(HTML, /I18n\.t\('emailLogin\.resendInShort', \{ seconds: left \}\)/);
+    assert.match(HTML, /I18n\.t\('emailLogin\.resendInShort', \{ seconds \}\)/);
     assert.match(HTML, /I18n\.t\('emailLogin\.codeSentToDevin'/);
   });
 
@@ -480,8 +482,32 @@ describe('dashboard login tab wiring', () => {
 
   it('invalidates a cached probe and an outstanding code flow when the email changes', () => {
     assert.match(HTML, /oninput="App\.onWindsurfEmailInput\(\)"/);
-    assert.match(HTML, /if \(this\._wlFlow && email !== this\._wlFlow\.email\) \{/);
-    assert.match(HTML, /this\._wlFlow = null;\n      const st = document\.getElementById\('wl-code-status'\)/);
+    const methods = ['onWindsurfEmailInput', 'resetEmailCodeForm'].map(name => {
+      const from = HTML.indexOf(`\n  ${name}(`);
+      const end = HTML.indexOf('\n  },', from);
+      assert.ok(from >= 0 && end > from, `missing ${name}`);
+      return HTML.slice(from, end + 5);
+    });
+    for (const flow of [{ email: EMAIL, flowId: 'fixture-id' }, null]) {
+      const fields = {
+        'wl-email': { value: 'other-login@example.test' },
+        'wl-code-status': { textContent: '', dataset: {} },
+        'wl-email-code': { value: CODE },
+      };
+      const document = { getElementById: id => fields[id], querySelector: () => null };
+      const form = Function('document', 'I18n', `return ({ ${methods.join('\n')} });`)(document, { t: key => key });
+      Object.assign(form, {
+        _wlFlow: flow, _wlEmailOp: flow ? null : { email: EMAIL },
+        _wlProbeEmail: EMAIL, _wlProbe: {}, updateEmailCodeControls() {},
+      });
+      form.onWindsurfEmailInput();
+      assert.equal(form._wlProbe, null);
+      assert.equal(form._wlProbeEmail, null);
+      assert.equal(form._wlFlow, null);
+      assert.equal(form._wlEmailOp, null);
+      assert.equal(fields['wl-email-code'].value, '');
+      assert.equal(fields['wl-code-status'].textContent, 'emailLogin.emailChanged');
+    }
   });
 });
 

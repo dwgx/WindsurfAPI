@@ -14948,7 +14948,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     );
     if (!okConfirm) return;
     try {
-      const r = await this.api('PUT', '/settings/credentials', { [field]: value });
+      const r = await this.api('PUT', '/settings/credentials', { [field]: value }, { notify: false });
       // The API wrapper returns failure envelopes as values. Publication is
       // separate from HTTP success: a warning can describe already-live values.
       const updatedFlag = field === 'apiKey' ? 'apiKeyUpdated' : 'dashboardPasswordUpdated';
@@ -14963,10 +14963,13 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
       el.value = '';
       const warnings = Array.isArray(r.warnings) ? r.warnings : [];
       const notices = [];
-      if (r.durability === 'unconfirmed' || warnings.includes('ERR_CREDENTIAL_DURABILITY_UNCONFIRMED')) {
+      const durabilityUnconfirmed = r.durability === 'unconfirmed' || warnings.includes('ERR_CREDENTIAL_DURABILITY_UNCONFIRMED');
+      const protectionFailed = r.protection === 'failed' || warnings.includes('ERR_CREDENTIAL_PROTECTION_FAILED');
+      if (durabilityUnconfirmed && protectionFailed) {
+        notices.push(I18n.t('toast.credentialsAppliedBothWarnings'));
+      } else if (durabilityUnconfirmed) {
         notices.push(I18n.t('toast.credentialsAppliedDurabilityWarning'));
-      }
-      if (r.protection === 'failed' || warnings.includes('ERR_CREDENTIAL_PROTECTION_FAILED')) {
+      } else if (protectionFailed) {
         notices.push(I18n.t('toast.credentialsAppliedProtectionWarning'));
       }
       if (warnings.length && !notices.length) notices.push(I18n.t('toast.credentialsAppliedWarning'));

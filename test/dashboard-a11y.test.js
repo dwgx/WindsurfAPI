@@ -24,7 +24,9 @@ describe('dashboard a11y — segmented controls are radio groups (D3a)', () => {
     // must stay the only one so this guard keeps policing the seg-groups.
     assert.equal((html.match(/role="tablist"/g) || []).length, 1,
       'only the add-account modal may declare a tablist');
-    assert.match(html, /class="add-tabs" role="tablist"/);
+    const accountTabs = html.match(/<div\b[^>]*\bclass="add-tabs"[^>]*>/)?.[0];
+    assert.ok(accountTabs, 'the account-add tab container must exist');
+    assert.match(accountTabs, /\brole="tablist"/);
     assert.match(html, /role="tabpanel"/);
   });
 

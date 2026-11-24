@@ -1817,6 +1817,7 @@
     "saved": "Saved",
     "credentialsAppliedDurabilityWarning": "New credentials are active, but a safe disk save could not be confirmed. Keep the new values and check server storage.",
     "credentialsAppliedProtectionWarning": "New credentials are active, but file access protection could not be confirmed. Check the server configuration file permissions.",
+    "credentialsAppliedBothWarnings": "New credentials are active. Disk save and file protection are unconfirmed. Keep the new values and check server storage and config permissions.",
     "credentialsAppliedWarning": "New credentials are active, but the server reported a save warning. Check the server before restarting.",
     "settingSaved": "Setting saved",
     "turnstileFailed": "Turnstile verification failed",

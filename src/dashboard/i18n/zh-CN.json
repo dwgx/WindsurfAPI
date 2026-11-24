@@ -1817,6 +1817,7 @@
     "saved": "已保存",
     "credentialsAppliedDurabilityWarning": "新凭据已生效，但尚未确认已安全写入磁盘。请保留新值并检查服务器存储。",
     "credentialsAppliedProtectionWarning": "新凭据已生效，但未能确认文件访问保护。请检查服务器配置文件的权限。",
+    "credentialsAppliedBothWarnings": "新凭据已生效，磁盘保存与文件访问保护待确认。请保留新值，并检查服务器存储和配置文件权限。",
     "credentialsAppliedWarning": "新凭据已生效，但服务器报告了保存警告。请在重启前检查服务器状态。",
     "settingSaved": "设置已保存",
     "turnstileFailed": "人机验证失败",

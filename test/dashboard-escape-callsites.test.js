@@ -105,7 +105,7 @@ const REVIEWED_NOT_SINKS = [
   { line: 14587, field: 'id', expr: 'id}', why: 'C numeric-or-http: local DOM id built from a literal settings key, not account data' },
   { line: 14757, field: 'id', expr: 'id}', why: 'C numeric-or-http: local DOM id built from a literal settings key, not account data' },
   { line: 14758, field: 'id', expr: 'id}', why: 'C numeric-or-http: local DOM id built from a literal settings key, not account data' },
-  { line: 15058, field: 'status', expr: 'res.status}', why: 'C numeric-or-http: HTTP status code, always a Number' },
+  { line: 15061, field: 'status', expr: 'res.status}', why: 'C numeric-or-http: HTTP status code, always a Number' },
 ];
 
 function dashboardSource() {

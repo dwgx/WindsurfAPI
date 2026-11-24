@@ -344,41 +344,50 @@ describe('end to end: the caller stays on its own account', () => {
       'the pin is unchanged, so the next turn reads the cache back');
   });
 
-  it('with the knob OFF, the same scenario rotates to the substitute (default unchanged)', async () => {
+  it('with the knob OFF, the same scenario rotates to the substitute (default unchanged)', async (t) => {
     const chat = await import('../src/handlers/chat.js');
     const A = seed('off-a');
     const B = seed('off-b');
     sticky.setStickyBinding(CALLER, null, A.id, A.apiKey, SELECTOR);
+    // Keep the short recovery window blocked until the actual checkout.
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: Date.now() });
     blockOnRpm(A);
     setBudget(null); // OFF
 
-    setTimeout(() => unblock(A), 150);
+    const polling = Symbol('pending poll');
+    const acct = await Promise.race([
+      chat.__testing.waitForAccount([], null, 5000, null, CALLER, SELECTOR),
+      new Promise(resolve => setImmediate(resolve, polling)),
+    ]);
 
-    const acct = await chat.__testing.waitForAccount([], null, 5000, null, CALLER, SELECTOR);
-
+    assert.notEqual(acct, polling, 'the disabled wait must settle without advancing the clock');
     assert.ok(acct, 'the caller must still be served');
     assert.equal(acct.id, B.id,
       'with the knob off the behaviour must be exactly what it was: rotate immediately');
     auth.releaseAccountById(acct.id);
   });
 
-  it('a wait longer than the budget gives up and rotates rather than stalling', async () => {
+  it('a recovery window longer than the budget rotates without waiting', async (t) => {
     const chat = await import('../src/handlers/chat.js');
     const A = seed('give-a');
     const B = seed('give-b');
     sticky.setStickyBinding(CALLER, null, A.id, A.apiKey, SELECTOR);
-    blockOnRpm(A); // never freed
+    t.mock.timers.enable({ apis: ['setTimeout', 'Date'], now: Date.now() });
+    blockOnRpm(A, RPM_WINDOW_MS - 900);
     setBudget(300);
+    assert.ok(auth.getAccountAvailability(A.apiKey, SELECTOR).retryAfterMs > 300,
+      'the fixture must keep the recovery beyond the pin wait budget');
 
-    const t0 = Date.now();
-    const acct = await chat.__testing.waitForAccount([], null, 5000, null, CALLER, SELECTOR);
-    const elapsed = Date.now() - t0;
+    const polling = Symbol('pending poll');
+    const acct = await Promise.race([
+      chat.__testing.waitForAccount([], null, 5000, null, CALLER, SELECTOR),
+      new Promise(resolve => setImmediate(resolve, polling)),
+    ]);
 
+    assert.notEqual(acct, polling, 'a recovery beyond the budget must skip the pin wait');
     assert.ok(acct, 'giving up must still serve the caller');
-    assert.equal(acct.id, B.id, 'it rotates to the substitute after the budget expires');
+    assert.equal(acct.id, B.id, 'the checkout rotates to the substitute');
     auth.releaseAccountById(acct.id);
-    assert.ok(elapsed < 3000,
-      `must give up near the 300ms budget, not stall — took ${elapsed}ms`);
   });
 
   it('a quota dry-well rotates IMMEDIATELY instead of burning the budget', async () => {

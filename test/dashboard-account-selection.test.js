@@ -70,6 +70,8 @@ function baseSelf(overrides = {}) {
     _updateBatchBar: () => {},
     ...overrides,
   };
+  self.accountOperationsBusy = method('accountOperationsBusy', self);
+  self.recordAccountActionResult = method('recordAccountActionResult', self);
   self.accountsFilterKey = method('accountsFilterKey', self);
   self._selectionMatchesFilters = method('_selectionMatchesFilters', self);
   self._rememberSelectionScope = method('_rememberSelectionScope', self);

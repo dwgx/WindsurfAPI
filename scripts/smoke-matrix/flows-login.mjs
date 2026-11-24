@@ -556,11 +556,16 @@ export function registerLoginFlows(ctx) {
       return doc.slice(start, end);
     };
 
-    // Step 1 is a chooser: two method cards plus one secondary token link.
+    // Keep the supported portal handoff and email entry distinct from legacy
+    // Windsurf and manual credential import.
     const panel = slice('<div class="add-panel active" id="add-panel-login"', '<div class="add-panel" id="add-panel-paste"');
     const chooser = slice('id="wl-method-step"', 'id="wl-panel-oauth"');
-    requireThat((chooser.match(/class="login-method"/g) || []).length === 2, `the first screen offers ${(chooser.match(/class="login-method"/g) || []).length} method cards, not 2`);
-    requireThat((chooser.match(/class="btn btn-ghost btn-sm login-method-token"/g) || []).length === 1, 'the token link is not a single secondary action');
+    const methods = chooser.match(/<(?:a|button)\b[^>]*class="login-method(?: [^"]+)?"[^>]*>/g) || [];
+    requireThat(methods.length === 2, `the first screen offers ${methods.length} primary methods, not 2`);
+    requireThat(methods.some(tag => tag.includes('href="https://app.devin.ai/"')), 'the Devin handoff is missing');
+    requireThat(methods.some(tag => tag.includes("App.selectLoginMethod('email')")), 'the email action is missing');
+    requireThat(chooser.includes('id="wl-method-oauth-btn"') && chooser.includes('accounts.login.legacyWindsurf'), 'the legacy path must be labelled');
+    requireThat(chooser.includes("App.focusCredentialPaste('acc-key')"), 'the independent manual paste action is missing');
     requireThat(!chooser.includes('oauth-google-btn'), 'provider buttons are on the first screen');
     requireThat(!chooser.includes('id="wl-email"'), 'the email field is on the first screen');
 
@@ -580,7 +585,7 @@ export function registerLoginFlows(ctx) {
     requireThat(steps.length === 3, `the token path has ${steps.length} steps, not 3`);
     for (const [index, step] of steps.entries()) requireThat(step.includes('<button'), `token step ${index + 1} has no action`);
     requireThat(steps[0].includes('App.fetchWindsurfToken()'), 'step 1 does not open the sign-in page');
-    requireThat(steps[1].includes('App.pasteOAuthTokenFromClipboard()'), 'step 2 does not paste from the clipboard');
+    requireThat(steps[1].includes("App.focusCredentialPaste('oauth-token-input')"), 'step 2 does not focus the manual paste field');
     requireThat(steps[2].includes('App.submitOAuthToken()'), 'step 3 does not add the token');
 
     // One action, one verb: the entry button names the tab it opens.
