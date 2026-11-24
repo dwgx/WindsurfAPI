@@ -594,6 +594,15 @@
       "requestIdSelected": "已选中请求 ID，请用快捷键复制",
       "dispatchUnknown": "派发情况未知",
       "moreDispatches": "另记录 {{count}} 次派发",
+      "dispatchUsage": {
+        "unknown": "未知",
+        "notReported": "未见上报",
+        "unknownAccount": "账号未知",
+        "onRootRow": "逐次派发明细见同 ID 最新一行",
+        "tokenCounts": "上游实报 token · 输入 {{input}} · 输出 {{output}}",
+        "tokenTotal": "合计 {{count}}",
+        "charge": "上游实报费用 · credits {{credits}} · ACU {{acu}}"
+      },
       "failureReason": "失败原因",
       "failureUnknown": "失败原因未知",
       "requestNotFound": "保留记录中未找到该请求",

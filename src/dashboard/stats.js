@@ -402,15 +402,28 @@ export function beginChatRequestLog(scope, requestId, requestedModel, build, lif
     origin: { ...requestLogOrigin(build), requestSurface: surface }, lifecycle,
   };
   scope.chatLog = chatLog;
-  return (selector) => {
-    chatLog.dispatchCount++;
-    if (chatLog.dispatches.length < REQUEST_DISPATCH_CAP) chatLog.dispatches.push(requestLogModel(selector));
-    if (!lifecycle) return;
-    const attempt = chatLog.dispatchCount;
-    lifecycle.connect = null;
-    lifecycle.connectTiming = null;
-    return ({ timing, ...observation }) => {
-      if (chatLog.dispatchCount !== attempt) return;
+  return (selector, accountId) => {
+    const attempt = ++chatLog.dispatchCount;
+    const entry = attempt <= REQUEST_DISPATCH_CAP
+      ? { account: normalizeAccountRef(accountId), observed: false, usage: null, billing: null } : null;
+    if (entry) chatLog.dispatches.push({ selector: requestLogModel(selector), entry });
+    if (lifecycle) {
+      lifecycle.connect = null;
+      lifecycle.connectTiming = null;
+    } else if (!entry) return;
+    return ({ timing, usage, billing, ...observation }) => {
+      // The transport callback owns this exact slot, even after a later
+      // dispatch or the end of the root HTTP request.
+      if (entry) {
+        entry.observed = true;
+        entry.usage = usageTokenCounts(usage)?.reportedUsage ?? null;
+        entry.billing = reportedBillingFields({
+          credits: tokenCount(billing?.credit_cost) ?? billing?.committed_credit_cost,
+          acu: billing?.committed_acu_cost,
+        });
+        if (chatLog.finalized) scheduleSave();
+      }
+      if (!lifecycle || chatLog.dispatchCount !== attempt) return;
       lifecycle.connect = observation;
       if (timing) lifecycle.connectTiming = { ...timing, attempt };
     };
@@ -466,8 +479,10 @@ export function finalizeStatsScope(scope) {
     // All attempts retain their own statsRowId and point to the same HTTP root.
     row.requestHttpStatus = scope.status;
     row.requestFailureCode = requestLogFailureCode(scope.chatLog.failureCode);
-    row.requestDispatches = scope.chatLog.dispatches.slice();
+    row.requestDispatches = scope.chatLog.dispatches.map(dispatch => dispatch.selector);
     row.requestDispatchCount = scope.chatLog.dispatchCount;
+    row.requestAttemptUsage = scope.chatLog.dispatches.map(dispatch => dispatch.entry);
+    scope.chatLog.finalized = true;
     if (scope.chatLog.responses) row.requestResponses = { ...scope.chatLog.responses };
     const lifecycle = scope.chatLog.lifecycle;
     if (lifecycle) {
@@ -526,6 +541,16 @@ function reportedTokenFields(usage) {
     ...(tokensIn === undefined ? {} : { tokensIn }),
     ...(tokensOut === undefined ? {} : { tokensOut }),
     ...(totalTokens === undefined ? {} : { totalTokens }),
+  };
+}
+
+function reportedBillingFields(billing) {
+  const credits = tokenCount(billing?.credits);
+  const acu = tokenCount(billing?.acu);
+  if (credits === undefined && acu === undefined) return null;
+  return {
+    ...(credits === undefined ? {} : { credits }),
+    ...(acu === undefined ? {} : { acu }),
   };
 }
 
@@ -1171,6 +1196,8 @@ function requestLogDetails(row) {
     requestLifecycle: requestLifecycleView(row.requestLifecycle),
     requestTiming: requestTimingView(row.requestTiming),
     requestDispatches: dispatches,
+    requestAttemptUsage: Array.isArray(row.requestAttemptUsage)
+      ? row.requestAttemptUsage.slice(0, dispatches.length).map(requestAttemptUsageView) : null,
     requestDispatchCount: admission ? 0 : observedConnect ? count : null,
     requestDispatchCoverage: admission ? 'before_dispatch' : observedConnect ? 'connect_handoff' : null,
     requestStage: admission ? 'account_admission' : null,
@@ -1179,6 +1206,17 @@ function requestLogDetails(row) {
     requestVersion: typeof row.requestVersion === 'string' && /^[A-Za-z0-9.+_-]{1,48}$/.test(row.requestVersion) ? row.requestVersion : null,
     requestCommit: typeof row.requestCommit === 'string' && /^[a-f0-9]{7,40}$/i.test(row.requestCommit) ? row.requestCommit : null,
     requestBuildSource: ['build-env', 'build-git', 'git', 'package'].includes(row.requestBuildSource) ? row.requestBuildSource : null,
+  };
+}
+
+function requestAttemptUsageView(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
+  const observed = value.observed === true;
+  return {
+    account: typeof value.account === 'string' && ACCOUNT_REF_RE.test(value.account) ? value.account : null,
+    observed,
+    usage: observed ? reportedTokenFields(value.usage) : null,
+    billing: observed ? reportedBillingFields(value.billing) : null,
   };
 }
 

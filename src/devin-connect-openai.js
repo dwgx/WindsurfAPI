@@ -416,7 +416,7 @@ async function* streamChatWithEmptyRetry(params, { env = process.env } = {}, opt
       }
       : upstreamParams;
     // Observe the final selector after budget admission, for each adapter dispatch.
-    const onTransportObservation = opts.onDispatch?.(callParams.model);
+    const onTransportObservation = opts.onDispatch?.(callParams.model, opts.dispatchAccountId);
     const observedParams = typeof onTransportObservation === 'function'
       ? { ...callParams, onTransportObservation } : callParams;
     for await (const ev of streamChatImpl(observedParams)) {

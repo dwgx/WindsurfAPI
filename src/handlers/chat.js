@@ -5118,6 +5118,7 @@ async function _handleChatCompletionsInner(body, context, captureCacheGeneration
           // would duplicate content, so we surface the error instead.
           const attemptStream = async (a) => {
             const params = a ? { ...connectParams, token: a.apiKey, deviceSeed: ensureDeviceSeed(a) } : connectParams;
+            const meta = { ...connectMeta, dispatchAccountId: a?.id };
             // D2/V-10: a schema-constrained turn cannot be judged frame by frame
             // — the verdict needs the whole payload, and the adapter writes every
             // delta the moment it arrives. Buffer this attempt's frames instead of
@@ -5128,7 +5129,7 @@ async function _handleChatCompletionsInner(body, context, captureCacheGeneration
             const schemaFrames = jsonSchema ? [] : null;
             const sink = schemaFrames ? (data) => { schemaFrames.push(data); } : send;
             try {
-              const _sr = await streamChatCompletion(params, sink, connectMeta);
+              const _sr = await streamChatCompletion(params, sink, meta);
               // Dashboard token-usage breakdown from the streaming connect path
               // (the return value carries the terminal usage). Was discarded
               // before → "Token 用量分布" empty on connect deployments.
@@ -5181,7 +5182,7 @@ async function _handleChatCompletionsInner(body, context, captureCacheGeneration
                       // The first attempt may have buffered frames before it hit
                       // the 401; the replay replaces them, never appends.
                       if (schemaFrames) schemaFrames.length = 0;
-                      const _sr3 = await streamChatCompletion({ ...connectParams, token: freshKey }, sink, connectMeta);
+                      const _sr3 = await streamChatCompletion({ ...connectParams, token: freshKey }, sink, meta);
                       // Billing identity is the account, not the credential: the
                       // retry presented freshKey, but the row belongs to a.id.
                       try { recordAccountSpend({ accountId: a.id, apiKey: freshKey, attemptId: a.reservationTimestamp }, _sr3?.usage, connectSpendOpts(_sr3?.billing)); } catch {}
@@ -5463,8 +5464,9 @@ async function _handleChatCompletionsInner(body, context, captureCacheGeneration
     // cross-account failover — wrapped in attempt() per account.
     const attempt = async (a) => {
       const params = a ? { ...connectParams, token: a.apiKey, deviceSeed: ensureDeviceSeed(a) } : connectParams;
+      const meta = { ...connectMeta, dispatchAccountId: a?.id };
       try {
-        const out = await toChatCompletion(params, connectMeta);
+        const out = await toChatCompletion(params, meta);
         finalizeConnectAccount(a, { model: connectDisplayModel, selector, startTime: ccStart, err: null });
         return { kind: 'ok', out };
       } catch (err) {
@@ -5488,7 +5490,7 @@ async function _handleChatCompletionsInner(body, context, captureCacheGeneration
             if (freshKey) {
               log.info(`Chat[${reqId}]: DEVIN_CONNECT re-login recovered token, retrying once`);
               try {
-                const out = await toChatCompletion({ ...connectParams, token: freshKey }, connectMeta);
+                const out = await toChatCompletion({ ...connectParams, token: freshKey }, meta);
                 finalizeConnectAccount(a, { model: connectDisplayModel, selector, startTime: ccStart, err: null, credentialKey: freshKey });
                 return { kind: 'ok', out };
               } catch (retryErr) {

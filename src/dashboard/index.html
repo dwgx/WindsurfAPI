@@ -13170,6 +13170,27 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     return (Number(n) || 0).toLocaleString(undefined, { maximumFractionDigits: 2 });
   },
 
+  renderStatsDispatchUsage(selector, attempt) {
+    const t = (key, values) => I18n.t(`section.statsLog.dispatchUsage.${key}`, values);
+    const missing = t(attempt.observed ? 'notReported' : 'unknown');
+    const { tokensIn, tokensOut, totalTokens } = attempt.usage || {};
+    const usage = [t('tokenCounts', {
+      input: tokensIn == null ? missing : this.fmtTokenCount(tokensIn),
+      output: tokensOut == null ? missing : this.fmtTokenCount(tokensOut),
+    })];
+    if (totalTokens != null) usage.push(t('tokenTotal', { count: this.fmtTokenCount(totalTokens) }));
+    const { credits, acu } = attempt.billing || {};
+    const charge = t('charge', {
+      credits: credits == null ? missing : this.fmtCredit(credits),
+      acu: acu == null ? missing : this.fmtCredit(acu),
+    });
+    return `<li><details data-dispatch-usage${this.statsLogRequestId ? ' open' : ''}>
+      <summary><code>${this.esc(selector)}</code> · <code>${this.esc(attempt.account || t('unknownAccount'))}</code></summary>
+      <div data-provider-usage>${this.esc(usage.join(' · '))}</div>
+      <div data-provider-charge>${this.esc(charge)}</div>
+    </details></li>`;
+  },
+
   renderStatsRequestLifecycle(value) {
     const state = value || {};
     const t = key => I18n.t(`section.statsLog.lifecycle.${key}`);
@@ -13275,6 +13296,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     }
 
     const items = d.items.filter(r => r && typeof r === 'object');
+    const rootsWithAttemptUsage = new Set(items.filter(r => r.requestAttemptUsage?.length).map(r => r.requestId));
     body.innerHTML = items.map((r) => {
       const when = new Date(Number(r.ts) || 0);
       const http = r.requestId ? r.requestHttpStatus : r.status;
@@ -13283,11 +13305,17 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
       const requestedModel = r.requestId ? r.requestedModel : r.model;
       const dispatches = r.requestDispatches || [];
       const unknownDispatch = I18n.t('section.statsLog.dispatchUnknown');
-      const dispatchLabels = dispatches.map(selector => `<li><code>${this.esc(selector || unknownDispatch)}</code></li>`).join('');
+      const dispatchLabels = dispatches.map((selector, index) => {
+        const attempt = r.requestAttemptUsage?.[index];
+        const name = selector || unknownDispatch;
+        return attempt ? this.renderStatsDispatchUsage(name, attempt) : `<li><code>${this.esc(name)}</code></li>`;
+      }).join('');
       const extraDispatches = r.requestDispatchCount - dispatches.length;
       const admissionRejected = r.requestStage === 'account_admission';
+      const dispatchesOnRootRow = !dispatches.length && rootsWithAttemptUsage.has(r.requestId);
       const dispatchEmpty = r.requestDispatchCoverage === 'before_dispatch'
-        ? I18n.t('section.statsLog.dispatchNone') : unknownDispatch;
+        ? I18n.t('section.statsLog.dispatchNone')
+        : dispatchesOnRootRow ? I18n.t('section.statsLog.dispatchUsage.onRootRow') : unknownDispatch;
       const dispatchDetails = r.requestId ? `<div class="stats-request-detail" data-dispatch-details>
         ${dispatchLabels ? `<ol class="stats-request-dispatches">${dispatchLabels}</ol>` : this.esc(dispatchEmpty)}
         ${extraDispatches > 0 ? this.esc(I18n.t('section.statsLog.moreDispatches', { count: extraDispatches })) : ''}
@@ -13304,7 +13332,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
       const reason = admissionRejected ? I18n.t('section.statsLog.noActiveAccounts') : r.requestFailureCode;
       const disconnected = r.requestLifecycle?.clientDisconnected === true;
       const step = r.requestResponses;
-      const showMissingDetails = this.statsLogRequestId && !step;
+      const showMissingDetails = this.statsLogRequestId && !step && !dispatchesOnRootRow;
       const timing = r.requestId && (r.requestTiming || showMissingDetails)
         ? this.renderStatsRequestTiming(r.requestTiming, disconnected) : '';
       const timeline = timing && !this.statsLogRequestId

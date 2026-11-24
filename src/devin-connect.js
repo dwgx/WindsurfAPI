@@ -3758,6 +3758,8 @@ export async function* streamChat({
       upstreamTerminal: sawEndOfStream ? 'end_frame' : sawStopReason ? 'finish_marker' : 'not_observed',
       upstreamUsageReported: lastUsage != null,
       upstreamBillingReported: lastBilling != null ? true : null,
+      usage: normalizeConnectUsage(lastUsage),
+      billing: lastBilling,
       timing,
     });
   }
