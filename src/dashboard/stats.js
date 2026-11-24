@@ -408,8 +408,11 @@ export function beginChatRequestLog(scope, requestId, requestedModel, build, lif
     if (!lifecycle) return;
     const attempt = chatLog.dispatchCount;
     lifecycle.connect = null;
-    return observation => {
-      if (chatLog.dispatchCount === attempt) lifecycle.connect = observation;
+    lifecycle.connectTiming = null;
+    return ({ timing, ...observation }) => {
+      if (chatLog.dispatchCount !== attempt) return;
+      lifecycle.connect = observation;
+      if (timing) lifecycle.connectTiming = { ...timing, attempt };
     };
   };
 }
@@ -472,6 +475,22 @@ export function finalizeStatsScope(scope) {
         gatewayAbortEmitted: lifecycle.gatewayAbortEmitted,
         ...lifecycle.connect,
       };
+      const received = scope.received;
+      if (received) {
+        const elapsed = at => Number.isFinite(at) && at >= received.monotonicMs
+          ? Math.round(at - received.monotonicMs) : null;
+        const connect = lifecycle.connectTiming;
+        row.requestTiming = {
+          receivedAt: received.wallMs,
+          connectAttempt: connect?.attempt ?? null,
+          connectSentMs: elapsed(connect?.sentAt),
+          firstContentMs: elapsed(connect?.firstContentAt),
+          firstToolMs: elapsed(connect?.firstToolAt),
+          upstreamTerminalMs: elapsed(connect?.terminalAt),
+          clientDisconnectedMs: elapsed(lifecycle.disconnectedAt),
+          gatewayFinishedMs: elapsed(performance.now()),
+        };
+      }
     }
     scheduleSave();
   }
@@ -1117,6 +1136,21 @@ function requestLifecycleView(value) {
   };
 }
 
+function requestTimingView(value) {
+  if (!value || typeof value !== 'object') return null;
+  const ms = n => Number.isSafeInteger(n) && n >= 0 ? n : null;
+  return {
+    receivedAt: value.receivedAt <= 8.64e15 ? ms(value.receivedAt) : null,
+    connectAttempt: value.connectAttempt > 0 ? ms(value.connectAttempt) : null,
+    connectSentMs: ms(value.connectSentMs),
+    firstContentMs: ms(value.firstContentMs),
+    firstToolMs: ms(value.firstToolMs),
+    upstreamTerminalMs: ms(value.upstreamTerminalMs),
+    clientDisconnectedMs: ms(value.clientDisconnectedMs),
+    gatewayFinishedMs: ms(value.gatewayFinishedMs),
+  };
+}
+
 function requestLogDetails(row) {
   if (typeof row?.requestId !== 'string' || !REQUEST_ID_RE.test(row.requestId)) return null;
   const dispatches = Array.isArray(row.requestDispatches)
@@ -1133,6 +1167,7 @@ function requestLogDetails(row) {
     requestHttpStatus: Number.isInteger(httpStatus) && httpStatus >= 100 && httpStatus <= 599 ? httpStatus : null,
     requestFailureCode: requestLogFailureCode(row.requestFailureCode),
     requestLifecycle: requestLifecycleView(row.requestLifecycle),
+    requestTiming: requestTimingView(row.requestTiming),
     requestDispatches: dispatches,
     requestDispatchCount: admission ? 0 : observedConnect ? count : null,
     requestDispatchCoverage: admission ? 'before_dispatch' : observedConnect ? 'connect_handoff' : null,

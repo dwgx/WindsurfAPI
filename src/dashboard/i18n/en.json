@@ -641,6 +641,21 @@
         "fieldsNotObserved": "Not observed",
         "unknown": "Unknown",
         "scope": "Connect observations cover the last attempt until the gateway closed its side of the stream. Provider processing and the final bill require separate confirmation."
+      },
+      "timing": {
+        "title": "Gateway timeline",
+        "details": "View request timing",
+        "attempt": "Gateway timeline · Connect attempt {{count}}",
+        "received": "Gateway received",
+        "sent": "Connect request written",
+        "content": "First upstream text",
+        "tool": "First native tool data",
+        "terminal": "Upstream end frame",
+        "disconnected": "Downstream disconnected",
+        "finished": "Gateway processing ended",
+        "unknown": "Unknown",
+        "afterSend": "{{time}} after write",
+        "scope": "Elapsed time starts at gateway receipt. Connect fields cover the last observed attempt. Request write is a local transport event. Provider queue time is unknown."
       }
     },
     "statsAgg": {

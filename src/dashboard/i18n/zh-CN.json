@@ -641,6 +641,21 @@
         "fieldsNotObserved": "未见上报",
         "unknown": "未知",
         "scope": "Connect 字段仅覆盖最后一次尝试在本地关闭前的观察。服务商是否停止计算与最终账单需另行确认。"
+      },
+      "timing": {
+        "title": "网关时间线",
+        "details": "查看请求时间线",
+        "attempt": "网关时间线 · Connect 第 {{count}} 次尝试",
+        "received": "网关接单",
+        "sent": "Connect 请求写出",
+        "content": "首段上游正文",
+        "tool": "首段原生工具数据",
+        "terminal": "上游结束帧",
+        "disconnected": "下游断开",
+        "finished": "网关处理结束",
+        "unknown": "未知",
+        "afterSend": "写出后 {{time}}",
+        "scope": "加号后的耗时从网关接单开始。Connect 字段对应最后一次观察到的尝试。请求写出由本机传输层记录，服务商排队时间未知。"
       }
     },
     "statsAgg": {

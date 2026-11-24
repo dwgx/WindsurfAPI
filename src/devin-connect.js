@@ -3361,6 +3361,9 @@ export async function* streamChat({
   let lastUsage = null;
   let lastBilling = null;
   let transportAbortObserved = false;
+  const timing = onTransportObservation
+    ? { sentAt: null, firstContentAt: null, firstToolAt: null, terminalAt: null }
+    : null;
   let lastActualModel = null;
   let lastSignature = null;
   const nativeToolCalls = [];
@@ -3491,6 +3494,7 @@ export async function* streamChat({
       for (const frame of frames) {
         if (queueOverflowed) break;
         if (frame.isEndStream) {
+          if (timing) timing.terminalAt ??= performance.now();
           sawEndOfStream = true;
           // Trailer is JSON: {} on success, {"error":{...}} on failure.
           const text = frame.payload.toString('utf8').trim();
@@ -3524,6 +3528,10 @@ export async function* streamChat({
         // wire-01: decode across frame boundaries so split multi-byte chars survive.
         const content = contentBytes ? contentDecoder.write(contentBytes) : '';
         const reasoning = reasoningBytes ? reasoningDecoder.write(reasoningBytes) : '';
+        if (timing && timing.firstContentAt === null && content.trim()) timing.firstContentAt = performance.now();
+        if (timing && timing.firstToolAt === null && toolCalls?.some(call => call.id || call.arguments || call.invalidJson)) {
+          timing.firstToolAt = performance.now();
+        }
         // Calibration (DEBUG-gated, default OFF): emit the raw frame payload hex
         // so a probe can re-decode it WIDE — the production frameDump/metaDump
         // only collect wireType 0/2 and miss wt1(double)/wt5(float), which is
@@ -3578,6 +3586,9 @@ export async function* streamChat({
     res.on('error', (err) => { streamError = err; done = true; pump(); });
   });
 
+  // ClientRequest finish records the handoff of the request body to the local
+  // transport. Only decoded wire fields below can record the first payload.
+  if (timing) req.on('finish', () => { timing.sentAt ??= performance.now(); });
   req.on('error', (err) => {
     if (signal?.aborted && (err?.name === 'AbortError' || err?.code === 'ABORT_ERR')) {
       transportAbortObserved = true;
@@ -3747,6 +3758,7 @@ export async function* streamChat({
       upstreamTerminal: sawEndOfStream ? 'end_frame' : sawStopReason ? 'finish_marker' : 'not_observed',
       upstreamUsageReported: lastUsage != null,
       upstreamBillingReported: lastBilling != null ? true : null,
+      timing,
     });
   }
 }

@@ -13188,6 +13188,36 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     </dl>`;
   },
 
+  renderStatsRequestTiming(timing, disconnected) {
+    const state = timing || {};
+    const t = (key, values) => I18n.t(`section.statsLog.timing.${key}`, values);
+    const elapsed = value => value == null ? t('unknown') : `+${this.fmtMs(value)}`;
+    const afterSend = value => value != null && state.connectSentMs != null && value >= state.connectSentMs
+      ? `${elapsed(value)} · ${t('afterSend', { time: this.fmtMs(value - state.connectSentMs) })}`
+      : elapsed(value);
+    const received = state.receivedAt == null ? t('unknown')
+      : new Date(state.receivedAt).toLocaleTimeString(undefined, {
+        hour: '2-digit', minute: '2-digit', second: '2-digit', fractionalSecondDigits: 3, hourCycle: 'h23',
+      });
+    const rows = [
+      ['received', received],
+      ['sent', elapsed(state.connectSentMs)],
+      ['content', afterSend(state.firstContentMs)],
+      ['tool', afterSend(state.firstToolMs)],
+      ['terminal', elapsed(state.upstreamTerminalMs)],
+      ...(disconnected ? [['disconnected', elapsed(state.clientDisconnectedMs)]] : []),
+      ['finished', elapsed(state.gatewayFinishedMs)],
+    ];
+    const heading = state.connectAttempt != null
+      ? t('attempt', { count: state.connectAttempt }) : t('title');
+    return `<div class="stats-request-detail" data-request-timing title="${this.esc(t('scope'))}">
+      <strong>${this.esc(heading)}</strong>
+      <dl class="stats-request-detail stats-request-lifecycle">
+        ${rows.map(([name, time]) => `<dt>${this.esc(t(name))}</dt><dd>${this.esc(time)}</dd>`).join('')}
+      </dl>
+    </div>`;
+  },
+
   _statsTokenTitle(row) {
     return I18n.t('section.statsLog.tokenTitle', {
       fresh: this.fmtTokenCount((Number(row.tokensIn) || 0) - (Number(row.cacheRead) || 0) - (Number(row.cacheWrite) || 0)),
@@ -13273,6 +13303,11 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
       const origin = r.requestId ? `<div class="stats-request-detail" data-request-origin title="${this.esc(r.requestBootId || '')}">${this.esc([bootLabel, build].filter(Boolean).join(' · '))}</div>` : '';
       const reason = admissionRejected ? I18n.t('section.statsLog.noActiveAccounts') : r.requestFailureCode;
       const disconnected = r.requestLifecycle?.clientDisconnected === true;
+      const timing = r.requestId && (r.requestTiming || this.statsLogRequestId)
+        ? this.renderStatsRequestTiming(r.requestTiming, disconnected) : '';
+      const timeline = timing && !this.statsLogRequestId
+        ? `<details class="stats-request-detail"><summary>${this.esc(I18n.t('section.statsLog.timing.details'))}</summary>${timing}</details>`
+        : timing;
       const lifecycle = r.requestId && (r.requestLifecycle || this.statsLogRequestId)
         ? this.renderStatsRequestLifecycle(r.requestLifecycle) : '';
       const details = lifecycle && !this.statsLogRequestId
@@ -13293,7 +13328,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
         ? ` <small class="text-muted">${this.esc(I18n.t('section.statsLog.reportedTotal', { total: this.fmtTokenCount(totalTokens) }))}</small>` : '';
       return `<tr>`
         + `<td class="text-sm"><time>${this.esc(when.toLocaleString())}</time>${requestRef}${origin}</td>`
-        + `<td class="text-sm"><span class="cell-ellipsis" title="${this.esc(requestedModel || '')}">${this.esc(requestedModel || '—')}</span>${dispatchDetails}</td>`
+        + `<td class="text-sm"><span class="cell-ellipsis" title="${this.esc(requestedModel || '')}">${this.esc(requestedModel || '—')}</span>${dispatchDetails}${timeline}</td>`
         + `<td class="text-sm"><code>${this.esc(r.account || '-')}</code></td>`
         + `<td><span class="badge ${badge} no-dot">${this.esc(I18n.t('section.statsLog.' + outcome))}</span> ${hasStatus ? `<small class="text-muted">HTTP ${this.esc(status)}</small>` : ''}${failure}${details}</td>`
         + `<td class="text-sm numeric">${this.esc(this.fmtMs(r.ms))}</td>`

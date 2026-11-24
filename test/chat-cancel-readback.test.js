@@ -20,6 +20,11 @@ test('Chat history distinguishes a client abort from the Connect terminal and ac
     transportAbortObserved: true, upstreamTerminal: 'not_observed',
     upstreamUsageReported: false, upstreamBillingReported: null,
   });
+  const timing = row.requestTiming;
+  assert.ok(Number.isInteger(timing.clientDisconnectedMs));
+  assert.ok(timing.clientDisconnectedMs >= timing.firstContentMs);
+  assert.equal(timing.upstreamTerminalMs, null);
+  assert.ok(timing.gatewayFinishedMs >= timing.clientDisconnectedMs);
 
   const finished = await fixture.complete();
   assert.equal(finished.status, 200);

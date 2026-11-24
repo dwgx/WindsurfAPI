@@ -247,10 +247,12 @@ export function bindClientAbort(res, lifecycle = null) {
   const abortController = new AbortController();
   res.on('close', () => {
     if (res.writableEnded) return;
+    const disconnectedAt = lifecycle ? performance.now() : null;
     abortController.abort();
     if (lifecycle) {
       lifecycle.clientDisconnected = true;
       lifecycle.gatewayAbortEmitted = abortController.signal.aborted;
+      lifecycle.disconnectedAt = disconnectedAt;
     }
   });
   return abortController;
@@ -1476,6 +1478,7 @@ export function startServer() {
       // concurrent requests would race. The final response status is stamped on
       // the last attempt before the scope closes.
       await withStatsScope(async (scope) => {
+        scope.received = { wallMs: Date.now(), monotonicMs: performance.now() };
         try {
           await route(req, res, scope);
         } finally {
