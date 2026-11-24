@@ -2752,10 +2752,10 @@ tbody tr:hover td { background: var(--surface-2); }
 .acct-open:focus-visible { outline: 2px solid var(--accent-focus); outline-offset: 1px; border-radius: 2px; }
 .acct-line2 { display: flex; align-items: center; gap: var(--space-6); font-size: var(--fs-sm); line-height: 1.3; color: var(--text-dim); min-width: 0; }
 .acct-line2 code { background: transparent; border: 0; padding: 0; font-size: var(--fs-sm); color: var(--text-dim); }
-.acct-line2 .acct-key { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.acct-line2 .acct-key { flex: 0 3 auto; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* Last check lives on the existing second line, so the 44px row budget holds. */
 .acct-last-check {
-  margin-left: auto; flex: none; display: inline-flex; align-items: center; gap: var(--space-4);
+  margin-left: auto; min-width: 0; display: inline-flex; align-items: center; gap: var(--space-4);
   max-width: 260px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   color: var(--text-dim); font-size: var(--fs-sm);
 }
@@ -2905,7 +2905,7 @@ tbody tr:hover td { background: var(--surface-2); }
 .login-method-desc { font-size: var(--fs-sm); color: var(--text-muted); line-height: 1.5; }
 .login-method-token { justify-self: start; }
 .login-method-link { color: inherit; text-decoration: none; }
-.acct-last-check-slot { min-width: 0; }
+.acct-last-check-slot { flex: 0 1 auto; display: flex; min-width: 0; overflow: hidden; }
 .acct-routing-hint { display: block; margin-top: var(--space-4); }
 /* OAuth brand blocks (P2 palette). These were inline `background:#4285F4` with
    white text — 3.56, an AA text failure — plus a hardcoded hex outside the
@@ -8096,7 +8096,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
       this.api('GET', '/overview'),
       this.api('GET', '/stats').catch(() => null),
       this.api('GET', '/connect-metrics').catch(() => null),
-      this.api('GET', '/usage').catch(() => null),
+      this.api('GET', '/usage', undefined, { notify: false }).catch(() => null),
       this.api('GET', '/requests?limit=20').catch(() => null),
       this.api('GET', '/models/catalog').catch(() => null),
     ]);
@@ -11191,7 +11191,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
   },
 
   async refreshCredits(id) {
-    if (this.accountOperationsBusy()) return this.toast(I18n.t('accounts.fleet.busy'), 'info');
+    if (this.accountOperationsBusy()) return;
     this._accountSingleOp = { op: 'refresh', id };
     this.setOpStatus(I18n.t('accounts.fleet.starting', { action: I18n.t('accounts.op.refreshVerb') }));
     let r;
@@ -11247,10 +11247,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
   },
 
   async startFleetRun(op) {
-    if (this.accountOperationsBusy()) {
-      this.toast(I18n.t('accounts.fleet.busy'), 'info');
-      return;
-    }
+    if (this.accountOperationsBusy()) return;
     this._fleetStarting = true;
     const verb = op === 'probe' ? I18n.t('accounts.op.probeVerb') : I18n.t('accounts.op.refreshVerb');
     this.setOpStatus(I18n.t('accounts.fleet.starting', { action: verb }));
@@ -11605,7 +11602,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
   },
 
   async probeAccount(id) {
-    if (this.accountOperationsBusy()) return this.toast(I18n.t('accounts.fleet.busy'), 'info');
+    if (this.accountOperationsBusy()) return;
     this._accountSingleOp = { op: 'probe', id };
     this.setOpStatus(I18n.t('accounts.row.checking'));
     this._refreshRowChips();
@@ -12246,7 +12243,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
         });
       if (!ok) return;
     }
-    if (this.accountOperationsBusy()) return this.toast(I18n.t('accounts.fleet.busy'), 'info');
+    if (this.accountOperationsBusy()) return;
     this._accountBatchActive = true;
     this._batchResults = new Map();
     this.setBatchProgress(I18n.t('batchOps.running', { count: ids.length }));
