@@ -930,11 +930,11 @@
       "cacheEfficiency": "缓存命中率"
     },
     "credits": {
-      "title": "Credits 花销",
+      "title": "Credits 估算",
       "unit": "credits",
-      "byModel": "按模型花销",
-      "subtitle": "今日消耗 {{today}} credits",
-      "empty": "暂无消耗数据"
+      "byModel": "按模型估算",
+      "subtitle": "今日估算 {{today}} credits（UTC）",
+      "empty": "暂无按模型汇总的估算"
     },
     "banStats": {
       "title": "健康概览"

@@ -13467,11 +13467,11 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
       ? `${tt.requests_with_usage} req · total ${fmtTok(tt.total)}`
       : (I18n.t('card.tokens.subtitle.empty') || 'no usage data yet');
 
-    // v2.0.149 — Credits spend card. Each successful request costs its model's
-    // rate-card credit (stats.js recordRequest), accumulated into creditsTotal /
-    // creditsByModel / creditsByDay. Rendered as a centered total + a top-models
-    // horizontal-bar breakdown (a compact spend chart). NOTE: unit is Devin prompt
-    // credits (integers per request), not USD — we don't fabricate a $ figure.
+    // Stats estimates successful, non-cached requests from their model rates.
+    // recordRequest accumulates these estimates into creditsTotal,
+    // creditsByModel and creditsByDay. The card shows the total and the
+    // five highest model estimates. The daily subtitle uses the UTC bucket.
+    // The unit is Devin prompt credits.
     const creditsTotal = d.creditsTotal || 0;
     const creditsByModel = d.creditsByModel || {};
     // Price annotation for the filtered model aggregate: resolved server-side

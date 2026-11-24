@@ -930,11 +930,11 @@
       "cacheEfficiency": "Cache efficiency"
     },
     "credits": {
-      "title": "Credits Spent",
+      "title": "Estimated credits",
       "unit": "credits",
-      "byModel": "By model",
-      "subtitle": "{{today}} credits today",
-      "empty": "No spend recorded yet"
+      "byModel": "Estimates by model",
+      "subtitle": "Today's estimate (UTC) · {{today}} credits",
+      "empty": "No per-model estimates yet"
     },
     "banStats": {
       "title": "Health Overview"
