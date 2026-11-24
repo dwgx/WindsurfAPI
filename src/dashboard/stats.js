@@ -382,14 +382,51 @@ function requestLogFailureCode(code) {
   return typeof code === 'string' && code !== 'error' && /^[a-zA-Z0-9_-]{1,64}$/.test(code) ? code : null;
 }
 
+export const requestLogBootId = randomUUID();
+const REQUEST_BOOT_ID_RE = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
+const REQUEST_SURFACES = new Set(['chat_completions', 'completions', 'responses', 'messages', 'gemini']);
+
+function requestLogOrigin(build) {
+  return {
+    requestBootId: requestLogBootId,
+    requestVersion: build?.version || null,
+    requestCommit: build?.commit || null,
+    requestBuildSource: build?.source || null,
+  };
+}
+
 /** Track the Connect dispatch boundary under the public Chat request ID. */
-export function beginChatRequestLog(scope, requestId, requestedModel) {
-  const chatLog = { requestId, requestedModel: requestLogModel(requestedModel), dispatches: [], dispatchCount: 0 };
+export function beginChatRequestLog(scope, requestId, requestedModel, build) {
+  const chatLog = {
+    requestId, requestedModel: requestLogModel(requestedModel), dispatches: [], dispatchCount: 0,
+    origin: { ...requestLogOrigin(build), requestSurface: 'chat_completions' },
+  };
   scope.chatLog = chatLog;
   return (selector) => {
     chatLog.dispatchCount++;
     if (chatLog.dispatches.length < REQUEST_DISPATCH_CAP) chatLog.dispatches.push(requestLogModel(selector));
   };
+}
+
+// The HTTP account gate runs before reading the request body or handing off
+// to any model transport. Keep its rejection in the same bounded history
+// without recording an upstream attempt or modifying usage aggregates.
+export function recordAccountAdmissionRejection({ requestId, surface, status, build }) {
+  appendRecentRequest({
+    statsRowId: randomUUID(),
+    requestId,
+    ...requestLogOrigin(build),
+    requestSurface: surface,
+    requestStage: 'account_admission',
+    requestFailureCode: 'NO_ACTIVE_ACCOUNTS',
+    requestHttpStatus: status,
+    requestDispatchCount: 0,
+    ts: Date.now(),
+    model: '',
+    status,
+    success: false,
+    reportedUsage: null,
+  });
 }
 
 /**
@@ -666,11 +703,14 @@ export function recordRequest(model, success, durationMs, accountId, extra = {})
     pruneKeyed(creditsByHour, 720);
     pruneKeyed(creditsByDay, 90);
   }
-  if (!Array.isArray(_state.recentRequests)) _state.recentRequests = [];
   const scope = _requestScope.getStore();
   const row = {
     statsRowId: randomUUID(),
-    ...(scope?.chatLog ? { requestId: scope.chatLog.requestId, requestedModel: scope.chatLog.requestedModel } : {}),
+    ...(scope?.chatLog ? {
+      requestId: scope.chatLog.requestId,
+      requestedModel: scope.chatLog.requestedModel,
+      ...scope.chatLog.origin,
+    } : {}),
     ts: Date.now(), model, success: !!success, ms: durationMs || 0,
     account,
     credit,
@@ -687,6 +727,11 @@ export function recordRequest(model, success, durationMs, accountId, extra = {})
     scope.rows.push(row);
     scope.pendingUsage = null;
   }
+  appendRecentRequest(row);
+}
+
+function appendRecentRequest(row) {
+  if (!Array.isArray(_state.recentRequests)) _state.recentRequests = [];
   _state.recentRequests.push(row);
   if (_state.recentRequests.length > RECENT_REQ_CAP) {
     _state.recentRequests.splice(0, _state.recentRequests.length - RECENT_REQ_CAP);
@@ -1050,13 +1095,24 @@ function requestLogDetails(row) {
     ? row.requestDispatches.slice(0, REQUEST_DISPATCH_CAP).map(requestLogModel) : [];
   const count = row.requestDispatchCount;
   const httpStatus = row.requestHttpStatus;
+  const admission = row.requestStage === 'account_admission';
+  // A positive count comes from the existing Connect handoff observer. It
+  // does not attest other transports. Zero is known only at the early gate.
+  const observedConnect = Number.isSafeInteger(count) && count > 0 && count >= dispatches.length;
   return {
     requestId: row.requestId,
     requestedModel: requestLogModel(row.requestedModel),
     requestHttpStatus: Number.isInteger(httpStatus) && httpStatus >= 100 && httpStatus <= 599 ? httpStatus : null,
     requestFailureCode: requestLogFailureCode(row.requestFailureCode),
     requestDispatches: dispatches,
-    requestDispatchCount: Number.isSafeInteger(count) && count >= dispatches.length ? count : dispatches.length,
+    requestDispatchCount: admission ? 0 : observedConnect ? count : null,
+    requestDispatchCoverage: admission ? 'before_dispatch' : observedConnect ? 'connect_handoff' : null,
+    requestStage: admission ? 'account_admission' : null,
+    requestSurface: REQUEST_SURFACES.has(row.requestSurface) ? row.requestSurface : null,
+    requestBootId: REQUEST_BOOT_ID_RE.test(row.requestBootId) ? row.requestBootId : null,
+    requestVersion: typeof row.requestVersion === 'string' && /^[A-Za-z0-9.+_-]{1,48}$/.test(row.requestVersion) ? row.requestVersion : null,
+    requestCommit: typeof row.requestCommit === 'string' && /^[a-f0-9]{7,40}$/i.test(row.requestCommit) ? row.requestCommit : null,
+    requestBuildSource: ['build-env', 'build-git', 'git', 'package'].includes(row.requestBuildSource) ? row.requestBuildSource : null,
   };
 }
 
@@ -1167,12 +1223,16 @@ export function getRequestLog({
   const newestFirst = filtered.slice().reverse();
   const items = newestFirst.slice(off, off + n);
 
-  const summary = emptyAggregate({});
+  const summary = emptyAggregate({ admissionRejections: 0 });
   const byModel = new Map();
   const byAccount = new Map();
   const byDay = new Map();
   const unattributed = emptyAggregate({ account: null });
   for (const row of filtered) {
+    if (row.requestStage === 'account_admission') {
+      summary.admissionRejections++;
+      continue;
+    }
     addToAggregate(summary, row);
     if (row.model) {
       const agg = byModel.get(row.model) || emptyAggregate({ model: row.model });
@@ -1207,6 +1267,7 @@ export function getRequestLog({
   const all = rows.map(logRowView);
   return {
     items,
+    currentBootId: requestLogBootId,
     total: filtered.length,
     limit: n,
     offset: off,

@@ -580,19 +580,19 @@
     },
     "statsLog": {
       "title": "Request log",
-      "desc": "One row per gateway attempt, with separate attempt and HTTP results. Credits are estimates from gateway rates.",
-      "attemptAndHttp": "Attempt result / HTTP",
+      "desc": "Gateway rejections have their own rows. Attempt totals cover upstream attempts.",
+      "attemptAndHttp": "Outcome / HTTP",
       "attemptSucceeded": "Succeeded",
       "attemptFailed": "Failed",
       "attemptUnknown": "Unrecorded",
       "requestId": "Request ID",
       "findRequest": "Find",
       "timeAndRequest": "Time / request ID",
-      "modelAndDispatch": "Requested model / Connect dispatch",
+      "modelAndDispatch": "Requested model / dispatch",
       "copyRequestId": "Copy request ID",
       "requestIdCopied": "Request ID copied",
       "requestIdSelected": "Request ID selected. Use your copy shortcut.",
-      "dispatchUnknown": "Connect dispatch unknown",
+      "dispatchUnknown": "Dispatch coverage unknown",
       "moreDispatches": "{{count}} more dispatches recorded",
       "failureReason": "Failure reason",
       "failureUnknown": "Failure reason unknown",
@@ -611,7 +611,13 @@
         "status": "HTTP status",
         "all": "All",
         "reset": "Clear filters"
-      }
+      },
+      "admissionRejected": "Admission rejected",
+      "noActiveAccounts": "No active accounts and no enabled Connect fallback",
+      "dispatchNone": "0 dispatches · rejected at admission",
+      "currentBoot": "Current process",
+      "previousBoot": "Previous process",
+      "unknownBoot": "Process unknown"
     },
     "statsAgg": {
       "title": "Aggregates",
@@ -1459,7 +1465,13 @@
     },
     "loading": "Loading accounts…",
     "loadFailed": "Could not load the account list: {{detail}}. The table below is the last successful load.",
-    "retry": "Retry"
+    "retry": "Retry",
+    "connectCatalog": {
+      "observed": "Connect catalog read · {{count}} entries",
+      "stale": "Connect catalog is stale",
+      "unknown": "Connect catalog unverified",
+      "help": "Catalog observed for this account’s current credential. The model call and quota are separate checks."
+    }
   },
   "account": {
     "tierManualBadge": "manual",

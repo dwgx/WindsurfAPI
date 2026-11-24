@@ -5402,6 +5402,19 @@ export function publicBanReason(reason) {
     .slice(0, 240);
 }
 
+function connectCatalogObservation(account) {
+  if (account.status !== 'active' || !getBackendSwitch('devinConnect')) return null;
+  if (_connectCatalogSyncedKeys.get(account.id) !== account.apiKey) {
+    return { state: 'unknown', observedAt: null, entryCount: null };
+  }
+  const observedAt = _connectCatalogSyncedAt.get(account.id);
+  const rows = _connectCatalogRowsByAccount.get(account.id);
+  if (!observedAt || !rows?.length) return { state: 'unknown', observedAt: null, entryCount: null };
+  const age = connectCatalogNow() - observedAt;
+  const state = age >= 0 && age < connectCatalogTtlMs() ? 'observed' : 'stale';
+  return { state, observedAt, entryCount: rows.length };
+}
+
 function publicAccount(a, now, { view = 'full' } = {}) {
   const rpmLimit = rpmLimitFor(a);
   const rpmUsed = pruneRpmHistory(a, now);
@@ -5440,6 +5453,7 @@ function publicAccount(a, now, { view = 'full' } = {}) {
     apiKey_masked: maskApiKey(a.apiKey),
     tier: a.tier || 'unknown',
     lastProbed: a.lastProbed || 0,
+    connectCatalog: connectCatalogObservation(a),
     rateLimitedUntil: a.rateLimitedUntil || 0,
     rateLimited: !!(a.rateLimitedUntil && a.rateLimitedUntil > now),
     quotaResetAt: a.quotaResetAt || 0,

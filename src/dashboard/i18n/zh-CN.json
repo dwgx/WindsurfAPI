@@ -580,19 +580,19 @@
     },
     "statsLog": {
       "title": "请求日志",
-      "desc": "每行一次网关尝试，分别显示尝试结果和 HTTP 状态。费用按网关费率估算。",
-      "attemptAndHttp": "尝试结果 / HTTP",
+      "desc": "入口拒绝单独显示，尝试汇总统计上游尝试。",
+      "attemptAndHttp": "结果 / HTTP",
       "attemptSucceeded": "成功",
       "attemptFailed": "失败",
       "attemptUnknown": "未记录",
       "requestId": "请求 ID",
       "findRequest": "查找",
       "timeAndRequest": "时间 / 请求 ID",
-      "modelAndDispatch": "请求模型 / Connect 派发",
+      "modelAndDispatch": "请求模型 / 派发",
       "copyRequestId": "复制请求 ID",
       "requestIdCopied": "请求 ID 已复制",
       "requestIdSelected": "已选中请求 ID，请用快捷键复制",
-      "dispatchUnknown": "Connect 派发未知",
+      "dispatchUnknown": "派发情况未知",
       "moreDispatches": "另记录 {{count}} 次派发",
       "failureReason": "失败原因",
       "failureUnknown": "失败原因未知",
@@ -611,7 +611,13 @@
         "status": "HTTP 状态",
         "all": "全部",
         "reset": "清除筛选"
-      }
+      },
+      "admissionRejected": "准入拒绝",
+      "noActiveAccounts": "活跃账号为 0，Connect 备用入口未启用或未配置",
+      "dispatchNone": "0 次派发 · 账号准入拒绝",
+      "currentBoot": "当前进程",
+      "previousBoot": "历史进程",
+      "unknownBoot": "进程未知"
     },
     "statsAgg": {
       "title": "聚合统计",
@@ -1459,7 +1465,13 @@
     },
     "loading": "正在加载账号…",
     "loadFailed": "账号列表加载失败：{{detail}}。下方表格是上一次成功加载的结果。",
-    "retry": "重试"
+    "retry": "重试",
+    "connectCatalog": {
+      "observed": "Connect 目录已读 · {{count}} 项",
+      "stale": "Connect 目录已过期",
+      "unknown": "Connect 目录待确认",
+      "help": "这是此账号当前凭据的目录观察。具体模型能否调用、余额和配额需分别核对。"
+    }
   },
   "account": {
     "tierManualBadge": "手动",

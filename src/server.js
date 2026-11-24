@@ -38,7 +38,9 @@ import { isExperimentalEnabled, getBackendSwitch } from './runtime-config.js';
 import { resolveModel, getModelInfo } from './models.js';
 import { handleDashboardApi, preflightDashboardRequest, parseProxyUrl, validateProxyHost, verifyAdminRequest, validateDashboardRequestHost, credStoreGateOpen } from './dashboard/api.js';
 import { recordRequest, updateRequest } from './dashboard/request-ring.js';
-import { beginChatRequestLog, withStatsScope, finalizeStatsScope } from './dashboard/stats.js';
+import {
+  beginChatRequestLog, finalizeStatsScope, recordAccountAdmissionRejection, requestLogBootId, withStatsScope,
+} from './dashboard/stats.js';
 import { setAccountProxy } from './dashboard/proxy-config.js';
 import { config, log } from './config.js';
 import { getVersionInfo } from './version.js';
@@ -69,6 +71,22 @@ function hasUsableAccount() {
   if (isAuthenticated()) return true;
   return getBackendSwitch('devinConnect')
     && !!(process.env.DEVIN_CONNECT_TOKEN || process.env.WINDSURF_API_KEY);
+}
+
+function rejectAccountAdmission(res, requestId, surface) {
+  const status = surface === 'messages' ? 529 : 503;
+  recordAccountAdmissionRejection({ requestId, surface, status, build: VERSION_INFO });
+  if (surface === 'messages') {
+    res.setHeader('request-id', requestId);
+    return json(res, status, withRequestId(status, {
+      type: 'error', error: { type: 'overloaded_error', message: 'No active accounts available, please retry' },
+    }, requestId));
+  }
+  const message = 'No active accounts. POST /auth/login to add accounts.';
+  if (surface === 'gemini') {
+    return json(res, status, { error: { code: status, message, status: 'UNAVAILABLE' } });
+  }
+  return json(res, status, withRequestId(status, { error: { type: 'api_error', message } }, requestId));
 }
 
 // 读取并归一 anthropic-version 请求头。返回生效版本字符串(缺失→默认)。
@@ -528,6 +546,7 @@ async function route(req, res, scope) {
       commitDate: VERSION_INFO.commitDate,
       branch: VERSION_INFO.branch,
       buildSource: VERSION_INFO.source,
+      requestLogBootId,
       pid: process.pid,
       uptime: Math.round(process.uptime()),
       accounts: counts,
@@ -887,9 +906,7 @@ async function route(req, res, scope) {
 
   if (path === '/v1/chat/completions' && method === 'POST') {
     if (!hasUsableAccount()) {
-      return json(res, 503, {
-        error: { message: 'No active accounts. POST /auth/login to add accounts.', type: 'api_error' },
-      });
+      return rejectAccountAdmission(res, fallbackRequestId, 'chat_completions');
     }
 
     let body;
@@ -918,7 +935,7 @@ async function route(req, res, scope) {
     // the remaining time and may only shorten their own bounds.
     const budget = createRequestBudget({ stream: body.stream === true });
     const requestId = fallbackRequestId;
-    const onConnectDispatch = beginChatRequestLog(scope, requestId, body.model);
+    const onConnectDispatch = beginChatRequestLog(scope, requestId, body.model, VERSION_INFO);
     const result = await handleChatCompletions(body, {
       callerKey,
       nativeBridgeCallerKey: nativeBridgeCallerKeyForRequest(req, token, body, callerKey),
@@ -986,9 +1003,7 @@ async function route(req, res, scope) {
 
   if (path === '/v1/completions' && method === 'POST') {
     if (!hasUsableAccount()) {
-      return json(res, 503, {
-        error: { message: 'No active accounts. POST /auth/login to add accounts.', type: 'api_error' },
-      });
+      return rejectAccountAdmission(res, fallbackRequestId, 'completions');
     }
 
     let body;
@@ -1050,9 +1065,7 @@ async function route(req, res, scope) {
 
   if (path === '/v1/responses' && method === 'POST') {
     if (!hasUsableAccount()) {
-      return json(res, 503, {
-        error: { message: 'No active accounts. POST /auth/login to add accounts.', type: 'api_error' },
-      });
+      return rejectAccountAdmission(res, fallbackRequestId, 'responses');
     }
 
     let body;
@@ -1256,7 +1269,7 @@ async function route(req, res, scope) {
   if (path === '/v1/messages' && method === 'POST') {
     if (!hasUsableAccount()) {
       // D2: see count_tokens above — transient capacity → 529 overloaded_error.
-      return json(res, 529, { type: 'error', error: { type: 'overloaded_error', message: 'No active accounts available, please retry' } });
+      return rejectAccountAdmission(res, fallbackRequestId, 'messages');
     }
     let body;
     try { body = JSON.parse(await readBody(req)); } catch (err) {
@@ -1352,7 +1365,7 @@ async function route(req, res, scope) {
   // after the final ':'. A v1 alias path is accepted too.
   if (method === 'POST' && GEMINI_GENERATE_PATH_RE.test(path)) {
     if (!hasUsableAccount()) {
-      return json(res, 503, { error: { code: 503, message: 'No active accounts. POST /auth/login to add accounts.', status: 'UNAVAILABLE' } });
+      return rejectAccountAdmission(res, fallbackRequestId, 'gemini');
     }
     const parsed = parseGeminiPath(path);
     if (!parsed) {

@@ -4288,7 +4288,7 @@ tbody tr:hover td { background: var(--surface-2); }
       <div class="section-header">
         <div>
           <div class="section-title" data-i18n="section.statsLog.title">请求日志</div>
-          <div class="section-desc" data-i18n="section.statsLog.desc">逐请求明细：时间、模型、账号、状态、延迟、Token 与费用。每次上游尝试一行，费用单位为 Devin credits。</div>
+          <div class="section-desc" data-i18n="section.statsLog.desc">逐请求明细。入口拒绝单独显示，尝试汇总统计上游尝试。</div>
         </div>
         <div class="stats-log-meta">
           <span id="stats-log-summary" class="text-sm text-muted"></span>
@@ -10010,11 +10010,22 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     const routing = state === 'active' || state === 'watch'
       ? `<span class="acct-routing-hint text-xs text-muted" title="${this.esc(I18n.t('accounts.status.routeTip'))}">${this.esc(I18n.t('accounts.status.routeUnknown'))}</span>`
       : '';
+    const catalog = this.renderConnectCatalogObservation(a.connectCatalog);
     return `<div class="acct-state">
       <span class="acct-state-dot" style="background:${meta.band}"></span>
       <span class="badge ${meta.cls}" title="${this.esc(I18n.t(`accounts.statusTip.${state}`))}">${this.accountStateLabel(meta)}</span>
       ${errors}${countdown}${extra}
-    </div>${routing}`;
+    </div>${catalog}${routing}`;
+  },
+
+  renderConnectCatalogObservation(catalog) {
+    if (!catalog) return '';
+    const hasObservation = catalog.state === 'observed' || catalog.state === 'stale';
+    const key = hasObservation ? catalog.state : 'unknown';
+    const time = hasObservation ? new Date(catalog.observedAt).toLocaleString() : '';
+    const label = I18n.t('accounts.connectCatalog.' + key, { count: catalog.entryCount });
+    const tip = [I18n.t('accounts.connectCatalog.help'), time].filter(Boolean).join(' · ');
+    return `<span class="acct-routing-hint text-xs text-muted" data-connect-catalog="${key}" title="${this.esc(tip)}">${this.esc(label)}</span>`;
   },
 
   renderQuotaCell(a) {
@@ -13093,15 +13104,26 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
       const unknownDispatch = I18n.t('section.statsLog.dispatchUnknown');
       const dispatchLabels = dispatches.map(selector => `<li><code>${this.esc(selector || unknownDispatch)}</code></li>`).join('');
       const extraDispatches = r.requestDispatchCount - dispatches.length;
+      const admissionRejected = r.requestStage === 'account_admission';
+      const dispatchEmpty = r.requestDispatchCoverage === 'before_dispatch'
+        ? I18n.t('section.statsLog.dispatchNone') : unknownDispatch;
       const dispatchDetails = r.requestId ? `<div class="stats-request-detail" data-dispatch-details>
-        ${dispatchLabels ? `<ol class="stats-request-dispatches">${dispatchLabels}</ol>` : this.esc(unknownDispatch)}
+        ${dispatchLabels ? `<ol class="stats-request-dispatches">${dispatchLabels}</ol>` : this.esc(dispatchEmpty)}
         ${extraDispatches > 0 ? this.esc(I18n.t('section.statsLog.moreDispatches', { count: extraDispatches })) : ''}
       </div>` : '';
       const requestRef = r.requestId ? `<div class="stats-request-ref"><code>${this.esc(r.requestId)}</code><button
         type="button" class="btn btn-ghost btn-xs" onclick="App.copyStatsRequestId(this)"
         aria-label="${this.esc(I18n.t('section.statsLog.copyRequestId'))}">${this.esc(I18n.t('action.copy'))}</button></div>` : '';
-      const failure = r.requestId && r.success === false ? `<div class="stats-request-detail" data-failure-reason title="${this.esc(I18n.t('section.statsLog.failureReason'))}">${this.esc(r.requestFailureCode || I18n.t('section.statsLog.failureUnknown'))}</div>` : '';
-      const [badge, outcome] = r.success === true ? ['success', 'attemptSucceeded']
+      const sameBoot = r.requestBootId && d.currentBootId === r.requestBootId;
+      const bootLabel = r.requestBootId && d.currentBootId
+        ? I18n.t(sameBoot ? 'section.statsLog.currentBoot' : 'section.statsLog.previousBoot')
+        : I18n.t('section.statsLog.unknownBoot');
+      const build = [r.requestVersion, r.requestCommit?.slice(0, 7)].filter(Boolean).join(' · ');
+      const origin = r.requestId ? `<div class="stats-request-detail" data-request-origin title="${this.esc(r.requestBootId || '')}">${this.esc([bootLabel, build].filter(Boolean).join(' · '))}</div>` : '';
+      const reason = admissionRejected ? I18n.t('section.statsLog.noActiveAccounts') : r.requestFailureCode;
+      const failure = r.requestId && r.success === false ? `<div class="stats-request-detail" data-failure-reason title="${this.esc(r.requestFailureCode || I18n.t('section.statsLog.failureReason'))}">${this.esc(reason || I18n.t('section.statsLog.failureUnknown'))}</div>` : '';
+      const [badge, outcome] = admissionRejected ? ['error', 'admissionRejected']
+        : r.success === true ? ['success', 'attemptSucceeded']
         : r.success === false ? ['error', 'attemptFailed'] : ['muted', 'attemptUnknown'];
       const { tokensIn, tokensOut, totalTokens } = r.reportedUsage || {};
       const usageMissing = I18n.t('section.statsLog.usageMissing');
@@ -13110,7 +13132,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
       const totalLabel = (tokensIn == null || tokensOut == null) && totalTokens != null
         ? ` <small class="text-muted">${this.esc(I18n.t('section.statsLog.reportedTotal', { total: this.fmtTokenCount(totalTokens) }))}</small>` : '';
       return `<tr>`
-        + `<td class="text-sm"><time>${this.esc(when.toLocaleString())}</time>${requestRef}</td>`
+        + `<td class="text-sm"><time>${this.esc(when.toLocaleString())}</time>${requestRef}${origin}</td>`
         + `<td class="text-sm"><span class="cell-ellipsis" title="${this.esc(requestedModel || '')}">${this.esc(requestedModel || '—')}</span>${dispatchDetails}</td>`
         + `<td class="text-sm"><code>${this.esc(r.account || '-')}</code></td>`
         + `<td><span class="badge ${badge} no-dot">${this.esc(I18n.t('section.statsLog.' + outcome))}</span> ${hasStatus ? `<small class="text-muted">HTTP ${this.esc(status)}</small>` : ''}${failure}</td>`

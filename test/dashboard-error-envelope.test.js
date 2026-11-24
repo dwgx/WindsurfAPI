@@ -312,7 +312,7 @@ describe('#257 the client fetch wrappers force success:false on non-2xx', () => 
 
   for (const [label, html, signature] of [
     ['index.html', MAIN_HTML, mainSignature],
-    ['index-sketch.html', SKETCH_HTML, 'async api(method, path, body)'],
+    ['index-sketch.html', SKETCH_HTML, 'async api(method, path, body, options)'],
   ]) {
     it(`${label}: a 404 body gains success:false and keeps its error`, async () => {
       const { out } = await runApiRaw(html, signature, async () => ({
