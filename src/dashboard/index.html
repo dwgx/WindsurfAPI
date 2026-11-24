@@ -2254,8 +2254,9 @@ tbody tr:hover td { background: var(--surface-2); }
   margin: var(--space-8) 0 0; white-space: normal;
 }
 .stats-request-lifecycle dt { color: var(--text-muted); }
-.stats-request-lifecycle dd { margin: 0; }
-.stats-request-dispatches { margin: 0; padding-left: 1.25em; }
+.stats-request-lifecycle dd { margin: 0; min-width: 7em; }
+.stats-request-dispatches { margin: 0; padding-left: 1.25em; white-space: normal; }
+.stats-account-ref, .stats-request-dispatches summary code { white-space: nowrap; }
 #stats-log-table .numeric, .stats-agg-table .numeric { text-align: right; font-variant-numeric: tabular-nums; }
 .cell-ellipsis { display: inline-block; max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; vertical-align: bottom; }
 
@@ -13370,7 +13371,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
       return `<tr>`
         + `<td class="text-sm"><time>${this.esc(when.toLocaleString())}</time>${requestRef}${origin}</td>`
         + `<td class="text-sm"><span class="cell-ellipsis" title="${this.esc(requestedModel || '')}">${this.esc(requestedModel || '—')}</span>${dispatchDetails}${timeline}</td>`
-        + `<td class="text-sm"><code>${this.esc(r.account || '-')}</code></td>`
+        + `<td class="text-sm"><code class="stats-account-ref">${this.esc(r.account || '-')}</code></td>`
         + `<td><span class="badge ${badge} no-dot">${this.esc(I18n.t('section.statsLog.' + outcome))}</span> ${hasStatus ? `<small class="text-muted">HTTP ${this.esc(status)}</small>` : ''}${failure}${responses}${details}</td>`
         + `<td class="text-sm numeric">${this.esc(this.fmtMs(r.ms))}</td>`
         + `<td class="text-sm numeric" title="${this.esc(inputTitle)}">${tokensIn == null ? '—' : this.esc(this.fmtTokenCount(tokensIn))}${totalLabel}</td>`
