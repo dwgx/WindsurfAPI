@@ -1415,6 +1415,8 @@
       "connectVerify": "保存后，用常用客户端发一条短模型请求，确认这份凭据真的能出结果。",
       "connectDependency": "如果你只有 Devin 门户登录或 Devin API 密钥，需先由管理员提供受支持的连接凭据。自动接入需要 Devin 支持的授权和已登记的回调。",
       "replaceCredential": "替换凭据",
+      "sessionCredential": "替换会话凭据",
+      "replaceHint": "粘贴替换凭据后，点击「替换凭据」。",
       "savingCredential": "正在保存凭据…",
       "credentialSaved": "替换凭据已保存，模型访问待验证。"
     },

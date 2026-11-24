@@ -228,6 +228,7 @@ describe('POST /accounts/:id/reauth {action:"token"}', () => {
     const previous = getAccountInternal(account.id).apiKey;
     const inputs = [
       ['https://app.devin.ai/', 'ERR_REAUTH_DEVIN_PORTAL_URL'],
+      ['https://devin.ai/', 'ERR_REAUTH_DEVIN_PORTAL_URL'],
       ['cog_fixture_public_api', 'ERR_REAUTH_DEVIN_API_CREDENTIAL'],
       ['https://example.invalid/auth/callback?error=invalid_redirect_uri&state=fixture-hidden', 'ERR_REAUTH_REDIRECT_REJECTED'],
       ['https://example.invalid/auth/callback?error=access_denied&error_description=fixture-hidden', 'ERR_REAUTH_CALLBACK_FAILED'],

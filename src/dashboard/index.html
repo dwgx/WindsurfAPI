@@ -3432,7 +3432,7 @@ tbody tr:hover td { background: var(--surface-2); }
           <!-- Title follows the active tab (set by App.setAddModalTitle), so the
                entry verb the user clicked is the one they land on. -->
           <div class="modal-title" id="add-modal-title"></div>
-          <div class="modal-desc" data-i18n="accounts.add.desc">选择一种方式添加账号：登录、粘贴凭证、批量导入或从本机扫描</div>
+          <div id="add-account-description" class="modal-desc" data-i18n="accounts.add.desc">选择一种方式添加账号：登录、粘贴凭证、批量导入或从本机扫描</div>
         </div>
         <button class="btn btn-ghost btn-sm" onclick="App.closeAddAccountModal()" aria-label="关闭" data-i18n-aria-label="action.close">×</button>
       </div>
@@ -3652,7 +3652,7 @@ tbody tr:hover td { background: var(--surface-2); }
 
         <div class="add-panel" id="add-panel-paste" role="tabpanel" aria-labelledby="add-tab-paste">
           <div class="section">
-            <div class="section-header">
+            <div id="account-paste-header" class="section-header">
               <div>
                 <div class="section-title" data-i18n="section.addAccount.title">添加账号</div>
                 <div class="section-desc" data-i18n="section.addAccount.desc">支持 API Key 或 Auth Token 两种方式</div>
@@ -3684,7 +3684,7 @@ tbody tr:hover td { background: var(--surface-2); }
                   </select>
                 </div>
                 <div class="field" style="flex:2">
-                  <label class="field-label" for="acc-key" data-i18n="field.key.label">Key / Token</label>
+                  <label class="field-label" id="account-paste-label-key" for="acc-key" data-i18n="field.key.label">Key / Token</label>
                   <input id="acc-key" type="password" autocomplete="off" spellcheck="false" class="input" aria-describedby="account-paste-hint" data-i18n-placeholder="field.key.placeholder" placeholder="粘贴 Auth Token">
                   <div class="field-hint" id="account-paste-hint" data-i18n="accounts.login.manualPasteHint">按 Ctrl+V 或使用浏览器的粘贴菜单，再点击添加。</div>
                 </div>
@@ -3703,7 +3703,7 @@ tbody tr:hover td { background: var(--surface-2); }
               <div class="field-row-actions">
                 <button id="account-credential-submit" class="btn btn-primary" onclick="App.addAccount()" data-i18n="action.add">添加账号</button>
               </div>
-              <div id="account-credential-status" class="field-hint"></div>
+              <div id="account-credential-status" class="field-hint" role="status" aria-atomic="true"></div>
             </div>
           </div>
         </div>
@@ -5599,7 +5599,7 @@ docker compose up -d --force-recreate</pre>
     return text.length > 180 ? text.slice(0, 179) + '…' : text;
   },
 
-  toast(msg, type = 'success', detail = '') {
+  toast(msg, type = 'success', detail = '', group = '') {
     const stack = document.getElementById('toast-stack');
     const text = this.noticeText(msg);
     if (!stack || !text) return;
@@ -5607,12 +5607,19 @@ docker compose up -d --force-recreate</pre>
     const dismissLabel = I18n.t('toast.dismiss');
     const title = code ? `${code} · ${dismissLabel}` : dismissLabel;
     if ([...stack.children].some(node =>
-      !node.dataset.dismissing && node.classList.contains(type) && node.textContent === text && node.title === title)) return;
+      !node.dataset.dismissing && (node.dataset.noticeGroup || '') === group
+      && node.classList.contains(type) && node.textContent === text && node.title === title)) return;
+    if (group) {
+      for (const node of [...stack.children]) {
+        if (node.dataset.noticeGroup === group) node.remove();
+      }
+    }
     const t = document.createElement('div');
     t.className = 'toast ' + type;
     t.textContent = text;
     t.style.cursor = 'pointer';
     t.title = title;
+    if (group) t.dataset.noticeGroup = group;
     stack.appendChild(t);
     let done = false;
     const dismiss = () => {
@@ -9079,6 +9086,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
   resetEmailCodeForm() {
     this._wlEmailOp = null;
     this._wlFlow = null;
+    document.querySelector('#toast-stack [data-notice-group="email-code"]')?.remove();
     const code = document.getElementById('wl-email-code');
     const status = document.getElementById('wl-code-status');
     if (code) code.value = '';
@@ -9121,7 +9129,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
             ? I18n.t('emailLogin.codeSentToDevin', { email })
             : I18n.t('emailLogin.codeSentTo', { email });
         }
-        this.toast(I18n.t('emailLogin.codeSent'), 'success');
+        this.toast(I18n.t('emailLogin.codeSent'), 'success', '', 'email-code');
         document.getElementById('wl-email-code')?.focus();
         this.startEmailCodeCooldown(email);
       } else if (r?.error === 'ERR_EMAIL_CODE_COOLDOWN') {
@@ -9136,7 +9144,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
         this._wlFlow = null;
         const message = this.loginErrorMessage(r);
         if (status) status.textContent = message;
-        this.toast(message, 'error');
+        this.toast(message, 'error', '', 'email-code');
       }
     } finally {
       if (this._wlEmailOp === operation) {
@@ -9182,14 +9190,15 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
         entry.apiKey = r.apiKey_masked || (r.apiKey ? r.apiKey.slice(0, 16) + '...' : '');
         if (status) status.textContent = '';
         this.renderSingleWindsurfLoginResult(r, autoAdd);
-        this.toast(bound ? I18n.t('accounts.reauth.success') : (autoAdd ? I18n.t('toast.loginSuccessAdded') : I18n.t('toast.loginSuccess')), 'success');
+        this.toast(bound ? I18n.t('accounts.reauth.success') : (autoAdd ? I18n.t('toast.loginSuccessAdded') : I18n.t('toast.loginSuccess')),
+          'success', '', bound ? '' : 'email-code');
         this.loadAccounts();
         if (bound) this.closeAddAccountModal();
       } else {
         const message = this.loginErrorMessage(r);
         entry.status = 'error: ' + message;
         if (status) status.textContent = message;
-        this.toast(message, 'error');
+        this.toast(message, 'error', '', 'email-code');
         if (/^ERR_EMAIL_FLOW_(EXPIRED|USED|NOT_FOUND)$/.test(r?.error || '')) {
           this._wlFlow = null;
           if (codeEl) codeEl.value = '';
@@ -10526,9 +10535,26 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     el.classList.toggle('hidden', !id);
     document.getElementById('connect-recovery-guide')?.classList.toggle('hidden', !connect);
     for (const extra of [
-      'add-account-tabs', 'account-paste-help', 'account-paste-type', 'account-paste-label',
+      'add-account-tabs', 'add-account-description', 'account-paste-header',
+      'account-paste-help', 'account-paste-type', 'account-paste-label',
       'account-paste-proxy', 'account-paste-proxy-hint',
     ]) document.getElementById(extra)?.classList.toggle('hidden', connect);
+    for (const [fieldId, key] of [
+      ['account-paste-label-key', connect ? 'accounts.reauth.sessionCredential' : 'field.key.label'],
+      ['account-paste-hint', connect ? 'accounts.reauth.replaceHint' : 'accounts.login.manualPasteHint'],
+    ]) {
+      const field = document.getElementById(fieldId);
+      if (field) {
+        field.setAttribute('data-i18n', key);
+        field.textContent = I18n.t(key);
+      }
+    }
+    const secretInput = document.getElementById('acc-key');
+    if (secretInput) {
+      const key = connect ? 'accounts.reauth.sessionCredential' : 'field.key.placeholder';
+      secretInput.setAttribute('data-i18n-placeholder', key);
+      secretInput.setAttribute('placeholder', I18n.t(key));
+    }
     const submit = document.getElementById('account-credential-submit');
     if (submit) {
       const key = connect ? 'accounts.reauth.replaceCredential' : 'action.add';
@@ -11971,7 +11997,6 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
       } else {
         const message = this.loginErrorMessage(r, 'toast.addFailed');
         if (status) status.textContent = message;
-        this.toast(message, 'error');
       }
     } finally {
       if (this._credentialSave === save) {

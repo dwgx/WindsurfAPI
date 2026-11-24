@@ -1415,6 +1415,8 @@
       "connectVerify": "After saving, send a short request from your usual client to confirm the model responds.",
       "connectDependency": "If you only have a Devin portal login or Devin API key, ask the gateway administrator for a compatible credential. Automatic enrollment requires a supported authorization flow and a registered callback.",
       "replaceCredential": "Replace credential",
+      "sessionCredential": "Replacement session credential",
+      "replaceHint": "Paste the replacement credential, then select Replace credential.",
       "savingCredential": "Saving credential…",
       "credentialSaved": "Replacement credential saved. Model access is still unverified."
     },

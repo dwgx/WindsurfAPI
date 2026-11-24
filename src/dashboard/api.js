@@ -1114,7 +1114,8 @@ function applyReauthToken(id, rawToken, { via = 'token' } = {}) {
     throw invalid(rejected ? 'ERR_REAUTH_REDIRECT_REJECTED' : 'ERR_REAUTH_CALLBACK_FAILED');
   }
   if (!token) {
-    const portal = URL.canParse(input) && new URL(input).origin === 'https://app.devin.ai';
+    const origin = URL.canParse(input) ? new URL(input).origin : '';
+    const portal = origin === 'https://app.devin.ai' || origin === 'https://devin.ai';
     throw invalid(portal ? 'ERR_REAUTH_DEVIN_PORTAL_URL' : 'ERR_NO_TOKEN_IN_INPUT');
   }
   if (token.startsWith('cog_')) throw invalid('ERR_REAUTH_DEVIN_API_CREDENTIAL');
