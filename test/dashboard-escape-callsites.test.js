@@ -101,11 +101,11 @@ const REVIEWED_NOT_SINKS = [
   { line: 12314, field: 'id', expr: 'id}', why: 'B url-or-selector: DELETE path, not markup' },
   { line: 12651, field: 'id', expr: 'id}', why: 'B url-or-selector: proxy PUT path, not markup' },
   { line: 12663, field: 'id', expr: 'id}', why: 'B url-or-selector: proxy DELETE path, not markup' },
-  { line: 14354, field: 'id', expr: 'id}', why: 'C numeric-or-http: local DOM id built from a literal settings key, not account data' },
-  { line: 14355, field: 'id', expr: 'id}', why: 'C numeric-or-http: local DOM id built from a literal settings key, not account data' },
-  { line: 14525, field: 'id', expr: 'id}', why: 'C numeric-or-http: local DOM id built from a literal settings key, not account data' },
-  { line: 14526, field: 'id', expr: 'id}', why: 'C numeric-or-http: local DOM id built from a literal settings key, not account data' },
-  { line: 14826, field: 'status', expr: 'res.status}', why: 'C numeric-or-http: HTTP status code, always a Number' },
+  { line: 14358, field: 'id', expr: 'id}', why: 'C numeric-or-http: local DOM id built from a literal settings key, not account data' },
+  { line: 14359, field: 'id', expr: 'id}', why: 'C numeric-or-http: local DOM id built from a literal settings key, not account data' },
+  { line: 14529, field: 'id', expr: 'id}', why: 'C numeric-or-http: local DOM id built from a literal settings key, not account data' },
+  { line: 14530, field: 'id', expr: 'id}', why: 'C numeric-or-http: local DOM id built from a literal settings key, not account data' },
+  { line: 14830, field: 'status', expr: 'res.status}', why: 'C numeric-or-http: HTTP status code, always a Number' },
 ];
 
 function dashboardSource() {

@@ -613,6 +613,7 @@
         "reset": "Clear filters"
       },
       "admissionRejected": "Admission rejected",
+      "summaryAdmission": "{{count}} admission rejections",
       "noActiveAccounts": "No active accounts and no enabled Connect fallback",
       "dispatchNone": "0 dispatches · rejected at admission",
       "currentBoot": "Current process",

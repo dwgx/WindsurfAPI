@@ -4323,7 +4323,7 @@ tbody tr:hover td { background: var(--surface-2); }
               <th data-i18n="section.statsLog.timeAndRequest">时间 / 请求 ID</th>
               <th data-i18n="section.statsLog.modelAndDispatch">请求模型 / 派发</th>
               <th data-i18n="table.header.account">账号</th>
-              <th data-i18n="section.statsLog.attemptAndHttp">尝试结果 / HTTP</th>
+              <th data-i18n="section.statsLog.attemptAndHttp">结果 / HTTP</th>
               <th class="numeric" data-i18n="table.header.duration">耗时</th>
               <th class="numeric" data-i18n="table.header.tokensIn">输入 Token</th>
               <th class="numeric" data-i18n="table.header.tokensOut">输出 Token</th>
@@ -13091,11 +13091,15 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     const s = d.summary || {};
     if (summaryEl) {
       summaryEl.textContent = I18n.t('section.statsLog.summary', {
-        count: Number(d.total) || 0,
+        count: Number(s.requests ?? d.total) || 0,
         in: this.fmtTokenCount(s.tokensIn),
         out: this.fmtTokenCount(s.tokensOut),
         credit: this.fmtCredit(s.credits),
       });
+      const rejected = Number(s.admissionRejections) || 0;
+      if (rejected > 0) {
+        summaryEl.textContent += ' · ' + I18n.t('section.statsLog.summaryAdmission', { count: rejected });
+      }
     }
 
     const items = d.items.filter(r => r && typeof r === 'object');

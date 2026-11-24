@@ -613,6 +613,7 @@
         "reset": "清除筛选"
       },
       "admissionRejected": "准入拒绝",
+      "summaryAdmission": "{{count}} 次入口拒绝",
       "noActiveAccounts": "活跃账号为 0，Connect 备用入口未启用或未配置",
       "dispatchNone": "0 次派发 · 账号准入拒绝",
       "currentBoot": "当前进程",
