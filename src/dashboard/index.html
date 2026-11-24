@@ -10072,6 +10072,11 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     const blockedCount = Number(a.blockedModelCount ?? (a.blockedModels || []).length);
     if (!tierModelCount) return `<span class="text-xs text-dim">-</span>`;
     const availCount = Math.max(0, tierModelCount - blockedCount);
+    if (a.connectCatalog) {
+      const title = I18n.t('accounts.connectCatalog.localPolicyTip', { count: availCount, total: tierModelCount });
+      return `<button type="button" class="btn btn-ghost btn-xs" data-local-model-policy onclick="App.openBlockedModal('${this.escJsAttr(a.id)}')"
+        title="${this.esc(title)}">${this.esc(I18n.t('accounts.connectCatalog.localPolicy'))}</button>`;
+    }
     return `<button class="btn btn-ghost btn-xs" style="min-width:72px;padding-left:0" onclick="App.openBlockedModal('${this.escJsAttr(a.id)}')" title="${I18n.t('account.editModels')}">
       <span style="color: var(--success-text);font-weight:600">${availCount}</span>
       <span style="color:var(--text-dim)">/${tierModelCount}</span>

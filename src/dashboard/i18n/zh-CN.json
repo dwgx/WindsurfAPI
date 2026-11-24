@@ -1467,10 +1467,12 @@
     "loadFailed": "账号列表加载失败：{{detail}}。下方表格是上一次成功加载的结果。",
     "retry": "重试",
     "connectCatalog": {
-      "observed": "Connect 目录已读 · {{count}} 项",
+      "observed": "Connect 目录 {{count}} 项",
       "stale": "Connect 目录已过期",
       "unknown": "Connect 目录待确认",
-      "help": "这是此账号当前凭据的目录观察。具体模型能否调用、余额和配额需分别核对。"
+      "help": "这是此账号当前凭据的目录观察。具体模型能否调用、余额和配额需分别核对。",
+      "localPolicy": "本地规则",
+      "localPolicyTip": "本地层级规则允许 {{count}} / {{total}} 项。点击编辑此账号的模型规则。"
     }
   },
   "account": {
