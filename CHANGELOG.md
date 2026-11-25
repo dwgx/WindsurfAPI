@@ -2,7 +2,7 @@
 
 <p align="center">
   <a href="#最近的版本">最近的版本</a> ·
-  <a href="docs/releases/">全部 224 份发布说明</a> ·
+  <a href="docs/releases/">全部 225 份发布说明</a> ·
   <a href="README.md">← 主 README</a>
 </p>
 
@@ -19,9 +19,9 @@
 
 | | |
 |---|---|
-| 发布说明 | **224** 份,v2.0.6 → v4.0.0（生成：`node scripts/sync-changelog-counts.mjs`；口径 `ls docs/releases/RELEASE_NOTES_*.md \| wc -l`） |
-| git tag | 232 个（生成：`node scripts/sync-changelog-counts.mjs`；口径 `git tag \| wc -l` 减去 `docs/releases/UNPUBLISHED-TAGS.txt` 里本 checkout 存在的未发布 tag，再减去 `package.json` 版本的 tag——本次发布自己的 tag，创建前后都不计数，所以三种 checkout 同值） |
-| 当前 | **v4.0.0** (2026-11-22) |
+| 发布说明 | **225** 份,v2.0.6 → v4.0.1（生成：`node scripts/sync-changelog-counts.mjs`；口径 `ls docs/releases/RELEASE_NOTES_*.md \| wc -l`） |
+| git tag | 233 个（生成：`node scripts/sync-changelog-counts.mjs`；口径 `git tag \| wc -l` 减去 `docs/releases/UNPUBLISHED-TAGS.txt` 里本 checkout 存在的未发布 tag，再减去 `package.json` 版本的 tag——本次发布自己的 tag，创建前后都不计数，所以三种 checkout 同值） |
+| 当前 | **v4.0.1** (2026-11-26) |
 | 运行时依赖 | **0** —— 从第一个版本保持到现在 |
 
 ```mermaid
@@ -41,6 +41,12 @@ flowchart LR
 ## 最近的版本
 
 下面是 3.9.x 全系。更早的版本请直接翻 [`docs/releases/`](docs/releases/)。
+
+### [v4.0.1](docs/releases/RELEASE_NOTES_4.0.1.md) · 2026-11-26
+
+- Publish the 4.0 routing, dashboard diagnostics and local Devin browser sign-in.
+- Allow 30 minutes for the measured full release suite after v4.0.0 exceeded the
+  job's previous 20-minute budget at 673/685 files.
 
 ### [v4.0.0](docs/releases/RELEASE_NOTES_4.0.0.md) · 2026-11-22
 
