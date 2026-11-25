@@ -16,9 +16,10 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
-    # 506 files / ~6,250 tests: measured 10m+ on a hosted runner. The old 10-minute
-    # cap cancelled v3.9.58 mid-suite; 20 leaves headroom without hiding a hang.
-    timeout-minutes: 20
+    # v4.0.0 reached 673/685 files with no failures before the 20-minute job
+    # timeout. Allow the measured baseline and full suite to finish. The shard
+    # runner retains its independent 90-second per-file timeout.
+    timeout-minutes: 30
     permissions:
       contents: read
 
