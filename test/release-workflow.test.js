@@ -26,7 +26,7 @@ describe('release workflow', () => {
       'release identity must be checked before dependencies, tests, or builds run',
     );
     assert.match(test, /\brun:\s*npm run test:release\b/);
-    assert.match(test, /\btimeout-minutes:\s*20\b/);
+    assert.match(test, /\btimeout-minutes:\s*30\b/);
     assert.match(docker, /\bneeds:\s*test\b/);
     assert.match(docker, /\btimeout-minutes:\s*30\b/);
     // Release waits for docker image, Windows single-exe, AND macOS arm64.
