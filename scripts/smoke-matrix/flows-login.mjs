@@ -652,6 +652,6 @@ export function registerLoginFlows(ctx) {
       : val));
     requireThat(stable(en.json) === stable(disk('en.json')), 'the served en.json is not the file the lint reads');
     requireThat(stable(zh.json) === stable(disk('zh-CN.json')), 'the served zh-CN.json is not the file the lint reads');
-    return 'chooser + 3 token steps; entry verbs match their tabs; copy lint clean on the served bytes';
+    return 'chooser + local browser flow + masked credential input; entry verbs match tabs; copy lint clean on served bytes';
   });
 }

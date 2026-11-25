@@ -204,9 +204,13 @@ export function registerCoreFlows(ctx) {
 
   addFlow('dashboard', 'dashboard.oauth-status', async () => {
     const r = await http('GET', '/dashboard/api/oauth/status');
-    requireThat(r.status === 200, `status ${r.status}`);
-    requireThat(r.json != null && typeof r.json === 'object', 'status payload missing');
-    return 'OAuth session status readable';
+    requireThat(r.status === 410, 'the retired browser transaction still reports a usable status');
+    requireThat(r.json?.success === false && r.json?.error === 'ERR_BROWSER_ENROLLMENT_UNAVAILABLE',
+      'the retired flow must return its explicit terminal failure');
+    const current = await http('GET', '/dashboard/api/devin-browser-login/status');
+    requireThat(current.status === 200 && current.json?.available === false,
+      'local browser enrollment must remain unavailable until explicitly enabled');
+    return 'retired flow is terminal; current local browser enrollment is opt-in';
   });
 
   addFlow('dashboard', 'dashboard.import-local-availability', async () => {
