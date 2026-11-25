@@ -709,7 +709,7 @@
   },
   "help": {
     "token": "推荐用 Token 方式添加账号 点 {{link}} 登录后复制 Token 粘贴到下面就行 所有登录方式（邮箱/Google/GitHub）都能用",
-    "tokenGuide": "请使用已取得、此网关支持的凭证。旧版 Windsurf 凭证页",
+    "tokenGuide": "请粘贴已签发给此网关集成的凭证。",
     "tokenGuideEnd": " 登录后复制 Token 粘贴到下面就行 所有登录方式（邮箱/Google/GitHub）都能用"
   },
   "skin": {
@@ -1202,8 +1202,8 @@
     "github": "GitHub 登录",
     "copyAuthToken": "复制 Auth Token",
     "pasteToken": "去账号管理粘贴 Token",
-    "inlineTokenTitle": "或者直接粘贴 Auth Token（推荐 OAuth-only 账号用这个）",
-    "inlineTokenDesc": "点左边按钮在新 tab 打开 windsurf.com → 用 Google/GitHub 登录 → 页面会显示 Auth Token → 复制粘到右边输入框 → 点添加",
+    "inlineTokenTitle": "粘贴已有凭证",
+    "inlineTokenDesc": "请使用已签发给此网关集成的凭证。",
     "openWindsurfToken": "打开 windsurf.com 拿 Token",
     "tokenPlaceholder": "粘贴 Auth Token...",
     "urlOrTokenPlaceholder": "粘贴回调 URL 或 Auth Token...",
@@ -1242,7 +1242,7 @@
       "dontAsk": "下次不要问我（可在设置里改回）",
       "copyUnavailable": "浏览器无法自动复制链接，请点「打开登录页」。"
     },
-    "legacyRedirectHelp": "若提示 Invalid redirect URI，上游在回调前拒绝了旧版流程。已有网关支持的凭据可直接粘贴。自动接入需要上游支持并登记回调。"
+    "legacyRedirectHelp": "旧回调入口已停用。请使用邮箱登录或已签发给此网关集成的凭证。"
   },
   "update": {
     "checking": "正在检查更新...",
@@ -1339,8 +1339,8 @@
       "pasteToken": "粘贴凭证",
       "back": "换一种方式",
       "advanced": "高级选项（代理 / 登录历史 / 存储密码）",
-      "devinTitle": "Devin 官方登录",
-      "devinHint": "在新标签页完成 Devin 登录。向此网关添加账号需另行提供受支持的凭证。",
+      "devinTitle": "打开 Devin 官网",
+      "devinHint": "官网登录用于 Devin。自动接入此网关需服务商授权，请使用邮箱登录或已签发给此集成的凭证。",
       "legacyWindsurf": "Windsurf 旧版登录",
       "focusPaste": "定位到粘贴框",
       "manualPasteHint": "按 Ctrl+V 或使用浏览器的粘贴菜单，再提交。"
@@ -2032,10 +2032,10 @@
     "ERR_TLS_TUNNEL_ERROR": "TLS 隧道建立但返回内容异常",
     "ERR_TLS_FAILED": "TLS 失败",
     "ERR_LOGIN_FAILED": "登录失败",
-    "ERR_EMAIL_NOT_FOUND": "该邮箱未注册邮箱密码登录方式。若通过 Google/GitHub OAuth 注册，请使用 OAuth 按钮或访问 windsurf.com/show-auth-token 复制 Auth Token",
+    "ERR_EMAIL_NOT_FOUND": "这个地址未找到密码账号，请核对地址或使用已签发给此集成的凭证。",
     "ERR_INVALID_PASSWORD": "密码错误",
     "ERR_INVALID_CREDENTIALS": "邮箱或密码错误",
-    "ERR_NO_PASSWORD_SET": "该账号未设置密码登录方式。使用 Google/GitHub OAuth 或访问 windsurf.com/show-auth-token 复制 Auth Token",
+    "ERR_NO_PASSWORD_SET": "该账号没有密码。请使用可用的邮箱验证，或使用已签发给此集成的凭证。",
     "ERR_USER_DISABLED": "账号已被停用",
     "ERR_TOO_MANY_ATTEMPTS": "尝试太多次 请稍后再试",
     "ERR_INVALID_EMAIL": "邮箱格式错误",
@@ -2053,8 +2053,9 @@
     "ERR_FIREBASE_TOKEN_MISSING": "Firebase 回应缺少 idToken",
     "ERR_LOCAL_IMPORT_LOOPBACK_ONLY": "本地导入仅限 127.0.0.1 访问 — 请在部署服务器本机的浏览器里打开 dashboard，不要用公网域名",
     "ERR_LOCAL_IMPORT_FAILED": "扫描本地 Windsurf 凭证失败",
-    "ERR_INTERMEDIATE_CALLBACK": "这是中间回调页，它的登录 code 无法在这里兑换。请等浏览器跳转到 show-auth-token 页面后，粘贴那上面显示的 token。",
-    "ERR_OAUTH_UPSTREAM": "登录提供方返回了错误，请重新登录。",
+    "ERR_BROWSER_ENROLLMENT_UNAVAILABLE": "网关暂无法通过网页登录自动接入。请使用邮箱登录或已签发给此集成的凭证。",
+    "ERR_INTERMEDIATE_CALLBACK": "授权回调不能在这里导入。请粘贴已签发给此网关集成的凭证。",
+    "ERR_OAUTH_UPSTREAM": "服务商拒绝了这次登录。请使用可用的登录方式或已签发给此集成的凭证。",
     "rollbackFailed": "回滚失败",
     "ERR_NO_PASSWORD_OAUTH_ACCOUNT": "该账号没有密码（仅支持 OAuth 或邮箱验证码）。请使用邮箱验证码、Google/GitHub，或粘贴 Auth Token。",
     "ERR_EMAIL_LOCKED": "该邮箱因连续登录失败被临时锁定。请等待解锁，或在设置中调整阈值。",
@@ -2307,8 +2308,8 @@
     "methodEmailCode": "该账号没有密码。请发送验证码并在下方输入。",
     "methodOAuth": "该账号没有密码，也不支持邮箱验证码。请使用 Google/GitHub 或粘贴 Token。",
     "methodUnknown": "无法确定登录方式，已保留密码登录表单。",
-    "oauthOnlyHint": "该账号没有密码，也不支持邮箱验证码。请用上面的 Google / GitHub 按钮登录，或粘贴 show-auth-token 页面的 Token。",
-    "useToken": "改用 Token 登录",
+    "oauthOnlyHint": "该账号需要通过 Devin 登录。添加到网关时请使用已签发给此集成的凭证。",
+    "useToken": "粘贴已有凭证",
     "sendingCode": "正在发送验证码…",
     "codeSent": "验证码已发送，请查收邮箱（10 分钟内有效）。",
     "resendIn": "验证码已发送，{{seconds}} 秒后可重新发送。",

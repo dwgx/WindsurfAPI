@@ -454,16 +454,12 @@ describe('secret hygiene', () => {
 describe('dashboard login tab wiring', () => {
   const HTML = readFileSync(new URL('../src/dashboard/index.html', import.meta.url), 'utf8');
 
-  it('opens the sign-in flow and supports explicit paste into the credential field', () => {
-    assert.match(HTML, /onclick="App\.fetchWindsurfToken\(\)"[^>]*id="oauth-fetch-token-btn"/);
-    assert.match(HTML, /onclick="App\.focusCredentialPaste\('oauth-token-input'\)"/);
-    assert.match(HTML, /id="oauth-token-input" type="password"/);
-    assert.match(HTML, /onclick="App\.submitOAuthToken\(\)"/);
-    assert.match(HTML, /async fetchWindsurfToken\(\)/);
-    assert.match(HTML, /async submitOAuthToken\(\)/);
-    // The import must go through the stateless route, not the state-bound
-    // callback that produced ERR_INVALID_STATE for a valid token.
-    assert.match(HTML, /this\.api\('POST', '\/windsurf-login\/token'/);
+  it('links to Devin and sends existing credentials through the masked account form', () => {
+    assert.match(HTML, /id="devin-sign-in" href="https:\/\/app\.devin\.ai\/" target="_blank" rel="noopener noreferrer"/);
+    assert.match(HTML, /onclick="App\.openCredentialPaste\(\)"/);
+    assert.match(HTML, /id="acc-key" type="password"/);
+    assert.match(HTML, /this\.api\('POST', '\/accounts', body, \{ notify: false \}\)/);
+    assert.doesNotMatch(HTML, /redirect_uri=show-auth-token|\/oauth\/start/);
   });
 
   it('shows the code form with a live status line and a resend countdown', () => {

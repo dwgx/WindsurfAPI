@@ -55,10 +55,9 @@ function extractAppMethods(html, names, scope = {}) {
 const I18nStub = { t: (key) => `i18n:${key}` };
 const app = extractAppMethods(
   DASHBOARD,
-  ['accountsListUrl', 'systemPromptDomId', 'getWindsurfProxyLabel', 'buildWindsurfSigninUrl'],
+  ['accountsListUrl', 'systemPromptDomId', 'getWindsurfProxyLabel'],
   { I18n: I18nStub },
 );
-const sketchApp = extractAppMethods(SKETCH, ['isFirebaseOAuthOriginBlocked']);
 
 for (const skin of ['src/dashboard/index.html', 'src/dashboard/index-sketch.html']) {
   test(`${skin} inline scripts are syntactically valid`, () => {
@@ -153,38 +152,7 @@ describe('dashboard helpers run', () => {
     }
   });
 
-  it('buildWindsurfSigninUrl emits the token flow with a fresh state per call', () => {
-    const first = new URL(app.buildWindsurfSigninUrl());
-    assert.equal(first.origin + first.pathname, 'https://windsurf.com/windsurf/signin');
-    assert.equal(first.searchParams.get('response_type'), 'token');
-    assert.equal(first.searchParams.get('redirect_uri'), 'show-auth-token');
-    assert.equal(first.searchParams.get('prompt'), 'login');
-    assert.ok((first.searchParams.get('state') || '').length > 0, 'a CSRF state is mandatory');
 
-    const second = new URL(app.buildWindsurfSigninUrl());
-    assert.notEqual(first.searchParams.get('state'), second.searchParams.get('state'));
-  });
-
-  it('isFirebaseOAuthOriginBlocked separates origin blocks from real failures', () => {
-    const blocked = [
-      { message: 'Firebase: Error (auth/unauthorized-domain).' },
-      { message: 'auth/requests-from-referer-https://x.are-blocked' },
-      'unauthorized-domain',
-    ];
-    for (const err of blocked) {
-      assert.equal(sketchApp.isFirebaseOAuthOriginBlocked(err), true, `${JSON.stringify(err)} is an origin block`);
-    }
-    const notBlocked = [
-      { message: 'Firebase: Error (auth/wrong-password).' },
-      { message: 'auth/network-request-failed' },
-      null,
-      undefined,
-      '',
-    ];
-    for (const err of notBlocked) {
-      assert.equal(sketchApp.isFirebaseOAuthOriginBlocked(err), false, `${JSON.stringify(err)} must not be steered to the token fallback`);
-    }
-  });
 });
 
 // ─── Markup / data guards ───────────────────────────────────────────────────
@@ -281,25 +249,12 @@ describe('dashboard markup contract', () => {
       `sketch list views must stay at or below 200 rows per request; found ${sizes.join(', ')}`);
   });
 
-  test('dashboard Quick Login uses the Windsurf sign-in + token flow (no dead Firebase popup)', () => {
-    // The sign-in URL is built and executed above; the sketch's Firebase flow has
-    // no importable seam, so its classifier is executed in the helper suite and
-    // the two literals it must recognise stay here as a cheap regression pin.
-    assert.match(SKETCH, /requests-from-referer-\.\*are-blocked/);
-    assert.match(SKETCH, /unauthorized-domain/);
-
-    // Both variants surface the windsurf.com token path.
+  test('both dashboard skins open the Devin portal without starting gateway enrollment', () => {
     for (const source of [DASHBOARD, SKETCH]) {
-      assert.match(source, /windsurf\.com\/show-auth-token/);
+      assert.match(source, /href="https:\/\/app\.devin\.ai\/" target="_blank" rel="noopener noreferrer"/);
+      assert.doesNotMatch(source, /redirect_uri=show-auth-token|href="https:\/\/windsurf\.com\/show-auth-token|\/oauth\/start|signInWithPopup/);
+      assert.doesNotMatch(source, /\/auth\/cli\/(?:continue|token)/);
     }
-
-    // index.html's Quick Login no longer relies on Firebase signInWithPopup — it is
-    // permanently origin-blocked on a self-hosted public origin. It now drives the
-    // Windsurf official sign-in + paste-token flow unconditionally (App.oauthLogin →
-    // buildWindsurfSigninUrl → App.submitOAuthToken).
-    assert.match(DASHBOARD, /submitOAuthToken/);
-    // The Firebase Auth SDK (which provided signInWithPopup) must no longer be imported.
-    assert.doesNotMatch(DASHBOARD, /firebasejs\/[\d.]+\/firebase-auth/);
   });
 
   test('recent merged PR contributors are represented in dashboard and README credits', () => {

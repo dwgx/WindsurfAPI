@@ -2917,11 +2917,6 @@ tbody tr:hover td { background: var(--surface-2); }
 /* OAuth brand blocks (P2 palette). These were inline `background:#4285F4` with
    white text — 3.56, an AA text failure — plus a hardcoded hex outside the
    theme system. Tokens keep the brand hue while clearing 4.5. */
-.oauth-brand-btn { padding: var(--space-10) var(--space-24); font-weight: 600; gap: var(--space-8); }
-.oauth-brand-google { background: var(--brand-google-bg); color: var(--brand-google-fg); }
-.oauth-brand-google:hover:not(:disabled) { background: var(--brand-google-bg-hover); border-color: transparent; }
-.oauth-brand-github { background: var(--brand-github-bg); color: var(--brand-github-fg); }
-.oauth-brand-github:hover:not(:disabled) { background: var(--brand-github-bg-hover); border-color: transparent; }
 /* Token step panel: neutral border. Its accent stripe was a leftover of the
    pre-workbuddy palette; the panel is a step, not a status. */
 .login-token-step {
@@ -3010,10 +3005,6 @@ tbody tr:hover td { background: var(--surface-2); }
 </style>
 
 <script src="https://challenges.cloudflare.com/turnstile/v0/api.js" async defer></script>
-<!-- Firebase signInWithPopup was removed: on a self-hosted public origin it always
-     fails with auth/unauthorized-domain (Firebase authorized-domain lock). Quick
-     Login now drives the Windsurf official sign-in + paste-token flow instead
-     (App.oauthLogin), which runs on windsurf.com and is not bound to our origin. -->
 </head>
 <body>
 
@@ -3459,65 +3450,16 @@ tbody tr:hover td { background: var(--surface-2); }
       </div>
       <div class="add-modal-body">
         <div class="add-panel active" id="add-panel-login" role="tabpanel" aria-labelledby="add-tab-login">
-          <!-- Step 1: choose ONE method. The proxy fields, the saved-password
-               checkbox and the login history are under the advanced disclosure,
-               so the first screen is two choices plus a secondary token link —
-               not four stacked sections competing for attention. -->
           <div class="login-methods" id="wl-method-step" role="group" data-i18n-aria-label="accounts.login.methodsLabel">
             <a class="login-method login-method-link" id="devin-sign-in" href="https://app.devin.ai/" target="_blank" rel="noopener noreferrer">
-              <span class="login-method-title" data-i18n="accounts.login.devinTitle">Devin 官方登录</span>
-              <span class="login-method-desc" data-i18n="accounts.login.devinHint">在 Devin 完成登录。向此网关添加账号需另行提供受支持的凭证。</span>
+              <span class="login-method-title" data-i18n="accounts.login.devinTitle">打开 Devin 官网</span>
+              <span class="login-method-desc" data-i18n="accounts.login.devinHint">官网登录用于 Devin。自动接入此网关需服务商授权，请使用邮箱登录或已签发给此集成的凭证。</span>
             </a>
             <button type="button" class="login-method" id="wl-method-email-btn" onclick="App.selectLoginMethod('email')">
               <span class="login-method-title" data-i18n="section.emailLogin.title">邮箱登录</span>
               <span class="login-method-desc" data-i18n="section.emailLogin.desc">有密码的账号用密码登录；没有密码的账号改用邮箱验证码。</span>
             </button>
-            <button type="button" class="btn btn-ghost btn-sm login-method-token" id="wl-method-oauth-btn" onclick="App.selectLoginMethod('oauth')" data-i18n="accounts.login.legacyWindsurf">Windsurf 旧版登录</button>
-            <button type="button" class="btn btn-ghost btn-sm login-method-token" id="wl-method-token-btn" onclick="App.switchAddTab('paste'); App.focusCredentialPaste('acc-key')" data-i18n="accounts.login.pasteToken">粘贴凭证</button>
-          </div>
-
-          <div class="login-method-panel hidden" id="wl-panel-oauth">
-            <div class="login-panel-head">
-              <button type="button" class="btn btn-ghost btn-xs" onclick="App.selectLoginMethod(null)" data-i18n="accounts.login.back">换一种方式</button>
-              <span class="login-panel-title" data-i18n="section.oauthLogin.title">Google / GitHub 登录</span>
-            </div>
-            <div class="section-body">
-              <div style="display:flex;gap:12px;flex-wrap:wrap">
-                <button class="btn oauth-brand-btn oauth-brand-google" onclick="App.oauthLogin('google')" id="oauth-google-btn">
-                  <svg width="18" height="18" viewBox="0 0 48 48"><path fill="#FFC107" d="M43.6 20.1H42V20H24v8h11.3C33.9 33.1 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 8 3l5.7-5.7C34 6 29.3 4 24 4 13 4 4 13 4 24s9 20 20 20 20-9 20-20c0-1.3-.2-2.7-.4-3.9z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.5 15.5 18.8 12 24 12c3.1 0 5.8 1.2 8 3l5.7-5.7C34 6 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.6-11.2-8.5l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.1H42V20H24v8h11.3c-.8 2.2-2.2 4.1-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.2-2.7-.4-3.9z"/></svg>
-                  <span data-i18n="oauth.google">Google 登录</span>
-                </button>
-                <button class="btn oauth-brand-btn oauth-brand-github" onclick="App.oauthLogin('github')" id="oauth-github-btn">
-                  <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M12 0C5.37 0 0 5.37 0 12c0 5.3 3.44 9.8 8.2 11.38.6.11.82-.26.82-.58v-2.03c-3.34.73-4.04-1.61-4.04-1.61-.55-1.39-1.34-1.76-1.34-1.76-1.08-.74.08-.73.08-.73 1.2.08 1.84 1.23 1.84 1.23 1.07 1.83 2.81 1.3 3.5 1 .1-.78.42-1.3.76-1.6-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.13-.3-.54-1.52.12-3.18 0 0 1-.32 3.3 1.23a11.5 11.5 0 016.02 0c2.28-1.55 3.29-1.23 3.29-1.23.66 1.66.25 2.88.12 3.18.77.84 1.24 1.91 1.24 3.22 0 4.61-2.8 5.63-5.48 5.92.43.37.82 1.1.82 2.22v3.29c0 .32.21.7.82.58C20.56 21.8 24 17.3 24 12 24 5.37 18.63 0 12 0z"/></svg>
-                  <span data-i18n="oauth.github">GitHub 登录</span>
-                </button>
-              </div>
-              <p class="field-hint" data-i18n="oauth.legacyRedirectHelp">若提示 Invalid redirect URI，上游在回调前拒绝了旧版流程。已有网关支持的凭据可直接粘贴。自动接入需要上游支持并登记回调。</p>
-              <div id="oauth-status" style="margin-top:8px;font-size:12px;color:var(--text-muted)"></div>
-              <div id="oauth-token-step" class="login-token-step hidden">
-                <div style="font-weight:600;margin-bottom:6px" data-i18n="oauth.step2Title">粘贴 Windsurf 返回的 Token</div>
-                <div style="font-size:12px;color:var(--text-muted);margin-bottom:10px" data-i18n="oauth.step2Desc">登录完成后，Windsurf 会显示一串 Token。复制它，或直接复制整条回调地址。</div>
-                <ol class="login-steps">
-                  <li>
-                    <span data-i18n="oauth.step1">在新标签页完成登录（Google、GitHub 或邮箱验证码均可）。</span>
-                    <button class="btn btn-outline btn-sm" onclick="App.fetchWindsurfToken()" id="oauth-fetch-token-btn" data-i18n="oauth.openSignin">打开 Windsurf 登录页</button>
-                  </li>
-                  <li>
-                    <span data-i18n="oauth.step2">登录完成后页面会显示 Token；点“复制”或直接全选地址栏。</span>
-                    <button type="button" class="btn btn-outline btn-sm" onclick="App.focusCredentialPaste('oauth-token-input')" id="oauth-paste-btn" data-i18n="accounts.login.focusPaste">定位到粘贴框</button>
-                  </li>
-                  <li>
-                    <span data-i18n="oauth.step3">回到这里，粘贴并添加；Token 会立即写入账号池。</span>
-                    <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-top:6px">
-                      <input id="oauth-token-input" type="password" autocomplete="off" spellcheck="false" class="input" style="flex:1;min-width:220px" data-i18n-aria-label="field.key.label" aria-describedby="oauth-paste-hint" data-i18n-placeholder="oauth.urlOrTokenPlaceholder" placeholder="粘贴回调 URL 或 Auth Token...">
-                      <button class="btn btn-primary" onclick="App.submitOAuthToken()" id="oauth-import-btn" data-i18n="oauth.addWithToken">用 Token 添加</button>
-                    </div>
-                    <div class="field-hint" id="oauth-paste-hint" data-i18n="accounts.login.manualPasteHint">按 Ctrl+V 或使用浏览器的粘贴菜单，再点击添加。</div>
-                  </li>
-                </ol>
-                <a id="oauth-manual-link" href="#" class="hidden" onclick="return App.openWindsurfSignin(event)" style="display:inline-block;margin-top:8px;font-size:12px;color: var(--accent-text)" data-i18n="oauth.openManually">登录页没弹出来？点这里手动打开</a>
-              </div>
-            </div>
+            <button type="button" class="btn btn-ghost btn-sm login-method-token" id="wl-method-token-btn" onclick="App.openCredentialPaste()" data-i18n="accounts.login.pasteToken">粘贴凭证</button>
           </div>
 
           <div class="login-method-panel hidden" id="wl-panel-email">
@@ -3576,8 +3518,8 @@ tbody tr:hover td { background: var(--surface-2); }
               </div>
               <!-- OAuth-only path: has_password:false and no email connection. -->
               <div id="wl-oauth-hint" class="login-alt-panel hidden">
-                <div class="text-sm" data-i18n="emailLogin.oauthOnlyHint">该账号没有密码，也不支持邮箱验证码。请用上面的 Google / GitHub 按钮登录，或粘贴 show-auth-token 页面的 Token。</div>
-                <button class="btn btn-outline" style="margin-top:8px" onclick="App.showOAuthTokenStep()" data-i18n="emailLogin.useToken">改用 Token 登录</button>
+                <div class="text-sm" data-i18n="emailLogin.oauthOnlyHint">该账号需要通过 Devin 登录。添加到网关时请使用已签发给此集成的凭证。</div>
+                <button class="btn btn-outline" style="margin-top:8px" onclick="App.openCredentialPaste()" data-i18n="emailLogin.useToken">改用 Token 登录</button>
               </div>
             </div>
           </div>
@@ -3670,7 +3612,7 @@ tbody tr:hover td { background: var(--surface-2); }
                 <div class="reauth-notice-title" data-i18n="accounts.reauth.connectGuide">Devin Connect 恢复</div>
                 <ol class="login-steps">
                   <li>
-                    <a id="connect-recovery-portal" href="https://app.devin.ai/" target="_blank" rel="noopener noreferrer" data-i18n="accounts.login.devinTitle">Devin 官方登录</a>
+                    <a id="connect-recovery-portal" href="https://app.devin.ai/" target="_blank" rel="noopener noreferrer" data-i18n="accounts.login.devinTitle">打开 Devin 官网</a>
                     <span data-i18n="accounts.reauth.connectPortal">可在官网确认账号能登录。网关恢复需要另外提供凭据。</span>
                   </li>
                   <li data-i18n="accounts.reauth.connectCredential">向网关管理员取得此连接支持的替换凭据，粘贴到下方并替换原账号。</li>
@@ -3679,8 +3621,7 @@ tbody tr:hover td { background: var(--surface-2); }
                 <p class="field-hint" data-i18n="accounts.reauth.connectDependency">如果你只有 Devin 门户登录或 Devin API 密钥，需先由管理员提供受支持的连接凭据。自动接入需要 Devin 支持的授权和已登记的回调。</p>
               </div>
               <div id="account-paste-help" style="padding:8px 12px;margin-bottom:12px;background:var(--surface-2);border-radius:var(--radius);font-size:12px;color:var(--text-muted);line-height:1.6">
-                <span data-i18n="help.tokenGuide">请使用此前已取得、此网关支持的凭证。旧版 Windsurf 凭证页</span>
-                <a href="https://windsurf.com/show-auth-token" target="_blank" rel="noopener noreferrer" style="color: var(--accent-text);font-weight:600">windsurf.com/show-auth-token</a>
+                <span data-i18n="help.tokenGuide">请粘贴已签发给此网关集成的凭证。</span>
               </div>
               <div class="field-row">
                 <div id="account-paste-type" class="field" style="max-width:180px">
@@ -3802,22 +3743,6 @@ tbody tr:hover td { background: var(--surface-2); }
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-linecap="round" stroke-linejoin="round" stroke-width="2"><path d="M21 12a9 9 0 0 1-9 9 9 9 0 0 1-6.24-2.52L3 21"/><path d="M3 12a9 9 0 0 1 9-9 9 9 0 0 1 6.24 2.52L21 3"/><path d="M21 3v6h-6"/><path d="M3 21v-6h6"/></svg>
           <span data-i18n="action.refresh">刷新</span>
         </button>
-      </div>
-    </div>
-
-    <div class="section">
-      <div class="section-header">
-        <div>
-          <div class="section-title" data-i18n="section.settings.ux.title">界面偏好</div>
-          <div class="section-desc" data-i18n="section.settings.ux.desc">跨浏览器/设备共享（存于服务端）</div>
-        </div>
-      </div>
-      <div class="section-body">
-        <label class="checkbox">
-          <input type="checkbox" id="set-oauth-skip-chooser" onchange="App.savePref('oauthSkipChooser', this.checked)">
-          <span class="box"></span>
-          <span data-i18n="settings.oauthSkipChooser">Google/GitHub 登录时跳过"打开/复制"选择弹窗，直接打开登录页</span>
-        </label>
       </div>
     </div>
 
@@ -5325,7 +5250,7 @@ docker compose up -d --force-recreate</pre>
       a.onclick = (e) => { e.preventDefault(); this.navigate(a.dataset.panel); };
     });
     this._labelNavLinks();
-    // Load shared UI prefs (e.g. oauthSkipChooser) once after auth so the OAuth
+    // Load shared UI preferences after authentication.
     // chooser and Settings page reflect the backend-stored preference.
     this.api('GET', '/settings/prefs').then(r => { this._prefs = r.prefs || {}; }).catch(() => { this._prefs = {}; });
     // Upgrade all static native selects / number inputs into themed controls.
@@ -5525,7 +5450,7 @@ docker compose up -d --force-recreate</pre>
         const btnEl = document.getElementById('login-btn');
         if (pwEl) pwEl.style.display = '';
         if (btnEl) btnEl.style.display = '';
-        // Do not return {}. addAccount / submitOAuthToken treat a missing
+        // Do not return {}. Credential forms treat a missing
         // error as toast.addFailed ("Add failed") — the #257 report.
         const authErr = (data && data.error && (data.error.message || data.error)) || 'Unauthorized';
         return { success: false, error: authErr };
@@ -8339,193 +8264,6 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     // this.initTurnstile();
   },
 
-  // Build the Windsurf editor's official backup-token signin URL. response_type=token
-  // + redirect_uri=show-auth-token makes windsurf.com display the token after OAuth
-  // completes (extracted from Windsurf editor 2.0.67 getLoginUrl forceShowAuthToken).
-  buildWindsurfSigninUrl() {
-    const state = (crypto.getRandomValues
-      ? Array.from(crypto.getRandomValues(new Uint8Array(8))).map(b => b.toString(16).padStart(2, '0')).join('')
-      : Math.random().toString(36).slice(2));
-    return 'https://windsurf.com/windsurf/signin?response_type=token&client_id=3GUryQ7ldAeKEuD2obYnppsnmj58eP5u&redirect_uri=show-auth-token&state=' + state + '&prompt=login&redirect_parameters_type=query&workflow=';
-  },
-
-  // Quick Login entry: clicking Google/GitHub. Unless the user opted out
-  // ("don't ask again" → prefs.oauthSkipChooser), first show a small chooser:
-  // open the login page in a new tab, OR copy the login URL (to open elsewhere,
-  // e.g. a browser already signed in to that Google/GitHub account). Either way
-  // the flow ends with pasting the callback URL / token back into step 2.
-  async oauthLogin(provider) {
-    if (this._prefs?.oauthSkipChooser) return this.oauthStartAndOpen(provider);
-    this.showOAuthChooser(provider);
-  },
-
-  // Small chooser popup over the modal-overlay: left = open page, right = copy
-  // URL, plus a "don't ask again" checkbox that persists to backend prefs.
-  async showOAuthChooser(provider) {
-    // Re-entrancy guard: the `await /oauth/start` below is async, so a second
-    // click before it resolves would stack a duplicate modal and clobber the
-    // _oauthUrl/_oauthState of the first. Bail if a chooser is already open.
-    if (document.querySelector('.modal-overlay[data-oauth-chooser]')) return;
-    const label = provider === 'google' ? 'Google' : 'GitHub';
-    // Append the (empty) overlay + marker synchronously BEFORE the async
-    // /oauth/start below, so a second click during that await is caught by the
-    // guard above instead of stacking a duplicate modal and clobbering
-    // _oauthUrl/_oauthState.
-    const wrap = document.createElement('div');
-    wrap.className = 'modal-overlay';
-    wrap.setAttribute('data-oauth-chooser', '');
-    document.body.appendChild(wrap);
-    // Start the session up front so "copy URL" hands back the same state-bound
-    // URL the "open page" path would use.
-    let url, state;
-    try {
-      const s = await this.api('POST', '/oauth/start', { provider: 'windsurf' });
-      url = s.url || this.buildWindsurfSigninUrl();
-      state = s.state || '';
-    } catch {
-      url = this.buildWindsurfSigninUrl();
-      state = '';
-    }
-    this._oauthProvider = label;
-    this._oauthUrl = url;
-    this._oauthState = state;
-
-    wrap.innerHTML = `
-      <div class="modal" style="max-width:440px">
-        <div class="modal-title">${I18n.t('oauth.chooser.title', { label })}</div>
-        <div class="modal-body" style="font-size:13px;color:var(--text-muted);margin-bottom:14px">${I18n.t('oauth.chooser.desc')}</div>
-        <div style="display:flex;gap:10px">
-          <button class="btn btn-primary" data-act="open" style="flex:1">${I18n.t('oauth.chooser.open')}</button>
-          <button class="btn btn-outline" data-act="copy" style="flex:1">${I18n.t('oauth.chooser.copy')}</button>
-        </div>
-        <label class="checkbox" style="margin-top:14px">
-          <input type="checkbox" data-act="skip"><span class="box"></span>
-          <span>${I18n.t('oauth.chooser.dontAsk')}</span>
-        </label>
-        <div style="text-align:right;margin-top:14px">
-          <button class="btn btn-ghost btn-sm" data-act="cancel">${I18n.t('action.cancel')}</button>
-        </div>
-      </div>`;
-    const close = () => wrap.remove();
-    const persistSkip = async () => {
-      if (wrap.querySelector('[data-act=skip]')?.checked) {
-        this._prefs = this._prefs || {};
-        this._prefs.oauthSkipChooser = true;
-        try { await this.api('PUT', '/settings/prefs', { oauthSkipChooser: true }); } catch {}
-      }
-    };
-    wrap.querySelector('[data-act=open]').onclick = async () => { await persistSkip(); close(); this.oauthStartAndOpen(provider, { reuse: true }); };
-    wrap.querySelector('[data-act=copy]').onclick = async () => {
-      try {
-        await navigator.clipboard.writeText(this._oauthUrl);
-      } catch {
-        this.toast(I18n.t('oauth.chooser.copyUnavailable'), 'info');
-        return;
-      }
-      await persistSkip();
-      this.toast(I18n.t('oauth.chooser.copied'), 'success');
-      close();
-      // Reveal step 2 so the user can paste the callback URL back after logging in.
-      document.getElementById('oauth-token-step')?.classList.remove('hidden');
-      const status = document.getElementById('oauth-status');
-      if (status) { status.style.color = 'var(--text-muted)'; status.textContent = I18n.t('oauth.status.copied', { label }); }
-      setTimeout(() => document.getElementById('oauth-token-input')?.focus(), 120);
-    };
-    wrap.querySelector('[data-act=cancel]').onclick = close;
-    wrap.onclick = (e) => { if (e.target === wrap) close(); };
-  },
-
-  // Open Windsurf's OFFICIAL sign-in page (Google/GitHub/email all live there,
-  // on windsurf.com — NOT bound by our Firebase authorized-domain lock). Then
-  // the user pastes the callback URL / token back into step 2. With opts.reuse
-  // the session started by the chooser is reused instead of starting a new one.
-  async oauthStartAndOpen(provider, opts = {}) {
-    const label = provider === 'google' ? 'Google' : 'GitHub';
-    const status = document.getElementById('oauth-status');
-    this._oauthProvider = label;
-    if (!opts.reuse) {
-      try {
-        const s = await this.api('POST', '/oauth/start', { provider: 'windsurf' });
-        this._oauthUrl = s.url || this.buildWindsurfSigninUrl();
-        this._oauthState = s.state || '';
-      } catch {
-        this._oauthUrl = this.buildWindsurfSigninUrl();
-        this._oauthState = '';
-      }
-    }
-    document.getElementById('oauth-token-step')?.classList.remove('hidden');
-    const manualLink = document.getElementById('oauth-manual-link');
-    const win = window.open(this._oauthUrl, '_blank');
-    if (win) {
-      manualLink?.classList.add('hidden');
-      status.style.color = 'var(--text-muted)';
-      status.textContent = I18n.t('oauth.status.opened', { label });
-    } else {
-      // Popup blocked — surface the manual link so the user can still open it.
-      manualLink?.classList.remove('hidden');
-      status.style.color = '#f59e0b';
-      status.textContent = I18n.t('oauth.status.popupBlocked');
-    }
-    setTimeout(() => document.getElementById('oauth-token-input')?.focus(), 120);
-  },
-
-  openWindsurfSignin(event) {
-    if (event) event.preventDefault();
-    window.open(this._oauthUrl || this.buildWindsurfSigninUrl(), '_blank');
-    setTimeout(() => document.getElementById('oauth-token-input')?.focus(), 120);
-    return false;
-  },
-
-  async submitOAuthToken() {
-    const input = document.getElementById('oauth-token-input');
-    const status = document.getElementById('oauth-status');
-    const pasted = input?.value.trim();
-    // 'windsurf.com' / 'OAuth' are UI labels, not account names — only a real
-    // provider label is passed through as the optional account label.
-    const label = (this._oauthProvider && this._oauthProvider !== 'windsurf.com' && this._oauthProvider !== 'OAuth')
-      ? this._oauthProvider : '';
-    if (!pasted) return this.toast(I18n.t('toast.enterKeyOrToken'), 'error');
-    status.style.color = 'var(--text-muted)';
-    status.textContent = I18n.t('oauth.status.adding');
-    const btn = document.getElementById('oauth-import-btn');
-    if (btn) btn.disabled = true;
-    try {
-      // ONE stateless endpoint for every token shape: a bare token, the
-      // show-auth-token value, a windsurf:// deep link, or the whole callback
-      // URL. It does not depend on a pending /oauth/start session, so a valid
-      // token can never fail with ERR_INVALID_STATE again.
-      const r = await this.api('POST', '/windsurf-login/token', {
-        token: pasted, label,
-        ...(this._reauthAccountId ? { accountId: this._reauthAccountId } : {}),
-      }, { notify: false });
-      if (r.success) {
-        const email = r.account?.email || label || '';
-        const bound = !!this._reauthAccountId;
-        status.style.color = '#22c55e';
-        status.textContent = I18n.t('oauth.tokenImported', { email });
-        this.toast(I18n.t(bound ? 'accounts.reauth.success' : 'account.addSuccess'), 'success');
-        if (input) input.value = '';
-        this._oauthState = '';
-        document.getElementById('oauth-token-step')?.classList.add('hidden');
-        this.loadAccounts();
-        this.pushLoginHistory({ time: new Date().toISOString(), email, proxy: I18n.t('proxy.direct'), status: 'success', method: label || 'token' });
-        if (bound) this.closeAddAccountModal();
-      } else {
-        const translatedErr = this.loginErrorMessage(r, 'toast.addFailed');
-        status.style.color = '#ef4444';
-        status.textContent = I18n.t('oauth.status.loginFailed', { label: label || 'Token', error: translatedErr });
-        this.toast(translatedErr, 'error');
-      }
-    } catch (err) {
-      const translatedErr = this.loginErrorMessage({ error: err.message }, 'toast.addFailed');
-      status.style.color = '#ef4444';
-      status.textContent = I18n.t('oauth.status.loginFailed', { label: label || 'Token', error: translatedErr });
-      this.toast(translatedErr, 'error');
-    } finally {
-      if (btn) btn.disabled = false;
-    }
-  },
-
   getWindsurfLoginProxy() {
     const proxyHost = document.getElementById('wl-proxy-host').value.trim();
     return proxyHost ? {
@@ -8586,31 +8324,17 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
         <div style="font-weight:600;margin-bottom:8px">${I18n.t('oauth.tryAnotherWay')}</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
           ${offerCode ? `<button class="btn btn-sm btn-primary" onclick="App.useEmailCodeInstead()">${I18n.t('emailLogin.useCode')}</button>` : ''}
-          <button class="btn btn-sm oauth-brand-google" onclick="App.oauthLogin('google')">${I18n.t('oauth.google')}</button>
-          <button class="btn btn-sm oauth-brand-github" onclick="App.oauthLogin('github')">${I18n.t('oauth.github')}</button>
+          <a class="btn btn-sm" href="https://app.devin.ai/" target="_blank" rel="noopener noreferrer">${I18n.t('accounts.login.devinTitle')}</a>
         </div>
         <div style="border-top:1px dashed var(--border);padding-top:12px">
           <div style="font-weight:600;margin-bottom:6px">${I18n.t('oauth.inlineTokenTitle')}</div>
           <div style="font-size:12px;color:var(--text-muted);margin-bottom:8px">${I18n.t('oauth.inlineTokenDesc')}</div>
           <div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center">
-            <button class="btn btn-sm btn-outline" onclick="App.openWindsurfTokenUrl('${inlineId}')">${I18n.t('oauth.openWindsurfToken')}</button>
-            <input id="${inlineId}" type="text" class="input" style="flex:1;min-width:240px" placeholder="${I18n.t('oauth.tokenPlaceholder')}">
+            <input id="${inlineId}" type="password" autocomplete="off" spellcheck="false" class="input" style="flex:1;min-width:240px" placeholder="${I18n.t('oauth.tokenPlaceholder')}">
             <button class="btn btn-sm btn-primary" onclick="App.addAccountFromInlineToken('${inlineId}','${emailAttr}')">${I18n.t('oauth.addWithToken')}</button>
           </div>
         </div>
       </div>`;
-  },
-
-  openWindsurfTokenUrl(inputId) {
-    // Use the editor backup-token signin URL extracted from real Windsurf editor
-    // 2.0.67 (extension.js getLoginUrl with forceShowAuthToken:true). The
-    // public client_id is the canonical Windsurf editor identifier; using the
-    // full URL bypasses the auth-protected /show-auth-token landing's signin
-    // bounce and shows the token directly after OAuth completes.
-    const state = (crypto.getRandomValues ? Array.from(crypto.getRandomValues(new Uint8Array(8))).map(b => b.toString(16).padStart(2, '0')).join('') : Math.random().toString(36).slice(2));
-    const url = 'https://windsurf.com/windsurf/signin?response_type=token&client_id=3GUryQ7ldAeKEuD2obYnppsnmj58eP5u&redirect_uri=show-auth-token&state=' + state + '&prompt=login&redirect_parameters_type=query&workflow=';
-    window.open(url, '_blank');
-    setTimeout(() => document.getElementById(inputId)?.focus(), 100);
   },
 
   async addAccountFromInlineToken(inputId, label) {
@@ -9013,52 +8737,9 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     }
   },
 
-  showOAuthTokenStep() {
-    // Reachable from the OAuth panel and from the email panel's "no password,
-    // no code" hint, so it must switch the method view itself.
-    this._loginMethod = 'token';
-    document.getElementById('wl-method-step')?.classList.add('hidden');
-    document.getElementById('wl-panel-oauth')?.classList.remove('hidden');
-    document.getElementById('wl-panel-email')?.classList.add('hidden');
-    document.getElementById('wl-method-oauth-btn')?.setAttribute('aria-pressed', 'true');
-    document.getElementById('wl-method-email-btn')?.setAttribute('aria-pressed', 'false');
-    const step = document.getElementById('oauth-token-step');
-    if (!step) return;
-    step.classList.remove('hidden');
-    document.getElementById('oauth-token-input')?.focus();
-    step.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
-  },
-
-  // "从 windsurf.com 获取 Token": open the official sign-in page in a new tab
-  // (the same state-bound URL the Windsurf editor uses) and reveal the paste
-  // step. The token is rendered on windsurf.com AFTER the operator signs in —
-  // it never travels to this dashboard until they paste it, so no server-side
-  // browser or CDP session is needed (and none is possible when the gateway
-  // runs on a different machine). One click to paste, one to import.
-  async fetchWindsurfToken() {
-    const status = document.getElementById('oauth-status');
-    const step = document.getElementById('oauth-token-step');
-    this._oauthProvider = 'windsurf.com';
-    try {
-      const s = await this.api('POST', '/oauth/start', { provider: 'windsurf' });
-      this._oauthUrl = s.url || this.buildWindsurfSigninUrl();
-      this._oauthState = s.state || '';
-    } catch {
-      this._oauthUrl = this.buildWindsurfSigninUrl();
-      this._oauthState = '';
-    }
-    const win = window.open(this._oauthUrl, '_blank');
-    step?.classList.remove('hidden');
-    const manual = document.getElementById('oauth-manual-link');
-    if (win) {
-      manual?.classList.add('hidden');
-      if (status) { status.style.color = 'var(--text-muted)'; status.textContent = I18n.t('oauth.status.tokenOpened'); }
-    } else {
-      // Popup blocked — surface the manual link so the flow can still finish.
-      manual?.classList.remove('hidden');
-      if (status) { status.style.color = '#f59e0b'; status.textContent = I18n.t('oauth.status.popupBlocked'); }
-    }
-    setTimeout(() => document.getElementById('oauth-token-input')?.focus(), 120);
+  openCredentialPaste() {
+    this.switchAddTab('paste');
+    this.focusCredentialPaste('acc-key');
   },
 
   updateEmailCodeControls() {
@@ -9244,7 +8925,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
         if (!this._wlFlow) return this.windsurfSendEmailCode();
         return this.windsurfCompleteEmailCode();
       }
-      this.showOAuthTokenStep();
+      this.openCredentialPaste();
       return this.toast(I18n.t('emailLogin.oauthOnlyHint'), 'info');
     }
 
@@ -9298,7 +8979,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
           this._wlProbeEmail = email;
           this.applyWindsurfLoginMethod(this._wlProbe);
           if (r.method === 'email_code') document.getElementById('wl-send-code-btn')?.focus();
-          else this.showOAuthTokenStep();
+          else this.openCredentialPaste();
         } else if (r.probeUnknown) {
           // Password rejected, but the login method was never confirmed. The
           // operator gets the alternatives (code / OAuth / token) instead of
@@ -10607,26 +10288,14 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     el.textContent = I18n.t(`accounts.add.modalTitle.${this._addTab || 'login'}`);
   },
 
-  // P1-9: step 1 is a method chooser, not four stacked sections. `null` returns
-  // to the chooser; 'oauth' / 'email' reveal exactly one form; 'token' reveals
-  // the three paste steps (also reachable from the OAuth flow).
   selectLoginMethod(method) {
-    const valid = [null, 'oauth', 'email', 'token'];
-    const next = valid.includes(method) ? method : null;
+    const next = method === 'email' ? 'email' : null;
     if (this._loginMethod === 'email' && next !== 'email' && (this._wlFlow || this._wlEmailOp)) this.resetEmailCodeForm();
     this._loginMethod = next;
     document.getElementById('wl-method-step')?.classList.toggle('hidden', next !== null);
-    document.getElementById('wl-panel-oauth')?.classList.toggle('hidden', next !== 'oauth' && next !== 'token');
     document.getElementById('wl-panel-email')?.classList.toggle('hidden', next !== 'email');
-    for (const [key, id] of [['oauth', 'wl-method-oauth-btn'], ['email', 'wl-method-email-btn']]) {
-      const btn = document.getElementById(id);
-      if (!btn) continue;
-      const on = next === key || (key === 'oauth' && next === 'token');
-      btn.setAttribute('aria-pressed', on ? 'true' : 'false');
-    }
-    if (next === 'token') this.showOAuthTokenStep();
+    document.getElementById('wl-method-email-btn')?.setAttribute('aria-pressed', next === 'email' ? 'true' : 'false');
     if (next === 'email') setTimeout(() => document.getElementById('wl-email')?.focus?.(), 30);
-    if (next === 'oauth') setTimeout(() => document.getElementById('oauth-google-btn')?.focus?.(), 30);
   },
 
   switchAddTab(tab) {
@@ -14554,8 +14223,6 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
       // A failed read must not reset the toggles to defaults (#257).
       if (p?.success === false) throw new Error(p.error || 'prefs_unavailable');
       this._prefs = p.prefs || {};
-      const cb = document.getElementById('set-oauth-skip-chooser');
-      if (cb) cb.checked = !!this._prefs.oauthSkipChooser;
     } catch { /* leave defaults */ }
     // Security/lockout tunables (numeric, from runtime-config tunables).
     this.renderSecuritySettings();

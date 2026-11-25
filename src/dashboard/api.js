@@ -863,11 +863,10 @@ function maskEmail(email) {
 //   - ERR_INTERMEDIATE_CALLBACK: the pasted URL is a federated *intermediate*
 //     callback (has ?code= on a /auth/<provider>/callback path). That code can
 //     only be exchanged by windsurf.com's backend (holds the client_secret) —
-//     the user pasted too early; they must wait for the show-auth-token page and
-//     paste the token shown there.
+//     the dashboard refuses the code and asks for an existing credential.
 //   - ERR_OAUTH_UPSTREAM:<error>[:<desc>]: the provider redirected back an
 //     ?error= (e.g. access_denied) — surface the real reason.
-// Exported for unit testing (also used by the /oauth/callback endpoint).
+// Also used by the existing manual credential intake.
 //
 // ANY absolute URL scheme is accepted, not just http(s): the Windsurf desktop
 // app's sign-in callback is `windsurf://codeium.windsurf?access_token=…` (F4).
@@ -3834,18 +3833,9 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
     }
   }
 
-  // Import a token captured from the official sign-in page
-  // (windsurf.com/editor/show-auth-token) or from any OAuth / deep-link
-  // redirect, in ONE step.
-  //
-  // Stateless on purpose. `/oauth/callback` is the state-bound flow for CLI and
-  // remote-onboarding clients; requiring a pending session here meant a valid
-  // token failed with ERR_INVALID_STATE whenever the page had been opened by a
-  // different button (or the session had expired). The token itself is the
-  // credential — the state adds nothing to this path.
-  //
-  // `devin-session-token$…` is stored as the pool key; a Firebase idToken /
-  // show-auth-token value goes through RegisterUser. `auth1_` is an
+  // Import an existing credential supplied for this gateway. This is separate
+  // from browser sign-in. Legacy token-bearing input formats remain accepted.
+  // A devin-session-token is stored as the pool key. An auth1_ value is an
   // intermediate and is rejected. The raw input is NEVER echoed or logged.
   if (subpath === '/windsurf-login/token' && method === 'POST') {
     const raw = body?.token ?? body?.redirect_url ?? '';
@@ -4081,50 +4071,11 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
     }
   }
 
-  // ─── OAuth remote-onboarding state machine ──────────────────────
-  // Lets a PUBLIC deploy onboard via the official Windsurf sign-in page without
-  // the server ever receiving a localhost callback: start -> user logs in in
-  // their own browser -> they paste the whole redirect URL back -> server pulls
-  // the token out of it -> poll for the result. Ported (in-memory) from
-  // CLIProxyAPI's oauth_sessions/oauth_callback. All three inherit checkAuth.
-  if (subpath === '/oauth/start' && method === 'POST') {
-    const { registerSession } = await import('./oauth-sessions.js');
-    const state = registerSession('windsurf');
-    // Windsurf editor backup-token signin URL (response_type=token). state rides
-    // the OAuth state param so we can correlate the pasted callback.
-    const url = 'https://windsurf.com/windsurf/signin?response_type=token'
-      + '&client_id=3GUryQ7ldAeKEuD2obYnppsnmj58eP5u&redirect_uri=show-auth-token'
-      + '&state=' + encodeURIComponent(state)
-      + '&prompt=login&redirect_parameters_type=query&workflow=';
-    return json(res, 200, { success: true, url, state });
-  }
-  if (subpath === '/oauth/callback' && method === 'POST') {
-    const { validateState, getSession, completeSession, failSession } = await import('./oauth-sessions.js');
-    const { state, redirect_url } = body || {};
-    if (!validateState(state)) return json(res, 400, { error: 'ERR_INVALID_STATE' });
-    const session = getSession(state);
-    if (!session || session.status !== 'pending') return json(res, 409, { error: 'ERR_SESSION_NOT_PENDING' });
-    try {
-      // Extract the token from whatever the user pasted: a full redirect URL
-      // (query or #hash), or the bare token itself. NEVER log redirect_url.
-      const token = extractOAuthToken(redirect_url);
-      if (!token) throw new Error('ERR_NO_TOKEN_IN_INPUT');
-      // A devin-session-token$ IS the apiKey — it must go through addAccountByKey,
-      // NOT addAccountByToken (which runs RegisterUser and only accepts a Firebase
-      // idToken). Route by prefix so both token shapes onboard correctly.
-      const account = await addAccountByPastedSecret(token, '');
-      scheduleAccountWarmup(account.id);
-      completeSession(state);
-      return json(res, 200, { success: true, account: { id: account.id, email: account.email, status: account.status } });
-    } catch (err) {
-      failSession(state, err.message);
-      return json(res, 400, { error: err.message });
-    }
-  }
-  if (subpath === '/oauth/status' && method === 'GET') {
-    const { getStatus } = await import('./oauth-sessions.js');
-    const st = new URL(req.url, 'http://localhost').searchParams.get('state') || '';
-    return json(res, 200, getStatus(st));
+  // Keep an explicit terminal answer for clients with old browser flows.
+  // A portal visit does not create a gateway transaction or admit an account.
+  if ((method === 'POST' && (subpath === '/oauth/start' || subpath === '/oauth/callback'))
+      || (method === 'GET' && subpath === '/oauth/status')) {
+    return json(res, 410, { error: 'ERR_BROWSER_ENROLLMENT_UNAVAILABLE' }, NO_STORE);
   }
 
   // ─── Email OTP Login — SEALED 2026-07-06 ────────────────────────

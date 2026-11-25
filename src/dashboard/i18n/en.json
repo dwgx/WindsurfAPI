@@ -709,7 +709,7 @@
   },
   "help": {
     "token": "Recommended: Use Token method. Visit {{link}} after logging in, copy the Token and paste below. Works with all login methods (Email/Google/GitHub).",
-    "tokenGuide": "Paste an existing credential supported by this gateway. Legacy Windsurf credential page",
+    "tokenGuide": "Paste an existing credential issued for this gateway integration.",
     "tokenGuideEnd": " after logging in, copy the Token and paste below. Works with all login methods (Email/Google/GitHub)."
   },
   "skin": {
@@ -1202,8 +1202,8 @@
     "github": "GitHub Login",
     "copyAuthToken": "Copy Auth Token",
     "pasteToken": "Paste Token in Account Management",
-    "inlineTokenTitle": "Or paste Auth Token directly (recommended for OAuth-only accounts)",
-    "inlineTokenDesc": "Click the left button to open windsurf.com in a new tab → sign in with Google/GitHub → page shows Auth Token → copy and paste into the input on the right → click Add",
+    "inlineTokenTitle": "Paste an existing credential",
+    "inlineTokenDesc": "Use a credential issued for this gateway integration.",
     "openWindsurfToken": "Open windsurf.com for Token",
     "tokenPlaceholder": "Paste Auth Token...",
     "urlOrTokenPlaceholder": "Paste callback URL or Auth Token...",
@@ -1242,7 +1242,7 @@
       "dontAsk": "Don't ask again (change in Settings)",
       "copyUnavailable": "This browser could not copy the link. Select Open login page."
     },
-    "legacyRedirectHelp": "An Invalid redirect URI message means the provider rejected the legacy flow before a callback. Paste an existing gateway-compatible credential if you have one. Automatic enrollment needs a supported and registered callback."
+    "legacyRedirectHelp": "The legacy redirect is closed. Use email sign-in or a credential issued for this gateway integration."
   },
   "update": {
     "checking": "Checking for updates...",
@@ -1339,8 +1339,8 @@
       "pasteToken": "Paste a credential",
       "back": "Choose another way",
       "advanced": "Advanced options (proxy / login history / saved password)",
-      "devinTitle": "Sign in to Devin",
-      "devinHint": "Opens Devin in a new tab. Adding an account here requires a gateway-supported credential.",
+      "devinTitle": "Open Devin",
+      "devinHint": "Website sign-in is for Devin. Automatic enrollment requires provider approval. Use email sign-in or a credential issued for this integration.",
       "legacyWindsurf": "Legacy Windsurf sign-in",
       "focusPaste": "Focus paste field",
       "manualPasteHint": "Press Ctrl+V or use the browser paste menu, then submit."
@@ -2032,10 +2032,10 @@
     "ERR_TLS_TUNNEL_ERROR": "TLS tunnel established but returned abnormal content",
     "ERR_TLS_FAILED": "TLS failed",
     "ERR_LOGIN_FAILED": "Login failed",
-    "ERR_EMAIL_NOT_FOUND": "Email not registered for password login. If registered via Google/GitHub OAuth, use OAuth buttons or visit windsurf.com/show-auth-token to copy Auth Token",
+    "ERR_EMAIL_NOT_FOUND": "No password account was found at this address. Check the address or use a credential issued for this integration.",
     "ERR_INVALID_PASSWORD": "Invalid password",
     "ERR_INVALID_CREDENTIALS": "Invalid email or password",
-    "ERR_NO_PASSWORD_SET": "No password set for this account. Use Google/GitHub OAuth or visit windsurf.com/show-auth-token to copy Auth Token",
+    "ERR_NO_PASSWORD_SET": "This account has no password. Use email verification if available or use a credential issued for this integration.",
     "ERR_USER_DISABLED": "Account has been disabled",
     "ERR_TOO_MANY_ATTEMPTS": "Too many attempts. Please try again later",
     "ERR_INVALID_EMAIL": "Invalid email format",
@@ -2053,8 +2053,9 @@
     "ERR_FIREBASE_TOKEN_MISSING": "Firebase response missing idToken",
     "ERR_LOCAL_IMPORT_LOOPBACK_ONLY": "Local import only available from 127.0.0.1 — open the dashboard from the host machine itself, not via a public domain",
     "ERR_LOCAL_IMPORT_FAILED": "Failed to scan local Windsurf credentials",
-    "ERR_INTERMEDIATE_CALLBACK": "This is an intermediate callback page — its login code can't be exchanged here. Wait until the browser lands on the show-auth-token page, then paste the token shown there.",
-    "ERR_OAUTH_UPSTREAM": "The login provider returned an error. Please retry the sign-in.",
+    "ERR_BROWSER_ENROLLMENT_UNAVAILABLE": "Browser enrollment is unavailable. Use email sign-in or a credential issued for this integration.",
+    "ERR_INTERMEDIATE_CALLBACK": "Authorization callbacks cannot be imported here. Paste a credential issued for this gateway integration.",
+    "ERR_OAUTH_UPSTREAM": "The login provider rejected that attempt. Use an available sign-in method or a credential issued for this integration.",
     "rollbackFailed": "Rollback failed",
     "ERR_NO_PASSWORD_OAUTH_ACCOUNT": "This account has no password (OAuth or email-code only). Use the email code, Google/GitHub, or a pasted Auth Token.",
     "ERR_EMAIL_LOCKED": "This email is temporarily locked after repeated failed logins. Wait for the lock to expire, or raise the threshold in Settings.",
@@ -2307,8 +2308,8 @@
     "methodEmailCode": "This account has no password. Request an email code and enter it below.",
     "methodOAuth": "This account has no password and no email-code login. Use Google/GitHub or a pasted token.",
     "methodUnknown": "Could not determine the login method; the password form is shown.",
-    "oauthOnlyHint": "This account has no password and does not accept email codes. Use the Google / GitHub buttons above, or paste the token from the show-auth-token page.",
-    "useToken": "Use a token instead",
+    "oauthOnlyHint": "This account needs Devin sign-in. Adding it here requires a credential issued for this integration.",
+    "useToken": "Paste an existing credential",
     "sendingCode": "Sending the verification code…",
     "codeSent": "Code sent — check the inbox (valid for 10 minutes).",
     "resendIn": "Code sent. You can resend in {{seconds}}s.",

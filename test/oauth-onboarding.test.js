@@ -1,56 +1,65 @@
-import { describe, it, beforeEach } from 'node:test';
+import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import {
-  registerSession, validateState, getStatus, getSession,
-  completeSession, failSession, __testing,
-} from '../src/dashboard/oauth-sessions.js';
-import { extractOAuthToken } from '../src/dashboard/api.js';
+import { extractOAuthToken, handleDashboardApi } from '../src/dashboard/api.js';
+import { config } from '../src/config.js';
+import { getAccountCount } from '../src/auth.js';
 
-// Public remote-onboarding: the OAuth session state machine (in-memory port of
-// CLIProxyAPI's oauth_sessions) + the token extractor that lets a public deploy
-// onboard without ever receiving a localhost callback (user pastes the whole
-// redirect URL, server pulls the token out).
+describe('retired browser account onboarding', () => {
+  async function call(method, path, body, password) {
+    const req = {
+      url: '/dashboard/api' + path,
+      headers: { 'content-type': 'application/json', ...(password ? { 'x-dashboard-password': password } : {}) },
+      socket: { remoteAddress: '127.0.0.1' },
+    };
+    const response = {};
+    const res = {
+      setHeader() {},
+      writeHead(status, headers) { Object.assign(response, { status, headers }); return this; },
+      end(payload) { response.body = JSON.parse(payload); },
+    };
+    await handleDashboardApi(method, path.split('?')[0], body, req, res);
+    return response;
+  }
 
-describe('oauth-sessions: state machine', () => {
-  beforeEach(() => __testing.sessions.clear());
-
-  it('issues a URL-safe state that validates and starts pending', () => {
-    const s = registerSession('windsurf');
-    assert.ok(validateState(s), 'issued state must pass validateState');
-    assert.equal(getStatus(s).status, 'wait');
-    assert.equal(getSession(s).provider, 'windsurf');
+  it('requires dashboard authentication before revealing retired route status', async () => {
+    const password = config.dashboardPassword;
+    config.dashboardPassword = 'synthetic-dashboard-fixture';
+    try {
+      const response = await call('POST', '/oauth/start', {});
+      assert.equal(response.status, 401);
+      assert.equal(response.body.url, undefined);
+    } finally {
+      config.dashboardPassword = password;
+    }
   });
 
-  it('rejects path-traversal, oversized, and non-token states', () => {
-    assert.equal(validateState('../etc/passwd'), false);
-    assert.equal(validateState('a/b'), false);
-    assert.equal(validateState('has space'), false);
-    assert.equal(validateState('x'.repeat(129)), false);
-    assert.equal(validateState(''), false);
-    assert.equal(validateState(null), false);
-    assert.equal(validateState('Ok_valid.State-123'), true);
-  });
-
-  it('fail -> error status with message; complete -> ok (dropped)', () => {
-    const s = registerSession();
-    failSession(s, 'ERR_NO_TOKEN_IN_INPUT');
-    assert.deepEqual(getStatus(s), { status: 'error', error: 'ERR_NO_TOKEN_IN_INPUT' });
-
-    const s2 = registerSession();
-    completeSession(s2);
-    // A consumed/unknown session reads terminal-ok so a post-success poll ends.
-    assert.equal(getStatus(s2).status, 'ok');
-  });
-
-  it('unknown state reads ok (never leaks pending for a bogus state)', () => {
-    assert.equal(getStatus('never-registered').status, 'ok');
-  });
-
-  it('purges expired sessions', () => {
-    const s = registerSession();
-    __testing.sessions.get(s).expiresAt = Date.now() - 1;
-    __testing.purgeExpired();
-    assert.equal(__testing.sessions.has(s), false);
+  it('never issues a stale sign-in URL, consumes a callback or reports success', async () => {
+    const password = config.dashboardPassword;
+    config.dashboardPassword = 'synthetic-dashboard-fixture';
+    const state = 'stale-browser-flow-fixture';
+    const secret = 'synthetic-callback-fixture';
+    const callback = { state, redirect_url: 'https://example.test/callback?code=' + secret };
+    const before = getAccountCount();
+    try {
+      const attempts = [
+        ['POST', '/oauth/start', { state }],
+        ['POST', '/oauth/callback', callback],
+        ['POST', '/oauth/callback', callback],
+        ['GET', '/oauth/status?state=' + state, {}],
+        ['GET', '/oauth/status?state=cancelled-fixture', {}],
+        ['GET', '/oauth/status?state=expired-fixture', {}],
+      ];
+      const responses = await Promise.all(attempts.map(args => call(...args, config.dashboardPassword)));
+      for (const response of responses) {
+        assert.equal(response.status, 410);
+        assert.equal(response.headers['Cache-Control'], 'no-store');
+        assert.deepEqual(response.body, { error: 'ERR_BROWSER_ENROLLMENT_UNAVAILABLE' });
+        assert.doesNotMatch(JSON.stringify(response), new RegExp(state + '|' + secret));
+      }
+      assert.deepEqual(getAccountCount(), before);
+    } finally {
+      config.dashboardPassword = password;
+    }
   });
 });
 

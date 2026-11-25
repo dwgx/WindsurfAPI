@@ -436,15 +436,14 @@ describe('login tab is a method chooser (AC-LOGIN-1..3)', () => {
     HTML.indexOf('<div class="add-panel" id="add-panel-paste"'),
   );
 
-  it('shows official Devin sign-in alongside the existing email, legacy and paste routes', () => {
+  it('shows Devin portal access alongside the email and paste routes', () => {
     const step = loginPanel.slice(
       loginPanel.indexOf('id="wl-method-step"'),
-      loginPanel.indexOf('id="wl-panel-oauth"'),
+      loginPanel.indexOf('id="wl-panel-email"'),
     );
     assert.match(step, /id="devin-sign-in" href="https:\/\/app\.devin\.ai\/" target="_blank" rel="noopener noreferrer"/);
     assert.match(step, /id="wl-method-email-btn"[\s\S]*App\.selectLoginMethod\('email'\)/);
-    assert.match(step, /id="wl-method-oauth-btn"[\s\S]*App\.selectLoginMethod\('oauth'\)/);
-    assert.match(step, /id="wl-method-token-btn"[\s\S]*App\.switchAddTab\('paste'\)/);
+    assert.match(step, /id="wl-method-token-btn"[\s\S]*App\.openCredentialPaste\(\)/);
     assert.ok(!/oauth-google-btn/.test(step), 'provider buttons stay behind the OAuth choice');
     assert.ok(!/id="wl-email"/.test(step), 'email fields stay behind the email choice');
   });
@@ -460,49 +459,32 @@ describe('login tab is a method chooser (AC-LOGIN-1..3)', () => {
     }
   });
 
-  it('the token path has a button on every step', () => {
-    const step = loginPanel.slice(
-      loginPanel.indexOf('id="oauth-token-step"'),
-      loginPanel.indexOf('id="add-panel-paste"'),
-    );
-    const items = step.split(/<li>/).slice(1).map((s) => s.slice(0, s.indexOf('</li>')));
-    assert.equal(items.length, 3, 'three token steps');
-    for (const [i, item] of items.entries()) {
-      assert.match(item, /<button/, `step ${i + 1} has an action`);
-    }
-    assert.match(items[0], /App\.fetchWindsurfToken\(\)/);
-    assert.match(items[1], /App\.focusCredentialPaste\('oauth-token-input'\)/);
-    assert.match(items[2], /App\.submitOAuthToken\(\)/);
-    assert.match(items[2], /id="oauth-token-input" type="password"/);
+  it('switches to the existing masked paste field', () => {
+    const calls = [];
+    method('openCredentialPaste').call({
+      switchAddTab: tab => calls.push(tab),
+      focusCredentialPaste: id => calls.push(id),
+    });
+    assert.deepEqual(calls, ['paste', 'acc-key']);
+    assert.match(HTML, /id="acc-key" type="password"/);
   });
 
-  it('selectLoginMethod reveals exactly one form and keeps the email value', () => {
+  it('leaving email sign-in invalidates its active attempt and keeps the address', () => {
     const step = element('wl-method-step');
-    const oauth = element('wl-panel-oauth');
     const email = element('wl-panel-email');
-    const tokenStep = element('oauth-token-step');
     const emailInput = element('wl-email');
     emailInput.value = 'kept@example.test';
-    step.classList.remove('hidden');
-    oauth.classList.add('hidden');
-    email.classList.add('hidden');
+    let cancelled = 0;
+    const self = baseSelf({ _wlFlow: 'fixture-flow', resetEmailCodeForm: () => { cancelled++; } });
     const select = method('selectLoginMethod');
-    const self = baseSelf({ showOAuthTokenStep: method('showOAuthTokenStep') });
     select.call(self, 'email');
     assert.equal(step.classList.contains('hidden'), true);
     assert.equal(email.classList.contains('hidden'), false);
-    assert.equal(oauth.classList.contains('hidden'), true);
-    select.call(self, 'oauth');
-    assert.equal(email.classList.contains('hidden'), true);
-    assert.equal(oauth.classList.contains('hidden'), false);
-    assert.equal(emailInput.value, 'kept@example.test', 'switching methods does not clear the email');
-    select.call(self, 'token');
-    assert.equal(oauth.classList.contains('hidden'), false);
-    assert.equal(tokenStep.classList.contains('hidden'), false);
     select.call(self, null);
     assert.equal(step.classList.contains('hidden'), false);
-    assert.equal(oauth.classList.contains('hidden'), true);
     assert.equal(email.classList.contains('hidden'), true);
+    assert.equal(emailInput.value, 'kept@example.test');
+    assert.equal(cancelled, 1);
   });
 
   it('a fresh open starts at the chooser; a bound email starts on the email form', () => {

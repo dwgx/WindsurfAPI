@@ -1,6 +1,6 @@
 # Dashboard login flows
 
-Four ways into the account pool. The dashboard probes the account first and
+The dashboard offers account sign-in and explicit credential import. The dashboard probes the account first and
 shows only the form that can work, so a password is never submitted for an
 account that has none (that used to surface as `ERR_INVALID_CREDENTIALS`).
 
@@ -8,7 +8,7 @@ account that has none (that used to surface as `ERR_INVALID_CREDENTIALS`).
 |---|---|---|
 | Password account | `has_password: true` | email + password |
 | Email-code account (most OAuth signups) | `has_password: false`, email connection enabled | email + **verification code** form |
-| OAuth-only account | `has_password: false`, no email connection | Google / GitHub + token box |
+| OAuth-only account | `has_password: false`, no email connection | Devin website and existing integration credential |
 | No such account | `method: "not_found"` | "No Windsurf account uses this email" |
 | Probe unavailable | nothing usable | password form, plus the code form as a fallback |
 
@@ -27,8 +27,7 @@ answer.
 The backend never calls `password/login` when the probe says
 `has_password: false`, and never counts that answer toward the per-email
 lockout. If the probe is unavailable **and** the password is rejected, the
-error carries `probeUnknown: true` and the UI offers the code / OAuth / token
-alternatives instead of a dead end.
+error carries `probeUnknown: true` and the UI offers the email-code or existing-credential alternatives instead of a dead end.
 
 ## 2. Email-code login
 
@@ -61,56 +60,26 @@ Notes:
   endpoint is gone) and never after a transport error, because that could send
   a second email.
 
-## 3. Token capture from windsurf.com
+## 3. Portal access and manual credential import
 
-The token is rendered **on windsurf.com** after sign-in (`/editor/show-auth-token`
-calls `GetOneTimeAuthToken` and shows the result); it never appears in the URL.
-So there are two paths, depending on where the gateway runs.
+**Open Devin** opens [Devin](https://app.devin.ai/) in a separate tab.
+Portal sign-in leaves the gateway account pool as it was. Automatic account
+enrollment requires a provider-authorized integration for this gateway.
 
-### 3a. Gateway on another machine (the normal case) — one-click paste
+To add an account with a credential already issued for this integration, use
+**Paste a credential** in the dashboard. Existing credential types and
+account-bound replacement continue to use the account-management endpoints.
+Keep authorization codes and client session credentials in the client that
+owns the sign-in flow.
 
-1. **登录** tab → **从 windsurf.com 获取 Token**. A new tab opens on the official
-   sign-in page (the same `response_type=token&redirect_uri=show-auth-token` URL
-   the Windsurf editor uses). Sign in with Google, GitHub, or an email code.
-2. The page then shows the token. Click its copy button (or select the address
-   bar).
-3. Back in the dashboard, click **从剪贴板粘贴** — it reads the clipboard,
-   extracts the token from whatever was copied (bare token, `windsurf://…`
-   deep link, or a full callback URL) and imports it in the same click.
-
-The import goes to `POST /dashboard/api/windsurf-login/token`. It is stateless:
-no `/oauth/start` session is required, so a valid token cannot fail with
-`ERR_INVALID_STATE`. `auth1_…` intermediates are rejected (they are not pool
-keys). The raw token is never echoed by the API and never logged.
-
-If the clipboard API is unavailable (plain `http://LAN` is not a secure
-context), paste manually into the box and click **用 Token 添加**.
-
-### 3b. Gateway on the same machine — automated capture (CDP)
-
-```bash
-node scripts/token-capture.mjs --password <dashboard password> [--port 3456] [--timeout 300]
-```
-
-It launches a throwaway Chrome/Edge profile with remote debugging, opens the
-sign-in page, waits for you to finish signing in, reads the `authToken` from the
-`GetOneTimeAuthToken` response (falling back to the read-only input on the
-show-auth-token page), and imports it through the same
-`/windsurf-login/token` route. It prints only the masked account.
-
-- The consent step is always yours; the script never types credentials and never
-  requests an email code.
-- The token is never written to disk. Add `--print` to echo it to stdout instead
-  of importing (for pasting into another machine).
-- Use `--browser <path>` when Chrome/Edge is not in a standard location.
+Old browser onboarding requests to /oauth/start, /oauth/callback and
+/oauth/status return HTTP 410 with ERR_BROWSER_ENROLLMENT_UNAVAILABLE. Clear
+the old login attempt and reopen the current account dialog.
 
 ## 4. Devin (app.devin.ai)
 
 The same modal covers it, because both hosts speak the same Auth1 protocol:
 
-- **Token import**: a token minted on app.devin.ai works in the token box —
-  `devin-session-token$…` is stored as the pool key, a Firebase idToken goes
-  through RegisterUser.
 - **Email code**: the *"改用 app.devin.ai 发送"* action (or the
   `DEVIN_CONNECT_LOGIN_HOST_FALLBACK=1` automatic fallback) sends and verifies on
   `app.devin.ai/api/auth1/email/{start,complete}`.
@@ -126,7 +95,7 @@ as the windsurf.com token but has not been confirmed with a live Devin account.
 
 | Code | Meaning | What to do |
 |---|---|---|
-| `ERR_NO_PASSWORD_OAUTH_ACCOUNT` | the account has no password | use the code form, OAuth, or a token |
+| `ERR_NO_PASSWORD_OAUTH_ACCOUNT` | the account has no password | use the code form or an existing integration credential |
 | `ERR_EMAIL_NOT_FOUND` | no account for that address | check the address |
 | `ERR_EMAIL_LOCKED` | 3 failed attempts for this address | wait out `retryAfterMs` |
 | `ERR_EMAIL_CODE_COOLDOWN` | a code was just sent | the button counts down the remainder |
@@ -134,4 +103,4 @@ as the windsurf.com token but has not been confirmed with a live Devin account.
 | `ERR_EMAIL_VERIFY_UNAVAILABLE` | upstream did not answer; the code was **not** checked | retry the same code |
 | `ERR_POSTAUTH_FAILED` | code accepted, session exchange failed | retry the same code within 2 min |
 | `ERR_NO_TOKEN_IN_INPUT` | nothing token-shaped in the pasted text | copy the token itself or the whole URL |
-| `ERR_INVALID_STATE` | only from the legacy state-bound `/oauth/callback` | use `/windsurf-login/token` |
+| `ERR_BROWSER_ENROLLMENT_UNAVAILABLE` | the legacy browser flow has ended | reopen the account dialog and use an available method |
