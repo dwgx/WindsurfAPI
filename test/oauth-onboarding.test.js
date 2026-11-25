@@ -53,7 +53,7 @@ describe('retired browser account onboarding', () => {
       for (const response of responses) {
         assert.equal(response.status, 410);
         assert.equal(response.headers['Cache-Control'], 'no-store');
-        assert.deepEqual(response.body, { error: 'ERR_BROWSER_ENROLLMENT_UNAVAILABLE' });
+        assert.deepEqual(response.body, { error: 'ERR_BROWSER_ENROLLMENT_UNAVAILABLE', success: false });
         assert.doesNotMatch(JSON.stringify(response), new RegExp(state + '|' + secret));
       }
       assert.deepEqual(getAccountCount(), before);

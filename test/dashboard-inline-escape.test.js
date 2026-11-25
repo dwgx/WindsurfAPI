@@ -79,9 +79,9 @@ describe('index-sketch.html: escJsAttr replaces the dead escAttr composition', (
       `quoted JS-string interpolations bypassing escJsAttr: ${offenders.join(' | ')}`);
   });
 
-  it('the OAuth success line escapes the server-supplied email', () => {
-    assert.match(SKETCH, /logged in as \$\{this\.esc\(r\.email \|\| label\)\}/);
-    assert.doesNotMatch(SKETCH, /logged in as \$\{r\.email \|\| label\}/);
+  it('portal access has no Firebase token or callback rendering path', () => {
+    assert.match(SKETCH, /href="https:\/\/app\.devin\.ai\/" target="_blank" rel="noopener noreferrer"/);
+    assert.doesNotMatch(SKETCH, /_firebaseOAuth|signInWithPopup|\/oauth-login/);
   });
 
   it('the fail-panel email goes through escJsAttr, not esc', () => {
