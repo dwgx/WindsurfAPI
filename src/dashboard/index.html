@@ -3462,6 +3462,17 @@ tbody tr:hover td { background: var(--surface-2); }
             <button type="button" class="btn btn-ghost btn-sm login-method-token" id="wl-method-token-btn" onclick="App.openCredentialPaste()" data-i18n="accounts.login.pasteToken">粘贴凭证</button>
           </div>
 
+          <div id="devin-browser-login" class="login-alt-panel hidden">
+            <button type="button" id="devin-browser-start" class="btn btn-primary" onclick="App.startDevinBrowserLogin()" data-i18n="browserLogin.start">用 Devin 登录 WindsurfAPI</button>
+            <p class="field-hint" data-i18n="browserLogin.hint">授权本机 WindsurfAPI 接入你选择的 Devin 账号。回调回到本机实例。</p>
+            <div style="display:flex;gap:8px;flex-wrap:wrap">
+              <a id="devin-browser-open" class="btn btn-outline hidden" target="_blank" rel="noopener noreferrer" data-i18n="browserLogin.open">前往 Devin 授权</a>
+              <button type="button" id="devin-browser-complete" class="btn btn-primary hidden" onclick="App.completeDevinBrowserLogin()" data-i18n="browserLogin.complete">确认添加账号</button>
+              <button type="button" id="devin-browser-cancel" class="btn btn-ghost hidden" onclick="App.cancelDevinBrowserLogin()" data-i18n="action.cancel">取消</button>
+            </div>
+            <p id="devin-browser-status" class="field-hint" role="status" aria-live="polite"></p>
+          </div>
+
           <div class="login-method-panel hidden" id="wl-panel-email">
             <div class="login-panel-head">
               <button type="button" class="btn btn-ghost btn-xs" onclick="App.selectLoginMethod(null)" data-i18n="accounts.login.back">换一种方式</button>
@@ -8737,6 +8748,102 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     }
   },
 
+  async loadDevinBrowserLogin() {
+    const panel = document.getElementById('devin-browser-login');
+    if (!panel) return;
+    const result = await this.api('GET', '/devin-browser-login/status', undefined, { notify: false });
+    this._devinBrowserAvailable = result?.available === true && !this._reauthAccountId;
+    panel.classList.toggle('hidden', !this._devinBrowserAvailable || this._loginMethod === 'email');
+    if (!this._devinBrowserFlow) this.renderDevinBrowserLogin('');
+  },
+
+  renderDevinBrowserLogin(status) {
+    const flow = this._devinBrowserFlow;
+    const open = document.getElementById('devin-browser-open');
+    const waiting = status === 'pending' && !!flow?.authorizeUrl;
+    if (waiting) open?.setAttribute('href', flow.authorizeUrl);
+    else open?.removeAttribute('href');
+    open?.classList.toggle('hidden', !waiting);
+    document.getElementById('devin-browser-start')?.classList.toggle('hidden', !!flow);
+    document.getElementById('devin-browser-complete')?.classList.toggle('hidden', status !== 'ready');
+    document.getElementById('devin-browser-cancel')?.classList.toggle('hidden', !flow?.id);
+    const display = document.getElementById('devin-browser-status');
+    if (display) display.textContent = status ? I18n.t('browserLogin.' + status) : '';
+  },
+
+  async startDevinBrowserLogin() {
+    if (this._devinBrowserFlow) return;
+    const flow = {};
+    this._devinBrowserFlow = flow;
+    this.renderDevinBrowserLogin('starting');
+    const result = await this.api('POST', '/devin-browser-login/start', {}, { notify: false });
+    if (this._devinBrowserFlow !== flow) {
+      if (result?.id) await this.api('POST', '/devin-browser-login/cancel', { id: result.id }, { notify: false });
+      return;
+    }
+    let target;
+    try { target = new URL(result?.authorizeUrl); } catch {}
+    if (result?.status !== 'pending' || !result?.id || target?.origin !== 'https://app.devin.ai' || target?.pathname !== '/auth/cli/continue') {
+      if (result?.id) await this.api('POST', '/devin-browser-login/cancel', { id: result.id }, { notify: false });
+      if (this._devinBrowserFlow !== flow) return;
+      this._devinBrowserFlow = null;
+      this.renderDevinBrowserLogin(result?.status === 'busy' ? 'busy' : 'unavailable');
+      return;
+    }
+    flow.id = result.id;
+    flow.expiresAt = result.expiresAt;
+    flow.authorizeUrl = target.href;
+    this.renderDevinBrowserLogin('pending');
+    this.pollDevinBrowserLogin(flow);
+  },
+
+  async pollDevinBrowserLogin(flow) {
+    const result = await this.api('GET', '/devin-browser-login/status?id=' + encodeURIComponent(flow.id), undefined, { notify: false });
+    if (this._devinBrowserFlow !== flow || flow.completing) return;
+    const retryable = !result?.status && Date.now() < flow.expiresAt;
+    if (!retryable) this.showDevinBrowserLoginResult(result);
+    if (this._devinBrowserFlow === flow && (retryable || ['pending', 'exchanging'].includes(result?.status))) {
+      setTimeout(() => {
+        if (this._devinBrowserFlow === flow && !flow.completing) this.pollDevinBrowserLogin(flow);
+      }, 1000);
+    }
+  },
+
+  showDevinBrowserLoginResult(result) {
+    if (['pending', 'ready', 'exchanging'].includes(result?.status)) {
+      this.renderDevinBrowserLogin(result.status);
+      return;
+    }
+    this._devinBrowserFlow = null;
+    if (result?.status === 'added' && result.accountId) {
+      this.renderDevinBrowserLogin('added');
+      this.loadAccounts();
+      return;
+    }
+    const codes = ['expired', 'cancelled', 'client_binding_unverified', 'unauthorized_client', 'access_denied'];
+    const status = [result?.error, result?.status].find(code => codes.includes(code)) || 'failed';
+    this.renderDevinBrowserLogin(status);
+  },
+
+  async completeDevinBrowserLogin() {
+    const flow = this._devinBrowserFlow;
+    if (!flow?.id || flow.completing) return;
+    flow.completing = true;
+    this.renderDevinBrowserLogin('exchanging');
+    const result = await this.api('POST', '/devin-browser-login/complete', { id: flow.id }, { notify: false });
+    if (this._devinBrowserFlow !== flow) return;
+    flow.completing = false;
+    if (result?.status) this.showDevinBrowserLoginResult(result);
+    if (this._devinBrowserFlow === flow && result?.status !== 'ready') this.pollDevinBrowserLogin(flow);
+  },
+
+  cancelDevinBrowserLogin() {
+    const id = this._devinBrowserFlow?.id;
+    this._devinBrowserFlow = null;
+    if (id) this.api('POST', '/devin-browser-login/cancel', { id }, { notify: false });
+    this.renderDevinBrowserLogin(id ? 'cancelled' : '');
+  },
+
   openCredentialPaste() {
     this.switchAddTab('paste');
     this.focusCredentialPaste('acc-key');
@@ -10163,6 +10270,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     // Connect recovery edits the original row. A Windsurf-bound login can
     // still start at the email form when the original identity is known.
     if (this._addTab === 'login') this.selectLoginMethod(email || accountId ? 'email' : null);
+    if (this._addTab === 'login') this.loadDevinBrowserLogin();
     const emailInput = document.getElementById('wl-email');
     if (emailInput && (email || accountId)) {
       emailInput.value = email;
@@ -10195,6 +10303,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
   },
 
   closeAddAccountModal() {
+    if (this._devinBrowserFlow) this.cancelDevinBrowserLogin();
     const overlay = document.getElementById('add-account-overlay');
     if (!overlay) return;
     overlay.classList.add('hidden');
@@ -10292,6 +10401,9 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     const next = method === 'email' ? 'email' : null;
     if (this._loginMethod === 'email' && next !== 'email' && (this._wlFlow || this._wlEmailOp)) this.resetEmailCodeForm();
     this._loginMethod = next;
+    if (next === 'email' && this._devinBrowserFlow) this.cancelDevinBrowserLogin();
+    const browserPanel = document.getElementById('devin-browser-login');
+    browserPanel?.classList.toggle('hidden', next === 'email' || !this._devinBrowserAvailable);
     document.getElementById('wl-method-step')?.classList.toggle('hidden', next !== null);
     document.getElementById('wl-panel-email')?.classList.toggle('hidden', next !== 'email');
     document.getElementById('wl-method-email-btn')?.setAttribute('aria-pressed', next === 'email' ? 'true' : 'false');
@@ -10302,6 +10414,7 @@ void main(){ vec3 s=texture(u_scene,v_uv).rgb; vec3 g=texture(u_glow,v_uv).rgb; 
     const valid = ['login', 'paste', 'import', 'local'];
     const next = this._connectRecovery ? 'paste' : valid.includes(tab) ? tab : 'login';
     if (this._addTab === 'login' && next !== 'login' && (this._wlFlow || this._wlEmailOp)) this.resetEmailCodeForm();
+    if (next !== 'login' && this._devinBrowserFlow) this.cancelDevinBrowserLogin();
     this._addTab = next;
     for (const t of valid) {
       const btn = document.getElementById(`add-tab-${t}`);

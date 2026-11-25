@@ -1,4 +1,23 @@
 {
+  "browserLogin": {
+    "start": "用 Devin 登录 WindsurfAPI",
+    "hint": "授权本机 WindsurfAPI 接入你选择的 Devin 账号。回调回到本机实例。",
+    "open": "前往 Devin 授权",
+    "complete": "确认添加账号",
+    "starting": "正在准备授权…",
+    "pending": "请前往 Devin 完成授权，然后回到这里。",
+    "ready": "回调已到达 WindsurfAPI。确认后添加账号。",
+    "exchanging": "正在完成登录…",
+    "added": "账号已添加。",
+    "busy": "已有登录事务进行中，请等它结束再重试。",
+    "expired": "本次授权已过期，请重新开始。",
+    "cancelled": "登录已取消。",
+    "unavailable": "当前网页登录不可用。",
+    "client_binding_unverified": "服务商返回了绑定客户端的授权，网关无法确认该授权属于本应用。",
+    "unauthorized_client": "服务商拒绝了本客户端。",
+    "access_denied": "服务商未批准本次授权。",
+    "failed": "登录未能完成。"
+  },
   "_meta": {
     "name": "简体中文",
     "code": "zh-CN"

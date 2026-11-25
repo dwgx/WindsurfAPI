@@ -1,4 +1,23 @@
 {
+  "browserLogin": {
+    "start": "Sign in to WindsurfAPI with Devin",
+    "hint": "Authorize this local WindsurfAPI instance to connect the Devin account you select. The callback returns to this instance.",
+    "open": "Continue in Devin",
+    "complete": "Confirm account addition",
+    "starting": "Preparing sign-in…",
+    "pending": "Continue in Devin, then return here.",
+    "ready": "The callback reached WindsurfAPI. Confirm to add the account.",
+    "exchanging": "Finishing sign-in…",
+    "added": "Account added.",
+    "busy": "Another sign-in is active. Wait for it to end before restarting.",
+    "expired": "This sign-in expired. Start again.",
+    "cancelled": "Sign-in cancelled.",
+    "unavailable": "This browser sign-in is unavailable.",
+    "client_binding_unverified": "The provider returned a client-specific grant. The gateway could not confirm its application binding.",
+    "unauthorized_client": "The provider rejected this client.",
+    "access_denied": "The provider declined authorization.",
+    "failed": "Sign-in could not be completed."
+  },
   "_meta": {
     "name": "English",
     "code": "en"

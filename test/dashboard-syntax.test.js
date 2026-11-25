@@ -253,8 +253,16 @@ describe('dashboard markup contract', () => {
     for (const source of [DASHBOARD, SKETCH]) {
       assert.match(source, /href="https:\/\/app\.devin\.ai\/" target="_blank" rel="noopener noreferrer"/);
       assert.doesNotMatch(source, /redirect_uri=show-auth-token|href="https:\/\/windsurf\.com\/show-auth-token|\/oauth\/start|signInWithPopup/);
-      assert.doesNotMatch(source, /\/auth\/cli\/(?:continue|token)/);
+      assert.doesNotMatch(source, /\/auth\/cli\/token/);
     }
+  });
+
+  test('browser enrollment needs an explicit click and uses the gateway-owned transaction', () => {
+    assert.match(DASHBOARD, /id="devin-browser-login" class="login-alt-panel hidden"/);
+    assert.match(DASHBOARD, /onclick="App\.startDevinBrowserLogin\(\)"/);
+    assert.match(DASHBOARD, /\/devin-browser-login\/status/);
+    assert.match(DASHBOARD, /\/devin-browser-login\/complete/);
+    assert.doesNotMatch(SKETCH, /startDevinBrowserLogin/);
   });
 
   test('recent merged PR contributors are represented in dashboard and README credits', () => {

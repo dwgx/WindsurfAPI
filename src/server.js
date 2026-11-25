@@ -42,6 +42,7 @@ import {
   beginChatRequestLog, finalizeStatsScope, recordAccountAdmissionRejection, requestLogBootId, withStatsScope,
 } from './dashboard/stats.js';
 import { setAccountProxy } from './dashboard/proxy-config.js';
+import { DEVIN_BROWSER_CALLBACK, handleBrowserLoginCallback } from './dashboard/devin-browser-login.js';
 import { config, log } from './config.js';
 import { getVersionInfo } from './version.js';
 import { callerKeyFromRequest } from './caller-key.js';
@@ -498,6 +499,10 @@ async function route(req, res, scope) {
 
   // Allocate an ID before any early exit. Chat, Responses and Messages also
   // pass it into their handlers, so the public header can name a routing trace.
+  if (method === 'GET' && path === DEVIN_BROWSER_CALLBACK && process.env.DEVIN_BROWSER_LOGIN === '1') {
+    return handleBrowserLoginCallback(req, res);
+  }
+
   const fallbackRequestId = 'req_' + randomUUID();
   res.setHeader('x-request-id', fallbackRequestId);
 

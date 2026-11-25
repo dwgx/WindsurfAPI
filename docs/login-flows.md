@@ -76,6 +76,19 @@ Old browser onboarding requests to /oauth/start, /oauth/callback and
 /oauth/status return HTTP 410 with ERR_BROWSER_ENROLLMENT_UNAVAILABLE. Clear
 the old login attempt and reopen the current account dialog.
 
+### Local WindsurfAPI browser sign-in
+
+A loopback instance may enable **Sign in to WindsurfAPI with Devin** by setting
+DEVIN_BROWSER_LOGIN=1 and binding directly to 127.0.0.1. Open the Devin page
+from the account dialog. The provider must accept the instance's own callback.
+Then confirm account addition in the same dashboard dialog. Opening the
+provider website alone leaves the account pool as it was.
+
+Only this instance's unexpired sign-in can use its callback. Closing the
+dialog cancels the transaction. The authorization code stays in process memory
+and is cleared after use, cancellation, or expiry. Check the actual provider
+result for this instance before treating the sign-in as supported.
+
 ## 4. Devin (app.devin.ai)
 
 The same modal covers it, because both hosts speak the same Auth1 protocol:

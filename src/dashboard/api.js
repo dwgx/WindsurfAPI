@@ -1,3 +1,4 @@
+import { browserLoginOrigin, browserLogin } from './devin-browser-login.js';
 /**
  * Dashboard API route handlers.
  * All routes are under /dashboard/api/*.
@@ -4069,6 +4070,26 @@ export async function handleDashboardApi(method, subpath, body, req, res) {
     } catch (err) {
       return json(res, 400, { error: err.message });
     }
+  }
+
+  if (subpath === '/devin-browser-login/status' && method === 'GET') {
+    const origin = browserLoginOrigin(req);
+    if (!origin) return json(res, 200, { available: false }, NO_STORE);
+    const id = dashboardUrl(req).searchParams.get('id');
+    return json(res, 200, id ? browserLogin.status(origin, id) : { available: true }, NO_STORE);
+  }
+  if (method === 'POST' && ['/devin-browser-login/start', '/devin-browser-login/complete', '/devin-browser-login/cancel'].includes(subpath)) {
+    const origin = browserLoginOrigin(req);
+    if (!origin) return json(res, 404, { error: 'ERR_BROWSER_ENROLLMENT_UNAVAILABLE' }, NO_STORE);
+    if (subpath.endsWith('/start')) return json(res, 200, browserLogin.start(origin), NO_STORE);
+    if (subpath.endsWith('/cancel')) return json(res, 200, browserLogin.cancel(origin, body?.id), NO_STORE);
+    const result = await browserLogin.complete(origin, body?.id, key => {
+      const { account } = addAccountByKeyWithDisposition(key, 'Devin browser sign-in');
+      if (!account?.id) return null;
+      scheduleAccountWarmup(account.id);
+      return account.id;
+    });
+    return json(res, 200, result, NO_STORE);
   }
 
   // Keep an explicit terminal answer for clients with old browser flows.
