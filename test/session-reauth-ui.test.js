@@ -205,6 +205,7 @@ describe('row menu', () => {
       _accountsById: new Map([['acct-reauth', { ...reauthRow, loginEmail: '' }]]),
       switchAddTab(tab) { this._addTab = tab; },
       selectLoginMethod() {}, loadWindsurfLogin() {}, checkLocalImportAvailability() {},
+      loadDevinBrowserLogin() { this._browserAvailabilityChecked = true; },
     });
     input.value = 'previous@example.test';
 
@@ -212,6 +213,7 @@ describe('row menu', () => {
 
     assert.equal(input.value, '');
     assert.equal(self._reauthAccountId, 'acct-reauth');
+    assert.equal(self._browserAvailabilityChecked, true);
   });
 
   it('opens the replacement guide for a bound Connect credential', () => {

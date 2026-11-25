@@ -100,10 +100,10 @@ describe('provider swatches (P2-12 / AC-COLOR-1)', () => {
     }
   });
 
-  it('keeps the brand blocks out of the markup and above AA', () => {
+  it('uses the shared button style for local browser sign-in', () => {
     assert.ok(!/style="[^"]*background:\s*#4285F4/i.test(HTML), 'no inline Google blue');
     assert.ok(!/style="[^"]*background:\s*#24292e/i.test(HTML), 'no inline GitHub black');
-    assert.match(HTML, /class="btn oauth-brand-btn oauth-brand-google"/);
+    assert.match(HTML, /id="devin-browser-start" class="btn btn-primary"/);
   });
 });
 
