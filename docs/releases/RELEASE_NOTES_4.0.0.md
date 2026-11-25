@@ -1,27 +1,40 @@
-# v4.0.0 — 2026-11-22
+# WindsurfAPI v4.0.0
 
-主版本升级：协议可见行为有一处破坏性变更 —— 不可解析的模型名不再静默降级到免费档，直接报错。
+WindsurfAPI 4.0 improves model routing, account recovery and request diagnostics across its OpenAI, Anthropic and Gemini HTTP interfaces.
 
-## 行为变更（破坏兼容）
+## Upgrade changes
 
-- **未知模型一律 400 `model_not_found`**。`WINDSURFAPI_STRICT_MODEL` 开关删除，不存在 opt-out；`adaptive`/`arena-*` 路由名仅在 `DEVIN_CONNECT_ASSIGN_MODEL=1` 下仍由 AssignModel 解析。
-- **限流不再偷换变体**。`shouldAutoFallback` 改为默认关（`WINDSURFAPI_VARIANT_FALLBACK_ON_RATE_LIMIT=1` 才启用）：上游对 `claude-*` 限流时不再自动重试同族低档变体并仍以原名返回。
-- **池级目录缺失 = 不可重试 403 `model_unavailable`**。当 selector 在每个有权限账号的上游目录中被锁出（"model no longer available"），返回不可重试错误而非可重试 429。
-- **快照刷新至线上 306 模型目录**，`SELECTOR_MAP` 剪掉了指向已下线模型的悬空别名（claude-4.5 代、gpt-5.2/5.3-codex、gemini-3.0/3.1、grok-4-5、inkling、swe-1.5/1-6-fast/1-7-lightning、deepseek-v4 等）。
+- Unknown model names return HTTP 400 with model_not_found. The previous strict-model opt-out is removed.
+- Rate-limited Claude variants keep their requested identity. Optional variant fallback requires WINDSURFAPI_VARIANT_FALLBACK_ON_RATE_LIMIT=1.
+- A model unavailable in every eligible account's catalog returns a non-retryable model_unavailable response.
+- The 4.x version line sorts above the historical v3.141.592661 release for source and container updates.
 
-## 修复
+Back up the installation's configuration and account data before upgrading. The previous signed [v3.2.11 release](https://github.com/dwgx/WindsurfAPI/releases/tag/v3.2.11) remains available for rollback.
 
-- `mergeCloudCostTiers`：`creditMultiplier` 只接受数字或非空数字串，`''`/`' '`/`false` 不再被当作 0（免费档）。
-- `ToolNamePrefixBuffer`：出错或超限时先按序冲刷已排队帧，不再丢弃已确定的文本增量。
-- 移植自游离分支：pooled connect admission 拒绝、buffered 取消门控、缓存键按路由身份、UTF-8 stdio、provider retry 提示、ACP 取消/权限/工具归属边界。
+## Account sign-in
 
-## 门禁
+A direct local instance can sign in through Devin from the account dialog. Enable DEVIN_BROWSER_LOGIN=1 with HOST=127.0.0.1, then choose **Sign in → Sign in to WindsurfAPI with Devin → Continue in Devin**. After Devin returns to the same instance, confirm account addition in the original dialog.
 
-- `npm test` 8674 项全绿（Windows，Node 24.19）；Linux/HMC 全量复跑证据见发布审计。
-- CI `specs` 任务改为 Node 22+24 双版本矩阵，守住 `package.json` 声明下限。
+The gateway creates a fresh PKCE transaction. It clears one-time material after use, cancellation or expiry and rejects callbacks with the wrong state. The local callback requires a direct connection to 127.0.0.1. Remote dashboards can use their existing supported credential intake. Model access remains subject to the selected account's provider permissions and quota.
 
-## 自更新
+The obsolete browser redirect has been retired. Existing email sign-in, credential import and account-bound credential replacement continue through their current routes. Account status and failure messages give the next usable action.
 
-- 版本线跳到 4.x 一次性压过历史遗留 tag `v3.141.592661`，OTA 版本比较不再被三位数版本压住。
+## Dashboard and request diagnostics
+
+- The model catalog supports search and pagination. Runtime and session sections use a compact layout, and billed-turn history offers page-size choices.
+- Statistics cards retain their compact layout at desktop and narrower window sizes.
+- Public request IDs can be searched after statistics reload. Request details show observed dispatches, timing, stream outcomes and disconnect information.
+- The cost card identifies local rate estimates and UTC daily totals. Per-dispatch provider reports preserve explicit zero values and distinguish missing reports.
+- Tool-stream termination, cancellation and persistence fixes are included alongside the existing protocol compatibility work.
+
+## Validation and downloads
+
+On the product source used for this release, a fresh Devin browser login admitted the selected account and its provider identity was checked. Native OMP completed separate file-read and file-write tasks on that same instance with swe-1-7-medium. Four model requests produced one read-tool execution and one write-tool execution. The written file was reopened after the client exited and matched the requested bytes.
+
+The tagged release workflow executes the full release suite, checks mutation baselines, builds the Windows and macOS packages, publishes the container image and verifies the uploaded asset set. Release success is reported by that workflow.
+
+Windows previously reached the default 90-second per-file limit in the concurrency-stream-flow test during a full local run. The same file completed under the default limit when run individually. The root cause of that full-run slowdown remains unresolved. The complete mutation sweep and a final provider invoice are outside this release's executed validation.
+
+Download **windsurfapi-windows.zip** for Windows, or the corresponding macOS package. Verify SHA256SUMS and the Sigstore bundles using the instructions in [Release signing](https://github.com/dwgx/WindsurfAPI/blob/v4.0.0/docs/RELEASE-SIGNING.md). The source attestation and signed container digest are included with the release.
 
 [Open verification register](https://github.com/dwgx/WindsurfAPI/blob/v4.0.0/docs/UNVERIFIED.md) · [Roadmap](https://github.com/dwgx/WindsurfAPI/blob/v4.0.0/docs/ROADMAP.md)

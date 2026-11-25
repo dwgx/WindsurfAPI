@@ -556,16 +556,16 @@ export function registerLoginFlows(ctx) {
       return doc.slice(start, end);
     };
 
-    // Keep the supported portal handoff and email entry distinct from legacy
-    // Windsurf and manual credential import.
+    // The current chooser offers the provider website and email entry, plus
+    // manual credential import and an explicitly enabled local browser flow.
     const panel = slice('<div class="add-panel active" id="add-panel-login"', '<div class="add-panel" id="add-panel-paste"');
-    const chooser = slice('id="wl-method-step"', 'id="wl-panel-oauth"');
+    const chooser = slice('id="wl-method-step"', 'id="devin-browser-login"');
     const methods = chooser.match(/<(?:a|button)\b[^>]*class="login-method(?: [^"]+)?"[^>]*>/g) || [];
     requireThat(methods.length === 2, `the first screen offers ${methods.length} primary methods, not 2`);
     requireThat(methods.some(tag => tag.includes('href="https://app.devin.ai/"')), 'the Devin handoff is missing');
     requireThat(methods.some(tag => tag.includes("App.selectLoginMethod('email')")), 'the email action is missing');
-    requireThat(chooser.includes('id="wl-method-oauth-btn"') && chooser.includes('accounts.login.legacyWindsurf'), 'the legacy path must be labelled');
-    requireThat(chooser.includes("App.focusCredentialPaste('acc-key')"), 'the independent manual paste action is missing');
+    requireThat(!chooser.includes('id="wl-method-oauth-btn"'), 'the retired callback choice reappeared');
+    requireThat(chooser.includes('App.openCredentialPaste()'), 'the independent manual paste action is missing');
     requireThat(!chooser.includes('oauth-google-btn'), 'provider buttons are on the first screen');
     requireThat(!chooser.includes('id="wl-email"'), 'the email field is on the first screen');
 
@@ -579,14 +579,16 @@ export function registerLoginFlows(ctx) {
       requireThat(advanced.includes(id), `${id} escaped the advanced disclosure`);
     }
 
-    // Every token step has its own action button.
-    const tokenStep = panel.slice(panel.indexOf('id="oauth-token-step"'));
-    const steps = tokenStep.split(/<li>/).slice(1).map((item) => item.slice(0, item.indexOf('</li>')));
-    requireThat(steps.length === 3, `the token path has ${steps.length} steps, not 3`);
-    for (const [index, step] of steps.entries()) requireThat(step.includes('<button'), `token step ${index + 1} has no action`);
-    requireThat(steps[0].includes('App.fetchWindsurfToken()'), 'step 1 does not open the sign-in page');
-    requireThat(steps[1].includes("App.focusCredentialPaste('oauth-token-input')"), 'step 2 does not focus the manual paste field');
-    requireThat(steps[2].includes('App.submitOAuthToken()'), 'step 3 does not add the token');
+    // Browser authorization returns to this instance, and addition requires an
+    // explicit confirmation after the callback. The panel is hidden until the
+    // local availability check succeeds.
+    const browser = slice('id="devin-browser-login"', 'id="wl-panel-email"');
+    requireThat(browser.startsWith('id="devin-browser-login" class="login-alt-panel hidden"'), 'browser sign-in is visible before availability');
+    for (const action of ['startDevinBrowserLogin', 'completeDevinBrowserLogin', 'cancelDevinBrowserLogin']) {
+      requireThat(browser.includes('App.' + action + '()'), action + ' is missing');
+    }
+    requireThat(doc.includes('id="acc-key" type="password"'), 'the manual credential field is not masked');
+    requireThat(!doc.includes('redirect_uri=show-auth-token'), 'the obsolete redirect is still offered');
 
     // One action, one verb: the entry button names the tab it opens.
     for (const [id, tab, key] of [
